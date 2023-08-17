@@ -1,0 +1,65 @@
+trainer:
+  devices: 1
+  num_nodes: 1
+  accelerator: gpu
+  logger: False # logger provided by exp_manager
+  precision: bf16 # 16, 32, or bf16
+
+data:
+  # Example of how to specify paths to multiple datasets
+  # file_names: 
+  #   - /path/to/squad.jsonl
+  #   - /path/to/mnli.jsonl
+  #   - /path/to/boolq.jsonl
+  # Example of how each dataset is formatted
+  # {'text': 'John von Neumann\nVon Neumann made fundamental contributions .... Q: What did the math of artificial viscosity do?', 'output': 'smoothed the shock transition without sacrificing basic physics'}
+  file_names: ??? # Path to a list of JSONL files corresponding to the source data.
+  shuffle: False
+  num_workers: 4
+  pin_memory: True
+  max_seq_length: 4096
+  min_seq_length: 1
+  drop_last: True
+  # Example of how to specify concat_sampling_probabilities
+  # concat_sampling_probabilities:
+  #   - 0.5
+  #   - 0.25
+  #   - 0.25
+  concat_sampling_probabilities: [1] # When providing a list of datasets, this arg defines the sampling probabilities from each dataset when strategy='random'
+  input_key: input
+  output_key: output
+  reward_key: reward
+  add_bos: False
+  add_eos: True
+  index_mapping_dir: null # Path to a directory to write index mapping files.
+  micro_batch_size: 1
+  num_samples: null
+  tokens_to_generate: 0 # 0 means non-generate mode 
+  prompt_template: null
+  hf_dataset: True
+
+reward_standardization:  # Provide mean and std for z-score standardization of the rewards during inference and post process.
+  enable: True
+  mean: null
+  std: null
+
+processor: null # post processor, set to dt (Decision Transformer), filter (ReST) or best_of_n (Rejection Sampling)
+threshold: 0 # threshold for ReST
+reward_template: "{input} <rm_score>: {reward} " # reward template for decision transformer
+input_key: ${data.input_key}
+output_key: ${data.output_key}
+reward_key: ${data.reward_key}
+
+tensor_model_parallel_size: -1
+pipeline_model_parallel_size: -1
+pipeline_model_parallel_split_rank: -1 # used for encoder and decoder model (0 for others)
+megatron_amp_O2: True
+mcore_gpt: null
+
+gpt_model_file: null  # GPT nemo file path
+checkpoint_interval: null # checkpoint interval
+max_time_per_run: null
+
+seed: 1234
+output_file: null
+export_reward: False
