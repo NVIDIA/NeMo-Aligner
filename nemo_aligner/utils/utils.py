@@ -144,7 +144,7 @@ def extract_value_from_ckpt(key, ckpt_path):
 def set_autocast_gpu_dtype(precision):
     if precision == 16:
         torch.set_autocast_gpu_dtype(torch.float16)
-    elif precision == "bf16":
+    elif precision == "bf16" or precision == "bf16-mixed":
         torch.set_autocast_gpu_dtype(torch.bfloat16)
 
 

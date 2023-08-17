@@ -20,7 +20,6 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf, open_dict
 
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
 )
@@ -82,14 +81,19 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         gpt_cfg.ffn_dropout = cfg.model.ffn_dropout
         gpt_cfg.use_flash_attention = cfg.model.get("use_flash_attention", False)
         # if TP/PP size is -1, use default TP/PP size as original model
-        if cfg.model.get("tensor_model_parallel_size", 1) > 0:
-            gpt_cfg.tensor_model_parallel_size = cfg.model.get("tensor_model_parallel_size", 1)
-        if cfg.model.get("pipeline_model_parallel_size", 1) > 0:
-            gpt_cfg.pipeline_model_parallel_size = cfg.model.get("pipeline_model_parallel_size", 1)
-        gpt_cfg.pipeline_model_parallel_split_rank = cfg.model.get("pipeline_model_parallel_split_rank", 0)
+        if cfg.model.get("tensor_model_parallel_size", -1) > 0:
+            gpt_cfg.tensor_model_parallel_size = cfg.model.get("tensor_model_parallel_size")
+        if cfg.model.get("pipeline_model_parallel_size", -1) > 0:
+            gpt_cfg.pipeline_model_parallel_size = cfg.model.get("pipeline_model_parallel_size")
+        if cfg.model.get("pipeline_model_parallel_split_rank", -1) >= 0:
+            gpt_cfg.pipeline_model_parallel_split_rank = cfg.model.get("pipeline_model_parallel_split_rank")
 
         if cfg.model.data.get("chat", False):
             # chat model, overwrite the prompt template
+            from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import (
+                get_prompt_template_example,
+            )
+
             prompt_template = get_prompt_template_example(cfg.model.data.chat_prompt_tokens)
             gpt_cfg.data.train_ds.prompt_template = prompt_template
             gpt_cfg.data.validation_ds.prompt_template = prompt_template
@@ -175,14 +179,17 @@ def main(cfg) -> None:
         num_samples = cfg.sft_trainer.limit_val_batches * val_data_cfg.global_batch_size
     else:
         num_samples = None
-    validation_ds = build_sft_dataset(
-        val_data_cfg,
-        ptl_model.tokenizer,
-        num_samples,
-        answer_only_loss=True,
-        is_chat=cfg.model.data.chat,
-        special_tokens=cfg.model.data.chat_prompt_tokens,
-    )
+
+    skip_validation = cfg.sft_trainer.get("skip_validation", False)
+    if not skip_validation:
+        validation_ds = build_sft_dataset(
+            val_data_cfg,
+            ptl_model.tokenizer,
+            num_samples,
+            answer_only_loss=True,
+            is_chat=cfg.model.data.chat,
+            special_tokens=cfg.model.data.chat_prompt_tokens,
+        )
 
     train_dataloader = build_dataloader(
         cfg=cfg,
@@ -196,17 +203,20 @@ def main(cfg) -> None:
         load_gbs=True,
     )
 
-    val_dataloader = build_dataloader(
-        cfg=cfg,
-        dataset=validation_ds,
-        consumed_samples=0,
-        mbs=val_data_cfg.micro_batch_size,
-        gbs=val_data_cfg.global_batch_size,
-        collate_fn=validation_ds.collate_fn,
-        drop_last=val_data_cfg.drop_last,
-        pad_samples_to_global_batch_size=not val_data_cfg.drop_last,
-        load_gbs=True,
-    )
+    if not skip_validation:
+        val_dataloader = build_dataloader(
+            cfg=cfg,
+            dataset=validation_ds,
+            consumed_samples=0,
+            mbs=val_data_cfg.micro_batch_size,
+            gbs=val_data_cfg.global_batch_size,
+            collate_fn=validation_ds.collate_fn,
+            drop_last=val_data_cfg.drop_last,
+            pad_samples_to_global_batch_size=not val_data_cfg.drop_last,
+            load_gbs=True,
+        )
+    else:
+        val_dataloader = []
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)

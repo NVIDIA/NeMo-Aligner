@@ -23,6 +23,7 @@ trainer:
   max_time: null
   max_epochs: ${.sft.max_epochs}
   max_steps: ${.sft.max_steps}
+  skip_validation: False
 
 exp_manager:
   explicit_log_dir: null
@@ -46,8 +47,8 @@ exp_manager:
 
 model:
   seed: 1234
-  tensor_model_parallel_size: 1 # intra-layer model parallelism
-  pipeline_model_parallel_size: 1 # inter-layer model parallelism
+  tensor_model_parallel_size: -1 # intra-layer model parallelism
+  pipeline_model_parallel_size: -1 # inter-layer model parallelism
   restore_from_path: ??? # Path to an existing p-tuned/prompt tuned .nemo model you wish to add new tasks to or run inference with
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   save_nemo_on_validation_end: True # Saves an inference ready .nemo file every time a checkpoint is saved during training. 

@@ -1,0 +1,181 @@
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (th\e "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import os
+from datetime import datetime, timedelta
+
+import jsonlines
+import torch
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from nemo_rlhf.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
+from pytorch_lightning.trainer.trainer import Trainer
+from tqdm import tqdm
+from utils import get_max_time_per_run, load_nemo_or_checkpoint, set_seed
+
+from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
+from nemo.core.config import hydra_runner
+from nemo_rlhf.algorithms.offline.processor import get_processor, reward_normalization
+from nemo_rlhf.algorithms.offline.reward_labeler import RewardLabeler
+from nemo_rlhf.data.nlp.offline.builders import build_data_loader, build_dataset
+from nemo_rlhf.utils.utils import set_autocast_gpu_dtype
+
+try:
+    from megatron.core import mpu
+
+    HAVE_MEGATRON_CORE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_MEGATRON_CORE = False
+
+if not torch.cuda.is_available():
+    raise OSError("GPU is needed for the inference")
+
+
+@hydra_runner(config_path="conf", config_name="megatron_reward_labeler")
+def main(cfg) -> None:
+    set_seed(cfg.seed)
+
+    # init start time
+    max_time_per_run = cfg.get("max_time_per_run", None)
+    if max_time_per_run:
+        start_time = datetime.now()
+        max_time_per_run = get_max_time_per_run(max_time_per_run)
+
+    # needed for autocasting BF16
+    set_autocast_gpu_dtype(cfg.trainer.precision)
+
+    # init trainer, model, sampler and dataloader
+    trainer = Trainer(strategy=NLPDDPStrategy(timeout=timedelta(seconds=99999999)), **cfg.trainer)
+    model = load_nemo_or_checkpoint(MegatronGPTRewardModel, trainer, cfg)
+    reward_labeler = RewardLabeler(trainer, model, cfg)
+
+    # load consumed_samples from checkpoint
+    consumed_samples = 0
+    ckpt_path = f"{cfg.output_file}_temp"
+    os.makedirs(ckpt_path, exist_ok=True)
+
+    dp_rank = mpu.get_data_parallel_rank()
+    status_ckpt_path = f"{ckpt_path}/{dp_rank}.ckpt"
+    if os.path.exists(status_ckpt_path):
+        consumed_samples = torch.load(status_ckpt_path)["consumed_samples"]
+
+    # init dataloader
+    def preprocess_callback(example):
+        return example[cfg.data.input_key] + example[cfg.data.output_key]
+
+    dataset = build_dataset(cfg.data, model.tokenizer, preprocess_callback)
+    dataloader = build_data_loader(dataset, cfg.data, consumed_samples)
+
+    global_rank = dist.get_rank()
+    # is the first node in TP and PP group ?
+    is_the_first_tp_pp_node = global_rank == mpu.get_tensor_model_parallel_src_rank() and mpu.is_pipeline_last_stage()
+    # is the first node in TP, PP and DP group ?
+    is_the_first_tp_pp_dp_node = is_the_first_tp_pp_node and global_rank == mpu.get_data_parallel_src_rank()
+
+    # ckpt func
+    def save_checkpoint(global_step, objs):
+        if not len(objs):
+            return
+        if is_the_first_tp_pp_node:
+            filename = f"{ckpt_path}/rank_{dp_rank}.json"
+            with jsonlines.open(filename, mode="a") as writer:
+                writer.write_all(objs)
+                objs.clear()
+
+            save_dict = {
+                "consumed_samples": global_step * cfg.data.micro_batch_size * mpu.get_data_parallel_world_size()
+            }
+            print(f"Rank {dp_rank} - Save ckpt: {save_dict}")
+            torch.save(save_dict, status_ckpt_path)
+
+    # inferece loop
+    global_step = consumed_samples // mpu.get_data_parallel_world_size() // cfg.data.micro_batch_size
+    if is_the_first_tp_pp_node:
+        print(f"Rank {dp_rank} - Init global steps: {global_step}")
+    objs = []
+    checkpoint_interval = cfg.get("checkpoint_interval", None)
+
+    for sample in tqdm(dataloader, desc="Labeling text with RM...", disable=not is_the_first_tp_pp_dp_node):
+        current_device = torch.cuda.current_device()
+        input = (sample["input_ids"].to(current_device), sample["length"].to(current_device))
+        reward_list = reward_labeler.predict(input)["reward"]
+
+        # ignore other ranks in TP and PP group
+        if is_the_first_tp_pp_node:
+            for i, reward in enumerate(reward_list):
+                data = sample["data"][i]
+                obj = {
+                    cfg.data.input_key: data[cfg.data.input_key],
+                    cfg.data.output_key: data[cfg.data.output_key],
+                    cfg.data.reward_key: reward.item(),
+                }
+                objs.append(obj)
+
+        global_step += 1
+        if checkpoint_interval:
+            dist.barrier()
+
+        # check max_time_per_run
+        if max_time_per_run is not None and datetime.now() >= start_time + max_time_per_run:
+            if is_the_first_tp_pp_dp_node:
+                print(f"max_time_per_run {max_time_per_run} reached.")
+            exit(0)
+
+        # save checkpoint interval
+        if checkpoint_interval:
+            if global_step % cfg.checkpoint_interval == 0:
+                save_checkpoint(global_step, objs)
+
+    save_checkpoint(global_step, objs)
+    dist.barrier()
+    if is_the_first_tp_pp_dp_node:
+        # merge the output json files in the first node
+        objs = []
+        for dp_rank in tqdm(range(mpu.get_data_parallel_world_size()), desc="Merging output files..."):
+            filename = f"{ckpt_path}/rank_{dp_rank}.json"
+            with jsonlines.open(filename, mode="r") as reader:
+                for obj in reader:
+                    objs.append(obj)
+
+        # use the mean and std for all input samples
+        # If mean std is not null, Reward Labeler will use the specified mean std.
+        if cfg.reward_standardization.enable and (
+            cfg.reward_standardization.mean is None or cfg.reward_standardization.std is None
+        ):
+            print("Use auto reward normalization")
+            objs = reward_normalization(cfg, objs)
+
+        # convert/filtering samples, such as best-of-n, decision transformer
+        if cfg.get("processor", None):
+            name = cfg.get("processor")
+            print(f"Use processor: {name}")
+            print(f"Number of samples before processing: {len(objs)}")
+
+            processor = get_processor(name)
+            objs = processor(cfg, objs)
+
+            # delete the original rewards
+            if not cfg.get("export_reward", False) and len(objs) and cfg.data.reward_key in objs[0]:
+                for obj in objs:
+                    del obj[cfg.data.reward_key]
+
+        print(f"Number of output samples: {len(objs)}")
+
+        # write
+        with jsonlines.open(cfg.output_file, mode="w") as writer:
+            writer.write_all(objs)
+
+
+if __name__ == "__main__":
+    with torch.no_grad():
+        main()  # noqa pylint: disable=no-value-for-parameter

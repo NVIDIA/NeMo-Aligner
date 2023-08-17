@@ -1,0 +1,67 @@
+inference:
+  greedy: False # Whether or not to use sampling ; use greedy decoding otherwise
+  top_k: 0  # The number of highest probability vocabulary tokens to keep for top-k-filtering.
+  top_p: 0.9 # If set to float < 1, only the most probable tokens with probabilities that add up to top_p or higher are kept for generation.
+  temperature: 1.0 # sampling temperature
+  add_BOS: False # add the bos token at the begining of the prompt
+  tokens_to_generate: 30 # The minimum length of the sequence to be generated.
+  all_probs: False  # whether return the log prob for all the tokens in vocab
+  repetition_penalty: 1.2  # The parameter for repetition penalty. 1.0 means no penalty.
+  min_tokens_to_generate: 1  # The minimum length of the sequence to be generated.
+  compute_logprob: False  # a flag used to compute logprob of all the input text, a very special case of running inference, default False
+  end_strings: ["<|endoftext|>", "</s>"]  # generation will stop when one of these tokens is generated
+
+trainer:
+  devices: 1
+  num_nodes: 1
+  accelerator: gpu
+  logger: False # logger provided by exp_manager
+  precision: bf16 # 16, 32, or bf16
+
+data:
+  # Example of how to specify paths to multiple datasets
+  # file_names: 
+  #   - /path/to/squad.jsonl
+  #   - /path/to/mnli.jsonl
+  #   - /path/to/boolq.jsonl
+  # Example of how each dataset is formatted
+  # {'text': 'John von Neumann\nVon Neumann made fundamental contributions .... Q: What did the math of artificial viscosity do?', 'output': 'smoothed the shock transition without sacrificing basic physics'}
+  file_names: ??? # Path to a list of JSONL files corresponding to the source data.
+  shuffle: False
+  num_workers: 4
+  pin_memory: True
+  max_seq_length: 2048
+  min_seq_length: 1
+  drop_last: True
+  # Example of how to specify concat_sampling_probabilities
+  # concat_sampling_probabilities:
+  #   - 0.5
+  #   - 0.25
+  #   - 0.25
+  concat_sampling_probabilities: [1] # When providing a list of datasets, this arg defines the sampling probabilities from each dataset when strategy='random'
+  input_key: input
+  output_key: output
+  add_bos: False
+  add_eos: False
+  index_mapping_dir: null # Path to a directory to write index mapping files.
+  micro_batch_size: 1
+  num_samples: null
+  best_of_n: 1
+  tokens_to_generate: ${inference.tokens_to_generate}
+  prompt_template: null
+  hf_dataset: True
+  sample_split_size: null
+  sample_split_iter: 0
+
+tensor_model_parallel_size: -1
+pipeline_model_parallel_size: -1
+pipeline_model_parallel_split_rank: -1 # used for encoder and decoder model (0 for others)
+megatron_amp_O2: True
+mcore_gpt: null
+
+gpt_model_file: null  # GPT nemo file path
+checkpoint_interval: null # checkpoint interval
+max_time_per_run: null
+
+seed: 1234
+output_file: null

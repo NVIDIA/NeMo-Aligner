@@ -66,9 +66,11 @@ class SupervisedTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-        assert (
-            self.cfg.save_interval % self.cfg.val_check_interval == 0
-        ), f"{self.cfg.save_interval=} must be divisible by {self.cfg.val_check_interval=}"
+        self.skip_validation = cfg.get("skip_validation", False)
+        if not self.skip_validation:
+            assert (
+                self.cfg.save_interval % self.cfg.val_check_interval == 0
+            ), f"{self.cfg.save_interval=} must be divisible by {self.cfg.val_check_interval=}"
 
     def validation_step(self, batch):
         self.model.prepare_for_validation_step()
@@ -171,7 +173,7 @@ class SupervisedTrainer:
                 self.step += 1
 
                 is_train_end = self.step == self.max_steps
-                run_val = (self.step % self.cfg.val_check_interval == 0) or is_train_end
+                run_val = not self.skip_validation and (self.step % self.cfg.val_check_interval == 0 or is_train_end)
                 if run_val:
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
@@ -185,7 +187,7 @@ class SupervisedTrainer:
                 # PTL save wants tensors only
                 metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
 
-                if run_val and (self.step % self.cfg.save_interval == 0 or is_train_end):
+                if (self.step % self.cfg.save_interval == 0) or is_train_end:
                     self.save(metrics, is_train_end=is_train_end)
 
                 metrics.clear()
