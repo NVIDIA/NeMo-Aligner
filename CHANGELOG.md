@@ -6,9 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [Next Version]
 
 ### New features and optimizations
-- Added public-facing official Dockerfile for NeMo-Aligner
-- Memory optimization in PPO that helps avoid OOM in the actor when sending training data to the critic
-- SFT: added support for custom validation metrics based on model generations
+- Added public-facing official Dockerfile for NeMo-Aligner.
+- PPO: memory optimization to help avoid OOM in the actor when sending training data to the critic.
+- PPO: it is now possible to use a custom end string in `sampling_params.end_strings` that is different from `<extra_id_1>`.
+- SFT: added support for custom validation metrics based on model generations.
 
 ### Breaking changes
 
