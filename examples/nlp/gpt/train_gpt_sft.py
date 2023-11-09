@@ -180,7 +180,7 @@ def main(cfg) -> None:
     else:
         num_samples = None
 
-    skip_validation = cfg.sft_trainer.get("skip_validation", False)
+    skip_validation = cfg.trainer.sft.get("skip_validation", False)
     if not skip_validation:
         validation_ds = build_sft_dataset(
             val_data_cfg,
