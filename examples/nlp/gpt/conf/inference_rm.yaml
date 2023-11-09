@@ -1,0 +1,23 @@
+trainer:
+  num_nodes: 1
+  devices: 8
+  accelerator: gpu
+  logger: False # logger provided by exp_manager
+  precision: bf16 # 16, 32, or bf16
+
+inference:
+  micro_batch_size: 4
+  port: 5555 # the port number for the inference server
+
+rm_model_file: null
+
+model:
+  sequence_parallel: False
+  activations_checkpoint_granularity: null
+  activations_checkpoint_method: null
+  precision: ${trainer.precision}
+
+  reward_standardization:
+    enable: False
+    mean: null
+    std: null 
