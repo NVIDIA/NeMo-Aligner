@@ -1,11 +1,15 @@
 boto3
+braceexpand
+datasets
 einops
 faiss-cpu
 flask_restful
 ftfy
 gdown
 h5py
+hydra-core>1.3,<=1.3.2
 ijson
+inflect
 jieba
 markdown2
 matplotlib>=3.3.2
@@ -13,11 +17,23 @@ megatron_core==0.3.0
 nemo_toolkit
 nltk>=3.6.5
 nvidia-pytriton
+omegaconf<=2.3
 opencc<1.1.7
+pandas
 pangu
+pydantic<2  # remove after inflect supports Pydantic 2.0+
+pytorch-lightning>=2.0,<=2.0.7
 rapidfuzz
 rouge_score
 sacrebleu  # manually install sacrebleu[ja] for Japanese support; MeCab is unsupported in Python 3.11+
+sacremoses>=0.0.43
 sentence_transformers
+sentencepiece<1.0.0
 tensorstore<0.1.46
+torchmetrics>=0.11.0
+transformers>=4.0.1,<=4.33.3
+wandb
+webdataset
+webdataset>=0.1.48,<=0.1.62
+youtokentome>=1.0.5
 zarr
