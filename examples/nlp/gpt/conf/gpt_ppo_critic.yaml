@@ -1,0 +1,94 @@
+defaults:
+  - optional tp_overlap@model.ub_tp_comm_overlap_cfg:
+
+trainer:
+  num_nodes: 1
+  devices: 8
+  accelerator: gpu
+  precision: bf16
+
+  ppo:
+    # mbs for inference
+    inference_micro_batch_size: 2
+    port: 5556
+
+    # run rm and critic together
+    combine_rm_and_critic_server: True
+
+    # used to set the learning rate scheduler
+    max_steps: 10000
+    gradient_clip_val: 1.0
+
+  # do not change these trainer args
+  logger: False # logger provided by exp_manager
+  enable_checkpointing: False
+  use_distributed_sampler: False
+  max_epochs: null
+  max_steps: ${.ppo.max_steps}
+
+
+pretrained_checkpoint:
+  restore_from_path: null
+
+exp_manager:
+  explicit_log_dir: /results
+  exp_dir: null
+  name: megatron_gpt_critic
+  create_wandb_logger: False
+  wandb_logger_kwargs:
+    project: nemo_aligner_ppo
+    name: gpt3_ppo_2b
+  resume_if_exists: True
+  resume_ignore_no_checkpoint: True
+  create_checkpoint_callback: True
+  checkpoint_callback_params:
+    monitor: step
+    save_top_k: 0 # no need to save the best critic
+    mode: max
+    always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
+    save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
+    filename: 'megatron_gpt-{step}'
+    model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
+
+model:
+  # critic args
+  loss_clip_val: 0.2
+  offload_adam_states: False
+  output_sequence: True # Whether to output a single scalar or a sequence of scalars.
+  reward_standardization:
+    enable: False
+    mean: null
+    std: null 
+
+  # RM args
+  use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model
+  force_head_dtype: float32  # enforce specific dtype for the final projection in the model head
+
+  micro_batch_size: 1
+  global_batch_size: 64
+  megatron_amp_O2: True # Enable O2-level automatic mixed precision using master parameters
+
+  # model architecture
+  encoder_seq_length: 4096
+  max_position_embeddings: ${.encoder_seq_length}
+
+  # miscellaneous
+  seed: 1234
+
+  optim:
+    name: distributed_fused_adam
+    bucket_cap_mb: 200
+    overlap_grad_sync: False
+    contiguous_grad_buffer: True
+    lr: 9e-6
+    weight_decay: 0.1 
+    betas: 
+    - 0.9
+    - 0.98
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 10
+      constant_steps: 1000
+      min_lr: 9e-7
+
+  precision: ${trainer.precision}
