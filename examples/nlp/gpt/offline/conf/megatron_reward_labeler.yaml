@@ -40,8 +40,8 @@ data:
 
 reward_standardization:  # Provide mean and std for z-score standardization of the rewards during inference and post process.
   enable: True
-  mean: null
-  std: null
+  mean: null # null means calculating the mean of all input samples 
+  std: null # null means calculating the mean of all input samples
 
 processor: null # post processor, set to dt (Decision Transformer), filter (ReST) or best_of_n (Rejection Sampling)
 threshold: 0 # threshold for ReST
@@ -50,16 +50,16 @@ input_key: ${data.input_key}
 output_key: ${data.output_key}
 reward_key: ${data.reward_key}
 
-tensor_model_parallel_size: -1
-pipeline_model_parallel_size: -1
+tensor_model_parallel_size: -1 # -1 means reading `tensor_model_parallel_size` from the .nemo
+pipeline_model_parallel_size: -1 # -1 means reading `pipeline_model_parallel_size` from the .nemo
 pipeline_model_parallel_split_rank: -1 # used for encoder and decoder model (0 for others)
 megatron_amp_O2: True
-mcore_gpt: null
+mcore_gpt: null # null means reading `mcore_gpt` from the .nemo
 
 gpt_model_file: null  # GPT nemo file path
 checkpoint_interval: null # checkpoint interval
-max_time_per_run: null
+max_time_per_run: null # days:hours:mins:secs
 
 seed: 1234
-output_file: null
+output_file: null # output jsonl file path
 export_reward: False # export reward values to jsonl

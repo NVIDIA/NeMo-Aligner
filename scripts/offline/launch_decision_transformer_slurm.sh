@@ -25,18 +25,18 @@ WANDB=<<<WANDB_API_KEY>>>
 # Training settings
 LEARNING_RATE=<<<LEARNING_RATE>>> # Constant learning rate
 WEIGHT_DECAY=<<<WEIGHT_DECAY>>> # L2 weight decay, such as 0.01
-PROCESSOR=dt # Can be set to best_of_n (Rejection Sampling), filter (ReST) or dt (Decision Transformer）
+POST_PROCESSOR=dt # Can be set to best_of_n (Rejection Sampling), filter (ReST) or dt (Decision Transformer）
 MAX_NUM_SAMPLES=<<<MAX_NUM_SAMPLES>>>
 
-RM_MICRO_BATCH_SIZE=<<<RM_MICRO_BATCH_SIZE>>> # Set it to a large integer to improve efficiency
+RM_MICRO_BATCH_SIZE=<<<RM_MICRO_BATCH_SIZE>>> # Set it to a large integer to improve inference efficiency
 GLOBAL_TRAIN_BATCH_SIZE=<<<GLOBAL_TRAIN_BATCH_SIZE>>>
 MICRO_TRAIN_BATCH_SIZE=<<<MICRO_TRAIN_BATCH_SIZE>>>
 
 SEQUENCE_MAX_LENGTH=<<<SEQUENCE_MAX_LENGTH>>> # Maximum sequence length of the model
 
 REWARD_NORM_ENABLE=True # set to True or False
-REWARD_NORM_MEAN=null # set to float or null (null means calculating the mean of all input samples)
-REWARD_NORM_STD=null # set to float or null (null means calculating the std of all input samples)
+REWARD_NORM_MEAN=null # null means calculating the mean of all input samples
+REWARD_NORM_STD=null # null means calculating the std of all input samples
 
 # Models path
 POLICY_MODEL_PATH=<<<INIT_POLICY_PATH>>>
@@ -47,13 +47,14 @@ TENSOR_MODEL_PARALLEL_SIZE=-1
 PIPELINE_MODEL_PARALLEL_SIZE=-1
 
 # JSON datasets path
-RM_DATA_PATH=<<<RM_DATA_PATH>>>
-SFT_DATA_PATH=<<<SFT_DATA_PATH>>>
-LABELED_SAMPLES_PATH=<<<LABELED_DATA_PATH>>>
+RM_DATA_PATH=<<<RM_JSONL_FILE_PATH>>>
+SFT_DATA_PATH=<<<SFT_JSONL_FILE_PATH>>>
+LABELED_SAMPLES_PATH=<<<LABELED_JSONL_FILE_PATH>>>
 
 # Logs path
 OUTPUT_PATH=<<<LOG_OUTPUT_DIR>>>
 mkdir -p $OUTPUT_PATH
+# default .nemo save path of the SFT trainer
 MODEL_OUTPUT_PATH=$OUTPUT_PATH/checkpoints/megatron_gpt_sft.nemo
 LOGS_PATH=$OUTPUT_PATH/$SLURM_JOB_ID.log
 
@@ -110,7 +111,7 @@ getRemainTime() {
 
 # For DT Alignment, see https://arxiv.org/abs/2308.12050.
 # We found that the DT Alignment without generation achieved similar performance to the DT with generation version.
-# And DT without generation is significantly faster than DT with generation (In half the time).
+# And DT without generation is significantly faster than DT with generation.
 
 # Labeling and filtering the samples
 while [ ! -e $LABELED_SAMPLES_PATH ]; do
@@ -135,7 +136,7 @@ cd ${RLHF_DIR} \
         reward_standardization.enable=$REWARD_NORM_ENABLE \
         reward_standardization.mean=$REWARD_NORM_MEAN \
         reward_standardization.std=$REWARD_NORM_STD \
-        processor=$PROCESSOR \
+        processor=$POST_PROCESSOR \
         output_file=$LABELED_SAMPLES_PATH \
         checkpoint_interval=8 \
         max_time_per_run=$REMAIN_TIME

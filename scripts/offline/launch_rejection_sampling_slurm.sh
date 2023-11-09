@@ -28,7 +28,7 @@ ROLLOUT_BATCH_SIZE=<<<ROLLOUT_BATCH_SIZE>>> # Training samples for each iter
 BEST_OF_N=<<<GENERATE_N_SAMPLES_EACH_PROMPT>>> # Set it to an integer such as 16
 LEARNING_RATE=<<<LEARNING_RATE>>> # Constant learning rate
 WEIGHT_DECAY=<<<WEIGHT_DECAY>>> # L2 weight decay, such as 0.01
-PROCESSOR=best_of_n # Can be set to best_of_n (Rejection Sampling), filter (ReST) or dt (Decision Transformer)
+POST_PROCESSOR=best_of_n # Can be set to best_of_n (Rejection Sampling), filter (ReST) or dt (Decision Transformer)
 
 GENERATE_MICRO_BATCH_SIZE=<<<GENERATE_MICRO_BATCH_SIZE>>> # Set it to a large integer like 32 to improve efficiency
 RM_MICRO_BATCH_SIZE=<<<RM_MICRO_BATCH_SIZE>>> # Set it to a large integer to improve efficiency
@@ -38,25 +38,26 @@ MICRO_TRAIN_BATCH_SIZE=<<<MICRO_TRAIN_BATCH_SIZE>>>
 SEQUENCE_MAX_LENGTH=<<<SEQUENCE_MAX_LENGTH>>> # Maximum sequence length of the model
 
 REWARD_NORM_ENABLE=False # set to True or False
-REWARD_NORM_MEAN=null # set to float or null (null means calculating the mean of all input samples)
-REWARD_NORM_STD=null # set to float or null (null means calculating the std of all input samples)
+REWARD_NORM_MEAN=null # null means calculating the mean of all input samples
+REWARD_NORM_STD=null # null means calculating the std of all input samples
 
 # Models path
 POLICY_MODEL_PATH=<<<INIT_POLICY_PATH>>>
 REWARD_MODEL_PATH=<<<REWARD_MODEL_PATH>>>
 
-# -1 means read the TP/PP size from model config
+# -1 means read the TP/PP size from .nemo
 TENSOR_MODEL_PARALLEL_SIZE=-1
 PIPELINE_MODEL_PARALLEL_SIZE=-1
 
 # JSON datasets path
-PROMPTS_PATH=<<<PROMPTS_DATA_PATH>>>
-GENERATE_SAMPLES_PATH=<<<GENERATE_DATA_PATH>>>
-LABELED_SAMPLES_PATH=<<<LABELED_DATA_PATH>>>
+PROMPTS_PATH=<<<PROMPTS_JSONL_FILE_PATH>>>
+GENERATE_SAMPLES_PATH=<<<GENERATE_JSONL_FILE_PATH>>>
+LABELED_SAMPLES_PATH=<<<LABELED_JSONL_FILE_PATH>>>
 
 # Logs path
 OUTPUT_PATH=<<<LOG_OUTPUT_DIR>>>
 mkdir -p $OUTPUT_PATH
+# default .nemo save path of the SFT trainer
 MODEL_OUTPUT_PATH=$OUTPUT_PATH/checkpoints/megatron_gpt_sft.nemo
 ITER_LOG_PATH=$OUTPUT_PATH/iter.log
 LOGS_PATH=$OUTPUT_PATH/$SLURM_JOB_ID.log
@@ -197,7 +198,7 @@ cd ${RLHF_DIR} \
             reward_standardization.enable=$REWARD_NORM_ENABLE \
             reward_standardization.mean=$REWARD_NORM_MEAN \
             reward_standardization.std=$REWARD_NORM_STD \
-            processor=$PROCESSOR \
+            processor=$POST_PROCESSOR \
             output_file=$LABELED_SAMPLES_PATH \
             checkpoint_interval=8 \
             max_time_per_run=$REMAIN_TIME
