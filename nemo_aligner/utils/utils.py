@@ -15,107 +15,21 @@
 """Misc helper functions"""
 
 import gc
-import os
-import re
-import tempfile
 from contextlib import contextmanager
 from functools import partial
-from unittest.mock import patch
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
-from omegaconf import OmegaConf
+
+try:
+    from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
+
+    HAVE_APEX = True
+
+except ModuleNotFoundError:
+    HAVE_APEX = False
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
-from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
 from nemo.utils import AppState, logging
-from nemo.utils.exp_manager import NeMoModelCheckpoint
-from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-
-
-class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
-    """A save connector that will ask the Reward model to not try to load
-        the rm head if load_base_model_only is True
-    """
-
-    def __init__(self, *args, load_base_model_only=False, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.__load_base_model_only = load_base_model_only
-
-    def restore_from(self, *args, **kwargs):
-        if not self.__load_base_model_only:
-            return super().restore_from(*args, **kwargs)
-
-        with patch.object(GPTRewardModel, "return_rm_head_in_state_dict", False):
-            output = super().restore_from(*args, **kwargs)
-
-        return output
-
-
-def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train_end=False, save_top_only=False):
-    """work around used so we can save models manually"""
-    super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
-    if save_top_only:
-        return
-
-    super(NeMoModelCheckpoint, self)._save_last_checkpoint(trainer, monitor_candidates)
-
-    if is_train_end:
-        # stop the checkpoint logic from saving another last checkpoint
-        with patch.object(trainer, "val_check_interval", 0):
-            self.on_train_end(trainer, pl_module)
-
-
-def load_from_nemo(
-    cls, model_cfg, trainer, strict=True, modify_config_fn=None, restore_path=None, load_base_model_only=False
-):
-    """load a model using nemo checkpoint
-    """
-    connector = CustomSaveRestoreConnector(load_base_model_only=load_base_model_only)
-
-    # if we gave it a directory, then load as if it was extracted already
-    if os.path.isdir(restore_path):
-        connector.model_extracted_dir = restore_path
-
-    if modify_config_fn is not None:
-        origin_cfg = cls.restore_from(
-            restore_path=restore_path, trainer=trainer, return_config=True, save_restore_connector=connector,
-        )
-        model_cfg = modify_config_fn(origin_cfg, model_cfg, add_cfg_to_tree=False)
-
-    model = cls.restore_from(
-        restore_path=restore_path,
-        trainer=trainer,
-        override_config_path=model_cfg,
-        save_restore_connector=connector,
-        strict=strict,
-    )
-    return model
-
-
-def load_checkpoint_model_config(restore_path):
-    """load only the model config from a checkpoint
-    """
-    config_name_in_ckpt = NLPSaveRestoreConnector()._model_config_yaml
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, extract_config_only=True)
-        cfg = OmegaConf.load(os.path.join(tmpdir, config_name_in_ckpt))
-
-    return cfg
-
-
-def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_meta_info=True):
-    """load the config in the model checkpoint and then overwrite it
-        with whatever is provided 
-    """
-    checkpoint_cfg = load_checkpoint_model_config(restore_path)
-
-    if remove_meta_info:
-        checkpoint_cfg.pop("target", None)
-        checkpoint_cfg.pop("nemo_version", None)
-
-    return OmegaConf.merge(checkpoint_cfg, model_cfg_to_overwrite)
 
 
 def masked_mean(values, mask, dim=None):
@@ -130,15 +44,6 @@ def masked_std(values, mask, dim=None):
     Masks values with mask, and computes the std of the values using the masked values.
     """
     return values[mask.bool()].std(dim=dim)
-
-
-def extract_value_from_ckpt(key, ckpt_path):
-    try:
-        val = int(float(re.findall(rf"{key}\=([0-9]+\.*[0-9]*)", ckpt_path)[0]))
-    except (ValueError, TypeError, IndexError):
-        logging.warning(f"Cannot parse the checkpoint file to get {key}, we assume it is zero.")
-        val = 0
-    return val
 
 
 def set_autocast_gpu_dtype(precision):

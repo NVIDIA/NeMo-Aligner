@@ -35,10 +35,12 @@ from nemo_aligner.utils.train_script_utils import (
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
     init_using_ptl,
+    load_and_override_model_config,
+    load_from_nemo,
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
 )
-from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
+from nemo_aligner.utils.utils import retrieve_model_state_dict_in_cpu
 
 """Script to start PPO training"""
 
