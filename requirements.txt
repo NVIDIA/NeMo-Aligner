@@ -1,2 +1,22 @@
-nemo_toolkit[nlp]
+boto3
+einops
+faiss-cpu
+flask_restful
+ftfy
+gdown
+h5py
+ijson
+jieba
+markdown2
+matplotlib>=3.3.2
+megatron_core==0.3.0
+nltk>=3.6.5
 nvidia-pytriton
+opencc<1.1.7
+pangu
+rapidfuzz
+rouge_score
+sacrebleu  # manually install sacrebleu[ja] for Japanese support; MeCab is unsupported in Python 3.11+
+sentence_transformers
+tensorstore<0.1.46
+zarr
