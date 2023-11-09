@@ -8,15 +8,15 @@ MODEL_PATH=<<<REWARD_MODEL_PATH>>>
 MICRO_BATCH_SIZE=<<<MICRO_BATCH_SIZE>>>
 MAX_SEQUENCE_LENGTH=<<<MAX_SEQUENCE_LENGTH>>>
 
-INPUT_PATH=<<<INPUT_JSON_FILE_PATH>>>
-OUTPUT_PATH=<<<OUTPUT_JSON_FILE_PATH>>>
+INPUT_PATH=<<<INPUT_JSONL_FILE_PATH>>>
+OUTPUT_PATH=<<<OUTPUT_JSONL_FILE_PATH>>>
 
 REWARD_NORM_ENABLE=True # set to True or False
-REWARD_NORM_MEAN=0.0 # set to float or null (null means calculating the mean of all input samples)
-REWARD_NORM_STD=1.0 # set to float or null (null means calculating the std of all input samples)
+REWARD_NORM_MEAN=0.0 # set to float or null
+REWARD_NORM_STD=1.0 # set to float or null
 
 # post processor, set to best_of_n (Rejection Sampling), dt (Decision Transformer), filter (ReST) or null
-PROCESSOR=null 
+POST_PROCESSOR=null 
 
 python ${RLHF_DIR}/examples/nlp/gpt/offline/launch_reward_labeler.py \
         gpt_model_file=${MODEL_PATH} \
@@ -29,7 +29,7 @@ python ${RLHF_DIR}/examples/nlp/gpt/offline/launch_reward_labeler.py \
         data.hf_dataset=True \
 	data.micro_batch_size=$MICRO_BATCH_SIZE \
         data.max_seq_length=$MAX_SEQUENCE_LENGTH \
-        processor=$PROCESSOR \
+        processor=$POST_PROCESSOR \
         reward_standardization.enable=$REWARD_NORM_ENABLE \
         reward_standardization.mean=$REWARD_NORM_MEAN \
         reward_standardization.std=$REWARD_NORM_STD \
