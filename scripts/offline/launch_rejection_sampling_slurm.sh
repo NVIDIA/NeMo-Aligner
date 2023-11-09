@@ -30,8 +30,8 @@ LEARNING_RATE=<<<LEARNING_RATE>>> # Constant learning rate
 WEIGHT_DECAY=<<<WEIGHT_DECAY>>> # L2 weight decay, such as 0.01
 PROCESSOR=best_of_n # Can be set to best_of_n (Rejection Sampling), filter (ReST) or dt (Decision Transformer)
 
-GENERATE_MICRO_BATCH_SIZE=<<<GENERATE_MICRO_BATCH_SIZE>>> # Set it to a larger integer like 32 to improve efficiency
-RM_MICRO_BATCH_SIZE=<<<RM_MICRO_BATCH_SIZE>>> # Set it to a larger value integer 16 to improve efficiency
+GENERATE_MICRO_BATCH_SIZE=<<<GENERATE_MICRO_BATCH_SIZE>>> # Set it to a large integer like 32 to improve efficiency
+RM_MICRO_BATCH_SIZE=<<<RM_MICRO_BATCH_SIZE>>> # Set it to a large integer to improve efficiency
 GLOBAL_TRAIN_BATCH_SIZE=<<<GLOBAL_TRAIN_BATCH_SIZE>>>
 MICRO_TRAIN_BATCH_SIZE=<<<MICRO_TRAIN_BATCH_SIZE>>>
 
@@ -234,6 +234,7 @@ cd ${RLHF_DIR} \
         model.optim.lr=$LEARNING_RATE \
         model.optim.weight_decay=$WEIGHT_DECAY \
         model.optim.betas=[0.9,0.95] \
+        ~model.optim.sched \
         model.answer_only_loss=True \
         model.data.train_ds.micro_batch_size=$MICRO_TRAIN_BATCH_SIZE \
         model.data.train_ds.global_batch_size=$GLOBAL_TRAIN_BATCH_SIZE \

@@ -15,7 +15,7 @@ REWARD_NORM_ENABLE=True # set to True or False
 REWARD_NORM_MEAN=0.0 # set to float or null (null means calculating the mean of all input samples)
 REWARD_NORM_STD=1.0 # set to float or null (null means calculating the std of all input samples)
 
-# post processor, set to dt (Decision Transformer), filter (ReST), best_of_n (Rejection Sampling) or null
+# post processor, set to best_of_n (Rejection Sampling), dt (Decision Transformer), filter (ReST) or null
 PROCESSOR=null 
 
 python ${RLHF_DIR}/examples/nlp/gpt/offline/launch_reward_labeler.py \
