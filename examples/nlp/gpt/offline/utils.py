@@ -18,13 +18,13 @@ import random
 
 import numpy as np
 import torch
-from nemo_rlhf.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 from omegaconf import OmegaConf, open_dict
 
 from nemo.collections.nlp.modules.common.megatron.megatron_init import fake_initialize_model_parallel
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
 from nemo.utils import AppState, logging
 from nemo.utils.model_utils import inject_model_parallel_rank
+from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 
 try:
     from megatron.core import mpu

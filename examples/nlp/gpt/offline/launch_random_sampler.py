@@ -25,9 +25,9 @@ from utils import get_max_time_per_run, load_nemo_or_checkpoint, set_seed
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo.core.config import hydra_runner
-from nemo_rlhf.algorithms.offline.random_sampler import RandomSampler
-from nemo_rlhf.data.nlp.offline.builders import build_data_loader, build_dataset
-from nemo_rlhf.utils.utils import set_autocast_gpu_dtype
+from nemo_aligner.algorithms.offline.random_sampler import RandomSampler
+from nemo_aligner.data.nlp.offline.builders import build_data_loader, build_dataset
+from nemo_aligner.utils.utils import set_autocast_gpu_dtype
 
 try:
     from megatron.core import mpu

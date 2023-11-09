@@ -221,9 +221,9 @@ cd ${RLHF_DIR} \
         trainer.num_nodes=${SLURM_JOB_NUM_NODES} \
         trainer.devices=${SLURM_NTASKS_PER_NODE} \
         trainer.precision=bf16-mixed \
-        ++sft_trainer.max_steps=-1 \
-        ++sft_trainer.skip_validation=True \
-        ++sft_trainer.save_interval=100 \
+        ++trainer.sft.max_steps=-1 \
+        ++trainer.sft.skip_validation=True \
+        ++trainer.sft.save_interval=100 \
         model.tensor_model_parallel_size=${TENSOR_MODEL_PARALLEL_SIZE} \
         model.pipeline_model_parallel_size=${PIPELINE_MODEL_PARALLEL_SIZE} \
         model.activations_checkpoint_granularity=selective \
