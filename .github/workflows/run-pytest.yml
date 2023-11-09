@@ -31,6 +31,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install pytest
         pip install --upgrade cython
+        pip install pybind11
         pip install .
     - name: Test with pytest on CPU
       run: |
