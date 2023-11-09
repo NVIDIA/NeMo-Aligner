@@ -164,7 +164,7 @@ def main(cfg) -> None:
             processor = get_processor(name)
             objs = processor(cfg, objs)
 
-            # delete the original rewards
+            # delete the reward values in objs
             if not cfg.get("export_reward", False) and len(objs) and cfg.data.reward_key in objs[0]:
                 for obj in objs:
                     del obj[cfg.data.reward_key]

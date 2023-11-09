@@ -62,4 +62,4 @@ max_time_per_run: null
 
 seed: 1234
 output_file: null
-export_reward: False
+export_reward: False # export reward values to jsonl

@@ -216,8 +216,6 @@ cd ${RLHF_DIR} \
 && export WANDB_API_KEY=${WANDB} \
 && export CUDA_DEVICE_MAX_CONNECTIONS=1 \
 && python examples/nlp/gpt/train_gpt_sft.py \
-        --config-path=${RLHF_DIR}/examples/nlp/gpt/conf \
-        --config-name=sft_gpt \
         trainer.num_nodes=${SLURM_JOB_NUM_NODES} \
         trainer.devices=${SLURM_NTASKS_PER_NODE} \
         trainer.precision=bf16-mixed \
