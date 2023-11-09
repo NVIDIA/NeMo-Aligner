@@ -10,6 +10,7 @@ jieba
 markdown2
 matplotlib>=3.3.2
 megatron_core==0.3.0
+nemo_toolkit
 nltk>=3.6.5
 nvidia-pytriton
 opencc<1.1.7
