@@ -117,10 +117,10 @@ cleanTempData() {
 
     rm -rf $GENERATE_SAMPLES_PATH*
     rm -rf $LABELED_SAMPLES_PATH*
-    
-    mv $MODEL_OUTPUT_PATH ./temp.nemo
+
+    mv $MODEL_OUTPUT_PATH $OUTPUT_PATH/temp.nemo
     rm -rf $OUTPUT_PATH/checkpoints/*
-    mv ./temp.nemo $MODEL_OUTPUT_PATH
+    mv $OUTPUT_PATH/temp.nemo $MODEL_OUTPUT_PATH
 }
 
 # ============================== TRAINING SCRIPTS =============================
