@@ -15,6 +15,7 @@ trainer:
 
     limit_val_batches: 50
     gradient_clip_val: 1.0
+    skip_validation: False
 
   # do not change these
   logger: False # logger provided by exp_manager
@@ -23,7 +24,6 @@ trainer:
   max_time: null
   max_epochs: ${.sft.max_epochs}
   max_steps: ${.sft.max_steps}
-  skip_validation: False
 
 exp_manager:
   explicit_log_dir: null

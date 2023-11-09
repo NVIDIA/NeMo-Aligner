@@ -18,17 +18,17 @@ import jsonlines
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from nemo_rlhf.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 from pytorch_lightning.trainer.trainer import Trainer
 from tqdm import tqdm
 from utils import get_max_time_per_run, load_nemo_or_checkpoint, set_seed
 
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo.core.config import hydra_runner
-from nemo_rlhf.algorithms.offline.processor import get_processor, reward_normalization
-from nemo_rlhf.algorithms.offline.reward_labeler import RewardLabeler
-from nemo_rlhf.data.nlp.offline.builders import build_data_loader, build_dataset
-from nemo_rlhf.utils.utils import set_autocast_gpu_dtype
+from nemo_aligner.algorithms.offline.processor import get_processor, reward_normalization
+from nemo_aligner.algorithms.offline.reward_labeler import RewardLabeler
+from nemo_aligner.data.nlp.offline.builders import build_data_loader, build_dataset
+from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
+from nemo_aligner.utils.utils import set_autocast_gpu_dtype
 
 try:
     from megatron.core import mpu

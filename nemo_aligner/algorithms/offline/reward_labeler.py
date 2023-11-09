@@ -14,10 +14,10 @@
 
 
 import torch
-from nemo_rlhf.utils.distributed import broadcast_2d_tensor
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
+from nemo_aligner.utils.distributed import broadcast_2d_tensor
 
 try:
     from megatron.core import mpu
