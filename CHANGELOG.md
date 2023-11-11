@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Bug Fixes
 
+* PPO: fix response length calculation when using a custom end string in `sampling_params.end_strings` that is different from `<extra_id_1>`.
+
 ## [1.0.0] - 2023-11-06
 ### Added
 - First open source release
