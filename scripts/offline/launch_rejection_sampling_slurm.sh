@@ -17,9 +17,7 @@
 
 # Please modify the variable in the <<<>>>  according to your project
 
-# Project settings
 RLHF_DIR=<<<PATH/TO/nemo-rlhf>>>
-PROJECT_NAME=<<<WANDB_PROJECT_NAME>>>
 
 # Training settings
 TRAINING_ITERS=<<<TRAINING_ITERS>>> # Total training iters
@@ -34,24 +32,19 @@ GLOBAL_TRAIN_BATCH_SIZE=<<<GLOBAL_TRAIN_BATCH_SIZE>>>
 MICRO_TRAIN_BATCH_SIZE=<<<MICRO_TRAIN_BATCH_SIZE>>>
 SEQUENCE_MAX_LENGTH=<<<SEQUENCE_MAX_LENGTH>>> # Maximum sequence length of the model
 
-# Max time per run  
 MAX_TIME_PER_RUN=null # days:hours:mins:secs
 
 # Models settings
 POLICY_MODEL_PATH=<<<INIT_POLICY_PATH>>>
 REWARD_MODEL_PATH=<<<REWARD_MODEL_PATH>>>
 
-# -1 means read the TP/PP size from .nemo
-TENSOR_MODEL_PARALLEL_SIZE=-1
-PIPELINE_MODEL_PARALLEL_SIZE=-1
-
 # Datasets settings
 PROMPTS_PATH=<<<PROMPTS_JSONL_FILE_PATH>>>
 GENERATE_SAMPLES_PATH=<<<GENERATE_JSONL_FILE_PATH>>>
 LABELED_SAMPLES_PATH=<<<LABELED_JSONL_FILE_PATH>>>
 
-# Logs settings
-ITER_LOG_PATH=<<<ITER_LOG_DIR>>>/iter.txt # training iterations
+# Logs and checkpoints settings
+ITER_CKPT_PATH=<<<ITER_LOG_DIR>>>/iter.txt # training iterations
 OUTPUT_PATH=<<<LOG_OUTPUT_DIR>>> # for logs
 
 mkdir -p $OUTPUT_PATH
@@ -108,7 +101,6 @@ getRemainTime() {
 # Clean temp data
 cleanTempData() {
     echo "cleanTempData for next iter"
-
     rm -rf $GENERATE_SAMPLES_PATH*
     rm -rf $LABELED_SAMPLES_PATH*
 
@@ -121,8 +113,8 @@ cleanTempData() {
 
 # Load current iters
 iter=0
-if [ -f $ITER_LOG_PATH ]; then
-    iter=$(cat $ITER_LOG_PATH)
+if [ -f $ITER_CKPT_PATH ]; then
+    iter=$(cat $ITER_CKPT_PATH)
     echo "Read iters: $iter" &>>$LOGS_PATH
 fi
 
@@ -152,8 +144,6 @@ cd ${RLHF_DIR} \
         trainer.devices=${SLURM_NTASKS_PER_NODE} \
         trainer.precision=bf16-mixed \
         megatron_amp_O2=True \
-        tensor_model_parallel_size=${TENSOR_MODEL_PARALLEL_SIZE} \
-        pipeline_model_parallel_size=${PIPELINE_MODEL_PARALLEL_SIZE} \
         data.micro_batch_size=$GENERATE_MICRO_BATCH_SIZE \
         data.max_seq_length=$((SEQUENCE_MAX_LENGTH / 2)) \
         data.best_of_n=$BEST_OF_N \
@@ -184,8 +174,6 @@ cd ${RLHF_DIR} \
             trainer.devices=${SLURM_NTASKS_PER_NODE} \
             trainer.precision=bf16-mixed \
             megatron_amp_O2=True \
-            tensor_model_parallel_size=${TENSOR_MODEL_PARALLEL_SIZE} \
-            pipeline_model_parallel_size=${PIPELINE_MODEL_PARALLEL_SIZE} \
             data.micro_batch_size=$RM_MICRO_BATCH_SIZE \
             data.max_seq_length=$SEQUENCE_MAX_LENGTH \
             data.concat_sampling_probabilities=[1] \
@@ -217,8 +205,8 @@ cd ${RLHF_DIR} \
         ++trainer.sft.max_steps=-1 \
         ++trainer.sft.skip_validation=True \
         ++trainer.sft.save_interval=100 \
-        model.tensor_model_parallel_size=${TENSOR_MODEL_PARALLEL_SIZE} \
-        model.pipeline_model_parallel_size=${PIPELINE_MODEL_PARALLEL_SIZE} \
+        model.tensor_model_parallel_size=-1 \
+        model.pipeline_model_parallel_size=-1 \
         model.activations_checkpoint_granularity=selective \
         model.activations_checkpoint_method=uniform \
         model.megatron_amp_O2=True \
@@ -250,7 +238,7 @@ EOF
     # Save iters
     iter=$((iter + 1))
     echo "Save iter log: $iter" &>>$LOGS_PATH
-    echo $iter >$ITER_LOG_PATH
+    echo $iter >$ITER_CKPT_PATH
 
     # clean temp data for next iter
     cleanTempData &>>$LOGS_PATH
