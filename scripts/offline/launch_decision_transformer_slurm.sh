@@ -98,7 +98,7 @@ getRemainTime() {
 # We found that the DT Alignment without generation achieved similar performance to the DT with generation version.
 # And DT without generation is significantly faster than DT with generation.
 
-# Labeling and filtering the samples
+# Labeling and process the samples
 while [ ! -e $LABELED_SAMPLES_PATH ]; do
     getRemainTime &>>$LOGS_PATH
     read -r -d '' filter_commands <<EOF
