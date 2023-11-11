@@ -24,7 +24,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 )
 from nemo.utils import logging
 
-from .datasets import OfflineJSONDataset
+from .datasets import OfflineDataset
 
 try:
     from megatron.core import mpu
@@ -121,7 +121,7 @@ def build_dataset(data_cfg, tokenizer, preprocess_callback=None):
         num_samples_after_blend = 0
 
     for file_path, num_samples in zip(data_cfg.file_names, num_samples_per_dataset):
-        dataset = OfflineJSONDataset(
+        dataset = OfflineDataset(
             data_cfg,
             file_path=file_path,
             tokenizer=tokenizer,
