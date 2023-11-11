@@ -162,7 +162,7 @@ EOF
         checkSuccess "RandomSampler" &>>$LOGS_PATH
     done
 
-    # Labeling and filtering the samples
+    # Labeling and process the samples
     while [ ! -e $LABELED_SAMPLES_PATH ]; do
         getRemainTime &>>$LOGS_PATH
         read -r -d '' filter_commands <<EOF
