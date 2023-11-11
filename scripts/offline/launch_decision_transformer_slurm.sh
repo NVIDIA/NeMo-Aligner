@@ -17,9 +17,7 @@
 
 # Please modify the variable in the <<<>>>  according to your project
 
-# Project settings
 RLHF_DIR=<<<PATH/TO/nemo-rlhf>>>
-PROJECT_NAME=<<<WANDB_PROJECT_NAME>>>
 
 # Training settings
 LEARNING_RATE=<<<LEARNING_RATE>>> # Constant learning rate
@@ -31,16 +29,11 @@ GLOBAL_TRAIN_BATCH_SIZE=<<<GLOBAL_TRAIN_BATCH_SIZE>>>
 MICRO_TRAIN_BATCH_SIZE=<<<MICRO_TRAIN_BATCH_SIZE>>>
 SEQUENCE_MAX_LENGTH=<<<SEQUENCE_MAX_LENGTH>>> # Maximum sequence length of the model
 
-# Max run time 
 MAX_TIME_PER_RUN=null # days:hours:mins:secs
 
 # Models settings
 POLICY_MODEL_PATH=<<<INIT_POLICY_PATH>>>
 REWARD_MODEL_PATH=<<<REWARD_MODEL_PATH>>>
-
-# -1 means read the TP/PP size from model config
-TENSOR_MODEL_PARALLEL_SIZE=-1
-PIPELINE_MODEL_PARALLEL_SIZE=-1
 
 # Datasets settings
 RM_DATA_PATH=<<<RM_JSONL_FILE_PATH>>>
@@ -117,8 +110,6 @@ cd ${RLHF_DIR} \
         trainer.devices=${SLURM_NTASKS_PER_NODE} \
         trainer.precision=bf16-mixed \
         megatron_amp_O2=True \
-        tensor_model_parallel_size=${TENSOR_MODEL_PARALLEL_SIZE} \
-        pipeline_model_parallel_size=${PIPELINE_MODEL_PARALLEL_SIZE} \
         data.micro_batch_size=$RM_MICRO_BATCH_SIZE \
         data.max_seq_length=$SEQUENCE_MAX_LENGTH \
         data.concat_sampling_probabilities=[0.5,0.5] \
@@ -153,8 +144,8 @@ cd ${RLHF_DIR} \
         ++trainer.sft.max_steps=-1 \
         ++trainer.sft.skip_validation=True \
         ++trainer.sft.save_interval=100 \
-        model.tensor_model_parallel_size=${TENSOR_MODEL_PARALLEL_SIZE} \
-        model.pipeline_model_parallel_size=${PIPELINE_MODEL_PARALLEL_SIZE} \
+        model.tensor_model_parallel_size=-1 \
+        model.pipeline_model_parallel_size=-1 \
         model.activations_checkpoint_granularity=selective \
         model.activations_checkpoint_method=uniform \
         model.megatron_amp_O2=True \
