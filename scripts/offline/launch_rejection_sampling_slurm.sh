@@ -53,6 +53,7 @@ LABELED_SAMPLES_PATH=<<<LABELED_JSONL_FILE_PATH>>>
 # Logs settings
 ITER_LOG_PATH=<<<ITER_LOG_DIR>>>/iter.txt # training iterations
 OUTPUT_PATH=<<<LOG_OUTPUT_DIR>>> # for logs
+
 mkdir -p $OUTPUT_PATH
 LOGS_PATH=$OUTPUT_PATH/$SLURM_JOB_ID.log
 MODEL_OUTPUT_PATH=$OUTPUT_PATH/checkpoints/megatron_gpt_sft.nemo # default .nemo save path of the SFT trainer
