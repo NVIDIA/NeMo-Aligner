@@ -20,7 +20,6 @@
 # Project settings
 RLHF_DIR=<<<PATH/TO/nemo-rlhf>>>
 PROJECT_NAME=<<<WANDB_PROJECT_NAME>>>
-WANDB=<<<WANDB_API_KEY>>>
 
 # Training settings
 TRAINING_ITERS=<<<TRAINING_ITERS>>> # Total training iters
@@ -243,9 +242,6 @@ cd ${RLHF_DIR} \
         model.data.train_ds.file_path=$LABELED_SAMPLES_PATH \
         model.data.train_ds.concat_sampling_probabilities=[1] \
         model.data.train_ds.hf_dataset=True \
-        exp_manager.create_wandb_logger=True \
-        exp_manager.wandb_logger_kwargs.name=$PROJECT_NAME \
-        exp_manager.wandb_logger_kwargs.project=$PROJECT_NAME \
         exp_manager.explicit_log_dir=$OUTPUT_PATH \
         ++exp_manager.max_time_per_run=$REMAIN_TIME \
         exp_manager.checkpoint_callback_params.monitor=global_step \
