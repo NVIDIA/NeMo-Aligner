@@ -58,7 +58,7 @@ OUTPUT_PATH=<<<LOG_OUTPUT_DIR>>>
 mkdir -p $OUTPUT_PATH
 # default .nemo save path of the SFT trainer
 MODEL_OUTPUT_PATH=$OUTPUT_PATH/checkpoints/megatron_gpt_sft.nemo
-ITER_LOG_PATH=$OUTPUT_PATH/iter.log
+ITER_LOG_PATH=$OUTPUT_PATH/iter.txt
 LOGS_PATH=$OUTPUT_PATH/$SLURM_JOB_ID.log
 
 # Max run time 
