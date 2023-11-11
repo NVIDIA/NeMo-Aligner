@@ -36,7 +36,7 @@ except (ImportError, ModuleNotFoundError):
     HAVE_MEGATRON_CORE = False
 
 
-class OfflineJSONDataset(Dataset):
+class OfflineDataset(Dataset):
     def __init__(
         self,
         cfg,
