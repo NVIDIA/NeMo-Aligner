@@ -45,10 +45,10 @@ def build_data_loader(dataset, data_cfg, consumed_samples=0, sample_split_size=N
     sample_split_iter = data_cfg.get("sample_split_iter", 0)
     if sample_split_size is not None:
         # current samples offset
-        sample_split_start_idx = sample_split_iter * sample_split_size
-        consumed_samples += sample_split_start_idx
-        total_samples = sample_split_start_idx + sample_split_size
-        logging.info(f"DataLoader sample split: {sample_split_start_idx}:{total_samples}")
+        sample_split_offset = sample_split_iter * sample_split_size
+        total_samples = sample_split_offset + sample_split_size
+        logging.info(f"DataLoader sample split: {sample_split_offset}:{total_samples}")
+        consumed_samples += sample_split_offset
     else:
         total_samples = len(dataset)
 
