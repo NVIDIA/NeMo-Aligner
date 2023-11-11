@@ -27,20 +27,17 @@ ROLLOUT_BATCH_SIZE=<<<ROLLOUT_BATCH_SIZE>>> # Training samples for each iter
 BEST_OF_N=<<<GENERATE_N_SAMPLES_EACH_PROMPT>>> # Set it to an integer such as 16
 LEARNING_RATE=<<<LEARNING_RATE>>> # Constant learning rate
 WEIGHT_DECAY=<<<WEIGHT_DECAY>>> # L2 weight decay, such as 0.01
-POST_PROCESSOR=best_of_n # Can be set to best_of_n (Rejection Sampling), filter (ReST) or dt (Decision Transformer)
 
 GENERATE_MICRO_BATCH_SIZE=<<<GENERATE_MICRO_BATCH_SIZE>>> # Set it to a large integer like 32 to improve efficiency
 RM_MICRO_BATCH_SIZE=<<<RM_MICRO_BATCH_SIZE>>> # Set it to a large integer to improve efficiency
 GLOBAL_TRAIN_BATCH_SIZE=<<<GLOBAL_TRAIN_BATCH_SIZE>>>
 MICRO_TRAIN_BATCH_SIZE=<<<MICRO_TRAIN_BATCH_SIZE>>>
-
 SEQUENCE_MAX_LENGTH=<<<SEQUENCE_MAX_LENGTH>>> # Maximum sequence length of the model
 
-REWARD_NORM_ENABLE=False # set to True or False
-REWARD_NORM_MEAN=null # null means calculating the mean of all input samples
-REWARD_NORM_STD=null # null means calculating the std of all input samples
+# Max time per run  
+MAX_TIME_PER_RUN=null # days:hours:mins:secs
 
-# Models path
+# Models settings
 POLICY_MODEL_PATH=<<<INIT_POLICY_PATH>>>
 REWARD_MODEL_PATH=<<<REWARD_MODEL_PATH>>>
 
@@ -48,23 +45,17 @@ REWARD_MODEL_PATH=<<<REWARD_MODEL_PATH>>>
 TENSOR_MODEL_PARALLEL_SIZE=-1
 PIPELINE_MODEL_PARALLEL_SIZE=-1
 
-# JSON datasets path
+# Datasets settings
 PROMPTS_PATH=<<<PROMPTS_JSONL_FILE_PATH>>>
 GENERATE_SAMPLES_PATH=<<<GENERATE_JSONL_FILE_PATH>>>
 LABELED_SAMPLES_PATH=<<<LABELED_JSONL_FILE_PATH>>>
 
-# Logs path
-OUTPUT_PATH=<<<LOG_OUTPUT_DIR>>>
+# Logs settings
+ITER_LOG_PATH=<<<ITER_LOG_DIR>>>/iter.txt # training iterations
+OUTPUT_PATH=<<<LOG_OUTPUT_DIR>>> # for logs
 mkdir -p $OUTPUT_PATH
-# default .nemo save path of the SFT trainer
-MODEL_OUTPUT_PATH=$OUTPUT_PATH/checkpoints/megatron_gpt_sft.nemo
-ITER_LOG_PATH=$OUTPUT_PATH/iter.txt
 LOGS_PATH=$OUTPUT_PATH/$SLURM_JOB_ID.log
-
-# Max run time 
-MAX_TIME_PER_RUN=null # days:hours:mins:secs
-REMAIN_TIME=null
-START_TIME=$(date +%s)
+MODEL_OUTPUT_PATH=$OUTPUT_PATH/checkpoints/megatron_gpt_sft.nemo # default .nemo save path of the SFT trainer
 
 # Docker settings
 CONTAINER_IMAGE=<<<CONTAINER_IMAGE>>>
@@ -83,6 +74,9 @@ checkSuccess() {
 }
 
 # Get remain maxtime
+REMAIN_TIME=null
+START_TIME=$(date +%s)
+
 getRemainTime() {
     declare -g REMAIN_TIME
     if [[ "${MAX_TIME_PER_RUN}" == "null" ]] || [[ -z "${MAX_TIME_PER_RUN}" ]]; then
@@ -196,12 +190,10 @@ cd ${RLHF_DIR} \
             data.concat_sampling_probabilities=[1] \
             data.file_names=[$GENERATE_SAMPLES_PATH] \
             data.hf_dataset=True \
-            reward_standardization.enable=$REWARD_NORM_ENABLE \
-            reward_standardization.mean=$REWARD_NORM_MEAN \
-            reward_standardization.std=$REWARD_NORM_STD \
-            processor=$POST_PROCESSOR \
+            reward_standardization.enable=False \
+            processor=best_of_n \
             output_file=$LABELED_SAMPLES_PATH \
-            checkpoint_interval=8 \
+            checkpoint_interval=4 \
             max_time_per_run=$REMAIN_TIME
 EOF
 
