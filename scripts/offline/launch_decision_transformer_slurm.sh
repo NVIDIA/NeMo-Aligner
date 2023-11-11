@@ -24,8 +24,7 @@ PROJECT_NAME=<<<WANDB_PROJECT_NAME>>>
 # Training settings
 LEARNING_RATE=<<<LEARNING_RATE>>> # Constant learning rate
 WEIGHT_DECAY=<<<WEIGHT_DECAY>>> # L2 weight decay, such as 0.01
-POST_PROCESSOR=dt # Can be set to best_of_n (Rejection Sampling), filter (ReST) or dt (Decision Transformer）
-MAX_NUM_SAMPLES=<<<MAX_NUM_SAMPLES>>>
+MAX_NUM_SAMPLES=<<<MAX_NUM_SAMPLES>>> # Max training samples
 
 RM_MICRO_BATCH_SIZE=<<<RM_MICRO_BATCH_SIZE>>> # Set it to a large integer to improve inference efficiency
 GLOBAL_TRAIN_BATCH_SIZE=<<<GLOBAL_TRAIN_BATCH_SIZE>>>
@@ -33,11 +32,10 @@ MICRO_TRAIN_BATCH_SIZE=<<<MICRO_TRAIN_BATCH_SIZE>>>
 
 SEQUENCE_MAX_LENGTH=<<<SEQUENCE_MAX_LENGTH>>> # Maximum sequence length of the model
 
-REWARD_NORM_ENABLE=True # set to True or False
-REWARD_NORM_MEAN=null # null means calculating the mean of all input samples
-REWARD_NORM_STD=null # null means calculating the std of all input samples
+# Max run time 
+MAX_TIME_PER_RUN=null # days:hours:mins:secs
 
-# Models path
+# Models settings
 POLICY_MODEL_PATH=<<<INIT_POLICY_PATH>>>
 REWARD_MODEL_PATH=<<<REWARD_MODEL_PATH>>>
 
@@ -45,22 +43,15 @@ REWARD_MODEL_PATH=<<<REWARD_MODEL_PATH>>>
 TENSOR_MODEL_PARALLEL_SIZE=-1
 PIPELINE_MODEL_PARALLEL_SIZE=-1
 
-# JSON datasets path
+# Datasets settings
 RM_DATA_PATH=<<<RM_JSONL_FILE_PATH>>>
 SFT_DATA_PATH=<<<SFT_JSONL_FILE_PATH>>>
 LABELED_SAMPLES_PATH=<<<LABELED_JSONL_FILE_PATH>>>
 
-# Logs path
+# Logs settings
 OUTPUT_PATH=<<<LOG_OUTPUT_DIR>>>
 mkdir -p $OUTPUT_PATH
-# default .nemo save path of the SFT trainer
-MODEL_OUTPUT_PATH=$OUTPUT_PATH/checkpoints/megatron_gpt_sft.nemo
 LOGS_PATH=$OUTPUT_PATH/$SLURM_JOB_ID.log
-
-# Max run time 
-MAX_TIME_PER_RUN=null # days:hours:mins:secs
-REMAIN_TIME=null
-START_TIME=$(date +%s)
 
 # Docker settings
 CONTAINER_IMAGE=<<<CONTAINER_IMAGE>>>
@@ -79,6 +70,9 @@ checkSuccess() {
 }
 
 # Get remain maxtime
+REMAIN_TIME=null
+START_TIME=$(date +%s)
+
 getRemainTime() {
     declare -g REMAIN_TIME
     if [[ "${MAX_TIME_PER_RUN}" == "null" ]] || [[ -z "${MAX_TIME_PER_RUN}" ]]; then
@@ -132,10 +126,10 @@ cd ${RLHF_DIR} \
         data.file_names=[$SFT_DATA_PATH,$RM_DATA_PATH] \
         data.num_samples=$MAX_NUM_SAMPLES \
         data.hf_dataset=True \
-        reward_standardization.enable=$REWARD_NORM_ENABLE \
-        reward_standardization.mean=$REWARD_NORM_MEAN \
-        reward_standardization.std=$REWARD_NORM_STD \
-        processor=$POST_PROCESSOR \
+        reward_standardization.enable=True \
+        reward_standardization.mean=null \
+        reward_standardization.std=null \
+        processor=dt \
         output_file=$LABELED_SAMPLES_PATH \
         checkpoint_interval=8 \
         max_time_per_run=$REMAIN_TIME
