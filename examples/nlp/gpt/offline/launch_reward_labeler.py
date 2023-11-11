@@ -147,6 +147,11 @@ def main(cfg) -> None:
                 for obj in reader:
                     objs.append(obj)
 
+        # Print mean reward std for debugging
+        if cfg.get("print_reward_info", False):
+            rewards = torch.tensor([obj[cfg.data.reward_key] for obj in objs])
+            print(f"Reward mean: {rewards.mean().item()}, std: {rewards.std().item()}")
+
         # use the mean and std for all input samples
         # If mean std is not null, Reward Labeler will use the specified mean std.
         if cfg.reward_standardization.enable and (
@@ -155,7 +160,7 @@ def main(cfg) -> None:
             print("Use auto reward normalization")
             objs = reward_normalization(cfg, objs)
 
-        # convert/filtering samples, such as best-of-n, decision transformer
+        # sample post-processing, such as best-of-n, decision transformer, rest.
         if cfg.get("processor", None):
             name = cfg.get("processor")
             print(f"Use processor: {name}")
@@ -165,7 +170,7 @@ def main(cfg) -> None:
             objs = processor(cfg, objs)
 
             # delete the reward values in objs
-            if not cfg.get("export_reward", False) and len(objs) and cfg.data.reward_key in objs[0]:
+            if not cfg.get("export_reward", False):
                 for obj in objs:
                     del obj[cfg.data.reward_key]
 

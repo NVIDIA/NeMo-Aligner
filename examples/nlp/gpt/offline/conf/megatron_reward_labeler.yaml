@@ -63,3 +63,4 @@ max_time_per_run: null # days:hours:mins:secs
 seed: 1234
 output_file: null # output jsonl file path
 export_reward: False # export reward values to jsonl
+print_reward_info: True # show reward mean and std
