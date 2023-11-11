@@ -3,7 +3,7 @@
 #SBATCH -p <<<PARTITION>>>         
 #SBATCH -A <<<ACCOUNT>>>
 #SBATCH -J <<<JOB_NAME>>>
-#SBATCH -N 4                       # 64x8x4
+#SBATCH -N <<<NUM_NODES>>>                   
 #SBATCH -t 0-4:00:00               # wall time
 #SBATCH --ntasks-per-node=8        # tasks per node
 #SBATCH --exclusive                # exclusive node access
