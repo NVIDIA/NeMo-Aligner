@@ -185,7 +185,7 @@ class SupervisedTrainer:
                 # PTL save wants tensors only
                 metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
 
-                if run_val and (self.step % self.cfg.save_interval == 0):
+                if run_val and (self.step % self.cfg.save_interval == 0 or is_train_end):
                     self.save(metrics, is_train_end=is_train_end)
 
                 metrics.clear()
