@@ -118,7 +118,7 @@ cd ${RLHF_DIR} \
         data.concat_sampling_probabilities=[1] \
         data.file_names=[${PROMPTS_PATH}] \
         data.hf_dataset=True \
-        data.num_samples=True \
+        data.num_samples=$((MAX_NUM_SAMPLES / 3)) \
         output_file=$GENERATE_SAMPLES_PATH \
         checkpoint_interval=1 \
         max_time_per_run=$REMAIN_TIME
