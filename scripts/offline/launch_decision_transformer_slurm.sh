@@ -36,8 +36,11 @@ POLICY_MODEL_PATH=<<<INIT_POLICY_PATH>>>
 REWARD_MODEL_PATH=<<<REWARD_MODEL_PATH>>>
 
 # Datasets settings
+PROMPTS_PATH=<<<PROMPTS_JSONL_FILE_PATH>>>
 RM_DATA_PATH=<<<RM_JSONL_FILE_PATH>>>
 SFT_DATA_PATH=<<<SFT_JSONL_FILE_PATH>>>
+
+GENERATE_SAMPLES_PATH=<<<GENERATE_SAMPLES_JSONL_FILE_PATH>>>
 LABELED_SAMPLES_PATH=<<<LABELED_JSONL_FILE_PATH>>>
 
 # Logs settings
@@ -94,9 +97,37 @@ getRemainTime() {
 
 # ============================== TRAINING SCRIPTS =============================
 
-# For DT Alignment, see https://arxiv.org/abs/2308.12050.
-# We found that the DT Alignment without generation achieved similar performance to the DT with generation version.
-# And DT without generation is significantly faster than DT with generation.
+# Generate samples
+while [ ! -e $GENERATE_SAMPLES_PATH ]; do
+    getRemainTime &>>$LOGS_PATH
+    read -r -d '' generate_commands <<EOF
+cd ${RLHF_DIR} \
+&& export PYTHONPATH="${RLHF_DIR}:\$PYTHONPATH" \
+&& python examples/nlp/gpt/offline/launch_random_sampler.py \
+        gpt_model_file=${POLICY_MODEL_PATH} \
+        inference.greedy=True \
+        inference.add_BOS=False \
+        inference.tokens_to_generate=$((SEQUENCE_MAX_LENGTH / 2)) \
+        trainer.num_nodes=${SLURM_JOB_NUM_NODES} \
+        trainer.devices=${SLURM_NTASKS_PER_NODE} \
+        trainer.precision=bf16-mixed \
+        megatron_amp_O2=True \
+        data.micro_batch_size=$GENERATE_MICRO_BATCH_SIZE \
+        data.max_seq_length=$((SEQUENCE_MAX_LENGTH / 2)) \
+        data.best_of_n=1 \
+        data.concat_sampling_probabilities=[1] \
+        data.file_names=[${PROMPTS_PATH}] \
+        data.hf_dataset=True \
+        data.num_samples=True \
+        output_file=$GENERATE_SAMPLES_PATH \
+        checkpoint_interval=1 \
+        max_time_per_run=$REMAIN_TIME
+EOF
+
+    echo $generate_commands &>>$LOGS_PATH
+    srun --container-image="$CONTAINER_IMAGE" --container-mounts="$MOUNT" bash -c "$generate_commands" &>>$LOGS_PATH
+    checkSuccess "RandomSampler" &>>$LOGS_PATH
+done
 
 # Labeling and process the samples
 while [ ! -e $LABELED_SAMPLES_PATH ]; do
@@ -112,13 +143,11 @@ cd ${RLHF_DIR} \
         megatron_amp_O2=True \
         data.micro_batch_size=$RM_MICRO_BATCH_SIZE \
         data.max_seq_length=$SEQUENCE_MAX_LENGTH \
-        data.concat_sampling_probabilities=[0.5,0.5] \
-        data.file_names=[$SFT_DATA_PATH,$RM_DATA_PATH] \
+        data.concat_sampling_probabilities=[0.33,0.33,0.34] \
+        data.file_names=[$GENERATE_SAMPLES_PATH,$SFT_DATA_PATH,$RM_DATA_PATH] \
         data.num_samples=$MAX_NUM_SAMPLES \
         data.hf_dataset=True \
         reward_standardization.enable=True \
-        reward_standardization.mean=null \
-        reward_standardization.std=null \
         processor=dt \
         output_file=$LABELED_SAMPLES_PATH \
         checkpoint_interval=8 \
