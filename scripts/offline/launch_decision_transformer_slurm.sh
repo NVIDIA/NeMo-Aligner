@@ -24,6 +24,7 @@ LEARNING_RATE=<<<LEARNING_RATE>>> # Constant learning rate
 WEIGHT_DECAY=<<<WEIGHT_DECAY>>> # L2 weight decay, such as 0.01
 MAX_NUM_SAMPLES=<<<MAX_NUM_SAMPLES>>> # Max training samples
 
+GENERATE_MICRO_BATCH_SIZE=<<<GENERATE_MICRO_BATCH_SIZE>>> # Set it to a large integer like 32 to improve efficiency
 RM_MICRO_BATCH_SIZE=<<<RM_MICRO_BATCH_SIZE>>> # Set it to a large integer to improve inference efficiency
 GLOBAL_TRAIN_BATCH_SIZE=<<<GLOBAL_TRAIN_BATCH_SIZE>>>
 MICRO_TRAIN_BATCH_SIZE=<<<MICRO_TRAIN_BATCH_SIZE>>>
