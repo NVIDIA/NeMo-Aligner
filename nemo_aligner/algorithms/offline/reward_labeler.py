@@ -14,19 +14,11 @@
 
 
 import torch
+from megatron.core import mpu
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
 from nemo_aligner.utils.distributed import broadcast_2d_tensor
-
-try:
-    from megatron.core import mpu
-
-    HAVE_MEGATRON_CORE = True
-
-except (ImportError, ModuleNotFoundError):
-
-    HAVE_MEGATRON_CORE = False
 
 if not torch.cuda.is_available():
     raise EnvironmentError("GPU is needed for the inference")

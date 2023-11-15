@@ -14,17 +14,10 @@
 
 
 import torch
+from megatron.core import mpu
+
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
 from nemo.utils import logging
-
-try:
-    from megatron.core import mpu
-
-    HAVE_MEGATRON_CORE = True
-
-except (ImportError, ModuleNotFoundError):
-
-    HAVE_MEGATRON_CORE = False
 
 if not torch.cuda.is_available():
     raise EnvironmentError("GPU is needed for the inference")
