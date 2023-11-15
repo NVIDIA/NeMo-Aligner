@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import os
 from datetime import datetime, timedelta
 
@@ -18,6 +19,7 @@ import jsonlines
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+from megatron.core import mpu
 from pytorch_lightning.trainer.trainer import Trainer
 from tqdm import tqdm
 from utils import get_max_time_per_run, load_nemo_or_checkpoint, set_seed
@@ -29,13 +31,6 @@ from nemo_aligner.algorithms.offline.reward_labeler import RewardLabeler
 from nemo_aligner.data.nlp.offline.builders import build_data_loader, build_dataset
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 from nemo_aligner.utils.utils import set_autocast_gpu_dtype
-
-try:
-    from megatron.core import mpu
-
-    HAVE_MEGATRON_CORE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_MEGATRON_CORE = False
 
 if not torch.cuda.is_available():
     raise OSError("GPU is needed for the inference")

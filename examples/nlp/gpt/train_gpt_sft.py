@@ -20,6 +20,7 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf, open_dict
 
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
 )
@@ -90,10 +91,6 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
 
         if cfg.model.data.get("chat", False):
             # chat model, overwrite the prompt template
-            from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import (
-                get_prompt_template_example,
-            )
-
             prompt_template = get_prompt_template_example(cfg.model.data.chat_prompt_tokens)
             gpt_cfg.data.train_ds.prompt_template = prompt_template
             gpt_cfg.data.validation_ds.prompt_template = prompt_template
