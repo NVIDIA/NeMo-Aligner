@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import torch
+from megatron.core import mpu
 from omegaconf import ListConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
@@ -25,15 +26,6 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.utils import logging
 
 from .datasets import OfflineDataset
-
-try:
-    from megatron.core import mpu
-
-    HAVE_MEGATRON_CORE = True
-
-except (ImportError, ModuleNotFoundError):
-
-    HAVE_MEGATRON_CORE = False
 
 
 def build_data_loader(dataset, data_cfg, consumed_samples=0, sample_split_size=None):
