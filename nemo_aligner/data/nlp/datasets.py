@@ -45,6 +45,8 @@ class RLHFDataset(Dataset):
 
         self.max_sample_length = max_sample_length
 
+        self.use_json = self.cfg.data.data_impl.startswith("json")
+
         self.shuffled_indices = list(range(len(self)))
 
         np_rng = np.random.default_rng(seed=seed)
@@ -98,7 +100,7 @@ class RLHFDataset(Dataset):
         while True:
             shuffled_idx = self.shuffled_indices[idx]
             sample = self.data[shuffled_idx]
-            if self.cfg.data.data_impl.startswith("json"):
+            if self.use_json:
                 sample, _ = self.encode(sample["text"])
             if len(sample) <= self.max_sample_length:
                 break
@@ -115,7 +117,12 @@ class RLHFDataset(Dataset):
             )
             mask_sample = True
 
-        sample_tensor = torch.from_numpy(sample.astype(np.int64))
+        if self.use_json:
+            # `sample` is a regular Python list.
+            sample_tensor = torch.tensor(sample, dtype=torch.int64)
+        else:
+            # `sample` is a NumPy array.
+            sample_tensor = torch.from_numpy(sample.astype(np.int64))
 
         # if we want to mask the sample we should
         # set the loss multiplier to 0
