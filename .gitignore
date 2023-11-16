@@ -159,3 +159,6 @@ results/
 
 # test dirs
 test_scripts
+
+# nfs temp file
+.nfs*
