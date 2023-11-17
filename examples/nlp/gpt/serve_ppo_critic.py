@@ -67,7 +67,7 @@ def main(cfg) -> None:
         # we move to CPU and swap them
         # so we need to retrieve the state here before PTL load
         rm_state_dict = retrieve_model_state_dict_in_cpu(
-            ptl_model, megatron_amp_o2=cfg.model.get("megatron_amp_O2", False)
+            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
         ptl_model.rm_state_dict = rm_state_dict
 
