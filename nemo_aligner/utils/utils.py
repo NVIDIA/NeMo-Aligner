@@ -310,7 +310,7 @@ def clear_memory():
     torch.cuda.empty_cache()
 
 
-def retrieve_model_state_dict_in_cpu(model, megatron_amp_o2=True):
+def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
     """get a copy of the model states in CPU
     """
     cpu_dict = {}
@@ -321,7 +321,7 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_o2=True):
 
         cpu_dict[name] = item
 
-    if megatron_amp_o2:
+    if megatron_amp_O2:
         cpu_dict = convert_to_amp_o2_format(cpu_dict)
 
     torch.cuda.synchronize()
@@ -329,29 +329,29 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_o2=True):
 
 
 @torch.no_grad()
-def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_o2=True):
+def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O2=True):
     """swap the state dict with a specified state dict, and offload the current state dict onto CPU
         if needed
     """
     offloaded_weights = {}
 
     if offload_onto_cpu:
-        offloaded_weights = retrieve_model_state_dict_in_cpu(resident_model, megatron_amp_o2=megatron_amp_o2)
+        offloaded_weights = retrieve_model_state_dict_in_cpu(resident_model, megatron_amp_O2=megatron_amp_O2)
 
     resident_model.load_state_dict(cpu_weights)
     return offloaded_weights
 
 
 @contextmanager
-def cpu_weight_swap(resident_model, cpu_weights, megatron_amp_o2=True):
+def cpu_weight_swap(resident_model, cpu_weights, megatron_amp_O2=True):
     """swap the weights into GPU, and then swap it out once return
     """
-    cpu_dict = swap_dict(resident_model, cpu_weights, megatron_amp_o2=megatron_amp_o2)
+    cpu_dict = swap_dict(resident_model, cpu_weights, megatron_amp_O2=megatron_amp_O2)
     try:
         yield
 
     finally:
-        swap_dict(resident_model, cpu_dict, offload_onto_cpu=False, megatron_amp_o2=megatron_amp_o2)
+        swap_dict(resident_model, cpu_dict, offload_onto_cpu=False, megatron_amp_O2=megatron_amp_O2)
 
 
 def convert_to_amp_o2_format(state_dict):
