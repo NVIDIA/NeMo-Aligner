@@ -203,10 +203,10 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
 
         return loss, acc_chosen
 
-    def get_loss_and_metrics(self, global_batch, forward_only):
-        seq_length = global_batch["chosen"].shape[1]
+    def get_loss_and_metrics(self, batch, forward_only):
+        seq_length = batch["chosen"].shape[1]
 
-        data_iter = get_iterator_k_split(global_batch, get_num_microbatches())
+        data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
 
         fwd_bwd_function = get_forward_backward_func()
@@ -278,14 +278,13 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
 
         return loss_mean.item(), metrics
 
-    def prepare_for_training(self):
+    def prepare_for_training_step(self):
+        # not sure if we still need, may be safe to remove
         configure_batch_sizes(
             mbs=self.cfg.micro_batch_size,
             gbs=self.cfg.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
-
-    def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
         prepare_for_training_step(self, zero_grad=False)
 

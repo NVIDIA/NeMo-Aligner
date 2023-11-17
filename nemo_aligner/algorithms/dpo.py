@@ -19,6 +19,9 @@ import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
+from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
+    MegatronPretrainingRandomBatchSampler,
+)
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
@@ -124,7 +127,7 @@ class DPOTrainer:
         # these things should go into a GPTModel wrapper
         self.model.prepare_for_validation_step()
 
-        loss_mean, metrics = self.model.get_loss_and_metrics(global_batch=global_batch, forward_only=True)
+        loss_mean, metrics = self.model.get_loss_and_metrics(batch=global_batch, forward_only=True)
 
         self.model.finish_validation_step()
         return loss_mean, metrics
@@ -161,11 +164,10 @@ class DPOTrainer:
     def train_single_step(self, global_batch):
         self.optimizer.zero_grad()
 
-        self.model.prepare_for_training()
         self.model.prepare_for_training_step()
 
         # NOTE: assume backward is called on the loss already
-        loss_mean, metrics = self.model.get_loss_and_metrics(global_batch=global_batch, forward_only=False)
+        loss_mean, metrics = self.model.get_loss_and_metrics(batch=global_batch, forward_only=False)
 
         self.model.finish_training_step()
 
@@ -184,10 +186,16 @@ class DPOTrainer:
         return loss_mean, {**metrics, **trainer_metrics}
 
     def fit(self):
-        # if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
-        # because we need to figure out a nice way to reset the shuffling on our dataset
-        # otherwise epoch > 1 will loop over the dataset in the same order
-        # raise ValueError("epoch > 1 is not supported")
+        if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
+            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
+        ):
+            # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
+            # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
+            # to fix this, you should use MegatronPretrainingRandomBatchSampler instead, which alleviates this issue and allows
+            # random shuffling for each epoch.
+            raise ValueError(
+                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
+            )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
         if len(epoch_iter) <= 0:
