@@ -38,7 +38,7 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_validation_step,
     set_sync_funcs,
 )
-from nemo_aligner.utils.utils import configure_batch_sizes, cpu_weight_swap
+from nemo_aligner.utils.utils import cpu_weight_swap
 
 
 class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
@@ -279,12 +279,6 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
         return loss_mean.item(), metrics
 
     def prepare_for_training_step(self):
-        # not sure if we still need, may be safe to remove
-        configure_batch_sizes(
-            mbs=self.cfg.micro_batch_size,
-            gbs=self.cfg.global_batch_size,
-            dp=parallel_state.get_data_parallel_world_size(),
-        )
         # custom trainers will always zero grad for us
         prepare_for_training_step(self, zero_grad=False)
 
