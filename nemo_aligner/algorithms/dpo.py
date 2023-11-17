@@ -16,14 +16,13 @@ from collections import defaultdict
 from statistics import mean
 
 import torch
-from megatron.core import parallel_state
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
-from nemo_aligner.utils.utils import clear_memory, configure_batch_sizes
+from nemo_aligner.utils.utils import clear_memory
 
 
 def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
@@ -111,7 +110,7 @@ class DPOTrainer:
         self.set_max_steps()
 
         self.timer = SyncTimer(
-            reduction="mean", sync_cuda=False, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
+            reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
         if self.cfg.save_interval % self.val_check_interval != 0:
@@ -164,10 +163,6 @@ class DPOTrainer:
 
         self.model.prepare_for_training()
         self.model.prepare_for_training_step()
-
-        # must be provided by the RM
-        # the RM is responsible for broadcasting the loss_mean as well
-        # the loss mean and metrics must be on rank 0 and on the CPU
 
         # NOTE: assume backward is called on the loss already
         loss_mean, metrics = self.model.get_loss_and_metrics(global_batch=global_batch, forward_only=False)

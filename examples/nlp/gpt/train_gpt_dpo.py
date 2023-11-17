@@ -41,19 +41,14 @@ mp.set_start_method("spawn", force=True)
 
 @hydra_runner(config_path="conf", config_name="dpo_gpt")
 def main(cfg) -> None:
+    cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
+
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
-    cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
-
     trainer = resolve_and_create_trainer(cfg, "dpo")
     exp_manager(trainer, cfg.exp_manager)
-
     logger = CustomLoggerWrapper(trainer.loggers)
-
-    # hydra interpolation does not work here as the interpolation key is lost when PTL saves hparams
-    with open_dict(cfg):
-        cfg.model.precision = cfg.trainer.precision
 
     ptl_model = load_from_nemo(
         MegatronGPTDPOModel,
@@ -134,7 +129,6 @@ def main(cfg) -> None:
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
-    # OmegaConf.resolve(cfg)
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     dpo_trainer = DPOTrainer(
