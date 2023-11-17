@@ -58,7 +58,7 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
         self.ref_policy_state_dict = None
 
         self.ref_policy_kl_penalty = self.cfg.dpo.get("ref_policy_kl_penalty", 0.0)
-        self.avg_log_probs = self.cfg.dpo.get("average_dpo_log_probs", False)
+        self.avg_log_probs = self.cfg.dpo.get("average_log_probs", False)
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels):
@@ -133,6 +133,7 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
                 "loss_mask": None,
             }
 
+            # TODO: we can remove this someday when we no longer support legacy models
             if not self.mcore_gpt:
                 forward_args["checkpoint_activations_all_layers"] = checkpoint_activations_all_layers
                 if not self.use_loss_mask:
@@ -154,7 +155,6 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
                 per_token_logps = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=output_tensor, target=labels, higher_stability=True
                 )
-                del output_tensor
 
                 loss, acc_chosen = self.loss_func(
                     per_token_logps, ref_logprobs, labels[:, 1:], average_log_probs=self.avg_log_probs

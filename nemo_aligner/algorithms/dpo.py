@@ -273,7 +273,7 @@ class DPOTrainer:
     def set_max_steps(self):
         self.max_steps = self._train_dataloader_len + self.step
 
-        if (max_steps := self.cfg.get("max_steps", -1)) > 0:
+        if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
 
     def state_dict(self):
