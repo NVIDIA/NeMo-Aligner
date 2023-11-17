@@ -33,7 +33,7 @@ def set_sync_funcs(ptl_model, forward_only):
     grad_sync_func = None
     param_sync_func = None
     if not forward_only and ptl_model.with_distributed_adam:
-        no_sync_func = partial(ptl_model._optimizer.no_sync, greedy_grad_copy=ptl_model.megatron_amp_o2,)
+        no_sync_func = partial(ptl_model._optimizer.no_sync, greedy_grad_copy=ptl_model.megatron_amp_O2,)
         grad_sync_func = ptl_model.reduce_overlap_gradients
         param_sync_func = ptl_model.sync_overlap_parameters
 
@@ -91,7 +91,7 @@ def grad_reductions(ptl_model):
         # note: not necessary, but reduces performance degradation
         # from multiple simultaneous NCCL calls
         ptl_model._optimizer._finish_bucket_grad_sync()
-    elif ptl_model.megatron_amp_o2:
+    elif ptl_model.megatron_amp_O2:
         # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
         if ptl_model.cfg.get("pipeline_model_parallel_size", 1) > 1 or ptl_model.cfg.get("sequence_parallel", False):
             # main grads are stored in the MainParamsOptimizer wrapper
@@ -146,7 +146,7 @@ def clip_gradients(ptl_model, clip_val):
     if ptl_model.with_distributed_adam:
         grad_norm = clip_grad_norm_distributed_optimizer(ptl_model._optimizer, clip_val)
     else:
-        if ptl_model.megatron_amp_o2:
+        if ptl_model.megatron_amp_O2:
             # grep fp32 master parameters for gradient clipping
             parameters = ptl_model._optimizer.get_parameters_with_grad()
         else:

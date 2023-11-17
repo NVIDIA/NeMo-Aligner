@@ -297,7 +297,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
     def get_init_policy_logprobs(self, rollout_batches):
         init_log_probs = []
-        with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_o2=self.megatron_amp_o2):
+        with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             for rollout_batch in rollout_batches:
                 init_log_prob = self.get_inference_log_probs(rollout_batch["response_tokens"].cuda())
 
