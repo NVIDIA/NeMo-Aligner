@@ -46,7 +46,7 @@ data:
   index_mapping_dir: null # Path to a directory to write index mapping files.
   micro_batch_size: 1
   num_samples: null
-  best_of_n: 1
+  n: 1
   tokens_to_generate: ${inference.tokens_to_generate}
   prompt_template: null
   hf_dataset: True

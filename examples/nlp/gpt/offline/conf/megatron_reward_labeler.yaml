@@ -43,7 +43,7 @@ reward_standardization:  # Provide mean and std for z-score standardization of t
   mean: null # null means calculating the mean of all input samples 
   std: null # null means calculating the mean of all input samples
 
-processor: null # post processor, set to dt (Decision Transformer), filter (ReST) or best_of_n (Rejection Sampling)
+processor: null # post processor, can be set to dt (Decision Transformer), rest (ReST), rs (Rejection Sampling) or null
 threshold: 0 # threshold for ReST
 reward_template: "{input} <rm_score>: {reward} " # reward template for decision transformer
 input_key: ${data.input_key}
