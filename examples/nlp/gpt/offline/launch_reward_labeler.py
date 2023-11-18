@@ -155,7 +155,7 @@ def main(cfg) -> None:
             print("Use auto reward normalization")
             objs = reward_normalization(cfg, objs)
 
-        # sample post-processing, such as best-of-n, decision transformer, rest.
+        # sample post-processing, such as rs, dt, rest.
         if cfg.get("processor", None):
             name = cfg.get("processor")
             print(f"Use processor: {name}")
