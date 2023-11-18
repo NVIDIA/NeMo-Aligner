@@ -27,7 +27,7 @@ def reward_normalization(cfg, objs):
 
 # Rejection Sampling
 # See https://arxiv.org/abs/2307.09288
-def best_of_n_processor(cfg, objs):
+def rejection_sampling_processor(cfg, objs):
     out = {}
     for obj in tqdm(objs, desc=f"Best of N process...."):
         input = obj[cfg.input_key]
@@ -67,18 +67,18 @@ def decesion_transformer_processor(cfg, objs):
 
 # Reinforced Self-Training
 # See https://arxiv.org/abs/2308.08998
-def filter_processor(cfg, objs):
-    print("Filter (ReST) process...")
-
+def rest_processor(cfg, objs):
     threshold = cfg.get("threshold", 0)
+    print(f"ReST (threshold: {threshold}) process...")
+
     out = [obj for obj in objs if float(obj[cfg.reward_key]) > threshold]
     return out
 
 
 PROCESSORS = {
-    "best_of_n": best_of_n_processor,
+    "rs": rejection_sampling_processor,
     "dt": decesion_transformer_processor,
-    "filter": filter_processor,
+    "rest": rest_processor,
 }
 
 

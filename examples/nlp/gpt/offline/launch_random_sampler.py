@@ -101,7 +101,7 @@ def main(cfg) -> None:
         input = (sample["input_ids"].to(current_device), sample["length"].to(current_device))
 
         # generate n samples per prompt for rejection sampling
-        N = int(cfg.data.get("best_of_n", 1))
+        N = int(cfg.data.get("n", 1))
         for _ in range(N):
             response_list = sampler.generate(input)["sentences"]
             # ignore other ranks in TP and PP group
