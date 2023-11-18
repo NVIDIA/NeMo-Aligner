@@ -20,7 +20,6 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf, open_dict
 
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
 )
@@ -90,6 +89,10 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
             gpt_cfg.pipeline_model_parallel_split_rank = cfg.model.get("pipeline_model_parallel_split_rank")
 
         if cfg.model.data.get("chat", False):
+            from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import (
+                get_prompt_template_example,
+            )
+
             # chat model, overwrite the prompt template
             prompt_template = get_prompt_template_example(cfg.model.data.chat_prompt_tokens)
             gpt_cfg.data.train_ds.prompt_template = prompt_template
