@@ -20,7 +20,6 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.models.gpt import GPTModel
-from megatron.core.models.gpt.gpt_layer_specs import gpt_layer_with_transformer_engine_spec
 from megatron.core.tensor_parallel.layers import RowParallelLinear
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
