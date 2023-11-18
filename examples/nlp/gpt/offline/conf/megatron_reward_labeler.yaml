@@ -39,7 +39,7 @@ data:
   hf_dataset: True
 
 reward_standardization:  # Provide mean and std for z-score standardization of the rewards during inference and post process.
-  enable: True
+  enable: False
   mean: null # null means calculating the mean of all input samples 
   std: null # null means calculating the mean of all input samples
 
