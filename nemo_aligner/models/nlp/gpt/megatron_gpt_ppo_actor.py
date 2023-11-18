@@ -18,6 +18,7 @@ import torch
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.utils import divide
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
@@ -67,6 +68,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self.to_offload_adam_states = self.cfg.ppo.offload_adam_states
         self.entropy_bonus = self.cfg.ppo.entropy_bonus
         self.ratio_eps = self.cfg.ppo.ratio_eps
+        self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
@@ -223,27 +225,28 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         return log_prob_output_only_func
 
     @torch.no_grad()
-    def get_inference_log_probs(self, response_tokens):
+    def get_inference_log_probs(self, response_tokens, forward_micro_batch_size):
         set_sync_funcs(self, forward_only=True)
 
         mbs, seq_length = response_tokens.size()
+        num_microbatches = divide(mbs, forward_micro_batch_size)
         attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(response_tokens)
-        batch = ([response_tokens, attention_mask, position_ids],)
+
+        batch_iter = get_iterator_k_split([response_tokens, attention_mask, position_ids], num_microbatches)
 
         fwd_bwd_function = get_forward_backward_func()
         logprobs_list = fwd_bwd_function(
             forward_step_func=self.get_logprob_output_only_func(inference_only=True),
-            data_iterator=iter(batch),
+            data_iterator=batch_iter,
             model=self.model,
-            num_microbatches=1,
+            num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=seq_length,
             micro_batch_size=mbs,
             collect_non_loss_data=True,
         )
 
-        logprobs = logprobs_list[0] if len(logprobs_list) > 0 else None
-
+        logprobs = torch.cat(logprobs_list) if len(logprobs_list) > 0 else None
         if parallel_state.get_pipeline_model_parallel_world_size() > 1:
             # broadcast it from last PP stage to everything else
             logprobs = broadcast_2d_tensor(
@@ -283,7 +286,9 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         )
 
         # TODO(geshen): get nemo generate to return the unaltered log probs
-        log_probs = self.get_inference_log_probs(response_tokens)
+        log_probs = self.get_inference_log_probs(
+            response_tokens, forward_micro_batch_size=self.forward_micro_batch_size
+        )
 
         rollout_batch = {
             "response_tokens": response_tokens,
@@ -299,8 +304,9 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         init_log_probs = []
         with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             for rollout_batch in rollout_batches:
-                init_log_prob = self.get_inference_log_probs(rollout_batch["response_tokens"].cuda())
-
+                init_log_prob = self.get_inference_log_probs(
+                    rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
+                )
                 init_log_probs.append(init_log_prob)
 
         # return in GPU, trainer needs to move to cpu

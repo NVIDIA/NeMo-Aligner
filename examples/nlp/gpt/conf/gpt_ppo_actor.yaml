@@ -90,6 +90,11 @@ model:
     rollout_micro_batch_size: 8
     num_rollout_samples: 512
 
+    # mbs to do log prob inference, can be set to
+    # lower than rollout_micro_batch_size to reduce
+    # memory usage
+    forward_micro_batch_size: ${.rollout_micro_batch_size}
+
     # val generation mbs
     val_rollout_micro_batch_size: ${.rollout_micro_batch_size}
     num_val_samples: ${.num_rollout_samples}
