@@ -14,7 +14,7 @@ Add a one line overview of what this PR aims to accomplish.
 
 # Before your PR is "Ready for review"
 **Pre checks**:
-- [ ] Make sure you read and followed [Contributor guidelines](https://github.com/NVIDIA/NeMo/blob/main/CONTRIBUTING.md)
+- [ ] Make sure you read and followed [Contributor guidelines](/CONTRIBUTING.md)
 - [ ] Did you write any new necessary tests?
 - [ ] Did you add or update any necessary documentation? Make sure to also update the [NeMo Framework User Guide](https://docs.nvidia.com/nemo-framework/user-guide/latest/index.html) which contains the tutorials
 
