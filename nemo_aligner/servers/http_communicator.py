@@ -56,7 +56,7 @@ class HTTPCommunicator:
 
         logging.info("=================================")
 
-    def send_data_to_server(self, server_name, data):
+    def send_data_to_server(self, server_name, data, batching=True):
         *_, client = self.connections[server_name]
-        output_future = client.infer_batch(**data)
+        output_future = client.infer_batch(**data) if batching else client.infer_sample(**data)
         return output_future

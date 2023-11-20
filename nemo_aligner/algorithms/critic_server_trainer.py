@@ -19,7 +19,7 @@ import numpy as np
 import torch
 from megatron.core import parallel_state
 from megatron.core.utils import divide
-from pytriton.decorators import batch
+from pytriton.decorators import batch, sample
 from pytriton.model_config import ModelConfig, Tensor
 from pytriton.model_config.common import DynamicBatcher
 from pytriton.triton import Triton, TritonConfig
@@ -79,10 +79,10 @@ class CriticServerTrainer:
         )
 
         self.train_inputs = (
-            Tensor(name="tokens", shape=(-1,), dtype=np.int64, optional=False),
-            Tensor(name="returns", shape=(-1,), dtype=np.float32, optional=False),
-            Tensor(name="prev_values", shape=(-1,), dtype=np.float32, optional=False),
-            Tensor(name="mask", shape=(-1,), dtype=np.float32, optional=False),
+            Tensor(name="tokens", shape=(-1, -1,), dtype=np.int64, optional=False),
+            Tensor(name="returns", shape=(-1, -1,), dtype=np.float32, optional=False),
+            Tensor(name="prev_values", shape=(-1, -1,), dtype=np.float32, optional=False),
+            Tensor(name="mask", shape=(-1, -1,), dtype=np.float32, optional=False),
         )
         self.train_outputs = (Tensor(name="loss_mean", shape=(1,), dtype=np.float32),)
 
@@ -107,7 +107,7 @@ class CriticServerTrainer:
             "exceeded": exceeded,
         }
 
-    @batch
+    @sample
     @lock_method("self.lock")
     def server_save(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
         # tell other ranks to start inference
@@ -116,7 +116,7 @@ class CriticServerTrainer:
         self.save()
         return {"status": np.array((0,), dtype=np.int32)}
 
-    @batch
+    @sample
     @lock_method("self.lock")
     def server_train(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
         tokens = inputs.pop("tokens", None)
@@ -164,8 +164,8 @@ class CriticServerTrainer:
                 batching=True, max_batch_size=self.max_inference_batch_size, batcher=dynamic_batcher
             )
             # the model will split the train batch by itself
-            train_model_config = ModelConfig(batching=True, max_batch_size=8192, batcher=None)
-            save_model_config = ModelConfig(batching=True, max_batch_size=1, batcher=None)
+            train_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
+            save_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
 
             with Triton(config=triton_config) as triton:
                 triton.bind(
