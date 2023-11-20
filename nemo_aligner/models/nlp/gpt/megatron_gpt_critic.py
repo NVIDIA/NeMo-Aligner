@@ -231,7 +231,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def _load_critic(self):
         if self.loaded_state_dict == StateDictState.REWARD:
             # no need to put the RM back to cpu, we already have it
-            swap_dict(self, self.cpu_state_dict, offload_onto_cpu=False, megatron_amp_o2=self.megatron_amp_o2)
+            swap_dict(self, self.cpu_state_dict, offload_onto_cpu=False, megatron_amp_O2=self.megatron_amp_O2)
 
             self.set_output_sequence_flag(True)
 
@@ -239,7 +239,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def _load_rm(self):
         if self.loaded_state_dict == StateDictState.CRITIC:
-            self.cpu_state_dict = swap_dict(self, self.rm_state_dict, megatron_amp_o2=self.megatron_amp_o2)
+            self.cpu_state_dict = swap_dict(self, self.rm_state_dict, megatron_amp_O2=self.megatron_amp_O2)
 
             self.set_output_sequence_flag(False)
             self.loaded_state_dict = StateDictState.REWARD

@@ -74,7 +74,7 @@ def main(cfg) -> None:
     # only need this if we are running with inital kl penalty
     if cfg.trainer.ppo.initial_policy_kl_penalty > 0:
         init_policy_state_dict = retrieve_model_state_dict_in_cpu(
-            ptl_model, megatron_amp_o2=cfg.model.get("megatron_amp_O2", False)
+            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
 
     ptl_model.init_policy_state_dict = init_policy_state_dict

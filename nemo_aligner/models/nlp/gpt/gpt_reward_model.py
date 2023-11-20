@@ -21,6 +21,7 @@ from megatron.core import parallel_state
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.models.gpt import GPTModel
 from megatron.core.tensor_parallel.layers import RowParallelLinear
+from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import make_sharded_tensor_for_checkpoint, make_tp_sharded_tensor_for_checkpoint
 from torch import Tensor
@@ -111,6 +112,7 @@ class GPTRewardModel(GPTModel):
     def __init__(
         self,
         config: TransformerConfig,
+        transformer_layer_spec: ModuleSpec,
         vocab_size: int,
         max_sequence_length: int,
         pre_process: bool = True,
@@ -127,6 +129,7 @@ class GPTRewardModel(GPTModel):
     ):
         super().__init__(
             config=config,
+            transformer_layer_spec=transformer_layer_spec,
             vocab_size=vocab_size,
             max_sequence_length=max_sequence_length,
             pre_process=pre_process,
