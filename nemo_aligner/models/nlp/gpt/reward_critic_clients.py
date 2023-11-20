@@ -155,14 +155,18 @@ class RemoteGPTRMCriticClient:
         future = None
         if torch.distributed.get_rank() == 0:
             send_data = {k: torch.cat(v, dim=0).detach().cpu().numpy() for k, v in send_data.items()}
-            future = self.communicator.send_data_to_server(server_name=self.cfg.critic.name.train, data=send_data)
+            future = self.communicator.send_data_to_server(
+                server_name=self.cfg.critic.name.train, data=send_data, batching=False
+            )
 
         return future
 
     def save(self):
         save_future = None
         if torch.distributed.get_rank() == 0:
-            send_data = {"dummy_var": np.array([[0]])}
-            save_future = self.communicator.send_data_to_server(server_name=self.cfg.critic.name.save, data=send_data)
+            send_data = {"dummy_var": np.array([0])}
+            save_future = self.communicator.send_data_to_server(
+                server_name=self.cfg.critic.name.save, data=send_data, batching=False
+            )
 
         return SaveFuture(save_future)
