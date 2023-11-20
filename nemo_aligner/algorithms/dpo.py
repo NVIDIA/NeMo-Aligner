@@ -25,6 +25,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
+from nemo_aligner.utils.trainer_utils import compute_limit_batches
 from nemo_aligner.utils.utils import clear_memory
 
 
@@ -96,15 +97,7 @@ class DPOTrainer:
 
         # used to compute the max step
         self._train_dataloader_len = len(train_dataloader)
-        self.limit_val_batches = (
-            len(val_dataloader)
-            if self.cfg.limit_val_batches is None
-            else (
-                int(len(val_dataloader) * self.cfg.limit_val_batches)
-                if isinstance(self.cfg.limit_val_batches, float)
-                else self.cfg.limit_val_batches
-            )
-        )
+        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
             int(self.cfg.val_check_interval * self._train_dataloader_len)
             if isinstance(self.cfg.val_check_interval, float)
