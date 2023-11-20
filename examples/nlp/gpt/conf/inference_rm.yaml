@@ -21,3 +21,6 @@ model:
     enable: False
     mean: null
     std: null 
+
+  merge_attributes: False # only for regression reward model, whether to merge attribute values into a scalar
+  attribute_weights: null # only for regression reward model, apply these weights to each attributes when merging them into a scalar

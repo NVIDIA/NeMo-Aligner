@@ -38,7 +38,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
     MegatronPretrainingBatchSampler,
 )
 from nemo.utils import logging
-from nemo_aligner.data.nlp.datasets import DPOModelDataset, RewardModelDataset, RLHFDataset
+from nemo_aligner.data.nlp.datasets import DPOModelDataset, RewardModelDataset, RLHFDataset, RegressionRewardModelDataset
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
@@ -252,7 +252,7 @@ def _build_train_valid_test_datasets(
 build_train_valid_test_rlhf_datasets = partial(build_train_valid_test_datasets, RLHFDataset)
 build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, RewardModelDataset)
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
-
+build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
 
 def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
     dataset_cls = GPTSFTChatDataset if is_chat else GPTSFTDataset
