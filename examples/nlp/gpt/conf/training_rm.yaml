@@ -15,7 +15,9 @@ trainer:
     save_interval: 100
 
     # how many GBS we loop over
-    limit_val_batches: 50
+    # set to float for a percentage
+    # of the validation dataset
+    limit_val_batches: 1.0
     gradient_clip_val: 1.0
 
   # do not change these
