@@ -14,6 +14,7 @@
 
 """distributed utils for communicating between different ranks"""
 
+import warnings
 from collections import defaultdict
 
 import torch
@@ -254,7 +255,7 @@ def from_parallel_logits_to_logprobs(vocab_parallel_logits, target, inference_on
     ].contiguous()
 
 
-def pad_tensors_to_max_global_seq_len(list_of_tensors, pad_value, group):
+def pad_tensors_to_max_global_seq_len(list_of_tensors, pad_value, group, sequence_length_to_pad_to=None):
     """pad a list of tensors to the global sequence length across the specified group
     """
     # compute the local padding
@@ -264,6 +265,15 @@ def pad_tensors_to_max_global_seq_len(list_of_tensors, pad_value, group):
     max_seq_length = torch.tensor([tensors_padded.size(-1)], dtype=torch.float32, device=torch.cuda.current_device())
     torch.distributed.all_reduce(max_seq_length, op=torch.distributed.ReduceOp.MAX, group=group)
     max_seq_length = int(max_seq_length)
+
+    if sequence_length_to_pad_to is not None:
+        if max_seq_length > sequence_length_to_pad_to:
+            warnings.warn(
+                f"{max_seq_length=} is bigger than the provided {sequence_length_to_pad_to=}, overwriting the padding"
+                f" to {max_seq_length}"
+            )
+        # pad to sequence length or max seq length, whichever is bigger
+        max_seq_length = max(sequence_length_to_pad_to, max_seq_length)
 
     return torch.nn.functional.pad(tensors_padded, (0, max_seq_length - tensors_padded.size(-1)), value=pad_value)
 
