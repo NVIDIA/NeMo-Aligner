@@ -76,14 +76,15 @@ def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
 
 
 def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32):
-    if parallel_state.get_pipeline_model_parallel_world_size() <= 1:
-        return tensor
-    return broadcast_2d_tensor(
-        tensor,
-        parallel_state.get_pipeline_model_parallel_last_rank(),
-        parallel_state.get_pipeline_model_parallel_group(),
-        dtype=dtype,
-    )
+    if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        return broadcast_2d_tensor(
+            tensor,
+            parallel_state.get_pipeline_model_parallel_last_rank(),
+            parallel_state.get_pipeline_model_parallel_group(),
+            dtype=dtype,
+        )
+
+    return tensor
 
 
 def run_if_model_parallel_src(fn, *fn_args, **fn_kwargs):
