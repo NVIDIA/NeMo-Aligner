@@ -52,7 +52,7 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
         #   - it has started
         #   - the end generation is triggered now
         #   - it did *not* end before
-        self._end_idx = torch.where(started & is_end & self._end_idx >= 0, context_length, self._end_idx)
+        self._end_idx = torch.where(started & is_end & self._end_idx < 0, context_length, self._end_idx)
         return is_end
 
     def get_lengths(self) -> torch.Tensor:
