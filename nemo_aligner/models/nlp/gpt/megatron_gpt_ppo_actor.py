@@ -31,10 +31,11 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
 from nemo_aligner.utils.distributed import (
-    broadcast_2d_tensor,
+    broadcast_2d_tensor_within_pp,
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
 )
+from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
 from nemo_aligner.utils.train_utils import (
     grad_reductions,
     prepare_for_training_step,
@@ -42,13 +43,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.utils import (
-    calculate_dialogue_response_lengths,
-    configure_batch_sizes,
-    cpu_weight_swap,
-    masked_mean,
-    offload_distributed_adam,
-)
+from nemo_aligner.utils.utils import configure_batch_sizes, cpu_weight_swap, masked_mean, offload_distributed_adam
 
 
 class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
@@ -244,13 +239,8 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
         logprobs = logprobs_list[0] if len(logprobs_list) > 0 else None
 
-        if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-            # broadcast it from last PP stage to everything else
-            logprobs = broadcast_2d_tensor(
-                logprobs,
-                parallel_state.get_pipeline_model_parallel_last_rank(),
-                parallel_state.get_pipeline_model_parallel_group(),
-            )
+        # broadcast it from last PP stage to everything else
+        logprobs = broadcast_2d_tensor_within_pp(logprobs)
 
         return logprobs
 
@@ -268,20 +258,20 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
 
-        actor_output = self.generate(
-            inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params
+        strategy = TrackLengthGPTModelTextGenerationStrategy(
+            model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
         )
+        actor_output = self.generate(
+            inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params, strategy=strategy
+        )
+
+        response_lengths = None
+        if parallel_state.is_pipeline_last_stage():
+            response_lengths = strategy.get_lengths().to(torch.int64).view((-1, 1))
+            assert (response_lengths <= self.cfg.encoder_seq_length).all()
+        response_lengths = broadcast_2d_tensor_within_pp(response_lengths, dtype=torch.int64).flatten()
 
         response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
-        response_lengths = calculate_dialogue_response_lengths(
-            tokens=response_tokens,
-            prompt_lengths=prompt_lengths,
-            tokenizer=self.tokenizer,
-            end_strings=self._sampling_params["end_strings"],
-            max_generation_length=self._length_params["max_length"],
-            max_sequence_length=self.cfg.encoder_seq_length,
-        )
-
         # TODO(geshen): get nemo generate to return the unaltered log probs
         log_probs = self.get_inference_log_probs(response_tokens)
 
