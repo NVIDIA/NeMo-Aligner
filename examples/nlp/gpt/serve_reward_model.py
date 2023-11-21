@@ -28,6 +28,7 @@ from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import RewardModelCallable
 from nemo_aligner.utils.train_script_utils import init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, set_autocast_gpu_dtype
+from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 
 """PyTriton Based Inference Server for the Reward Model"""
 
@@ -37,7 +38,7 @@ ENDPOINT_BIND_ADDRESS = "0.0.0.0"
 @hydra_runner(config_path="conf", config_name="inference_rm")
 def main(cfg) -> None:
     cfg.model = load_and_override_model_config(cfg.rm_model_file, cfg.model)
-
+    
     trainer = Trainer(strategy=NLPDDPStrategy(), **cfg.trainer)
 
     # needed for autocasting BF16
@@ -47,8 +48,11 @@ def main(cfg) -> None:
     elif trainer.precision in ["bf16", "bf16-mixed"] and cfg.get("megatron_amp_O2", False):
         cfg.model.megatron_amp_O2 = True
 
+    reward_model_type = RewardModelType(cfg.model.get("reward_model_type", "binary_ranking"))
+    reward_model_cls = REWARD_MODEL_CLASS_DICT[reward_model_type]
+
     ptl_model = load_from_nemo(
-        MegatronGPTRewardModel, cfg.model, trainer, strict=True, restore_path=cfg.rm_model_file,
+        reward_model_cls, cfg.model, trainer, strict=True, restore_path=cfg.rm_model_file,
     )
 
     ptl_model.freeze()
