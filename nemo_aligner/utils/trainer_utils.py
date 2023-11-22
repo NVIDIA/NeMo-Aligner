@@ -27,3 +27,36 @@ def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, floa
         raise TypeError(f"Invalid data type of {type(limit_batches)} cannot compute limit batches")
 
     return limit_batches
+
+
+def safe_is_divisible(a, b):
+    """a safe divisible check to allow b to be 0
+    """
+    if b == 0:
+        return False
+    return a % b == 0
+
+
+def check_progress(
+    step: int, max_steps: int, val_check_interval: int, save_interval: int, limit_val_batches: Union[int, float, None]
+):
+    run_validation = limit_val_batches != 0 and val_check_interval > 0
+    to_save = save_interval > 0
+    is_train_end = step == max_steps
+
+    if run_validation:
+        assert save_interval % val_check_interval == 0, f"{save_interval=} must be divisible by {val_check_interval=}"
+
+    # run validation on the last step
+    # or when we hit the val check interval
+    run_val = safe_is_divisible(step, val_check_interval) or is_train_end
+    run_val &= run_validation
+
+    # save model at save intervals or last step
+    save_model = safe_is_divisible(step, save_interval) or is_train_end
+    # sometimes the user will provide a validation metric
+    # to save against, so we need to run val when we save
+    save_model &= run_val or not run_validation
+    save_model &= to_save
+
+    return run_val, save_model, is_train_end
