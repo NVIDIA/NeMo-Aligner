@@ -20,6 +20,7 @@ import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -63,45 +64,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
         self.automatic_optimization = False
         self.enable_standardization = False 
 
-
-    def model_provider_func(self, pre_process, post_process):
-        """Model depends on pipeline paralellism."""
-
-        force_head_dtype = self.cfg.get("force_head_dtype", torch.float32)
-        head_dtype = None if force_head_dtype is None else _str_to_dtype(force_head_dtype)
-        if self.cfg.get("megatron_amp_O2", False) and (head_dtype is None or torch.finfo(head_dtype).bits < 32):
-            logging.warning(
-                "When `megatron_amp_O2` is enabled, it is recommended to set `force_head_dtype=32` "
-                "to improve the convergence and accuracy of the model"
-            )
-
-        if self.cfg.get("share_embeddings_and_output_weights", False):
-            logging.warning(
-                "`share_embeddings_and_output_weights` is not supported with the reward model since we don't use the "
-                "normal output layer. Overriding it to False"
-            )
-
-        model = GPTRewardModel(
-            config=self.transformer_config,
-            vocab_size=self.cfg.get("override_vocab_size", self.padded_vocab_size),
-            max_sequence_length=self.cfg.get("encoder_seq_length", 512),
-            pre_process=pre_process,
-            post_process=post_process,
-            parallel_output=True,
-            share_embeddings_and_output_weights=False,
-            position_embedding_type=self.cfg.get("position_embedding_type", "learned_absolute"),
-            rotary_percent=self.cfg.get("rotary_percentage", 1.0),
-            seq_len_interpolation_factor=self.cfg.get("seq_len_interpolation_factor", None),
-            output_sequence=self.cfg.get("output_sequence", False),
-            use_avg_pool=self.cfg.get("use_avg_pool", False),
-            head_dtype=head_dtype,
-            num_attributes=self.cfg.get("num_attributes", 1),
-            head_type=self.cfg.get("head_type", "LinearMerge"),
-            attribute_weights=self.cfg.get("attribute_weights", None),
-            merge_attributes=self.cfg.get("merge_attributes", True)
-        )
-        return model
-
+    
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model):
             batch = next(dataloader_iter)
@@ -139,8 +102,6 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
             if not parallel_state.is_pipeline_last_stage():
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
         
-            # output_tuple = (output_tensor, label_tensor)
-
             def loss_func(output_tensor):
                 # output_tensor, label_tensor = output_tuple
                 # Loss per micro batch (ub).
