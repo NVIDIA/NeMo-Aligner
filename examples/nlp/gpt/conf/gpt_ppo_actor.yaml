@@ -27,6 +27,12 @@ trainer:
     model_gbs: ${model.global_batch_size}
     model_mbs: ${model.micro_batch_size}
 
+    # the sequence length to pad the rollout batch to
+    # this reduces fragmentation at the cost of using more
+    # memory, set to null if we don't want to pad it
+    # to a constant size
+    rollout_batch_seq_length: null
+
   # no need to change these
   logger: False # logger provided by exp_manager
   enable_checkpointing: False

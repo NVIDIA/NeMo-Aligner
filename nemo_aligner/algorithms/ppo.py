@@ -84,6 +84,8 @@ class PPOTrainer:
         self.set_max_steps()
 
         self.compute_init_policy_kl = self.cfg.initial_policy_kl_penalty > 0
+        # size to pad our rollout batch to
+        self.rollout_batch_seq_length = self.cfg.rollout_batch_seq_length
 
         # for wandb table
         self.train_df = pd.DataFrame(columns=["step", "prompt", "response", "reward"])
@@ -161,12 +163,21 @@ class PPOTrainer:
         ppo_rollout_metrics = {k: v / num_samples for k, v in ppo_rollout_metrics.items()}
 
         for k in ppo_rollout_data:
-            pad_value = 0
-            if k == "response_tokens":
-                pad_value = self.model.tokenizer.eos_id
+            rollout_batch_seq_length = self.rollout_batch_seq_length
+            pad_value = self.model.tokenizer.eos_id
+
+            # all other tensors in the rollout batch
+            # will be B x S -1 (because we don't predict anything for the last token)
+            if k != "response_tokens":
+                pad_value = 0
+                if rollout_batch_seq_length is not None:
+                    rollout_batch_seq_length -= 1
 
             ppo_rollout_data[k] = pad_tensors_to_max_global_seq_len(
-                ppo_rollout_data[k], pad_value=pad_value, group=parallel_state.get_data_parallel_group()
+                ppo_rollout_data[k],
+                pad_value=pad_value,
+                group=parallel_state.get_data_parallel_group(),
+                sequence_length_to_pad_to=rollout_batch_seq_length,
             )
 
         mask = ppo_rollout_data["mask"]
