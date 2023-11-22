@@ -348,12 +348,15 @@ class DPOModelDataset(Dataset):
         }
         return output
 
+
 class RegressionRewardModelDataset(RewardModelDataset):
     def __init__(
         self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
     ):
-        
-        assert cfg.data.data_impl.startswith("json"), f"data.data_impl must be either mmap or json or jsonl, but got {cfg.data.data_impl}"
+
+        assert cfg.data.data_impl.startswith(
+            "json"
+        ), f"data.data_impl must be either mmap or json or jsonl, but got {cfg.data.data_impl}"
 
         super().__init__(
             cfg=cfg,
@@ -366,10 +369,10 @@ class RegressionRewardModelDataset(RewardModelDataset):
             seed=seed,
             drop_last=drop_last,
         )
-    
+
     def __len__(self):
         return len(self.data)
-    
+
     def __getitem__(self, idx):
         """
         Returns one training sample, its label, and its respective length.
@@ -385,32 +388,31 @@ class RegressionRewardModelDataset(RewardModelDataset):
                 idx += 1
                 continue
             found = True
-        
+
         if isinstance(sample_label, str):
-            sample_label = sample_label.split(',')
-        
+            sample_label = sample_label.split(",")
+
         assert isinstance(sample_label, list), f"label should be a string or a list"
         sample_label = [float(value) for value in sample_label]
-        
+
         label_tensor = torch.tensor(sample_label, dtype=torch.float)
 
         text_np = np.array(sample_text, dtype=np.int64)
         text_np_pad = np.pad(
             text_np, (0, max(0, self.seq_length - text_np.shape[0])), mode="constant", constant_values=self.eos_id
         )
-        
+
         text_tensor = torch.tensor(text_np_pad)
         attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
             text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
         )
 
-        
         # Negative index comes when we pad the last batch in MegatronPretrainingBatchSampler
         # We make the loss_mask zero to mask out loss from these samples
         if idx == -1:
             logging.info("WARNING: Got -1 as item index. Masking loss from this sample")
             loss_mask = torch.zeros_like(loss_mask)
-        
+
         output = {
             "inputs": text_tensor,
             "lengths": text_np.shape[0],

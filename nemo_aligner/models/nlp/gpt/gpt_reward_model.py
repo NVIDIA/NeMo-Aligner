@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from abc import ABC, abstractclassmethod
 from copy import deepcopy
 from typing import Callable, Literal, Optional
 from unittest.mock import patch
-from abc import ABC, abstractclassmethod
-
 
 import torch
 from megatron.core import parallel_state
@@ -105,6 +104,7 @@ class RewardModelHead(RowParallelLinear):
 
         return output
 
+
 class RewardModelHead(RowParallelLinear, ABC):
     def __init__(
         self,
@@ -122,7 +122,7 @@ class RewardModelHead(RowParallelLinear, ABC):
         output_sequence=False,
         use_avg_pool=False,
         dtype=torch.float32,
-        merge_attributes=True
+        merge_attributes=True,
     ):
         config = deepcopy(config)
         config.params_dtype = dtype
@@ -158,10 +158,10 @@ class RewardModelHead(RowParallelLinear, ABC):
         # hidden_size is S x B x D
         if self.output_sequence:
             with autocast_context:
-                output = super().forward(hidden_states.to(self.weight.dtype))[0] # [S x B x self.output_size]
-    
+                output = super().forward(hidden_states.to(self.weight.dtype))[0]  # [S x B x self.output_size]
+
             # Making it contiguous is required at least by `torch.distributed.gather()`.
-            return output.permute(1, 0, 2).contiguous() # [B x S x self.output_size]
+            return output.permute(1, 0, 2).contiguous()  # [B x S x self.output_size]
 
         if self.use_avg_pool:
             # lengths is shape B and arange is shape S, broadcast it to S x B
@@ -189,6 +189,7 @@ class RewardModelHead(RowParallelLinear, ABC):
     @abstractclassmethod
     def forward(self):
         pass
+
 
 class LinearMergeRewardModelHead(RewardModelHead):
     """
@@ -252,7 +253,6 @@ class GPTRewardModel(GPTModel):
         head_type: str = "LinearMerge",
         attribute_weights: list = None,
         merge_attributes: bool = True,
-
     ):
         super().__init__(
             config=config,
@@ -285,7 +285,7 @@ class GPTRewardModel(GPTModel):
                 )
             else:
                 raise ValueError("Only `head_type=LinearMerge` is supported for now")
-            
+
     def forward(
         self,
         input_ids: Tensor,

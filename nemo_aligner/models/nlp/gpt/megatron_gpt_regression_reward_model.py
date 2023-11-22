@@ -28,9 +28,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
-from nemo_aligner.utils.train_utils import (
-    set_sync_funcs,
-)
+from nemo_aligner.utils.train_utils import set_sync_funcs
 
 
 class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
@@ -47,9 +45,8 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
                 "avoid explicit casting for pipeline communication"
             )
         self.automatic_optimization = False
-        self.enable_standardization = False 
+        self.enable_standardization = False
 
-    
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model):
             batch = next(dataloader_iter)
@@ -69,7 +66,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
                     required_keys.update(("labels", "lengths", "loss_mask"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
-            
+
             label_tensor = batch["labels"] if batch["labels"] is not None else None
 
             forward_args = {
@@ -86,7 +83,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
             # so we need to explicitly cast it
             if not parallel_state.is_pipeline_last_stage():
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
-        
+
             def loss_func(output_tensor):
                 # output_tensor, label_tensor = output_tuple
                 # Loss per micro batch (ub).
@@ -111,24 +108,19 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
 
                     return (
                         loss_for_ub,
-                        {
-                            "loss_sum_and_ub_size": loss_sum_and_ub_size_all_gpu,
-                        },
+                        {"loss_sum_and_ub_size": loss_sum_and_ub_size_all_gpu,},
                     )
                 else:
                     reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
 
                     return (
                         loss_for_ub,
-                        {
-                            "avg": reduced_loss,
-                        },
+                        {"avg": reduced_loss,},
                     )
 
             return output_tensor, loss_func
 
         return fwd_output_and_loss_func
-
 
     def loss_func(self, output_tensor, label_tensor):
         mask_val = self.cfg.get("loss_mask_val", -100.0)
@@ -138,7 +130,6 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
         # Calculate the mean of the masked squared differences
         loss = squared_diff.sum() / mask.float().sum()
         return loss
-
 
     def get_loss_and_metrics(self, batch, forward_only):
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
@@ -153,7 +144,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
             seq_length=self.cfg.encoder_seq_length,
-            micro_batch_size=self.cfg.micro_batch_size
+            micro_batch_size=self.cfg.micro_batch_size,
         )
 
         # only the last stages of the pipeline return losses
@@ -166,10 +157,9 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
 
         else:
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            
+
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
-        
 
         metrics = {
             "loss": loss_mean,
@@ -179,5 +169,3 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
         metrics = {k: v.item() for k, v in metrics.items()}
 
         return loss_mean.item(), metrics
-
-   

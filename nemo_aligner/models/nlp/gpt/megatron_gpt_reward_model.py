@@ -106,7 +106,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             num_attributes=self.cfg.get("num_attributes", 1),
             head_type=self.cfg.get("head_type", "LinearMerge"),
             attribute_weights=self.cfg.get("attribute_weights", None),
-            merge_attributes=self.cfg.get("merge_attributes", True)
+            merge_attributes=self.cfg.get("merge_attributes", True),
         )
         return model
 

@@ -19,9 +19,13 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
-from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_rm_datasets, build_train_valid_test_regression_rm_datasets
-from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
+from nemo_aligner.data.nlp.builders import (
+    build_dataloader,
+    build_train_valid_test_regression_rm_datasets,
+    build_train_valid_test_rm_datasets,
+)
 from nemo_aligner.models.nlp.gpt.megatron_gpt_regression_reward_model import MegatronGPTRegressionRewardModel
+from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -44,12 +48,12 @@ mp.set_start_method("spawn", force=True)
 
 @hydra_runner(config_path="conf", config_name="training_rm")
 def main(cfg) -> None:
-    '''
+    """
     Binary ranking reward models use comparison based objective similar to the one found in the
     InstructGPT paper: https://arxiv.org/pdf/2203.02155.pdf and have no explicit labels.
     Regression reward models use a MSE loss to fit multi-attribute numeric labels for each data point.
-    '''
-    
+    """
+
     reward_model_type = RewardModelType(cfg.model.get("reward_model_type", "binary_ranking"))
     reward_model_cls = REWARD_MODEL_CLASS_DICT[reward_model_type]
 
