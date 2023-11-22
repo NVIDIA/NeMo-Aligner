@@ -24,6 +24,6 @@ def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, floa
     elif isinstance(limit_batches, int):
         limit_batches = min(number_of_batches, limit_batches)
     else:
-        raise ValueError(f"Invalid data type of {type(limit_batches)} cannot compute limit batches")
+        raise TypeError(f"Invalid data type of {type(limit_batches)} cannot compute limit batches")
 
     return limit_batches
