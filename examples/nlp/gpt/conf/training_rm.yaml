@@ -56,9 +56,9 @@ model:
   share_embeddings_and_output_weights: False
 
   reward_model_type: binary_ranking
-  head_type: LinearMerge # only for regression reward model
-  num_attributes: 1 # only for regression reward model
-  merge_attributes: False # only for regression reward model
+  head_type: LinearMerge # only for regression reward model, how to merge multiple attributes into a scalar
+  num_attributes: 1 # only for regression reward model, dimension of regression head
+  merge_attributes: False # only for regression reward model, whether to merge multiple attributes into a scalar
   attribute_weights: null # only for regression reward model, apply these weights to each attributes when merging them into a scalar
   loss_mask_val: -100 # only for regression reward model, mask dimensions with this value when calculating MSE loss
   output_sequence: False  # Whether to output a single scalar or a sequence of scalars.
