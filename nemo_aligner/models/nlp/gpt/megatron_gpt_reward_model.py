@@ -383,9 +383,9 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
             context_tokens_tensor,
             tokenizer.eos_id,
-            self.cfg.get("reset_position_ids", False),
-            self.cfg.get("reset_attention_mask", False),
-            self.cfg.get("eod_mask_loss", False),
+            self.cfg.data.get("reset_position_ids", False),
+            self.cfg.data.get("reset_attention_mask", False),
+            self.cfg.data.get("eod_mask_loss", False),
         )
         micro_batch_size = context_tokens_tensor.shape[0]
         sequence_length = context_tokens_tensor.shape[1]
