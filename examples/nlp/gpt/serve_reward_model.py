@@ -23,7 +23,6 @@ from pytriton.triton import Triton, TritonConfig
 
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo.core.config import hydra_runner
-from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import RewardModelCallable

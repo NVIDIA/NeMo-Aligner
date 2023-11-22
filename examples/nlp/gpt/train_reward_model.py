@@ -24,8 +24,7 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_regression_rm_datasets,
     build_train_valid_test_rm_datasets,
 )
-from nemo_aligner.models.nlp.gpt.megatron_gpt_regression_reward_model import MegatronGPTRegressionRewardModel
-from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
+
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
