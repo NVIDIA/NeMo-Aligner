@@ -170,7 +170,8 @@ class PPOTrainer:
             # will be B x S -1 (because we don't predict anything for the last token)
             if k != "response_tokens":
                 pad_value = 0
-                rollout_batch_seq_length -= 1
+                if rollout_batch_seq_length is not None:
+                    rollout_batch_seq_length -= 1
 
             ppo_rollout_data[k] = pad_tensors_to_max_global_seq_len(
                 ppo_rollout_data[k],
