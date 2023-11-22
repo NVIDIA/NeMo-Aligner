@@ -14,37 +14,22 @@
 
 
 import warnings
-from typing import List, Union
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
+from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
-    get_ltor_masks_and_position_ids,
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
-from nemo.core.optim.distributed_adam import _str_to_dtype
-from nemo.utils import AppState, logging
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
-from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor
-from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
-    finish_validation_step,
-    grad_reductions,
-    prepare_for_training_step,
-    prepare_for_validation_step,
-    set_eval,
     set_sync_funcs,
-    set_train,
 )
 
 
