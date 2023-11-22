@@ -59,8 +59,8 @@ class SupervisedTrainer:
         # used to compute the max step
         self._train_dataloader_len = len(train_dataloader)
 
-        self.skip_validation = self.cfg.limit_val_batches is not None and self.cfg.limit_val_batches == 0
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
+        self.skip_validation = self.limit_val_batches == 0
         self.set_max_steps()
 
         if not self.skip_validation:
