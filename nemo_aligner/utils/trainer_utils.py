@@ -56,7 +56,6 @@ def check_progress(
     save_model = safe_is_divisible(step, save_interval) or is_train_end
     # sometimes the user will provide a validation metric
     # to save against, so we need to run val when we save
-    save_model &= run_val or not is_validation_enabled
     save_model &= is_save_enabled
 
     return run_val, save_model, is_train_end
