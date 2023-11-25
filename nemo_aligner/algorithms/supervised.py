@@ -21,6 +21,7 @@ from tqdm import tqdm
 
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
+from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
 
 
 class SupervisedTrainer:
@@ -57,18 +58,13 @@ class SupervisedTrainer:
 
         # used to compute the max step
         self._train_dataloader_len = len(train_dataloader)
-        self.limit_val_batches = (
-            len(val_dataloader) if self.cfg.limit_val_batches is None else self.cfg.limit_val_batches
-        )
+
+        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.set_max_steps()
 
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-
-        assert (
-            self.cfg.save_interval % self.cfg.val_check_interval == 0
-        ), f"{self.cfg.save_interval=} must be divisible by {self.cfg.val_check_interval=}"
 
     def validation_step(self, batch):
         self.model.prepare_for_validation_step()
@@ -170,8 +166,14 @@ class SupervisedTrainer:
 
                 self.step += 1
 
-                is_train_end = self.step == self.max_steps
-                run_val = (self.step % self.cfg.val_check_interval == 0) or is_train_end
+                run_val, save_model, is_train_end = check_progress(
+                    self.step,
+                    self.max_steps,
+                    self.cfg.val_check_interval,
+                    self.cfg.save_interval,
+                    self.limit_val_batches,
+                )
+
                 if run_val:
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
@@ -182,10 +184,9 @@ class SupervisedTrainer:
 
                 global_pbar.set_postfix(metrics)
 
-                # PTL save wants tensors only
-                metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
-
-                if run_val and (self.step % self.cfg.save_interval == 0 or is_train_end):
+                if save_model:
+                    # PTL save wants tensors only
+                    metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
                     self.save(metrics, is_train_end=is_train_end)
 
                 metrics.clear()
