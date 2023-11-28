@@ -242,7 +242,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=seq_length,
-            micro_batch_size=mbs,
+            micro_batch_size=forward_micro_batch_size,
             collect_non_loss_data=True,
         )
 
