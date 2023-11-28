@@ -50,11 +50,12 @@ Additionally, TransformerEngine is non-deterministic by default, meaning subsequ
 Helpfully, TransformerEngine exposes a flag to set if you want to guarantee deterministic training runs:
 
 .. code-block:: bash
+
    export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
 
 Instruction Following Taught by Supervised Fine-Tuning (SFT)
 ############################################################
-For best DPO training performance, it is recommended to start with a supervised fine tuned model rather than the base model. For a full guide on how to perform SFT on a megatron GPT model, please refer to the `SFT section for RLHF <https://gitlab-master.nvidia.com/dl/JoC/NeMo-Aligner/-/blob/geshen/main_test_docs/docs/user-guide/RLHF.rst#Instruction_Following_Taught_by_Supervised_Fine-Tuning_(SFT)>`__
+For best DPO training performance, it is recommended to start with a supervised fine tuned model rather than the base model. For a full guide on how to perform SFT on a megatron GPT model, please refer to the :ref:`SFT guide in RLHF <sft>`
 
 DPO Model Training
 #####################
@@ -72,7 +73,9 @@ However, please be aware that most Megatron GPT models adhere to a strict format
 Always follow the prompt-response template format used during your SFT training for DPO, as failure to do so will produce a model which outputs garbage text. You should create one jsonl file in the format above for your training data, and one jsonl for your validation data.
 
 Once your data is processed into the correct format you are ready to begin DPO training. You must start with a pretrained or SFT trained model. For this section we will use the SFT model trained in the previous step to train the DPO model.
-For the purposes of the following sections, we'll assuming your training jsonl file is located in `/path/to/train_dpo_format.jsonl` and your validation jsonl file is located in `/path/to/valid_dpo_format.jsonl`
+For the purposes of the following sections, we'll assuming your training jsonl file is located in `/path/to/train_dpo_format.jsonl` and your validation jsonl file is located in `/path/to/valid_dpo_format.jsonl`.
+
+For the below parameters, the `model.dpo.ref_policy_kl_penalty` corresponds to the beta parameter in the DPO paper.
 
 .. tab-set::
 
@@ -174,3 +177,11 @@ The "reward" in this case is calculated as the difference between model log prob
 During training, the acc should generally be increasing, but don't worry if its absolute value remains low, as it doesn't correlate to finalised MTBench or MMLU scores. It should just be generally increasing.
 Other metrics to keep an eye on are the rewards_chosen_mean and rewards_rejected_mean, which represent the average of the "rewards" as defined above. Again, the absolute values aren't necessarily so important as the face the the chosen_mean should be greater than the rejected_mean over time, and the greater that difference, the better.
 All metrics will be grouped by either "train/" or "val/" in WandB, representing whether that metric is from the training or validation set, respectively.
+
+When it comes to ideal hyperparameters for DPO training, much will depend on the characteristics of your SFT (or base/foundation) model, so there are no one-size-fits-all parameters which will work in all cases.
+However, the following the following is a brief overview of which hyperparameters we have perturbed for various model sizes and their effects:
+
+* global_batch_size: generally, we have found that, all other parameters held equal, lower GBS performs worse. GBS of 256 or 512 seems to be the sweet spot for most models we trained
+* epochs: highly sensitive to training data size. We recommend you start with 1 epoch and then add on from there. We did not see any improvements beyond 3 epochs.
+* learning rate: we tested cosine annealing with a warmup of 10 steps, followed by a slow decay to a constant rate. That constant rate should be fairly low, we saw best performance with 9e-7 and 5-e7
+* ref_policy_kl_penalty: we generally saw better performance with lower values of 0.1, 0.2, 0.5, and 1.0. Occassionally values as high as 5.0 worked too.
