@@ -356,7 +356,7 @@ class RegressionRewardModelDataset(RewardModelDataset):
 
         assert cfg.data.data_impl.startswith(
             "json"
-        ), f"data.data_impl must be either mmap or json or jsonl, but got {cfg.data.data_impl}"
+        ), f"data.data_impl must be either json or jsonl, but got {cfg.data.data_impl}"
 
         super().__init__(
             cfg=cfg,
@@ -378,8 +378,7 @@ class RegressionRewardModelDataset(RewardModelDataset):
         Returns one training sample, its label, and its respective length.
         """
 
-        found = False
-        while not found:
+        while True:
             shuffled_idx = self.shuffled_indices[idx]
             sample = self.data[shuffled_idx]
             sample_text, sample_length = self.encode(sample["text"])
@@ -387,12 +386,13 @@ class RegressionRewardModelDataset(RewardModelDataset):
             if sample_length > self.seq_length:
                 idx += 1
                 continue
-            found = True
+            else:
+                break
 
         if isinstance(sample_label, str):
             sample_label = sample_label.split(",")
-
-        assert isinstance(sample_label, list), f"label should be a string or a list"
+        else:
+            assert isinstance(sample_label, list), f"label should be a string or a list"
         sample_label = [float(value) for value in sample_label]
 
         label_tensor = torch.tensor(sample_label, dtype=torch.float)

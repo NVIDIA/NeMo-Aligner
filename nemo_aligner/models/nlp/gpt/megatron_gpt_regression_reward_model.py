@@ -33,19 +33,15 @@ from nemo_aligner.utils.train_utils import set_sync_funcs
 
 class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
     """
-    Megatron GPT Reward Model Training.
+    Megatron GPT Regression Reward Model Training. 
+    Regression reward models use a MSE loss to fit multi-attribute numeric labels for each data point.
     """
 
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
 
-        if self.cfg.pipeline_model_parallel_size > 1 and not self.cfg.megatron_amp_O2:
-            warnings.warn(
-                "when using pipeline parallelism, it is recommended to set megatron_amp_O2 to be True to "
-                "avoid explicit casting for pipeline communication"
-            )
-        self.automatic_optimization = False
-        self.enable_standardization = False
+        if self.enable_standardization:
+            raise NotImplementedError("Reward Standardization is not supported")
 
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model):
@@ -67,7 +63,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            label_tensor = batch["labels"] if batch["labels"] is not None else None
+            label_tensor = batch["labels"]
 
             forward_args = {
                 "input_ids": batch["inputs"],
