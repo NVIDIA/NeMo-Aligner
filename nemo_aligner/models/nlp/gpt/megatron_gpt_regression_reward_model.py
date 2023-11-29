@@ -41,7 +41,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
         super().__init__(cfg, trainer=trainer)
 
         if self.enable_standardization:
-            raise NotImplementedError("Reward Standardization is not supported")
+            raise NotImplementedError("Reward Standardization is not supported for regression reward models")
 
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model):
@@ -63,8 +63,6 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            label_tensor = batch["labels"]
-
             forward_args = {
                 "input_ids": batch["inputs"],
                 "lengths": batch["lengths"],
@@ -81,9 +79,8 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
             def loss_func(output_tensor):
-                # output_tensor, label_tensor = output_tuple
                 # Loss per micro batch (ub).
-                loss_for_ub = self.loss_func(output_tensor, label_tensor)
+                loss_for_ub = self.loss_func(output_tensor, batch["labels"])
                 if validation_step and not self.cfg.data.get("validation_drop_last", True):
                     num_valid_tokens_in_ub = batch["loss_mask"].sum()
                     if loss_for_ub.isnan():

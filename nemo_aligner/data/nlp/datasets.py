@@ -378,21 +378,22 @@ class RegressionRewardModelDataset(RewardModelDataset):
         Returns one training sample, its label, and its respective length.
         """
 
+        orig_idx = idx = idx % len(self)
         while True:
             shuffled_idx = self.shuffled_indices[idx]
             sample = self.data[shuffled_idx]
             sample_text, sample_length = self.encode(sample["text"])
             sample_label = sample["label"]
-            if sample_length > self.seq_length:
-                idx += 1
-                continue
-            else:
+
+            if sample_length <= self.seq_length:
                 break
 
-        if isinstance(sample_label, str):
-            sample_label = sample_label.split(",")
-        else:
-            assert isinstance(sample_label, list), f"label should be a string or a list"
+            idx = (idx + 1) % len(self)
+            if idx == orig_idx:
+                raise RuntimeError(f"All samples have length > {self.seq_length}")
+
+        assert isinstance(sample_label, list), f"label should be a list of values"
+
         sample_label = [float(value) for value in sample_label]
 
         label_tensor = torch.tensor(sample_label, dtype=torch.float)
@@ -410,7 +411,16 @@ class RegressionRewardModelDataset(RewardModelDataset):
         # Negative index comes when we pad the last batch in MegatronPretrainingBatchSampler
         # We make the loss_mask zero to mask out loss from these samples
         if idx == -1:
-            logging.info("WARNING: Got -1 as item index. Masking loss from this sample")
+            logging.waring("WARNING: Got -1 as item index. Masking loss from this sample")
+            loss_mask = torch.zeros_like(loss_mask)
+
+        # Replace current sample (when it exceeds max length) with another sample but mask its loss
+        if idx != orig_idx:
+            logging.warning(
+                f"Sample {orig_idx} in dataset '{self.name}' has length "
+                f"{len(self.data[self.shuffled_indices[orig_idx]])} > {self.seq_length} "
+                f"=> replacing it with sample {idx} and masking its loss"
+            )
             loss_mask = torch.zeros_like(loss_mask)
 
         output = {
