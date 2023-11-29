@@ -14,7 +14,7 @@
 
 from abc import ABC, abstractclassmethod
 from copy import deepcopy
-from typing import Callable, Literal, Optional
+from typing import Callable, List, Literal, Optional, Union
 from unittest.mock import patch
 
 import torch
@@ -176,7 +176,7 @@ class GPTRewardModel(GPTModel):
         head_dtype: torch.dtype = None,
         num_attributes: int = 1,
         head_type: str = "LinearMerge",
-        attribute_weights: list = None,
+        attribute_weights: Optional[List[Union[float, int]]] = None,
         merge_attributes: bool = False,
     ):
         super().__init__(
