@@ -47,7 +47,7 @@ class RewardModelHead(RowParallelLinear, ABC):
         output_sequence=False,
         use_avg_pool=False,
         dtype=torch.float32,
-        merge_attributes=True,
+        merge_attributes=False,
     ):
         config = deepcopy(config)
         config.params_dtype = dtype
@@ -177,7 +177,7 @@ class GPTRewardModel(GPTModel):
         num_attributes: int = 1,
         head_type: str = "LinearMerge",
         attribute_weights: list = None,
-        merge_attributes: bool = True,
+        merge_attributes: bool = False,
     ):
         super().__init__(
             config=config,
