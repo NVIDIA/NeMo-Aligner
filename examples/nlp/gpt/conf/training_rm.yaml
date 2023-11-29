@@ -57,7 +57,6 @@ model:
 
   reward_model_type: binary_ranking # ["binary_ranking, "regression"]
   regression:
-    head_type: LinearMerge # how to merge multiple attributes into a scalar
     num_attributes: 1 # dimension of regression head
     merge_attributes: False # whether to merge multiple attributes into a scalar
     attribute_weights: null # apply these weights to each attributes when merging them into a scalar

@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-import warnings
-
 import torch
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from megatron.core import parallel_state

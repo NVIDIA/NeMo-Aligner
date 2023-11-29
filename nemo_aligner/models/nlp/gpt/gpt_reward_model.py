@@ -30,7 +30,11 @@ from torch import Tensor
 """Megatron Core based Reward Model"""
 
 
-class RewardModelHead(RowParallelLinear, ABC):
+class RewardModelHead(RowParallelLinear):
+    """
+    Reward model head to convert from output_size to scalar reward.
+    """
+
     def __init__(
         self,
         input_size,
@@ -44,10 +48,11 @@ class RewardModelHead(RowParallelLinear, ABC):
         keep_master_weight_for_test: bool = False,
         skip_bias_add: bool = False,
         # RM args
-        output_sequence=False,
-        use_avg_pool=False,
-        dtype=torch.float32,
-        merge_attributes=False,
+        output_sequence: bool = False,
+        use_avg_pool: bool = False,
+        dtype: torch.dtype = torch.float32,
+        merge_attributes: bool = False,
+        attributes_weights: Optional[List[Union[float, int]]] = None,
     ):
         config = deepcopy(config)
         config.params_dtype = dtype
@@ -70,6 +75,13 @@ class RewardModelHead(RowParallelLinear, ABC):
         self.use_avg_pool = use_avg_pool
         self.dtype = dtype
         self.merge_attributes = merge_attributes
+
+        if attributes_weights is None:
+            self.attributes_weights = torch.full((self.output_size,), 1.0 / self.output_size)
+        else:
+            self.attributes_weights = torch.tensor(attributes_weights, dtype=torch.float)
+
+        assert self.attributes_weights.size(0) == self.output_size
 
     def _compute_attributes(self, hidden_states, lengths):
         """
@@ -110,26 +122,6 @@ class RewardModelHead(RowParallelLinear, ABC):
             output = super().forward(last_state.to(self.weight.dtype))[0].squeeze(0)
 
         return output
-
-    @abstractclassmethod
-    def forward(self, hidden_states, lengths):
-        pass
-
-
-class LinearMergeRewardModelHead(RewardModelHead):
-    """
-    Reward model head to convert from output_size to scalar reward.
-    """
-
-    def __init__(self, *args, attributes_weights=None, **kwargs):
-        super(LinearMergeRewardModelHead, self).__init__(*args, **kwargs)
-
-        if attributes_weights is None:
-            self.attributes_weights = torch.full((self.output_size,), 1.0 / self.output_size)
-        else:
-            self.attributes_weights = torch.tensor(attributes_weights, dtype=torch.float)
-
-        assert self.attributes_weights.size(0) == self.output_size
 
     def forward(self, hidden_states, lengths):
         attributes = self._compute_attributes(
@@ -175,7 +167,6 @@ class GPTRewardModel(GPTModel):
         use_avg_pool: bool = False,
         head_dtype: torch.dtype = None,
         num_attributes: int = 1,
-        head_type: str = "LinearMerge",
         attribute_weights: Optional[List[Union[float, int]]] = None,
         merge_attributes: bool = False,
     ):
@@ -196,20 +187,17 @@ class GPTRewardModel(GPTModel):
 
         # if last stage or no PP
         if post_process:
-            if head_type == "LinearMerge":
-                self.rm_head = LinearMergeRewardModelHead(
-                    self.config.hidden_size,
-                    num_attributes,
-                    config=config,
-                    init_method=self.config.init_method,
-                    output_sequence=output_sequence,
-                    use_avg_pool=use_avg_pool,
-                    dtype=self.dtype if head_dtype is None else head_dtype,
-                    merge_attributes=merge_attributes,
-                    attributes_weights=attribute_weights,
-                )
-            else:
-                raise ValueError("Only `head_type=LinearMerge` is supported for now")
+            self.rm_head = RewardModelHead(
+                self.config.hidden_size,
+                num_attributes,
+                config=config,
+                init_method=self.config.init_method,
+                output_sequence=output_sequence,
+                use_avg_pool=use_avg_pool,
+                dtype=self.dtype if head_dtype is None else head_dtype,
+                merge_attributes=merge_attributes,
+                attributes_weights=attribute_weights,
+            )
 
     def forward(
         self,

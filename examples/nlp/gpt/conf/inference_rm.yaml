@@ -23,6 +23,5 @@ model:
     std: null 
   
   regression:
-    head_type: LinearMerge # how to merge multiple attributes into a scalar
     merge_attributes: False # whether to merge attribute values into a scalar
     attribute_weights: null # apply these weights to each attributes when merging them into a scalar
