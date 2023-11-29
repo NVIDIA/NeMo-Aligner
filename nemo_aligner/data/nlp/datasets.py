@@ -350,6 +350,13 @@ class DPOModelDataset(Dataset):
 
 
 class RegressionRewardModelDataset(RewardModelDataset):
+    """This class assumes each line of the dataset file is a dictionary with "text" and "label" field, 
+        where "text" is a string representing the input prompt, and "label" is a list of float or int values. 
+        Note that when training the model with multiple datasets which contain different attributes,
+        we should set missing attributes to model.regression.loss_mask_val(according to training_rm.yaml)
+        in the dataset files so that their losses are masked.
+    """
+
     def __init__(
         self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
     ):
@@ -393,7 +400,9 @@ class RegressionRewardModelDataset(RewardModelDataset):
             if idx == orig_idx:
                 raise RuntimeError(f"All samples have length > {self.seq_length}")
 
-        assert isinstance(sample_label, list), f"label should be a list of values"
+        assert isinstance(sample_label, list) and all(
+            isinstance(value, (float, int)) for value in sample_label
+        ), "label should be a list of float or int values"
 
         sample_label = [float(value) for value in sample_label]
 
