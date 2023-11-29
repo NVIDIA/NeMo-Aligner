@@ -384,7 +384,8 @@ class RegressionRewardModelDataset(RewardModelDataset):
             sample = self.data[shuffled_idx]
             sample_text, sample_length = self.encode(sample["text"])
             sample_label = sample["label"]
-
+            if idx == orig_idx:
+                orig_length = sample_length
             if sample_length <= self.seq_length:
                 break
 
@@ -417,9 +418,9 @@ class RegressionRewardModelDataset(RewardModelDataset):
         # Replace current sample (when it exceeds max length) with another sample but mask its loss
         if idx != orig_idx:
             logging.warning(
-                f"Sample {orig_idx} in dataset '{self.name}' has length "
-                f"{len(self.data[self.shuffled_indices[orig_idx]])} > {self.seq_length} "
-                f"=> replacing it with sample {idx} and masking its loss"
+                f"Sample {self.shuffled_indices[orig_idx]} in dataset '{self.name}' has length "
+                f"{orig_length} > {self.seq_length} "
+                f"=> replacing it with sample {self.shuffled_indices[idx]} and masking its loss"
             )
             loss_mask = torch.zeros_like(loss_mask)
 
