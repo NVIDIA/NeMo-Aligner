@@ -112,7 +112,7 @@ class RewardModelHead(RowParallelLinear, ABC):
         return output
 
     @abstractclassmethod
-    def forward(self):
+    def forward(self, hidden_states, lengths):
         pass
 
 
@@ -144,7 +144,7 @@ class LinearMergeRewardModelHead(RewardModelHead):
 
         else:
             assert attributes.dim() == 2, "for reward, attributes should have shape [B x self.output_size]"
-            if self.merge_attributes == False:
+            if not self.merge_attributes:
                 # do not merge attributes during regression rm training
                 return attributes
             else:
