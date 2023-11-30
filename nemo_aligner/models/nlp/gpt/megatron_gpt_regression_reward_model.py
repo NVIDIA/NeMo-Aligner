@@ -116,6 +116,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
     def loss_func(self, output_tensor, label_tensor):
         mask_val = self.cfg.get("loss_mask_val", -100.0)
         mask = label_tensor != mask_val
+        assert mask.float().sum() > 0, "Invalid sample: all attributes in label are masked, please check your data!"
         # Calculate the squared difference between prediction and label, and use the mask to ignore specific losses
         squared_diff = (output_tensor - label_tensor) ** 2 * mask
         # Calculate the mean of the masked squared differences
