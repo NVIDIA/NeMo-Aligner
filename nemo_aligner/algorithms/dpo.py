@@ -25,6 +25,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
+from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
 from nemo_aligner.utils.utils import clear_memory
 
 
@@ -96,15 +97,7 @@ class DPOTrainer:
 
         # used to compute the max step
         self._train_dataloader_len = len(train_dataloader)
-        self.limit_val_batches = (
-            len(val_dataloader)
-            if self.cfg.limit_val_batches is None
-            else (
-                int(len(val_dataloader) * self.cfg.limit_val_batches)
-                if isinstance(self.cfg.limit_val_batches, float)
-                else self.cfg.limit_val_batches
-            )
-        )
+        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
             int(self.cfg.val_check_interval * self._train_dataloader_len)
             if isinstance(self.cfg.val_check_interval, float)
@@ -115,13 +108,6 @@ class DPOTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-
-        if self.cfg.save_interval % self.val_check_interval != 0:
-            raise ValueError(
-                f"`dpo_trainer.save_interval` ({self.cfg.save_interval}) "
-                f"must be a multiple of the final val_check_interval ({self.val_check_interval}) "
-                "if `dpo_trainer.val_check_interval` is a float, you may want to make it an integer instead"
-            )
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -237,8 +223,14 @@ class DPOTrainer:
 
                 self.step += 1
 
-                is_train_end = self.step == self.max_steps
-                run_val = (self.step % self.cfg.val_check_interval == 0) or is_train_end
+                run_val, save_model, is_train_end = check_progress(
+                    self.step,
+                    self.max_steps,
+                    self.cfg.val_check_interval,
+                    self.cfg.save_interval,
+                    self.limit_val_batches,
+                )
+
                 if run_val:
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
@@ -249,10 +241,9 @@ class DPOTrainer:
 
                 global_pbar.set_postfix(metrics)
 
-                # PTL save wants tensors only
-                metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
-
-                if run_val and ((self.step % self.cfg.save_interval == 0) or is_train_end):
+                if save_model:
+                    # PTL save wants tensors only
+                    metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
                     self.save(metrics, is_train_end=is_train_end)
 
                 metrics.clear()
