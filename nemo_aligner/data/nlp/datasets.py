@@ -354,7 +354,7 @@ class RegressionRewardModelDataset(RewardModelDataset):
         where "text" is a string representing the input prompt, and "label" is a list of float or int values. 
         Note that when training the model with multiple datasets which contain different attributes,
         we should set missing attributes to model.regression.loss_mask_val(according to training_rm.yaml)
-        in the dataset files so that their losses are masked. At least one attribute should be presented for each sample.
+        in the dataset files so that their losses are masked. At least one attribute should be present for each sample.
 
         WARNING: It's recommended to preprocess your data in advance to ensure all samples are within self.seq_length.
                  Otherwise if all samples in a batch are longer than self.seq_length, you may get NaN loss.
