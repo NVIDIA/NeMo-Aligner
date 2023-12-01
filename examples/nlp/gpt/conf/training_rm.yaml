@@ -93,7 +93,7 @@ model:
       min_lr: 9e-7
 
   data:
-    data_impl: mmap
+    data_impl: jsonl
     splits_string: null
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True
