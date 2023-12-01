@@ -14,6 +14,7 @@ The toolkit is currently in it's early stages, and we are committed to improving
 * **Supervised Fine Tuning**
 * **Reward Model Training**
 * **Reinforcement Learning from Human Feedback using the PPO Algorithm**
+* **[Direct Preference Optimization](https://arxiv.org/pdf/2305.18290.pdf)**
 
 ## Learn More
 * [Documentation](./docs/README.md)
@@ -44,7 +45,7 @@ To build your own, refer to the [Dockerfile](https://github.com/NVIDIA/NeMo/blob
 For the list of changes within each release please see the [Changelog](CHANGELOG.md).
 
 ## Future work
-- Add DPO and Rejection Sampling support
+- Add Rejection Sampling support
 - We will continue improving the stability of the PPO learning phase.
 - Improve the performance of RLHF
 
