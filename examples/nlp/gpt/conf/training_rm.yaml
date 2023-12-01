@@ -57,6 +57,12 @@ model:
   mcore_gpt: True
   share_embeddings_and_output_weights: False
 
+  reward_model_type: binary_ranking # ["binary_ranking, "regression"]
+  regression:
+    num_attributes: 1 # dimension of regression head
+    merge_attributes: False # whether to merge multiple attributes into a scalar
+    attribute_weights: null # apply these weights to each attributes when merging them into a scalar
+    loss_mask_val: -100 #  mask dimensions with this value when calculating MSE loss
   output_sequence: False  # Whether to output a single scalar or a sequence of scalars.
   use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model
   force_head_dtype: float32  # enforce specific dtype for the final projection in the model head
