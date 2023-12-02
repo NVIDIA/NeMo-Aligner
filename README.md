@@ -10,7 +10,7 @@ The toolkit is currently in it's early stages, and we are committed to improving
 
 ## Key features
 
-* **SteerLM**
+* **SteerLM: Attribute Conditioned SFT as an (User-Steerable) Alternative to RLHF.** Learn more at our [SteerLM](https://arxiv.org/abs/2310.05344) and [HelpSteer](https://arxiv.org/abs/2311.09528) papers. Try it instantly for free on [NVIDIA AI Playground](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/llama2-70b-steerlm)
 * **Supervised Fine Tuning**
 * **Reward Model Training**
 * **Reinforcement Learning from Human Feedback using the PPO Algorithm**
