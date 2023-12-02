@@ -8,3 +8,4 @@
 
    RLHF.rst
    SteerLM.rst
+   DPO.rst
