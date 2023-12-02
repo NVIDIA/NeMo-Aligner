@@ -102,7 +102,9 @@ def load_checkpoint_model_config(restore_path):
 
     # if we gave it a directory, then load the cfg directly
     if os.path.isdir(restore_path):
-        return OmegaConf.load(os.path.join(restore_path, config_name_in_ckpt))
+        cfg_path = os.path.join(restore_path, config_name_in_ckpt)
+        assert os.path.exists(cfg_path), f"tried to load cfg at {cfg_path=} but it does not exist"
+        return OmegaConf.load(cfg_path)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, extract_config_only=True)
