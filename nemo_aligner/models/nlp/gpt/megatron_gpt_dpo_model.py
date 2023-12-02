@@ -365,7 +365,7 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
             [torch.cat((b["chosen_labels"], b["rejected_labels"]), dim=0) for b in list_of_batches], dim=0
         )
         global_batch = [tokens, masks, pos_ids, labels]
-        with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_o2):
+        with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             ref_log_probs = self.get_logprob_batch(global_batch)
 
         # return in GPU, trainer needs to move to cpu
