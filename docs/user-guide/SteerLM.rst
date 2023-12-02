@@ -1,7 +1,7 @@
 .. include:: /content/nemo.rsts
 
 Model Alignment by SteerLM Method
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 
 **SteerLM** is a novel approach developed by the NVIDIA NeMo Team, introduced as part of NVIDIA NeMo Alignment methods. It simplifies the customization of large language models (LLMs) and empowers users with dynamic control over model outputs by specifying desired attributes. Despite remarkable progress in natural language generation driven by LLMs like GPT-3, Megatron-Turing, Chinchilla, PaLM-2, Falcon, and Llama 2, these foundational models often fall short in delivering nuanced and user-aligned responses. The current approach for LLM improvement combines supervised fine-tuning and reinforcement learning from human feedback, but it comes with complexities and limited user control. SteerLM addresses these challenges and represents a significant advancement in the field, making it easier to tailor LLMs to specific needs and preferences. This document delves into how SteerLM operates and offers guidance on training a SteerLM model.
@@ -25,7 +25,8 @@ SteerLM simplifies alignment compared to RLHF. It supports user-steerable AI by 
 
 
 SteerLM vs RLHF
-################
+###############
+
 Reinforcement Learning from Human Feedback (RLHF) and SteerLM are two methods aimed at aligning language models to human preferences. RLHF trains language models by providing positive or negative feedback on generated responses, reinforcing good behaviors. Specifically, the model is encouraged to generate more text similar to responses that receive positive feedback, and less like those with negative feedback.
 SteerLM takes a different approach to model alignment. Rather than solely reinforcing "good" behaviors, it categorizes the space of possible model responses using steering labels. At inference time, the model generates based on these categorical labels that steer its output. So while RLHF uses direct feedback on model generations, SteerLM aligns by mapping responses into labeled categories associated with human preferences.
 The two methods tackle model alignment from different angles - RLHF by directly reinforcing desired model behaviors, and SteerLM by steering generation based on categorical labels. Both aim to produce language model outputs better aligned with human values and preferences.
@@ -33,8 +34,10 @@ The two methods tackle model alignment from different angles - RLHF by directly 
 .. note::
    For details of SteerLM, please refer to our paper `SteerLM: Attribute Conditioned SFT as an (User-Steerable) Alternative to RLHF <https://arxiv.org/abs/2310.05344>`_.
    For details of HelpSteer dataset, please refer to our paper `HelpSteer: Multi-attribute Helpfulness Dataset for SteerLM <https://arxiv.org/abs/2311.09528>`_.
+
 Train a SteerLM model 
 #####################
+
 This section is a step-by-step tutorial that walks you through how to run a full SteerLM pipeline with a Llama2 70B LLM model. It includes the following:
 
 1. Data download and preprocessing
@@ -72,7 +75,8 @@ Untar the .nemo file to obtain the tokenizer in NeMo format (only for the 70B mo
 The prefix for the tokenizer would be different when extracted. Ensure that the correct tokenizer file is used when running the preceding command.
 
 Step 2: Download and Preprocess data for Attribute Prediction Modelling
-#############################
+#######################################################################
+
 First, download and convert both datasets into a common format.
 
 .. code-block:: bash
@@ -103,7 +107,8 @@ Finally, preprocess the data into regression reward model training format.
 
 
 Step 3: Train the regression reward model on OASST+HelpSteer data
-###################################################
+#################################################################
+
 For this tutorial, train the regression reward model for 800 steps. 
 
 Note that you would need to set up multi-node training in your cluster env, depending on the type of cluster you use. For details, please refer to https://lightning.ai/docs/pytorch/stable/clouds/cluster.html
@@ -168,7 +173,8 @@ Now execute:
 
 
 Step 5: Train the Attribute-Conditioned SFT model
-###############################
+#################################################
+
 For the purposes of this tutorial, the Attribute-Conditioned SFT model is trained for 800 steps.
 
 .. code-block:: bash
@@ -333,5 +339,6 @@ Response is as below
    This tutorial covers only Phase 1-3: training the value model, generating annotations, and initial SteerLM model training. Phase 4 bootstraps the SteerLM model by sampling responses conditioned on high quality data, but is ignored for simplicity in this tutorial.
 
 SteerLM: Novel Technique for Simple and Controllable Model Alignment
-##############################
+####################################################################
+
 SteerLM provides a novel technique for realizing a new generation of AI systems aligned with human preferences in a controllable manner. Its conceptual simplicity, performance gains, and customizability highlight the transformative possibilities of user-steerable AI. To learn more, please check out our paper `SteerLM: Attribute Conditioned SFT as an (User-Steerable) Alternative to RLHF <https://arxiv.org/abs/2310.05344>`_.
