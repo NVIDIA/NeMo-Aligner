@@ -65,6 +65,15 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         # sampling parameters for generation
         self._sampling_params = OmegaConf.to_container(self.cfg.ppo.sampling_params, resolve=True)
 
+        # Safety check until https://github.com/NVIDIA/NeMo-Aligner/pull/19 is merged.
+        valid_end_strings = ["<|endoftext|>", "<extra_id_1>"]
+        for end_string in self._sampling_params["end_strings"]:
+            if end_string not in valid_end_strings:
+                raise NotImplementedError(
+                    "Currently only '<|endoftext|>' and '<extra_id_1>' are allowed in `sampling_params.end_strings`, "
+                    f"but found '{end_string}'"
+                )
+
         self.to_offload_adam_states = self.cfg.ppo.offload_adam_states
         self.entropy_bonus = self.cfg.ppo.entropy_bonus
         self.ratio_eps = self.cfg.ppo.ratio_eps
