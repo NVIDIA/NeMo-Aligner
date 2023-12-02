@@ -59,7 +59,7 @@ def main(cfg) -> None:
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
     ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-        ptl_model, megatron_amp_o2=cfg.model.get("megatron_amp_O2", False)
+        ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
     )
     ptl_model.ref_policy_state_dict = ref_policy_state_dict
 
