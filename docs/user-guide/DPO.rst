@@ -73,9 +73,9 @@ However, please be aware that most Megatron GPT models adhere to a strict format
 Always follow the prompt-response template format used during your SFT training for DPO, as failure to do so will produce a model which outputs garbage text. You should create one jsonl file in the format above for your training data, and one jsonl for your validation data.
 
 Once your data is processed into the correct format you are ready to begin DPO training. You must start with a pretrained or SFT trained model. For this section we will use the SFT model trained in the previous step to train the DPO model.
-For the purposes of the following sections, we'll assuming your training jsonl file is located in `/path/to/train_dpo_format.jsonl` and your validation jsonl file is located in `/path/to/valid_dpo_format.jsonl`.
+For the purposes of the following sections, we'll assuming your training jsonl file is located in ``/path/to/train_dpo_format.jsonl`` and your validation jsonl file is located in ``/path/to/valid_dpo_format.jsonl``.
 
-For the below parameters, the `model.dpo.ref_policy_kl_penalty` corresponds to the beta parameter in the DPO paper.
+For the below parameters, the ``model.dpo.ref_policy_kl_penalty`` corresponds to the beta parameter in the DPO paper.
 
 .. tab-set::
 
@@ -89,16 +89,12 @@ For the below parameters, the `model.dpo.ref_policy_kl_penalty` corresponds to t
             export GPFS="/path/to/nemo-aligner-repo"
             export TRAIN_DATA_PATH="/path/to/train_dpo_format.jsonl"
             export VALID_DATA_PATH="/path/to/valid_dpo_format.jsonl"
-            export CONFIG_PATH="${GPFS}/examples/nlp/gpt/conf/"
 
             python -u ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
-               --config-path=${CONFIG_PATH} \
-               --config-name=gpt_dpo \
                trainer.num_nodes=1 \
                trainer.devices=8 \
                ++model.micro_batch_size=1 \
                ++model.global_batch_size=512 \
-               ++model.data.data_impl=jsonl \
                pretrained_checkpoint.restore_from_path=/path/to/megatron_gpt_sft.nemo \
                "model.data.data_prefix={train: [${TRAIN_DATA_PATH}], validation: [${VALID_DATA_PATH}], test: [${VALID_DATA_PATH}]}" \
                exp_manager.create_wandb_logger=false \
@@ -128,7 +124,6 @@ For the below parameters, the `model.dpo.ref_policy_kl_penalty` corresponds to t
 
             GPFS="/path/to/nemo-aligner-repo"
             PRETRAINED_CHECKPOINT_NEMO_FILE="/path/to/megatron_gpt_sft.nemo"
-            CONFIG_PATH="${GPFS}/examples/nlp/gpt/conf/"
 
             TRAIN_DATA_PATH="/path/to/train_comparisons.jsonl"
             VALID_DATA_PATH="/path/to/test_comparisons.jsonl"
@@ -152,15 +147,12 @@ For the below parameters, the `model.dpo.ref_policy_kl_penalty` corresponds to t
             && export PYTHONPATH="${GPFS}:${PYTHONPATH}" \
             && export HYDRA_FULL_ERROR=1 \
             && python -u ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
-               --config-path=${CONFIG_PATH} \
-               --config-name=gpt_dpo \
                trainer.num_nodes=${SLURM_JOB_NUM_NODES} \
                trainer.devices=8 \
                pretrained_checkpoint.restore_from_path='${PRETRAINED_CHECKPOINT_NEMO_FILE}' \
                "++model.data.data_prefix={train: [${TRAIN_DATA_PATH}], validation: [${VALID_DATA_PATH}], test: [${VALID_DATA_PATH}]}" \
                ++model.micro_batch_size=1 \
                ++model.global_batch_size=512 \
-               ++model.data.data_impl=jsonl \
                exp_manager.explicit_log_dir=${RESULTS_DIR} \
                exp_manager.create_wandb_logger=True \
                exp_manager.wandb_logger_kwargs.name=${NAME} \
@@ -173,10 +165,10 @@ For the below parameters, the `model.dpo.ref_policy_kl_penalty` corresponds to t
             set +x
 
 During DPO training, there will be several metrics recorded to WandB which you can monitor, chiefly acc (representing the percentage amount whereby the model's chosen rewards are greater than the rejected rewards).
-The "reward" in this case is calculated as the difference between model log probs and the reference log probs, multiplied by the KL penalty (beta in the original paper), for the chosen and rejected responses.
+The ``reward`` in this case is calculated as the difference between model log probs and the reference log probs, multiplied by the KL penalty (beta in the original paper), for the chosen and rejected responses.
 During training, the acc should generally be increasing, but don't worry if its absolute value remains low, as it doesn't correlate to finalised MTBench or MMLU scores. It should just be generally increasing.
-Other metrics to keep an eye on are the rewards_chosen_mean and rewards_rejected_mean, which represent the average of the "rewards" as defined above. Again, the absolute values aren't necessarily so important as the face the the chosen_mean should be greater than the rejected_mean over time, and the greater that difference, the better.
-All metrics will be grouped by either "train/" or "val/" in WandB, representing whether that metric is from the training or validation set, respectively.
+Other metrics to keep an eye on are the rewards_chosen_mean and rewards_rejected_mean, which represent the average of the ``rewards`` as defined above. Again, the absolute values aren't necessarily so important as the face the the chosen_mean should be greater than the rejected_mean over time, and the greater that difference, the better.
+All metrics will be grouped by either ``train/`` or ``val/`` in WandB, representing whether that metric is from the training or validation set, respectively.
 
 When it comes to ideal hyperparameters for DPO training, much will depend on the characteristics of your SFT (or base/foundation) model, so there are no one-size-fits-all parameters which will work in all cases.
 However, the following the following is a brief overview of which hyperparameters we have perturbed for various model sizes and their effects:
