@@ -89,7 +89,7 @@ Then, merge the two datasets for the train and val subset respectively.
 
 .. code-block:: bash
 
-   cat data/oasst/train.jsonl data/helpsteer/train.jsonl > data/merge_train.jsonl
+   cat data/oasst/train.jsonl data/helpsteer/train.jsonl | awk '{for(i=1;i<=4;i++) print}' > data/merge_train.jsonl
 
    cat data/oasst/val.jsonl data/helpsteer/val.jsonl > data/merge_val.jsonl
 
@@ -118,7 +118,7 @@ Note that you would need to set up multi-node training in your cluster env, depe
    python /opt/NeMo-Aligner/examples/nlp/gpt/train_reward_model.py \
          trainer.num_nodes=32 \
          trainer.devices=8 \
-         ++model.micro_batch_size=1 \
+         ++model.micro_batch_size=2 \
          ++model.global_batch_size=512 \
          ++model.data.data_impl=jsonl \
          pretrained_checkpoint.restore_from_path=/models/llama13b/llama13b.nemo \
