@@ -170,6 +170,7 @@ Now execute:
          --output-file=data/oasst/val_labeled.jsonl \
          --port=1424
 
+   cat data/oasst/train_labeled.jsonl data/oasst/train_labeled.jsonl > data/oasst/train_labeled_2ep.jsonl
 
 
 Step 5: Train the Attribute-Conditioned SFT model
@@ -209,7 +210,7 @@ For the purposes of this tutorial, the Attribute-Conditioned SFT model is traine
         model.data.train_ds.max_seq_length=4096 \
         model.data.train_ds.micro_batch_size=1 \
         model.data.train_ds.global_batch_size=128 \
-        model.data.train_ds.file_path=data/oasst/train_labeled.jsonl \
+        model.data.train_ds.file_path=data/oasst/train_labeled_2ep.jsonl \
         model.data.train_ds.index_mapping_dir=/indexmap_dir \
         model.data.train_ds.add_eos=False \
         model.data.train_ds.hf_dataset=True \
