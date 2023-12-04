@@ -11,6 +11,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Bug Fixes
 
-## [1.0.0] - 2023-11-06
+## [0.1.0] - 2023-12-04
 ### Added
 - First open source release

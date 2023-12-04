@@ -23,7 +23,7 @@ The toolkit is currently in it's early stages, and we are committed to improving
 
 ## Latest Release
 
-For the latest stable release please see the [releases page](https://github.com/NVIDIA/NeMo-Aligner/releases). All releases come with a pre-built container. Changes within each release will be documented in [CHANGELOG](CHANGELOG.md).
+For the latest stable release please see the [releases page](https://github.com/NVIDIA/NeMo-Aligner/releases). All releases come with a pre-built container. Changes within each release will be documented in [CHANGELOG](https://github.com/NVIDIA/NeMo-Aligner/blob/main/CHANGELOG.md).
 
 ## Installing your own environment
 
