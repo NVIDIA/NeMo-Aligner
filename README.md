@@ -2,7 +2,7 @@
 
 ## Introduction
 
-NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state of the art model alignment algorithms such as SteerLM and Reinforcement Learning from Human Feedback (RLHF). RLHF enables users to align language models to be more safe, harmless and helpful. Enterprises can do end-to-end RLHF on a wide range of model sizes. They can also take advantage of all the parallelism and parameter-efficient techniques to ensure their model alignment is done in a performant and resource efficient manner.
+NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state of the art model alignment algorithms such as SteerLM, DPO and Reinforcement Learning from Human Feedback (RLHF). These algorithms enable users to align language models to be more safe, harmless and helpful. Enterprises can do end-to-end RLHF on a wide range of model sizes. They can also take advantage of all the parallelism techniques to ensure their model alignment is done in a performant and resource efficient manner.
 
 NeMo-Aligner toolkit is built using the [NeMo Toolkit](https://github.com/NVIDIA/NeMo) which allows for scaling training up to 1000s of GPUs using tensor, data and pipeline parallelism for all components of alignment. All of our checkpoints are cross compatible with the NeMo ecosystem; allowing for inference deployment and further customization.
 
