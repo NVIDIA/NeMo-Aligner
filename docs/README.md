@@ -3,7 +3,7 @@
 ## Custom Trainers
 
 NeMo-Aligner uses custom trainers to coordinate all aspects of training. There are currently 3 custom trainers:
-1. [SupervisedTrainer](/nemo_aligner/algorithms/supervised.py): for SFT and Reward modeling.
+1. [SupervisedTrainer](/nemo_aligner/algorithms/supervised.py): for SFT, SteerLM and Reward modeling.
 2. [CriticServerTrainer](/nemo_aligner/algorithms/critic_server_trainer.py): trains the RL critic via PyTriton requests. It will also run the reward model depending on the configuration.
 3. [PPOTrainer](/nemo_aligner/algorithms/ppo.py): performs the RLHF PPO training, since PPO has components such as the Critic, this trainer will send inference and train requests via [PyTriton](https://github.com/triton-inference-server/pytriton) to the CriticServerTrainer to train and run inference on the critic.
 
