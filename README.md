@@ -19,7 +19,7 @@ The toolkit is currently in it's early stages, and we are committed to improving
 ## Learn More
 * [Documentation](./docs/README.md)
 * [Examples](./examples/nlp/gpt/)
-* [Tutorials](https://docs.nvidia.com/nemo-framework/user-guide/latest/index.html): Please refer to the alignment section for step by step tutorials
+* [Tutorials](https://docs.nvidia.com/nemo-framework/user-guide/latest/ModelAlignment/index.html)
 
 ## Requirements
 NeMo-Aligner has the same requirements as the [NeMo Toolkit Requirements](https://github.com/NVIDIA/NeMo#requirements) and is built into the NeMo Training container.
