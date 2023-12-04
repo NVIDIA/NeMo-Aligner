@@ -1,7 +1,4 @@
-# Training architecture and details
-
-## Reward Model training
-The NeMo-Aligner toolkit supports reward model training using pairwise comparisons. This training will look very similar to the NeMo Toolkit except that the GPT model has the last layer removed for a layer to output a scalar reward.
+# RLHF Training architecture and details
 
 ## PPO training
 During PPO training, four different models will be interacting with each other:
