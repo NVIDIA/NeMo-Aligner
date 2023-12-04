@@ -21,11 +21,17 @@ The toolkit is currently in it's early stages, and we are committed to improving
 * [Examples](./examples/nlp/gpt/)
 * [Tutorials](https://docs.nvidia.com/nemo-framework/user-guide/latest/ModelAlignment/index.html)
 
-## Requirements
-NeMo-Aligner has the same requirements as the [NeMo Toolkit Requirements](https://github.com/NVIDIA/NeMo#requirements) and is built into the NeMo Training container.
+## Latest Release
 
-## Installation
-Please follow the same steps as the [NeMo Toolkit Installation Guide](https://github.com/NVIDIA/NeMo#installation) but add the following at the end to install NeMo-Aligner
+For the latest stable release please see the [releases page](https://github.com/NVIDIA/NeMo-Aligner/releases). All releases come with a pre-built container. Changes within each release will be documented in [CHANGELOG](CHANGELOG.md).
+
+## Installing your own environment
+
+### Requirements
+NeMo-Aligner has the same requirements as the [NeMo Toolkit Requirements](https://github.com/NVIDIA/NeMo#requirements) with the addition of [PyTriton](https://github.com/triton-inference-server/pytriton).
+
+### Installation
+Please follow the same steps as the [NeMo Toolkit Installation Guide](https://github.com/NVIDIA/NeMo#installation) but run the following after installing NeMo
 ```bash
 pip install nemo-aligner
 ```
@@ -36,13 +42,7 @@ pip install .
 
 ### Docker Containers
 
-We release along with the NeMo toolkit containers. You may find more details about released containers in [releases page](https://github.com/NVIDIA/NeMo-Aligner/releases).
-
-To build your own, refer to the [Dockerfile](https://github.com/NVIDIA/NeMo/blob/main/Dockerfile) and add `RUN pip install nemo-aligner` at the end.
-
-## Release history
-
-For the list of changes within each release please see the [Changelog](CHANGELOG.md).
+To build your own, refer to the [NeMo Dockerfile](https://github.com/NVIDIA/NeMo/blob/main/Dockerfile) and add `RUN pip install nemo-aligner` at the end.
 
 ## Future work
 - Add Rejection Sampling support
