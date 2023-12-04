@@ -13,8 +13,8 @@
 # limitations under the License.
 
 
-MAJOR = 1
-MINOR = 0
+MAJOR = 0
+MINOR = 1
 PATCH = 0
 PRE_RELEASE = "rc0"
 
@@ -27,9 +27,9 @@ __version__ = __shortversion__ + "".join(VERSION[3:])
 __package_name__ = "nemo_aligner"
 __contact_names__ = "NVIDIA"
 __contact_emails__ = "nemo-toolkit@nvidia.com"
-__homepage__ = "https://docs.nvidia.com/nemo-framework/user-guide/latest/index.html"
+__homepage__ = "https://docs.nvidia.com/nemo-framework/user-guide/latest/ModelAlignment/index.html"
 __repository_url__ = "https://github.com/NVIDIA/NeMo-Aligner"
 __download_url__ = "https://github.com/NVIDIA/NeMo-Aligner/releases"
 __description__ = "NeMo-Aligner - a toolkit for model alignment"
 __license__ = "Apache2"
-__keywords__ = "deep learning, machine learning, gpu, NLP, NeMo, nvidia, pytorch, torch, tts, speech, language, reinforcement learning, RLHF, preference modeling"
+__keywords__ = "deep learning, machine learning, gpu, NLP, NeMo, nvidia, pytorch, torch, language, reinforcement learning, RLHF, preference modeling, SteerLM, DPO"
