@@ -17,8 +17,8 @@ The toolkit is currently in it's early stages, and we are committed to improving
 * **Direct Preference Optimization as described in [paper](https://arxiv.org/pdf/2305.18290.pdf)**
 
 ## Learn More
-* [Documentation](https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/README.md)
-* [Examples](https://github.com/NVIDIA/NeMo-Aligner/tree/main/examples/nlp/gpt)
+* [Documentation](https://github.com/NVIDIA/NeMo-Aligner/blob/v0.1.0/docs/README.md)
+* [Examples](https://github.com/NVIDIA/NeMo-Aligner/tree/v0.1.0/examples/nlp/gpt)
 * [Tutorials](https://docs.nvidia.com/nemo-framework/user-guide/latest/ModelAlignment/index.html)
 
 ## Latest Release
