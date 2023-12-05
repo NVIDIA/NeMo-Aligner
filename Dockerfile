@@ -8,23 +8,6 @@ RUN git config --global user.email "worker@nvidia.com"
 
 WORKDIR /opt
 
-RUN git clone -b 23.08 https://github.com/NVIDIA/Megatron-LM.git
-RUN cd Megatron-LM && git cherry-pick 28363ee2af1d7384a402a84a9e15a03271b59db7 && pip install -e .
-
-RUN git clone -b r1.21.0 https://github.com/NVIDIA/NeMo.git
-RUN cd NeMo && git cherry-pick -X theirs 05ecfe40a74ea495e3bcd1d7c38307399701aa04 25c31382078e8328cd2e6ea0cc20ecbb7d702a07 8303d0d482a15b281a474fc6ea083dab6e59d645 06b13f912f05e395546bf728adea65ccaa464080 88c872aa7e633ae37849f971be76f889b5ac6069 54ce830c9d9f5bf2a0996f5ad0a9c1cccf1a0d39
-WORKDIR /opt/NeMo
-# fixes a bug in NeMo when used with latest apex
-RUN sed -i 's/_fast_layer_norm(x, self.weight + 1, self.bias, self.epsilon)/_fast_layer_norm(x, self.weight + 1, self.bias, self.epsilon, False)/g' nemo/collections/nlp/modules/common/megatron/layer_norm_1p.py
-RUN sed -i 's/shutil.rmtree(ckpt_to_dir(filepath))/shutil.rmtree(ckpt_to_dir(filepath), ignore_errors=True)/g' nemo/collections/nlp/parts/nlp_overrides.py
-RUN sed -i 's/\[all\]/\[nlp\]/g' reinstall.sh
-RUN rm -rf .git && ./reinstall.sh
-
-WORKDIR /opt
-
-# place any util pkgs here
-RUN pip install --upgrade-strategy only-if-needed jsonlines
-
 # install TransformerEngine
 RUN pip uninstall -y transformer-engine
 RUN pip install --upgrade git+https://github.com/NVIDIA/TransformerEngine.git@release_v1.1
@@ -38,6 +21,25 @@ RUN cd apex && pip install -v --disable-pip-version-check --no-cache-dir --no-bu
 
 RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==0.4.1
 RUN pip install -U --no-deps protobuf==4.24.4
+
+# MLM
+RUN git clone -b 23.08 https://github.com/NVIDIA/Megatron-LM.git
+RUN cd Megatron-LM && git cherry-pick 28363ee2af1d7384a402a84a9e15a03271b59db7 && pip install -e .
+
+# NeMo
+RUN git clone -b r1.21.0 https://github.com/NVIDIA/NeMo.git
+RUN cd NeMo && git cherry-pick -X theirs 05ecfe40a74ea495e3bcd1d7c38307399701aa04 25c31382078e8328cd2e6ea0cc20ecbb7d702a07 8303d0d482a15b281a474fc6ea083dab6e59d645 06b13f912f05e395546bf728adea65ccaa464080 88c872aa7e633ae37849f971be76f889b5ac6069 54ce830c9d9f5bf2a0996f5ad0a9c1cccf1a0d39
+WORKDIR /opt/NeMo
+# fixes a bug in NeMo when used with latest apex
+RUN sed -i 's/_fast_layer_norm(x, self.weight + 1, self.bias, self.epsilon)/_fast_layer_norm(x, self.weight + 1, self.bias, self.epsilon, False)/g' nemo/collections/nlp/modules/common/megatron/layer_norm_1p.py
+RUN sed -i 's/shutil.rmtree(ckpt_to_dir(filepath))/shutil.rmtree(ckpt_to_dir(filepath), ignore_errors=True)/g' nemo/collections/nlp/parts/nlp_overrides.py
+RUN sed -i 's/\[all\]/\[nlp\]/g' reinstall.sh
+RUN rm -rf .git && ./reinstall.sh
+
+WORKDIR /opt
+
+# place any util pkgs here
+RUN pip install --upgrade-strategy only-if-needed jsonlines
 
 # install the latest NeMo-Aligner
 RUN pip install --upgrade-strategy only-if-needed git+https://github.com/NVIDIA/NeMo-Aligner.git@main
