@@ -44,7 +44,10 @@ pip install .
 
 ### Docker Containers
 
-To build your own, refer to the [NeMo Dockerfile](https://github.com/NVIDIA/NeMo/blob/main/Dockerfile) and add `RUN pip install nemo-aligner` at the end.
+We provide an official NeMo-Aligner Dockerfile which is based on stable, tested versions of NeMo, Megatron-LM, and TransformerEngine. The goal of this Dockerfile
+is stability, so it may not track the very latest versions of those 3 packages. You can access our Dockerfile [here](https://github.com/NVIDIA/NeMo-Aligner/blob/main/Dockerfile)
+
+Alternatively, you can build the NeMo Dockerfile here [NeMo Dockerfile](https://github.com/NVIDIA/NeMo/blob/main/Dockerfile) and add `RUN pip install nemo-aligner` at the end.
 
 ## Future work
 - Add Rejection Sampling support
