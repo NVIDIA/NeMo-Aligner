@@ -39,7 +39,7 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 mp.set_start_method("spawn", force=True)
 
 
-@hydra_runner(config_path="conf", config_name="dpo_gpt")
+@hydra_runner(config_path="conf", config_name="gpt_dpo")
 def main(cfg) -> None:
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
@@ -59,7 +59,7 @@ def main(cfg) -> None:
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
     ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-        ptl_model, megatron_amp_o2=cfg.model.get("megatron_amp_O2", False)
+        ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
     )
     ptl_model.ref_policy_state_dict = ref_policy_state_dict
 

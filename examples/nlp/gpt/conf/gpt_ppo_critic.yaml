@@ -63,6 +63,11 @@ model:
   # RM args
   use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model
   force_head_dtype: float32  # enforce specific dtype for the final projection in the model head
+  reward_model_type: binary_ranking # ["binary_ranking, "regression"]
+  regression:
+    num_attributes: 1 # dimension of regression head
+    merge_attributes: True # whether to merge attribute values into a scalar
+    attribute_weights: null # apply these weights to each attributes when merging them into a scalar
 
   micro_batch_size: 1
   global_batch_size: 64

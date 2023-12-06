@@ -9,3 +9,4 @@
    RLHF.rst
    SteerLM.rst
    OfflineAlignment.rst
+   DPO.rst

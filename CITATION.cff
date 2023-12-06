@@ -11,14 +11,18 @@ authors:
     given-names: Sahil
   - family-names: Zhang
     given-names: Jimmy
+  - family-names: Zeng
+    given-names: Jiaqi
+  - family-names: Egert
+    given-names: Daniel
+  - family-names: Wang
+    given-names: Zhilin
   - family-names: Yan
     given-names: Zijie
   - family-names: Dong
     given-names: Yi
   - family-names: Markel 
     given-names: Ausin
-  - family-names: Zeng
-    given-names: Jiaqi
   - family-names: Taghibakhshi
     given-names: Ali
   - family-names: Tao
@@ -27,8 +31,6 @@ authors:
     given-names: Jian
   - family-names: Yao
     given-names: Xin
-  - family-names: Egert
-    given-names: Daniel
   - family-names: Liu
     given-names: Hongbin
   - family-names: Aithal

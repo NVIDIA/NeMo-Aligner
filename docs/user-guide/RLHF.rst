@@ -46,6 +46,8 @@ After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Align
       export NVTE_FLASH_ATTN=0
       export NVTE_FUSED_ATTN=0
 
+.. _sft:
+
 Instruction Following Taught by Supervised Fine-Tuning (SFT)
 ############################################################
 For best RLHF training performance, it is recommended to start with a supervised fine tuned model rather than the base model. In this section, we will describe how to do SFT using NeMo-Aligner.
