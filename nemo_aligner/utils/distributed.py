@@ -337,13 +337,8 @@ class Timer:
         self._duration = float("inf")
 
         if isinstance(self.duration, str):
-            struct_time = time.strptime(self.duration, "%d:%H:%M:%S")
-            self._duration = timedelta(
-                days=struct_time.tm_mday,
-                hours=struct_time.tm_hour,
-                minutes=struct_time.tm_min,
-                seconds=struct_time.tm_sec,
-            ).total_seconds()
+            days, hours, mins, seconds = map(int, self.duration.strip().split(":"))
+            self._duration = timedelta(days=days, hours=hours, minutes=mins, seconds=seconds).total_seconds()
 
     def start_time(self):
         self._start_time = time.monotonic()
@@ -354,7 +349,6 @@ class Timer:
     def get_time_remaining(self):
         return self._duration - self.get_time_elapsed()
 
-    @property
     def is_finished(self):
         time_left = self.get_time_remaining()
 
