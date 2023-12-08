@@ -32,6 +32,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset
 from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel
+from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -214,6 +215,7 @@ def main(cfg) -> None:
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
+    timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
     sft_trainer = SupervisedTrainer(
         cfg=cfg.trainer.sft,
@@ -225,6 +227,7 @@ def main(cfg) -> None:
         test_dataloader=None,
         logger=logger,
         ckpt_callback=ckpt_callback,
+        run_timer=timer,
     )
 
     if custom_trainer_state_dict is not None:
