@@ -336,7 +336,7 @@ class Timer:
     def __post_init__(self):
         self._duration = float("inf")
 
-        if isinstance(self.duration, str):
+        if self.duration is not None:
             days, hours, mins, seconds = map(int, self.duration.strip().split(":"))
             self._duration = timedelta(days=days, hours=hours, minutes=mins, seconds=seconds).total_seconds()
 
