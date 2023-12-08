@@ -328,7 +328,7 @@ class SyncTimer(NamedTimer):
 
 @dataclass
 class Timer:
-    """Timer to tell us when the time limit has reached
+    """Timer to tell us when the time limit is reached
     """
 
     duration: Optional[str]
