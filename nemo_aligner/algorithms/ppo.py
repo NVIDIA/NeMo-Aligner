@@ -22,6 +22,7 @@ from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
+from nemo.utils import logging
 from nemo_aligner.utils.distributed import (
     SyncTimer,
     masked_global_mean_var,
@@ -62,6 +63,7 @@ class PPOTrainer:
         rm_critic,
         logger,
         ckpt_callback,
+        run_timer,
     ):
         self.cfg = cfg
         self.model = model
@@ -72,6 +74,9 @@ class PPOTrainer:
         self.rm_critic = rm_critic
         self.logger = logger
         self.ckpt_callback = ckpt_callback
+
+        # this timer checks if we should stop training
+        self.run_timer = run_timer
 
         self.consumed_samples = 0
         self.epoch = 0
@@ -369,6 +374,7 @@ class PPOTrainer:
 
             num_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
 
+            self.run_timer.start_time()
             for _ in global_pbar:
                 step_metrics = {}
                 timing_metrics = {}
@@ -409,6 +415,7 @@ class PPOTrainer:
 
                 self.step += 1
 
+                run_time_exceeded = self.run_timer.is_finished()
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
