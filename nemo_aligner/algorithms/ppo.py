@@ -36,6 +36,7 @@ from nemo_aligner.utils.ppo_utils import (
 )
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
+from nemo_aligner.utils.trainer_utils import check_progress
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 
 
@@ -94,10 +95,6 @@ class PPOTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-
-        assert (
-            self.cfg.save_interval % self.cfg.val_check_interval == 0
-        ), f"{self.cfg.save_interval=} must be divisible by {self.cfg.val_check_interval=}"
 
     def generate_ppo_data(self, rollout_batches):
         """generate ppo specific data for training
@@ -412,8 +409,15 @@ class PPOTrainer:
 
                 self.step += 1
 
-                is_train_end = self.step == self.max_steps
-                run_val = (self.step % self.cfg.val_check_interval == 0) or is_train_end
+                run_val, save_model, is_train_end = check_progress(
+                    self.step,
+                    self.max_steps,
+                    self.cfg.val_check_interval,
+                    self.cfg.save_interval,
+                    1.0,  # TODO:(geshen): allow for limit val batches
+                    run_time_exceeded=run_time_exceeded,
+                )
+
                 if run_val:
                     self.timer.start("validation_time")
                     val_metrics = self.run_validation()
@@ -439,9 +443,13 @@ class PPOTrainer:
                 step_metrics.update({f"train_{k}": v for k, v in metrics.items()})
                 global_pbar.set_postfix(step_metrics)
 
-                step_metrics = {k: torch.as_tensor(v) for k, v in step_metrics.items()}
-                if run_val and (self.step % self.cfg.save_interval == 0 or is_train_end):
+                if save_model:
+                    step_metrics = {k: torch.as_tensor(v) for k, v in step_metrics.items()}
                     self.save(step_metrics, is_train_end=is_train_end)
+
+                if run_time_exceeded:
+                    logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
+                    return
 
             self.epoch += 1
 
