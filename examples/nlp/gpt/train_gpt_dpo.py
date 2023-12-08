@@ -14,7 +14,7 @@
 from functools import partial
 
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf, open_dict
+from omegaconf.omegaconf import OmegaConf
 
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
@@ -22,6 +22,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.dpo import DPOTrainer, dpo_custom_collate
 from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_dpo_datasets
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
+from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -131,6 +132,7 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
+    timer = Timer(cfg.exp_manager.get("max_time_per_run"))
     dpo_trainer = DPOTrainer(
         cfg=cfg.trainer.dpo,
         model=ptl_model,
@@ -141,6 +143,7 @@ def main(cfg) -> None:
         test_dataloader=None,
         logger=logger,
         ckpt_callback=ckpt_callback,
+        run_timer=timer,
     )
 
     if custom_trainer_state_dict is not None:

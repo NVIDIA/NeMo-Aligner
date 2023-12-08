@@ -23,6 +23,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
     MegatronPretrainingRandomBatchSampler,
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
+from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
@@ -79,6 +80,7 @@ class DPOTrainer:
         test_dataloader,
         logger,
         ckpt_callback,
+        run_timer,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -88,6 +90,9 @@ class DPOTrainer:
         self.cfg = cfg
         self.optimizer = optimizer
         self.scheduler = scheduler
+
+        # this timer checks if we should stop training
+        self.run_timer = run_timer
 
         self.step = 0
         self.epoch = 0
@@ -188,6 +193,8 @@ class DPOTrainer:
             # epoch done
             return
 
+        self.run_timer.start_time()
+
         for _ in epoch_iter:
             loop_iter = range(self.step, self.max_steps)
 
@@ -223,12 +230,14 @@ class DPOTrainer:
 
                 self.step += 1
 
+                run_time_exceeded = self.run_timer.is_finished()
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
                     self.limit_val_batches,
+                    run_time_exceeded=run_time_exceeded,
                 )
 
                 if run_val:
@@ -245,6 +254,10 @@ class DPOTrainer:
                     # PTL save wants tensors only
                     metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
                     self.save(metrics, is_train_end=is_train_end)
+
+                if run_time_exceeded:
+                    logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
+                    return
 
                 metrics.clear()
 
