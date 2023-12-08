@@ -435,7 +435,7 @@ The PPO Actor training job contains the master controller that makes the HTTP ca
 The above launches the initial and actor server on 1 node with 8 GPUs
 
 .. note::
-   Fore more info on PPO hyperparameters please see `PPO Hparams <https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/training.md#ppo-hyperparameters>`__.
+   Fore more info on PPO hyperparameters please see `PPO Hparams <https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/RLHFTraining.md#ppo-hyperparameters>`__.
 
 Launching Both Servers for RLHF training
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
