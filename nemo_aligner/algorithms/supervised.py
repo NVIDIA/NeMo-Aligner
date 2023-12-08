@@ -18,6 +18,8 @@ from statistics import mean
 import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
+from nemo.utils import logging
+
 
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
@@ -198,6 +200,7 @@ class SupervisedTrainer:
                     self.save(metrics, is_train_end=is_train_end)
 
                 if run_time_exceeded:
+                    logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
 
                 metrics.clear()
