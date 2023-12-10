@@ -6,11 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [Next Version]
 
 ### New features and optimizations
-- `exp_manager.max_time_per_run` is now respected, the trainers will save and run val if we've reached the time limit before exiting.
 
 ### Breaking changes
 
 ### Bug Fixes
+- `exp_manager.max_time_per_run` is now respected, the trainers will save and run val if we've reached the time limit before exiting.
 
 ## [0.1.0] - 2023-12-04
 ### Added
