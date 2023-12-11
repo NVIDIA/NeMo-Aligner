@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
-from omegaconf import OmegaConf, DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
@@ -151,7 +151,6 @@ def resolve_overlapping_fields(base_config, overwrite_config):
     recursive_merge(base_config, overwrite_config)
 
     return DictConfig(base_config)
-
 
 
 def masked_mean(values, mask, dim=None):
