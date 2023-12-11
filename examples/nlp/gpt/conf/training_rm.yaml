@@ -106,3 +106,7 @@ model:
     data_prefix: null
 
   precision: ${trainer.precision}
+
+  overwrite_base_config:
+      data:
+        data_prefix: True
