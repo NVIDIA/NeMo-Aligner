@@ -177,3 +177,7 @@ model:
     eod_mask_loss: False # Mask loss for the end of document tokens
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: null
+
+  overwrite_base_config:
+    data:
+      data_prefix: True

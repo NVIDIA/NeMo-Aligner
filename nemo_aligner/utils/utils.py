@@ -24,7 +24,7 @@ from unittest.mock import patch
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
@@ -123,7 +123,35 @@ def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_
         checkpoint_cfg.pop("target", None)
         checkpoint_cfg.pop("nemo_version", None)
 
-    return OmegaConf.merge(checkpoint_cfg, model_cfg_to_overwrite)
+    resolved_checkpoint_cfg = resolve_overlapping_fields(checkpoint_cfg, model_cfg_to_overwrite)
+
+    return OmegaConf.merge(resolved_checkpoint_cfg, model_cfg_to_overwrite)
+
+
+def resolve_overlapping_fields(base_config, overwrite_config):
+    def recursive_merge(base, overwrite, path=[]):
+        for key, value in overwrite.items():
+            current_path = path + [key]
+
+            if key not in base:
+                continue
+
+            if isinstance(value, DictConfig) and isinstance(base[key], DictConfig):
+                recursive_merge(base[key], value, path=current_path)
+            else:
+                current_config = overwrite_base_config
+                for sub_key in current_path:
+                    if isinstance(current_config, DictConfig):
+                        current_config = current_config[sub_key] if sub_key in current_config else None
+
+                if current_config is not None:
+                    base.pop(key, None)
+
+    overwrite_base_config = overwrite_config.get("overwrite_base_config", OmegaConf.create())
+    recursive_merge(base_config, overwrite_config)
+
+    return DictConfig(base_config)
+
 
 
 def masked_mean(values, mask, dim=None):
