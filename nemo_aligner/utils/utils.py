@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """Misc helper functions"""
-
+import copy
 import gc
 import os
 import re
@@ -129,13 +129,16 @@ def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_
 
 
 def resolve_overlapping_fields(base_config, overwrite_config):
-    def recursive_merge(base, overwrite, path=[]):
+    base_config = copy.deepcopy(base_config)
+
+    def recursive_merge(base, overwrite, path=None):
+        if path is None:
+            path = []
         for key, value in overwrite.items():
             current_path = path + [key]
 
             if key not in base:
                 continue
-
             if isinstance(value, DictConfig) and isinstance(base[key], DictConfig):
                 recursive_merge(base[key], value, path=current_path)
             else:
@@ -150,8 +153,7 @@ def resolve_overlapping_fields(base_config, overwrite_config):
     overwrite_base_config = overwrite_config.get("overwrite_base_config", OmegaConf.create())
     recursive_merge(base_config, overwrite_config)
 
-    return DictConfig(base_config)
-
+    return base_config
 
 def masked_mean(values, mask, dim=None):
     """
