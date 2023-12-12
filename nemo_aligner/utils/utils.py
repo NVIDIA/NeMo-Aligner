@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Misc helper functions"""
-import copy
 import gc
 import os
 import re
@@ -123,37 +122,31 @@ def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_
         checkpoint_cfg.pop("target", None)
         checkpoint_cfg.pop("nemo_version", None)
 
-    resolved_checkpoint_cfg = resolve_overlapping_fields(checkpoint_cfg, model_cfg_to_overwrite)
+    if "overwrite_base_config" in model_cfg_to_overwrite:
+        remove_overwritten_fields(checkpoint_cfg, model_cfg_to_overwrite.overwrite_base_config)
 
-    return OmegaConf.merge(resolved_checkpoint_cfg, model_cfg_to_overwrite)
+    merged_cfg = OmegaConf.merge(checkpoint_cfg, model_cfg_to_overwrite)
+
+    # Remove the "overwrite_base_config" key to avoid cluttering the model config.
+    merged_cfg.pop("overwrite_base_config", None)
+
+    return merged_cfg
 
 
-def resolve_overlapping_fields(base_config, overwrite_config):
-    base_config = copy.deepcopy(base_config)
+def remove_overwritten_fields(base_config, overwrite_config):
+    """
+    Remove from `base_config` fields associated to a `True` value in `overwrite_config`.
+    """
+    for key, value in overwrite_config.items():
+        if key not in base_config:
+            continue
 
-    def recursive_merge(base, overwrite, path=None):
-        if path is None:
-            path = []
-        for key, value in overwrite.items():
-            current_path = path + [key]
-
-            if key not in base:
-                continue
-            if isinstance(value, DictConfig) and isinstance(base[key], DictConfig):
-                recursive_merge(base[key], value, path=current_path)
-            else:
-                current_config = overwrite_base_config
-                for sub_key in current_path:
-                    if isinstance(current_config, DictConfig):
-                        current_config = current_config[sub_key] if sub_key in current_config else None
-
-                if current_config is not None:
-                    base.pop(key, None)
-
-    overwrite_base_config = overwrite_config.get("overwrite_base_config", OmegaConf.create())
-    recursive_merge(base_config, overwrite_config)
-
-    return base_config
+        if isinstance(value, DictConfig) and isinstance(base_config[key], DictConfig):
+            remove_overwritten_fields(base_config[key], value)
+        else:
+            assert isinstance(value, bool), "the overwrite config can only contain boolean values"
+            if value:
+                base_config.pop(key)
 
 
 def masked_mean(values, mask, dim=None):
