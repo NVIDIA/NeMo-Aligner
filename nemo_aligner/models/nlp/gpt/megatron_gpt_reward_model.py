@@ -131,11 +131,11 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
             # only do the torch.cat if it's available
             lengths, tokens = None, None
-            position_ids = (
-                torch.cat((batch["position_ids"], batch["position_ids"]), dim=0)
-                if batch["position_ids"] is not None
-                else None
-            )
+            #position_ids = (
+            #    torch.cat((batch["position_ids"], batch["position_ids"]), dim=0)
+            #    if batch["position_ids"] is not None
+            #    else None
+            #)
 
             if batch["chosen_length"] is not None and batch["rejected_length"] is not None:
                 # Combine chosen and rejected lengths and then tokens.
@@ -147,8 +147,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             forward_args = {
                 "input_ids": tokens,
                 "lengths": lengths,
-                "position_ids": position_ids,
-                "attention_mask": batch["attention_mask"],
+                "position_ids": batch["position_ids"],
+                "attention_mask": batch["attention_mask"][0:1],
                 "labels": None,
             }
 
@@ -241,6 +241,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         return loss, acc_chosen
 
     def get_loss_and_metrics(self, batch, forward_only):
+        seq_length = batch["chosen"].shape[1]
+
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
 
@@ -252,7 +254,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             model=self.model,
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
-            seq_length=self.cfg.encoder_seq_length,
+            seq_length=seq_length,
             micro_batch_size=self.cfg.micro_batch_size
             * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
         )

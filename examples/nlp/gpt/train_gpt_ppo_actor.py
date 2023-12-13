@@ -93,13 +93,13 @@ def main(cfg) -> None:
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
     # use the entire dataset
-    train_valid_test_num_samples = [-1, -1, -1]
+    #train_valid_test_num_samples = [-1, -1, -1]
     train_ds, validation_ds, _ = build_train_valid_test_rlhf_datasets(
         cfg=cfg.model,
         data_prefix=cfg.model.data.data_prefix,
         data_impl=cfg.model.data.data_impl,
-        splits_string=cfg.model.data.splits_string,
-        train_valid_test_num_samples=train_valid_test_num_samples,
+        #splits_string=cfg.model.data.splits_string,
+        #train_valid_test_num_samples=train_valid_test_num_samples,
         seq_length=cfg.model.data.seq_length,
         seed=cfg.model.seed,
         tokenizer=ptl_model.tokenizer,

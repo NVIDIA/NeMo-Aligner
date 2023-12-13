@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from functools import partial
 
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
@@ -18,14 +19,17 @@ from omegaconf.omegaconf import OmegaConf
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
+from nemo_aligner.algorithms.dpo import dpo_custom_collate
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.nlp.builders import (
     build_dataloader,
+    build_train_valid_test_dpo_datasets,
     build_train_valid_test_regression_rm_datasets,
     build_train_valid_test_rm_datasets,
 )
 
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
+from nemo_aligner.models.nlp.gpt.megatron_gpt_regression_reward_model import regression_rm_custom_collate
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -86,10 +90,10 @@ def main(cfg) -> None:
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
     # use the entire dataset
-    train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
+    #train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
 
     if reward_model_type == RewardModelType.BINARY_RANKING:
-        dataset_builder = build_train_valid_test_rm_datasets
+        dataset_builder = build_train_valid_test_dpo_datasets
     elif reward_model_type == RewardModelType.REGRESSION:
         dataset_builder = build_train_valid_test_regression_rm_datasets
     else:
@@ -99,8 +103,8 @@ def main(cfg) -> None:
         cfg=cfg.model,
         data_prefix=cfg.model.data.data_prefix,
         data_impl=cfg.model.data.data_impl,
-        splits_string=cfg.model.data.splits_string,
-        train_valid_test_num_samples=train_valid_test_num_samples,
+        #splits_string=cfg.model.data.splits_string,
+        #train_valid_test_num_samples=train_valid_test_num_samples,
         seq_length=cfg.model.data.seq_length,
         seed=cfg.model.seed,
         tokenizer=ptl_model.tokenizer,
@@ -113,6 +117,13 @@ def main(cfg) -> None:
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
+        collate_fn=partial(
+            regression_rm_custom_collate if reward_model_type == RewardModelType.REGRESSION else dpo_custom_collate,
+            eos_id=ptl_model.tokenizer.eos_id,
+            reset_position_ids=cfg.model.data.get("reset_position_ids", False),
+            reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
+            eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+        ),
     )
 
     val_dataloader = build_dataloader(
@@ -122,6 +133,13 @@ def main(cfg) -> None:
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
+        collate_fn=partial(
+            regression_rm_custom_collate if reward_model_type == RewardModelType.REGRESSION else dpo_custom_collate,
+            eos_id=ptl_model.tokenizer.eos_id,
+            reset_position_ids=cfg.model.data.get("reset_position_ids", False),
+            reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
+            eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+        ),
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
