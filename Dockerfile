@@ -43,3 +43,5 @@ WORKDIR /opt
 RUN pip install --upgrade-strategy only-if-needed git+https://github.com/NVIDIA/NeMo-Aligner.git@main
 
 WORKDIR /workspace
+
+ENV NVTE_APPLY_QK_LAYER_SCALING=1
