@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### New features and optimizations
 - Added public-facing official Dockerfile for NeMo-Aligner
+- Memory optimization in PPO that helps avoid OOM in the actor when sending training data to the critic
 
 ### Breaking changes
 

@@ -385,6 +385,7 @@ class PPOTrainer:
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
                 # send critic train
+                clear_memory()
                 self.rm_critic.train(ppo_rollout_data)
 
                 # logging
