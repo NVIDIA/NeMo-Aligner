@@ -96,8 +96,4 @@ model:
       constant_steps: 1000
       min_lr: 9e-7
 
-  overwrite_base_config:
-    data:
-      data_prefix: True
-
   precision: ${trainer.precision}
