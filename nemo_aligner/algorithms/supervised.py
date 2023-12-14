@@ -18,6 +18,8 @@ from statistics import mean
 import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
+from nemo.utils import logging
+
 
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
@@ -40,6 +42,7 @@ class SupervisedTrainer:
         test_dataloader,
         logger,
         ckpt_callback,
+        run_timer,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -49,6 +52,9 @@ class SupervisedTrainer:
         self.cfg = cfg
         self.optimizer = optimizer
         self.scheduler = scheduler
+
+        # this timer checks if we should stop training
+        self.run_timer = run_timer
 
         self.step = 0
         self.epoch = 0
@@ -138,6 +144,8 @@ class SupervisedTrainer:
             # epoch done
             return
 
+        self.run_timer.start_time()
+
         for _ in epoch_iter:
             loop_iter = range(self.step, self.max_steps)
 
@@ -166,12 +174,14 @@ class SupervisedTrainer:
 
                 self.step += 1
 
+                run_time_exceeded = self.run_timer.is_finished()
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
                     self.limit_val_batches,
+                    run_time_exceeded=run_time_exceeded,
                 )
 
                 if run_val:
@@ -188,6 +198,10 @@ class SupervisedTrainer:
                     # PTL save wants tensors only
                     metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
                     self.save(metrics, is_train_end=is_train_end)
+
+                if run_time_exceeded:
+                    logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
+                    return
 
                 metrics.clear()
 
