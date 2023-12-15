@@ -279,10 +279,8 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         set_eval(self)
         self.offload_adam_states()
 
-        print_mem("pre refit")
         if self.use_trtllm_generation:
             self.trtllm_generate.refit(self.model)
-        print_mem("post refit")
 
 
     @torch.no_grad()
