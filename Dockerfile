@@ -34,7 +34,7 @@ RUN rm -rf .git && ./reinstall.sh
 
 # MLM
 RUN pip uninstall -y megatron-core
-RUN git clone https://github.com/NVIDIA/Megatron-LM.git
+RUN git clone -b core_r0.4.0 https://github.com/NVIDIA/Megatron-LM.git
 RUN cd Megatron-LM && pip install -e .
 
 WORKDIR /opt
