@@ -29,6 +29,7 @@ from nemo_aligner.data.nlp.builders import (
 )
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMCriticClient
+from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -153,6 +154,7 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     rm_critic = RemoteGPTRMCriticClient(cfg.remote_critic_rm)
+    timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
     ppo_trainer = PPOTrainer(
         cfg=cfg.trainer.ppo,
@@ -164,6 +166,7 @@ def main(cfg) -> None:
         rm_critic=rm_critic,
         logger=logger,
         ckpt_callback=ckpt_callback,
+        run_timer=timer,
     )
 
     if custom_trainer_state_dict is not None:

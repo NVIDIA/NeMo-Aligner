@@ -13,5 +13,8 @@ Models:
 Servers:
 - nemo_aligner/servers/*
 
+documentation:
+- docs/**
+
 CI:
 - .github/**/*
