@@ -178,7 +178,7 @@ class GPTRewardModel(GPTModel):
 
         if self.post_process:
             return self.rm_head(hidden_states, lengths)
-
+        print(f"rm hiddenstate {hidden_states}")
         return hidden_states
 
     def sharded_state_dict(self, prefix=""):

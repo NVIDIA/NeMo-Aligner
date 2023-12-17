@@ -207,9 +207,11 @@ class PPOTrainer:
 
         for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
             rollout_batch = self.model.infer(inference_batch)
-
+            print("flag2")
             rollout_batches.append(rollout_batch)
             futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+            print("flag3")
+
 
         if not is_validation and self.compute_init_policy_kl:
             init_policy_logprobs = self.model.get_init_policy_logprobs(rollout_batches)

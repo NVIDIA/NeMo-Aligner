@@ -174,6 +174,7 @@ def calculate_dialogue_response_lengths(
             length_with_extra_id_1 >= prompt_lengths, length_with_extra_id_1, torch.iinfo(torch.int32).max
         )
 
+
         # either terminated using eos id or extra id 1
         lengths = torch.minimum(eos_length, length_with_extra_id_1)
     else:
@@ -183,7 +184,9 @@ def calculate_dialogue_response_lengths(
     lengths = lengths + 1
     # Ensure we never go over `length_params.max_length`. Note that this means the response may not necessarily
     # end with EOS / extra_id_1 (we should not enforce it as PPO training requires the real generated token).
+    # max_lengths = prompt_lengths + max_generation_length
     max_lengths = prompt_lengths + max_generation_length
+
     lengths = torch.minimum(lengths, max_lengths)
 
     # Prompts' max size and `max_length` should be such that we never exceed the encoder input size.

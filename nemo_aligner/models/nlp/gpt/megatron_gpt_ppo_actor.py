@@ -51,6 +51,13 @@ from nemo_aligner.utils.utils import (
     offload_distributed_adam,
 )
 
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
+
+def print_mem(prefix):
+    pyt = torch.cuda.memory_allocated() / (1024**3)
+    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024**3)
+    print(f"Mem Usage | {prefix} | {pyt} {el}")
+
 
 class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
@@ -69,6 +76,13 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self.entropy_bonus = self.cfg.ppo.entropy_bonus
         self.ratio_eps = self.cfg.ppo.ratio_eps
         self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
+        
+        self.use_trtllm_generation = self.cfg.ppo.use_trtllm
+        self.orig_dp_rank = parallel_state.get_data_parallel_rank()
+
+        if self.use_trtllm_generation:
+            self.trtllm_generate = GPTGenerateTRTLLM(self.cfg, self.tokenizer)
+
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
@@ -265,15 +279,24 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         set_eval(self)
         self.offload_adam_states()
 
+        print_mem("pre refit")
+        if self.use_trtllm_generation:
+            self.trtllm_generate.refit(self.model)
+        print_mem("post refit")
+
+
     @torch.no_grad()
     def infer(self, inference_batch):
         prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
 
-        actor_output = self.generate(
-            inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params
-        )
+        if self.use_trtllm_generation:
+            actor_output = self.trtllm_generate.generate(inputs, self._length_params, self._sampling_params)
+        else:
+            actor_output = self.generate(
+                inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params
+            )
 
         response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
         response_lengths = calculate_dialogue_response_lengths(
@@ -316,6 +339,12 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         # training will onload the adam states, no need to onload it here
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
+
+        print_mem("pre free")
+        if self.use_trtllm_generation:
+            self.trtllm_generate.free()
+        print_mem("post free")
+
         set_train(self)
 
     def offload_adam_states(self):
