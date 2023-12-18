@@ -38,7 +38,12 @@ def safe_is_divisible(a, b):
 
 
 def check_progress(
-    step: int, max_steps: int, val_check_interval: int, save_interval: int, limit_val_batches: Union[int, float, None]
+    step: int,
+    max_steps: int,
+    val_check_interval: int,
+    save_interval: int,
+    limit_val_batches: Union[int, float, None],
+    run_time_exceeded: bool = False,
 ):
     is_validation_enabled = limit_val_batches != 0 and val_check_interval > 0
     is_save_enabled = save_interval > 0
@@ -49,11 +54,11 @@ def check_progress(
 
     # run validation on the last step
     # or when we hit the val check interval
-    run_val = safe_is_divisible(step, val_check_interval) or is_train_end
+    run_val = safe_is_divisible(step, val_check_interval) or is_train_end or run_time_exceeded
     run_val &= is_validation_enabled
 
     # save model at save intervals or last step
-    save_model = safe_is_divisible(step, save_interval) or is_train_end
+    save_model = safe_is_divisible(step, save_interval) or is_train_end or run_time_exceeded
     # sometimes the user will provide a validation metric
     # to save against, so we need to run val when we save
     save_model &= is_save_enabled

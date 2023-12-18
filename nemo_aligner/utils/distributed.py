@@ -14,8 +14,12 @@
 
 """distributed utils for communicating between different ranks"""
 
+import time
 import warnings
 from collections import defaultdict
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Dict, Optional, Union
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
@@ -320,3 +324,37 @@ class SyncTimer(NamedTimer):
         yield from output_list
 
         del self.stored_results[name]
+
+
+@dataclass
+class Timer:
+    """Timer to tell us when the time limit is reached
+    """
+
+    duration: Optional[str]
+
+    def __post_init__(self):
+        self._duration = float("inf")
+
+        if self.duration is not None:
+            days, hours, mins, seconds = map(int, self.duration.strip().split(":"))
+            self._duration = timedelta(days=days, hours=hours, minutes=mins, seconds=seconds).total_seconds()
+
+    def start_time(self):
+        self._start_time = time.monotonic()
+
+    def get_time_elapsed(self):
+        return time.monotonic() - self._start_time
+
+    def get_time_remaining(self):
+        return self._duration - self.get_time_elapsed()
+
+    def is_finished(self):
+        time_left = self.get_time_remaining()
+
+        is_finished = time_left <= 0
+        is_finished_tensor = torch.tensor([is_finished], dtype=torch.bool, device="cuda")
+
+        # only respect rank 0 timing
+        torch.distributed.broadcast(is_finished_tensor, 0)
+        return is_finished_tensor.item()
