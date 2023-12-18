@@ -15,7 +15,7 @@ The toolkit is currently in it's early stages, and we are committed to improving
 * **Supervised Fine Tuning**
 * **Reward Model Training**
 * **Reinforcement Learning from Human Feedback using the [PPO](https://arxiv.org/pdf/1707.06347.pdf) Algorithm**
-    * Check out our aligned [NV-LLama2-70B-RLHF model](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/nv-llama2-70b-rlhf) on NVIDIA AI Foundation for free.
+    * Check out our aligned [NV-Llama2-70B-RLHF model](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/nv-llama2-70b-rlhf) on NVIDIA AI Foundation for free.
 * **Direct Preference Optimization as described in [paper](https://arxiv.org/pdf/2305.18290.pdf)**
 
 ## Learn More
