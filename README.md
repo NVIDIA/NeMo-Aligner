@@ -10,10 +10,12 @@ The toolkit is currently in it's early stages, and we are committed to improving
 
 ## Key features
 
-* **SteerLM: Attribute Conditioned SFT as an (User-Steerable) Alternative to RLHF.** Learn more at our [SteerLM](https://arxiv.org/abs/2310.05344) and [HelpSteer](https://arxiv.org/abs/2311.09528) papers. Try it instantly for free on [NVIDIA AI Playground](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/llama2-70b-steerlm)
+* **SteerLM: Attribute Conditioned SFT as an (User-Steerable) Alternative to RLHF.** 
+    * Learn more at our [SteerLM](https://arxiv.org/abs/2310.05344) and [HelpSteer](https://arxiv.org/abs/2311.09528) papers. Try our [NV-Llama2-70B-SteerLM-Chat model](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/llama2-70b-steerlm) instantly for free on NVIDIA AI Foundation.
 * **Supervised Fine Tuning**
 * **Reward Model Training**
 * **Reinforcement Learning from Human Feedback using the [PPO](https://arxiv.org/pdf/1707.06347.pdf) Algorithm**
+    * Check out our aligned [NV-Llama2-70B-RLHF model](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/nv-llama2-70b-rlhf) on NVIDIA AI Foundation for free.
 * **Direct Preference Optimization as described in [paper](https://arxiv.org/pdf/2305.18290.pdf)**
 
 ## Learn More
