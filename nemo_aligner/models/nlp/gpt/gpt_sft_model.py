@@ -21,6 +21,7 @@ from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.modules.common.text_generation_strategy import TextGenerationStrategy
 from nemo.collections.nlp.modules.common.text_generation_utils import (
@@ -40,11 +41,13 @@ from nemo_aligner.utils.train_utils import (
     set_train,
 )
 from nemo_aligner.utils.utils import configure_batch_sizes
+from omegaconf.dictconfig import DictConfig
+from pytorch_lightning.trainer.trainer import Trainer
 
+class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
+    def __init__(self, cfg: DictConfig, trainer: Trainer):
+        super().__init__(cfg, trainer=trainer)
 
-class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
-    def __init__(self, cfg, trainer):
-        super().__init__(cfg, trainer)
         inference_params = dict(cfg.get("inference", {}))
         # note that this will fail if import path is not available when the model is restored
         # this is by design as it might not be possible to use model correctly without a matching

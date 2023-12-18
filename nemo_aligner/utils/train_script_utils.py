@@ -95,6 +95,7 @@ def disable_data_callbacks(ptl_model, train_dataloader, train_ds):
 def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
     """initializes the model using PTL
     """
+    ptl_model.setup_complete = True
     disable_data_callbacks(ptl_model, train_dataloader, train_ds)
 
     call._call_setup_hook(ptl_trainer)
@@ -114,6 +115,7 @@ def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
             # stepping here will restore it properly
             scheduler.step(scheduler.last_epoch)
 
+    
 
 def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
     """get a function we can conveniently call within the trainer that saves the checkpoint
