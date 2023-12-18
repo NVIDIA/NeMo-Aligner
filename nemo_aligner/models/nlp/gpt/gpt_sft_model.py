@@ -18,6 +18,7 @@ from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
@@ -29,9 +30,13 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
 )
 from nemo_aligner.utils.utils import configure_batch_sizes
+from omegaconf.dictconfig import DictConfig
+from pytorch_lightning.trainer.trainer import Trainer
 
+class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
+    def __init__(self, cfg: DictConfig, trainer: Trainer):
+        super().__init__(cfg, trainer=trainer)
 
-class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
     def get_loss_and_metrics(self, batch, forward_only):
         """Take a data_iter which is an interator over the microbatches
             and return loss as well as metrics

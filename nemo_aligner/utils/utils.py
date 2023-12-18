@@ -67,7 +67,7 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
 
 
 def load_from_nemo(
-    cls, model_cfg, trainer, strict=True, modify_config_fn=None, restore_path=None, load_base_model_only=False
+    cls, model_cfg, trainer, strict=True, modify_config_fn=None, restore_path=None, load_base_model_only=False, return_updated_cfg=False
 ):
     """load a model using nemo checkpoint
     """
@@ -84,6 +84,7 @@ def load_from_nemo(
         )
         model_cfg = modify_config_fn(origin_cfg, model_cfg, add_cfg_to_tree=False)
 
+    
     model = cls.restore_from(
         restore_path=restore_path,
         trainer=trainer,
@@ -91,7 +92,10 @@ def load_from_nemo(
         save_restore_connector=connector,
         strict=strict,
     )
-    return model
+    if return_updated_cfg:
+        return model, model_cfg 
+    else:
+        return model
 
 
 def load_checkpoint_model_config(restore_path):
