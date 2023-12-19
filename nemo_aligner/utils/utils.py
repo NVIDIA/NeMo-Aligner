@@ -126,6 +126,7 @@ def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_
     if remove_meta_info:
         checkpoint_cfg.pop("target", None)
         checkpoint_cfg.pop("nemo_version", None)
+        checkpoint_cfg.pop("optim", None)
 
     return OmegaConf.merge(checkpoint_cfg, model_cfg_to_overwrite)
 

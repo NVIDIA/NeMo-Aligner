@@ -17,6 +17,7 @@ from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf
 
+from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
@@ -61,21 +62,34 @@ def main(cfg) -> None:
 
     logger = CustomLoggerWrapper(trainer.loggers)
 
-    ptl_model = load_from_nemo(
+    ptl_model, updated_cfg = load_from_nemo(
         MegatronGPTActorModel,
         cfg.model,
         trainer,
         strict=True,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
+        return_updated_cfg=True
     )
 
     init_policy_state_dict = None
 
-    # only need this if we are running with inital kl penalty
-    if cfg.trainer.ppo.initial_policy_kl_penalty > 0:
-        init_policy_state_dict = retrieve_model_state_dict_in_cpu(
-            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
-        )
+    peft_cfg_cls = PEFT_CONFIG_MAP[cfg.model.peft.peft_scheme]
+    if cfg.model.peft.restore_from_path is not None:
+        # initialize peft weights from a checkpoint instead of randomly
+        # This is not the same as resume training because optimizer states are not restored.
+        logging.info("PEFT Weights will be loaded from", cfg.model.peft.restore_from_path)
+        ptl_model.load_adapters(cfg.model.peft.restore_from_path, peft_cfg_cls(updated_cfg))
+    elif peft_cfg_cls is not None:
+        logging.info("Adding adapter weights to the model for PEFT")
+        ptl_model.add_adapter(peft_cfg_cls(updated_cfg))
+    else:
+        logging.info(f"Running full finetuning since no peft scheme is given.\n{ptl_model.summarize()}")
+
+        # only need this if we are running with inital kl penalty
+        if cfg.trainer.ppo.initial_policy_kl_penalty > 0:
+            init_policy_state_dict = retrieve_model_state_dict_in_cpu(
+                ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
+            )
 
     ptl_model.init_policy_state_dict = init_policy_state_dict
 
