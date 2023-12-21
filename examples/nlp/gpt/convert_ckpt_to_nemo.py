@@ -33,13 +33,13 @@ from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPSt
 from nemo.core.config import hydra_runner
 from nemo.utils import AppState
 from nemo.utils.model_utils import inject_model_parallel_rank
-from nemo_rlhf.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTPPOActorModel
-from nemo_rlhf.servers.constants import ServerSignal
-from nemo_rlhf.servers.server_callables import InitialPolicyCallable
-from nemo_rlhf.utils.utils import set_autocast_gpu_dtype
+from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTPPOActorModel
+from nemo_aligner.servers.constants import ServerSignal
+from nemo_aligner.servers.server_callables import InitialPolicyCallable
+from nemo_aligner.utils.utils import set_autocast_gpu_dtype
 from nemo.utils import logging
 import datetime
-from nemo_rlhf.utils.train_script_utils import (
+from nemo_aligner.utils.train_script_utils import (
     init_distributed,
 )
 

@@ -19,9 +19,6 @@ from functools import partial
 import torch
 from omegaconf import OmegaConf, open_dict
 from pytorch_lightning.trainer.trainer import Trainer
-from pytriton.model_config import ModelConfig
-from pytriton.model_config.common import DynamicBatcher
-from pytriton.triton import Triton, TritonConfig
 
 from nemo.collections.nlp.modules.common.text_generation_server import MegatronServer
 from nemo.collections.nlp.modules.common.text_generation_utils import generate
@@ -33,15 +30,8 @@ from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPSt
 from nemo.core.config import hydra_runner
 from nemo.utils import AppState
 from nemo.utils.model_utils import inject_model_parallel_rank
-from nemo_rlhf.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTPPOActorModel
-from nemo_rlhf.servers.constants import ServerSignal
-from nemo_rlhf.servers.server_callables import InitialPolicyCallable
-from nemo_rlhf.utils.utils import set_autocast_gpu_dtype
 from nemo.utils import logging
 import datetime
-from nemo_rlhf.utils.train_script_utils import (
-    init_distributed,
-)
 
 try:
     from megatron.core import parallel_state
