@@ -40,7 +40,7 @@ RUN cd Megatron-LM && pip install -e .
 WORKDIR /opt
 
 # install the latest NeMo-Aligner
-RUN pip install --upgrade-strategy only-if-needed git+https://github.com/NVIDIA/NeMo-Aligner.git@main
+RUN pip install --no-deps git+https://github.com/NVIDIA/NeMo-Aligner.git@main
 
 WORKDIR /workspace
 
