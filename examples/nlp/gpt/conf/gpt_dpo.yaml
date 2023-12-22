@@ -97,4 +97,9 @@ model:
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: null
 
+  # define fields from the base model's config that should be ignored when merging with this config.
+  overwrite_base_config:
+    data:
+      data_prefix: True
+
 precision: ${trainer.precision}
