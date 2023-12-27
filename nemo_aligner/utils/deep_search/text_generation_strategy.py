@@ -26,10 +26,12 @@ from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.deep_search.forward_only import get_forward_output_only_func
 from megatron.core import InferenceParams, parallel_state
+from nemo.collections.nlp.modules.common.megatron.utils import build_attention_mask_3d
+
 
 try:
     from apex.transformer.pipeline_parallel.utils import get_num_microbatches
-
+    from apex.transformer.enums import AttnMaskType
     HAVE_APEX = True
 
 except (ImportError, ModuleNotFoundError):
@@ -47,6 +49,20 @@ except (ImportError, ModuleNotFoundError):
 
 # the text representation of eos_id, it applies for all tokenizers
 END_OF_SEQ = '<|endoftext|>'
+
+
+def front_pad_batch(batch, pad_id, max_len, eos_id):
+    context_lengths = []
+    max_context_length = max([len(tokens) for tokens in batch])
+    new_batch = []
+    for tokens in batch:
+        context_length = len(tokens)
+        if context_length < max_context_length:
+            new_batch.append([eos_id] * (max_context_length - context_length) + tokens + [pad_id] * max_len)
+        else:
+            new_batch.append(tokens + [pad_id] * max_len)
+        context_lengths.append(max_context_length)
+    return new_batch, context_lengths
 
 
 class TextGenerationStrategy:
@@ -263,6 +279,26 @@ class GPTModelTextGenerationStrategy(TextGenerationStrategy):
         # to store the K-V cache
         self.inference_params = None
 
+    def tokenize_batch(self, sentences, max_len, add_BOS):
+        """
+        convert the sentences into lists of tokens, pad them to the same length, add bos tokens if it is needed
+        Args:
+            sentences (List[str]): list of input sentences in str format.
+            max_len (int): max number of tokens to generate.
+            add_BOS (bool): whether to add the BOS token at the beginning
+        Returns:
+            Tuple[torch.Tensor], the tokenized and padded torch tensor and the token context length tensor.
+        """
+        tokenizer = self.model.tokenizer
+        if add_BOS:
+            context_tokens = [[tokenizer.bos_id] + tokenizer.text_to_ids(s) for s in sentences]
+        else:
+            context_tokens = [tokenizer.text_to_ids(s) for s in sentences]
+        context_tokens, context_lengths = front_pad_batch(context_tokens, -1, max_len, -2)
+        context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
+        context_length_tensor = torch.cuda.LongTensor(context_lengths)
+        return context_tokens_tensor, context_length_tensor
+
     def clip_max_len(self, maxlen: int) -> int:
         """ clip the max len based on the LM model max sequence length"""
 
@@ -277,15 +313,30 @@ class GPTModelTextGenerationStrategy(TextGenerationStrategy):
         # Move to GPU.
         tokenizer = self.model.tokenizer
         tokens = context_tokens.contiguous().cuda()
+        
+        seq_length = tokens.size(1)
+        position_ids = torch.arange(seq_length, dtype=torch.long, device=tokens.device)
+        self.position_ids = position_ids.unsqueeze(0).repeat(tokens.size(0), 1)
+
+        token_mask = tokens != -2
+        front_pad_lengths = torch.sum(tokens == -2, dim=1)
+        tokens[tokens == -1] = tokenizer.eos_id
+        tokens[tokens == -2] = tokenizer.eos_id
+        self.attention_mask = build_attention_mask_3d(token_mask, token_mask, attn_mask_type=AttnMaskType.causal)
+
+        for b in range(tokens.size(0)):
+            offset = front_pad_lengths[b]
+            self.position_ids[b, offset:] -= offset
         # Get the attention mask and postition ids.
-        self.attention_mask, _, self.position_ids = get_ltor_masks_and_position_ids(
-            tokens,
-            tokenizer.eos_id,
-            self.model.cfg.get('reset_position_ids', False),
-            self.model.cfg.get('reset_attention_mask', False),
-            self.model.cfg.get('eod_mask_loss', False),
-            compute_attention_mask=compute_attention_mask,
-        )
+        # self.attention_mask, _, self.position_ids = get_ltor_masks_and_position_ids(
+        #     tokens,
+        #     tokenizer.eos_id,
+        #     self.model.cfg.get('reset_position_ids', False),
+        #     self.model.cfg.get('reset_attention_mask', False),
+        #     self.model.cfg.get('eod_mask_loss', False),
+        #     compute_attention_mask=compute_attention_mask,
+        # )
+        print('done')
 
     def prepare_batch_at_step(
         self,

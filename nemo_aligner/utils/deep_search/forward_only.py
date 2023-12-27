@@ -15,7 +15,7 @@ def get_forward_output_only_func(obj):
         position_ids = position_ids.cuda()
         if attention_mask is not None:
             attention_mask = attention_mask.cuda()
-            attention_mask = attention_mask[0:1]
+            # attention_mask = attention_mask[0:1]
         extra_arg['inference_params'] = obj.inference_params
         output_tensor = model(tokens, position_ids, attention_mask, **extra_arg)
 
