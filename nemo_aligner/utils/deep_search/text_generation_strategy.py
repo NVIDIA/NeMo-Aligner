@@ -327,16 +327,6 @@ class GPTModelTextGenerationStrategy(TextGenerationStrategy):
         for b in range(tokens.size(0)):
             offset = front_pad_lengths[b]
             self.position_ids[b, offset:] -= offset
-        # Get the attention mask and postition ids.
-        # self.attention_mask, _, self.position_ids = get_ltor_masks_and_position_ids(
-        #     tokens,
-        #     tokenizer.eos_id,
-        #     self.model.cfg.get('reset_position_ids', False),
-        #     self.model.cfg.get('reset_attention_mask', False),
-        #     self.model.cfg.get('eod_mask_loss', False),
-        #     compute_attention_mask=compute_attention_mask,
-        # )
-        print('done')
 
     def prepare_batch_at_step(
         self,
