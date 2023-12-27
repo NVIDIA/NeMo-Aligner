@@ -25,6 +25,7 @@ from transformers import CLIPImageProcessor
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.deep_search.forward_only import get_forward_output_only_func
+from megatron.core import InferenceParams, parallel_state
 
 try:
     from apex.transformer.pipeline_parallel.utils import get_num_microbatches
@@ -65,7 +66,7 @@ class TextGenerationStrategy:
         self._end_of_generation_cache = None
 
     def forward_step(self, batch, tensor_shape):
-        func = get_forward_output_only_func(self.model)
+        func = get_forward_output_only_func(self)
 
         fwd_bwd_function = get_forward_backward_func()
         output_tensor = fwd_bwd_function(
@@ -258,6 +259,9 @@ class GPTModelTextGenerationStrategy(TextGenerationStrategy):
     def __init__(self, model):
         super().__init__(model)
         self.forward_model = self.model.model
+        # all the model parallel worker will have a copy of the inference params
+        # to store the K-V cache
+        self.inference_params = None
 
     def clip_max_len(self, maxlen: int) -> int:
         """ clip the max len based on the LM model max sequence length"""
@@ -298,15 +302,21 @@ class GPTModelTextGenerationStrategy(TextGenerationStrategy):
         # types2use = None
         if step == 0:
             # Allocate memory for the entire context.
-            set_inference_key_value_memory = True
             tokens2use = tokens[:, :context_length]
             positions2use = self.position_ids[:, :context_length]
+            # init inference params 
+            self.inference_params = InferenceParams(
+                max_batch_size=micro_batch_size, max_sequence_length=maxlen
+            )
             # not using type2use. uncomment it if it is used
             # if type_ids is not None:
             #     types2use = type_ids[:, :context_length]
         else:
+            if step == 1:
+                self.inference_params.sequence_len_offset = context_length - 1
+            else:
+                self.inference_params.sequence_len_offset += 1
             # Set this to false so the memory is not reallocated.
-            set_inference_key_value_memory = False
             tokens2use = tokens[:, context_length - 1].view(micro_batch_size, -1)
             positions2use = self.position_ids[:, context_length - 1].view(micro_batch_size, -1)
             # not using type2use. uncomment it if it is used
@@ -318,11 +328,6 @@ class GPTModelTextGenerationStrategy(TextGenerationStrategy):
         if compute_attention_mask:
             attention_mask_repeat = torch.concat([self.attention_mask for _ in range(micro_batch_size)])
 
-        setkey_value_array = torch.tensor(
-            [set_inference_key_value_memory] * micro_batch_size, device=torch.cuda.current_device()
-        )
-        len_array = torch.tensor([maxlen] * micro_batch_size, device=torch.cuda.current_device())
-
-        batch = [tokens2use, attention_mask_repeat, positions2use, setkey_value_array, len_array]
+        batch = [tokens2use, attention_mask_repeat, positions2use]
         tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
         return batch, tensor_shape
