@@ -25,6 +25,7 @@ from nemo.utils import AppState
 from nemo.utils.model_utils import inject_model_parallel_rank
 from nemo.utils import logging
 import datetime
+from omegaconf import OmegaConf
 
 
 """Inference server for NeMo-RLHF Initial Policy model.
