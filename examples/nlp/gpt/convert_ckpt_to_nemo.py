@@ -11,21 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import asyncio
 import os
-import threading
-from functools import partial
 
 import torch
-from omegaconf import OmegaConf, open_dict
 from pytorch_lightning.trainer.trainer import Trainer
-from pytriton.model_config import ModelConfig
-from pytriton.model_config.common import DynamicBatcher
-from pytriton.triton import Triton, TritonConfig
 
-from nemo.collections.nlp.modules.common.text_generation_server import MegatronServer
-from nemo.collections.nlp.modules.common.text_generation_utils import generate
-from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
 from nemo.collections.nlp.modules.common.megatron.megatron_init import fake_initialize_model_parallel
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
@@ -33,22 +23,9 @@ from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPSt
 from nemo.core.config import hydra_runner
 from nemo.utils import AppState
 from nemo.utils.model_utils import inject_model_parallel_rank
-from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTPPOActorModel
-from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.servers.server_callables import InitialPolicyCallable
-from nemo_aligner.utils.utils import set_autocast_gpu_dtype
 from nemo.utils import logging
 import datetime
-from nemo_aligner.utils.train_script_utils import (
-    init_distributed,
-)
 
-try:
-    from megatron.core import parallel_state
-
-    HAVE_MEGATRON_CORE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_MEGATRON_CORE = False
 
 """Inference server for NeMo-RLHF Initial Policy model.
 """
@@ -134,7 +111,6 @@ def main(cfg) -> None:
     else:
         raise ValueError("need at least a nemo file or checkpoint dir")
 
-    # init_distributed(trainer, model, cfg.get("transformer_engine", False))
     model._save_restore_connector = NLPSaveRestoreConnector()
 
     if torch.distributed.is_initialized():
