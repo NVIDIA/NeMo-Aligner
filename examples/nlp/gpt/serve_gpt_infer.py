@@ -43,9 +43,7 @@ import time
 from nemo_aligner.utils.train_script_utils import (
     init_distributed,
 )
-from nemo.collections.nlp.modules.common.text_generation_utils import (
-    megatron_gpt_generate,
-)
+from nemo_aligner.utils.deep_search.text_gen_utils import generate
 
 
 try:
@@ -242,26 +240,34 @@ def main(cfg) -> None:
     strategy = GPTModelTextGenerationStrategy(model)
     strategy_args = {"strategy": strategy}
 
-    prompts = [
-        "What is the meaning of life?",
-        "How many stars are in the sky?",
-    ]
-
-
-    response = megatron_gpt_generate(
-        model, prompts, model.tokenizer, length_params, sampling_params, **strategy_args
-    )
-
-    # if fp8_enabled:
-    #     response = remove_padded_prompts(response, nb_paddings)
-    print("***************************")
-    print(response)
-    print("***************************")
-
-
     def get_infer_fn(model, length_params, sampling_params, **strategy_args):
-        def infer_fn(inputs):
-            return megatron_gpt_generate(model, inputs, model.tokenizer, length_params, sampling_params, **strategy_args) 
+        tokens_to_generate = length_params['max_length']
+        min_tokens_to_generate = length_params['min_length']
+        add_BOS = sampling_params['add_BOS']
+        all_probs = sampling_params['all_probs']
+        compute_logprob = sampling_params['compute_logprob']
+        temperature = sampling_params['temperature']
+        top_k = sampling_params['top_k']
+        top_p = sampling_params['top_p']
+        greedy = sampling_params['use_greedy']
+        repetition_penalty = sampling_params['repetition_penalty']
+        end_strings = sampling_params['end_strings']
+        
+        def infer_fn(inputs=None):
+            return generate(model,
+                            inputs,
+                            tokens_to_generate=tokens_to_generate,
+                            min_tokens_to_generate=min_tokens_to_generate,
+                            add_BOS=add_BOS,
+                            all_probs=all_probs,
+                            compute_logprob=compute_logprob,
+                            temperature=temperature,
+                            top_k=top_k,
+                            top_p=top_p,
+                            greedy=greedy,
+                            repetition_penalty=repetition_penalty,
+                            end_strings=end_strings,
+                            **strategy_args) 
         return infer_fn
     
     infer_fn = get_infer_fn(model, length_params, sampling_params, **strategy_args)
@@ -292,7 +298,7 @@ def main(cfg) -> None:
             choice = ServerSignal.INVALID.cuda()
             torch.distributed.broadcast(choice, 0)
             if choice.item() == ServerSignal.FORWARD:
-                infer_fn(['empty'])
+                infer_fn()
             else:
                 raise RuntimeError(f"Invalid operation: {choice.item()}")
 
