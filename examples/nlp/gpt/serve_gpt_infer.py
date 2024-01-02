@@ -27,6 +27,11 @@ from nemo.collections.nlp.modules.common.transformer.text_generation import Leng
 from nemo.collections.nlp.modules.common.megatron.megatron_init import fake_initialize_model_parallel
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
+from nemo_aligner.utils.deep_search.search_callables import SearchCallable
+from pytriton.model_config import ModelConfig
+from pytriton.model_config.common import DynamicBatcher
+from pytriton.triton import Triton, TritonConfig
+from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils.deep_search.text_generation_strategy import GPTModelTextGenerationStrategy
 
 from nemo.core.config import hydra_runner
@@ -212,6 +217,9 @@ def main(cfg) -> None:
     init_distributed(trainer, model, False)
     print_gpu_memory_usage()
 
+    dp_size = parallel_state.get_data_parallel_world_size()
+    max_batch_size = cfg.inference.micro_batch_size * dp_size
+
 
     length_params: LengthParam = {
         "max_length": cfg.inference.tokens_to_generate,
@@ -251,41 +259,43 @@ def main(cfg) -> None:
     print("***************************")
 
 
-    # # Third method of running text generation, use inference server
-    # if cfg.server:
-    #     from nemo.collections.nlp.modules.common.megatron_web_server import get_chatbot_demo, get_demo
+    def get_infer_fn(model, length_params, sampling_params, **strategy_args):
+        def infer_fn(inputs):
+            return megatron_gpt_generate(model, inputs, model.tokenizer, length_params, sampling_params, **strategy_args) 
+        return infer_fn
+    
+    infer_fn = get_infer_fn(model, length_params, sampling_params, **strategy_args)
 
-    #     if parallel_state.is_pipeline_first_stage() and parallel_state.get_tensor_model_parallel_rank() == 0:
-    #         if cfg.web_server:
-    #             if cfg.chat:
-    #                 defaults = {
-    #                     'user': cfg.chatbot_config.user,
-    #                     'assistant': cfg.chatbot_config.assistant,
-    #                     'system': cfg.chatbot_config.system,
-    #                 }
-    #                 web_ui = partial(
-    #                     get_chatbot_demo,
-    #                     defaults=defaults,
-    #                     value=cfg.chatbot_config.value,
-    #                     attributes=cfg.chatbot_config.attributes,
-    #                 )
-    #             else:
-    #                 web_ui = get_demo
-    #             loop = asyncio.new_event_loop()
-    #             thread = threading.Thread(
-    #                 target=web_ui,
-    #                 daemon=True,
-    #                 args=(cfg.share, cfg.username, cfg.password, cfg.port, cfg.web_port, loop),
-    #             )
-    #             thread.start()
-    #         server = MegatronServer(model.cuda())
-    #         server.run("0.0.0.0", port=cfg.port)
+    if torch.distributed.get_rank() == 0:
+        infer_callable = SearchCallable(model_name="reward_model", infer_fn=infer_fn, lock=threading.Lock())
+        triton_config = TritonConfig(
+            allow_http=True,
+            allow_grpc=False,
+            allow_metrics=False,
+            http_address=ENDPOINT_BIND_ADDRESS,
+            http_port=cfg.inference.port,
+        )
+        dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
+        model_config = ModelConfig(batching=True, max_batch_size=max_batch_size, batcher=dynamic_batcher)
 
-    #     while True:
-    #         choice = torch.cuda.LongTensor(1)
-    #         torch.distributed.broadcast(choice, 0)
-    #         if choice[0].item() == 0:
-    #             generate(model.cuda())
+        with Triton(config=triton_config) as triton:
+            triton.bind(
+                model_name=infer_callable.model_name,
+                infer_func=infer_callable.infer,
+                inputs=infer_callable.inputs,
+                outputs=infer_callable.outputs,
+                config=model_config,
+            )
+            triton.serve()
+    else:
+        while True:
+            choice = ServerSignal.INVALID.cuda()
+            torch.distributed.broadcast(choice, 0)
+            if choice.item() == ServerSignal.FORWARD:
+                infer_fn(['empty'])
+            else:
+                raise RuntimeError(f"Invalid operation: {choice.item()}")
+
 
 
 if __name__ == "__main__":
