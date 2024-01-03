@@ -11,17 +11,20 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
+
 import torch
 import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf
 
-from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
+from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
+from nemo.utils.model_utils import inject_model_parallel_rank
 from nemo_aligner.algorithms.ppo import PPOTrainer
 from nemo_aligner.data.nlp.builders import (
     build_dataloader,
@@ -68,23 +71,52 @@ def main(cfg) -> None:
         trainer,
         strict=True,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
-        return_updated_cfg=True
+        return_updated_cfg=True,
+    )
+    ptl_model.setup_complete = (
+        True  # used for PEFT, track only PEFT state dicts if ptl_model.setup_complete=True and ptl_model.use_peft=True
     )
 
     init_policy_state_dict = None
-
+    require_init_policy_state_dict = False
     peft_cfg_cls = PEFT_CONFIG_MAP[cfg.model.peft.peft_scheme]
     if cfg.model.peft.restore_from_path is not None:
         # initialize peft weights from a checkpoint instead of randomly
         # This is not the same as resume training because optimizer states are not restored.
         logging.info("PEFT Weights will be loaded from", cfg.model.peft.restore_from_path)
         ptl_model.load_adapters(cfg.model.peft.restore_from_path, peft_cfg_cls(updated_cfg))
+        require_init_policy_state_dict = True
+    elif (
+        cfg.model.peft.restore_from_ckpt.checkpoint_dir is not None
+        and cfg.model.peft.restore_from_ckpt.checkpoint_name is not None
+    ):
+        checkpoint_path = os.path.join(
+            cfg.model.peft.restore_from_ckpt.checkpoint_dir, cfg.model.peft.restore_from_ckpt.checkpoint_name
+        )
+        # checkpoint_path is a dir in case of distributed checkpointing
+        if not os.path.isdir(checkpoint_path):
+            # legacy checkpoint needs model parallel rank injection
+            checkpoint_path = inject_model_parallel_rank(
+                os.path.join(
+                    cfg.model.peft.restore_from_ckpt.checkpoint_dir, cfg.model.peft.restore_from_ckpt.checkpoint_name
+                )
+            )
+            ptl_model.load_adapters(checkpoint_path, peft_cfg_cls(updated_cfg))
+            require_init_policy_state_dict = True
+        else:
+            raise NotImplementedError("distributed checkpointing of PEFT weights is not supported")
     elif peft_cfg_cls is not None:
         logging.info("Adding adapter weights to the model for PEFT")
         ptl_model.add_adapter(peft_cfg_cls(updated_cfg))
     else:
         logging.info(f"Running full finetuning since no peft scheme is given.\n{ptl_model.summarize()}")
+        require_init_policy_state_dict = True
 
+    # init_policy_state_dict is required when we
+    # 1. start from a full model and do full ppo
+    # 2. start from a full model and peft weights, do peft ppo
+    # it is not needed when we start from a full model and do peft ppo
+    if require_init_policy_state_dict:
         # only need this if we are running with inital kl penalty
         if cfg.trainer.ppo.initial_policy_kl_penalty > 0:
             init_policy_state_dict = retrieve_model_state_dict_in_cpu(

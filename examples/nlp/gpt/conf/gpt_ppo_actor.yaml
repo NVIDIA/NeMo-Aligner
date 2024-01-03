@@ -133,8 +133,11 @@ model:
       min_length: 1
 
   peft:
-    peft_scheme: "none"  # ["adapter", "ia3", "ptuning", "lora", "none"]
+    peft_scheme: "lora"  # ["adapter", "ia3", "ptuning", "lora", "none"]
     restore_from_path: null
+    restore_from_ckpt:
+      checkpoint_dir: null
+      checkpoint_name: null
 
     # Used for adapter peft training
     adapter_tuning:

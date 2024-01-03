@@ -29,9 +29,9 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
     get_iterator_k_split,
     get_ltor_masks_and_position_ids,
 )
+from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
-from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
 from nemo_aligner.utils.distributed import (
     broadcast_2d_tensor,
@@ -313,7 +313,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
     def get_init_policy_logprobs(self, rollout_batches):
         init_log_probs = []
-        if self.use_peft:
+        if self.use_peft and self.init_policy_state_dict is None:
             for _, module in self.named_modules():
                 if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
                     module.set_enabled_adapters(enabled=False)
@@ -323,7 +323,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
                 )
                 init_log_probs.append(init_log_prob)
-            
+
             for _, module in self.named_modules():
                 if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
                     module.set_enabled_adapters(enabled=True)
