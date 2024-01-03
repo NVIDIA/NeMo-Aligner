@@ -132,7 +132,9 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
-    #TODO: What would be cleanest way to add the RM?
+    #TODO: What would be cleanest way to add the RM? 
+    #TODO: @ataghibakhsh Later replace with NeMo RMs
+
     if cfg.reward_model == "aesthetic":
         reward_model = aesthetic_RM()
     elif cfg.reward_model == "pickscore":
@@ -145,8 +147,8 @@ def main(cfg) -> None:
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     draft_trainer = DraftTrainer(
-        policy_config=cfg.model,
-        policy=alignable_model,
+        cfg=cfg.model,
+        model=alignable_model,
         optimizer=optimizer,
         scheduler=scheduler,
         train_dataloader=train_dataloader,
