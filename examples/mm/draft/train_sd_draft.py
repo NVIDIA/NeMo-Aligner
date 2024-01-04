@@ -39,6 +39,7 @@ from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 import torch
 from nemo_aligner.data.mm import text_webdataset
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
+from nemo_aligner.models.mm.draft.draft_RMs import get_reward_model
 
 mp.set_start_method("spawn", force=True)
 
@@ -70,7 +71,7 @@ class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
 
 @hydra_runner(config_path="conf", config_name="train_sd_draft")
 def main(cfg) -> None:
-    
+
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
     
@@ -134,16 +135,12 @@ def main(cfg) -> None:
 
     #TODO: What would be cleanest way to add the RM? 
     #TODO: @ataghibakhsh Later replace with NeMo RMs
-
-    if cfg.reward_model == "aesthetic":
-        reward_model = aesthetic_RM()
-    elif cfg.reward_model == "pickscore":
-        reward_model = pickscore_RM()
-    else:
-        raise ValueError(f'Reward Model {cfg.reward_model} Not Supported')
+    
+    reward_model = get_reward_model(cfg.RM, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
+    
 
     alignable_model = AlignableSDModel(ptl_model.model, reward_model, ptl_model.tokenizer, optimizer, cfg.model, ptl_model, logger=logger)
-        
+
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     draft_trainer = DraftTrainer(

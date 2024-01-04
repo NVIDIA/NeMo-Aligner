@@ -15,7 +15,7 @@ import torch
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
-from nemo_aligner.utils.utils import get_iterator_k_split_list
+# from nemo_aligner.utils.utils import get_iterator_k_split_list
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 
