@@ -80,12 +80,8 @@ class SearchCallable:
         self.model_name = model_name
         self.lock = lock
         self.infer_fn = infer_fn
-        self.inputs = (
-            Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
-        )
-        self.outputs = (
-            Tensor(name="output", shape=(-1,), dtype=bytes),
-        )
+        self.inputs = (Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),)
+        self.outputs = (Tensor(name="output", shape=(-1,), dtype=bytes),)
 
     @batch
     @lock_method("self.lock")
@@ -101,5 +97,5 @@ class SearchCallable:
         print(output)
         # rewards, exceeded = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
 
-        output_dict = { }
+        output_dict = {}
         return output_dict

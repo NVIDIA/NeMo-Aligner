@@ -1,4 +1,4 @@
-# Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,18 +20,17 @@ import warnings
 from typing import List, Set, Tuple
 
 import torch
+from megatron.core import InferenceParams, parallel_state
 from transformers import CLIPImageProcessor
 
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
-from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
+from nemo.collections.nlp.modules.common.megatron.utils import build_attention_mask_3d, get_ltor_masks_and_position_ids
 from nemo_aligner.utils.deep_search.forward_only import get_forward_output_only_func
-from megatron.core import InferenceParams, parallel_state
-from nemo.collections.nlp.modules.common.megatron.utils import build_attention_mask_3d
-
 
 try:
-    from apex.transformer.pipeline_parallel.utils import get_num_microbatches
     from apex.transformer.enums import AttnMaskType
+    from apex.transformer.pipeline_parallel.utils import get_num_microbatches
+
     HAVE_APEX = True
 
 except (ImportError, ModuleNotFoundError):
@@ -48,7 +47,7 @@ except (ImportError, ModuleNotFoundError):
 
 
 # the text representation of eos_id, it applies for all tokenizers
-END_OF_SEQ = '<|endoftext|>'
+END_OF_SEQ = "<|endoftext|>"
 
 
 def front_pad_batch(batch, pad_id, max_len, eos_id):
@@ -288,12 +287,11 @@ class GPTModelTextGenerationStrategy(TextGenerationStrategy):
         self.attention_mask, _, self.position_ids = get_ltor_masks_and_position_ids(
             tokens,
             tokenizer.eos_id,
-            self.model.cfg.get('reset_position_ids', False),
-            self.model.cfg.get('reset_attention_mask', False),
-            self.model.cfg.get('eod_mask_loss', False),
+            self.model.cfg.get("reset_position_ids", False),
+            self.model.cfg.get("reset_attention_mask", False),
+            self.model.cfg.get("eod_mask_loss", False),
             compute_attention_mask=compute_attention_mask,
         )
-
 
     def clip_max_len(self, maxlen: int) -> int:
         """ clip the max len based on the LM model max sequence length"""
@@ -321,10 +319,8 @@ class GPTModelTextGenerationStrategy(TextGenerationStrategy):
             # Allocate memory for the entire context.
             tokens2use = tokens[:, :context_length]
             positions2use = self.position_ids[:, :context_length]
-            # init inference params 
-            self.inference_params = InferenceParams(
-                max_batch_size=micro_batch_size, max_sequence_length=maxlen
-            )
+            # init inference params
+            self.inference_params = InferenceParams(max_batch_size=micro_batch_size, max_sequence_length=maxlen)
             # not using type2use. uncomment it if it is used
             # if type_ids is not None:
             #     types2use = type_ids[:, :context_length]

@@ -1,4 +1,4 @@
-# Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -56,7 +56,7 @@ __all__ = [
 ]
 
 
-def top_k_logits(logits, top_k=0, top_p=0.0, filter_value=-float('Inf'), started=None):
+def top_k_logits(logits, top_k=0, top_p=0.0, filter_value=-float("Inf"), started=None):
     """
        This function has been mostly taken from huggingface conversational
          ai code at
@@ -321,7 +321,7 @@ def generate(
     compute_attention_mask=True,
     compute_logprob=False,
     repetition_penalty=1.0,
-    end_strings=['<|endoftext|>'],
+    end_strings=["<|endoftext|>"],
     image_list=None,
     min_tokens_to_generate=0,
     **strategy_args,
@@ -350,8 +350,8 @@ def generate(
             token_ids: List[Tensor], output sentence token ids
             offsets: List[List[int]]  # list of tokens start positions in text
     """
-    if 'strategy' in strategy_args:
-        inference_strategy = strategy_args['strategy']
+    if "strategy" in strategy_args:
+        inference_strategy = strategy_args["strategy"]
     else:
         inference_strategy = model_inference_strategy_dispatcher(model, **strategy_args)
     tokenizer = model.tokenizer
@@ -412,19 +412,19 @@ def generate(
         image_list=image_list,
     )
     special_tokens = set()
-    if hasattr(tokenizer, 'pad_token') and tokenizer.pad_token is not None:
+    if hasattr(tokenizer, "pad_token") and tokenizer.pad_token is not None:
         special_tokens.add(tokenizer.pad_token)
-    if hasattr(tokenizer, 'eos_token') and tokenizer.eos_token is not None:
+    if hasattr(tokenizer, "eos_token") and tokenizer.eos_token is not None:
         special_tokens.add(tokenizer.eos_token)
-    if hasattr(tokenizer, 'bos_token') and tokenizer.bos_token is not None:
+    if hasattr(tokenizer, "bos_token") and tokenizer.bos_token is not None:
         special_tokens.add(tokenizer.bos_token)
-    if hasattr(tokenizer, 'cls_token') and tokenizer.cls_token is not None:
+    if hasattr(tokenizer, "cls_token") and tokenizer.cls_token is not None:
         special_tokens.add(tokenizer.cls_token)
-    if hasattr(tokenizer, 'unk_token') and tokenizer.unk_token is not None:
+    if hasattr(tokenizer, "unk_token") and tokenizer.unk_token is not None:
         special_tokens.add(tokenizer.unk_token)
-    if hasattr(tokenizer, 'sep_token') and tokenizer.sep_token is not None:
+    if hasattr(tokenizer, "sep_token") and tokenizer.sep_token is not None:
         special_tokens.add(tokenizer.sep_token)
-    if hasattr(tokenizer, 'mask_token') and tokenizer.mask_token is not None:
+    if hasattr(tokenizer, "mask_token") and tokenizer.mask_token is not None:
         special_tokens.add(tokenizer.mask_token)
     if output is not None:
         decode_tokens, output_logits, full_logits = output
@@ -443,9 +443,9 @@ def generate(
                     word = tokenizer.ids_to_tokens(token)
                     if isinstance(word, Iterable):
                         word = word[0]
-                    if hasattr(tokenizer.tokenizer, 'byte_decoder'):
+                    if hasattr(tokenizer.tokenizer, "byte_decoder"):
                         word = bytearray([tokenizer.tokenizer.byte_decoder[c] for c in word]).decode(
-                            'utf-8', errors='replace'
+                            "utf-8", errors="replace"
                         )
                     words.append(word)
                 resp_sentences_seg.append(words)
@@ -466,12 +466,12 @@ def generate(
             all_offsets.append(offsets)
 
         output = {}
-        output['sentences'] = resp_sentences
-        output['tokens'] = resp_sentences_seg
-        output['logprob'] = output_logits
-        output['full_logprob'] = full_logits
-        output['token_ids'] = decode_tokens
-        output['offsets'] = all_offsets
+        output["sentences"] = resp_sentences
+        output["tokens"] = resp_sentences_seg
+        output["logprob"] = output_logits
+        output["full_logprob"] = full_logits
+        output["token_ids"] = decode_tokens
+        output["offsets"] = all_offsets
         output = inference_strategy.post_generation_process(output)
         return output
 
@@ -492,7 +492,7 @@ def sample_sequence_batch(
     compute_logprob=False,
     type_ids=None,
     temperature=None,
-    end_strings=['<|endoftext|>'],
+    end_strings=["<|endoftext|>"],
     image_list=None,
     extra={},
 ):
@@ -508,14 +508,14 @@ def sample_sequence_batch(
         data_parallel_size=1,
     )
     assert (
-        model.cfg.get('sequence_parallel', False) == False
-    ), 'sequence_parallel should be False during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint'
+        model.cfg.get("sequence_parallel", False) == False
+    ), "sequence_parallel should be False during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint"
     assert (
-        model.cfg.get('activations_checkpoint_granularity', None) is None
-    ), 'activations_checkpoint_granularity should be None during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint'
+        model.cfg.get("activations_checkpoint_granularity", None) is None
+    ), "activations_checkpoint_granularity should be None during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint"
     assert (
-        model.cfg.get('activations_checkpoint_method', None) is None
-    ), 'activations_checkpoint_method should be None during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint'
+        model.cfg.get("activations_checkpoint_method", None) is None
+    ), "activations_checkpoint_method should be None during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint"
 
     tokenizer = model.tokenizer
     # initialize the batch
@@ -557,38 +557,38 @@ def sample_sequence_batch(
             if parallel_state.is_pipeline_last_stage():
 
                 if compute_logprob:
-                    output = output[0]['logits']
+                    output = output[0]["logits"]
                     output = tensor_parallel.gather_from_tensor_model_parallel_region(output)
                     assert output is not None
                     logits = output[:, -1].view(batch_size, -1).contiguous()
 
                 else:
-                    logits = output[0]['logits'][:, -1].contiguous()
+                    logits = output[0]["logits"][:, -1].contiguous()
                     logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
                     assert logits is not None
                     logits = logits.view(batch_size, -1)
 
                 # make sure it will generate at least min_length
-                min_length = extra.get('min_tokens_to_generate', 0)
+                min_length = extra.get("min_tokens_to_generate", 0)
                 if min_length > 0:
                     within_min_length = (context_length - context_lengths) < min_length
-                    logits[within_min_length, eod_id] = -float('Inf')
+                    logits[within_min_length, eod_id] = -float("Inf")
 
                 # make sure it won't sample outside the vocab_size range
-                logits[:, tokenizer.vocab_size :] = -float('Inf')
+                logits[:, tokenizer.vocab_size :] = -float("Inf")
 
                 # started indicates whether the current token step passes the context_length, so we make sure not to overwrite the context tokens
 
                 started = context_lengths <= context_length
-                if extra.get('greedy', False):
+                if extra.get("greedy", False):
                     prev = torch.argmax(logits, dim=-1).view(-1)
                 else:
                     logits = logits.float()
                     logits /= temperature
                     # handle repetition penality
-                    logits = repetition_penalty(logits, extra.get('repetition_penalty', 1.2), all_generated_indices)
+                    logits = repetition_penalty(logits, extra.get("repetition_penalty", 1.2), all_generated_indices)
                     logits = top_k_logits(
-                        logits, top_k=extra.get('top_k', 0), top_p=extra.get('top_p', 0.9), started=started
+                        logits, top_k=extra.get("top_k", 0), top_p=extra.get("top_p", 0.9), started=started
                     )
                     probs = F.softmax(logits, dim=-1)
                     prev = torch.multinomial(probs, num_samples=1).view(-1)
@@ -672,5 +672,3 @@ def sample_sequence_batch(
             counter += 1
             if done:
                 break
-
-

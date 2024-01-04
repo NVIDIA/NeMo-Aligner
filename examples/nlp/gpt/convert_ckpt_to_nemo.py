@@ -11,22 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import datetime
 import os
 
 import torch
+from omegaconf import OmegaConf
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.nlp.modules.common.megatron.megatron_init import fake_initialize_model_parallel
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.collections.nlp.modules.common.megatron.megatron_init import fake_initialize_model_parallel
 from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
-
 from nemo.core.config import hydra_runner
-from nemo.utils import AppState
+from nemo.utils import AppState, logging
 from nemo.utils.model_utils import inject_model_parallel_rank
-from nemo.utils import logging
-import datetime
-from omegaconf import OmegaConf
-
 
 """Inference server for NeMo-RLHF Initial Policy model.
 """
@@ -36,6 +33,7 @@ if not torch.cuda.is_available():
 
 ENDPOINT_BIND_ADDRESS = "0.0.0.0"
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)8s - %(process)8d - %(threadName)s - %(name)s: %(message)s"
+
 
 def remove_padded_prompts(response, nb_paddings):
     result = {}
@@ -47,28 +45,27 @@ def remove_padded_prompts(response, nb_paddings):
 
 
 def init_distributed_parameters(trainer, cfg):
-        app_state = AppState()
-        if cfg.tensor_model_parallel_size > 1 or cfg.pipeline_model_parallel_size > 1:
-            app_state.model_parallel_size = cfg.tensor_model_parallel_size * cfg.pipeline_model_parallel_size
-            app_state.tensor_model_parallel_size = cfg.tensor_model_parallel_size
-            app_state.pipeline_model_parallel_size = cfg.pipeline_model_parallel_size
-            (
-                app_state.tensor_model_parallel_rank,
-                app_state.pipeline_model_parallel_rank,
-                app_state.model_parallel_size,
-                app_state.data_parallel_size,
-                app_state.pipeline_model_parallel_split_rank,
-                app_state.virtual_pipeline_model_parallel_rank,
-            ) = fake_initialize_model_parallel(
-                world_size=app_state.model_parallel_size,
-                rank=trainer.global_rank,
-                tensor_model_parallel_size_=cfg.tensor_model_parallel_size,
-                pipeline_model_parallel_size_=cfg.pipeline_model_parallel_size,
-                pipeline_model_parallel_split_rank_=cfg.pipeline_model_parallel_split_rank,
-            )
-        if trainer.num_devices and trainer.num_nodes:
-            app_state.world_size = trainer.num_devices * trainer.num_nodes
- 
+    app_state = AppState()
+    if cfg.tensor_model_parallel_size > 1 or cfg.pipeline_model_parallel_size > 1:
+        app_state.model_parallel_size = cfg.tensor_model_parallel_size * cfg.pipeline_model_parallel_size
+        app_state.tensor_model_parallel_size = cfg.tensor_model_parallel_size
+        app_state.pipeline_model_parallel_size = cfg.pipeline_model_parallel_size
+        (
+            app_state.tensor_model_parallel_rank,
+            app_state.pipeline_model_parallel_rank,
+            app_state.model_parallel_size,
+            app_state.data_parallel_size,
+            app_state.pipeline_model_parallel_split_rank,
+            app_state.virtual_pipeline_model_parallel_rank,
+        ) = fake_initialize_model_parallel(
+            world_size=app_state.model_parallel_size,
+            rank=trainer.global_rank,
+            tensor_model_parallel_size_=cfg.tensor_model_parallel_size,
+            pipeline_model_parallel_size_=cfg.pipeline_model_parallel_size,
+            pipeline_model_parallel_split_rank_=cfg.pipeline_model_parallel_split_rank,
+        )
+    if trainer.num_devices and trainer.num_nodes:
+        app_state.world_size = trainer.num_devices * trainer.num_nodes
 
 
 @hydra_runner(config_path="conf", config_name="gpt_ckpt_to_nemo")
@@ -89,7 +86,7 @@ def main(cfg) -> None:
 
     if cfg.checkpoint_dir:
         # checkpoint_path = os.path.join(cfg.checkpoint_dir, cfg.checkpoint_name)
-        #trainer._checkpoint_connector.restore(checkpoint_path)
+        # trainer._checkpoint_connector.restore(checkpoint_path)
         # trainer._checkpoint_connector._restore_modules_and_callbacks(cfg.checkpoint_dir)
         init_distributed_parameters(trainer, cfg)
         checkpoint_path = os.path.join(cfg.checkpoint_dir, cfg.checkpoint_name)
@@ -105,10 +102,12 @@ def main(cfg) -> None:
             "precision": trainer.precision,
             "tensor_model_parallel_size": cfg.tensor_model_parallel_size,
             "pipeline_model_parallel_size": cfg.pipeline_model_parallel_size,
-            "megatron_amp_O2": cfg.get('megatron_amp_O2', False),
+            "megatron_amp_O2": cfg.get("megatron_amp_O2", False),
             "tokenizer": cfg.tokenizer,
         }
-        model = MegatronGPTModel.load_from_checkpoint(checkpoint_path, hparams_file=None, trainer=trainer, **overwrite_cfg)
+        model = MegatronGPTModel.load_from_checkpoint(
+            checkpoint_path, hparams_file=None, trainer=trainer, **overwrite_cfg
+        )
     else:
         raise ValueError("need at least a nemo file or checkpoint dir")
 
@@ -119,8 +118,7 @@ def main(cfg) -> None:
 
     model.save_to(cfg.nemo_file_path)
 
-    logging.info(f'NeMo model saved to: {cfg.nemo_file_path}')
-
+    logging.info(f"NeMo model saved to: {cfg.nemo_file_path}")
 
 
 if __name__ == "__main__":
