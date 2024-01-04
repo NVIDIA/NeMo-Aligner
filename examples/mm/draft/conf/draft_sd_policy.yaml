@@ -210,4 +210,15 @@ model:
           infinite_sampler: False
           local_root_path:  /opt/nemo-aligner/datasets/animals45.tar # /opt/nemo-aligner/laion_data/2B-en-5_10_0_tarfiles/{00000..00059}.tar # /opt/rlhf/laion_shard.tar # 
 
- 
+RM:
+  trainer:
+    devices: 1
+    num_nodes: 1
+    accelerator: gpu
+    logger: False # logger provided by exp_manager
+    precision: 32 # 16, 32, or bf16
+
+  model:
+    restore_from_path: "/opt/nemo-aligner/checkpoints/pickscore.nemo"  # Path to a trained ViT .nemo file
+    precision: ${trainer.precision}
+  
