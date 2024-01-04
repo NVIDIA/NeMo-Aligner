@@ -433,7 +433,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
                 micro_batch_size=self.cfg.micro_batch_size, #1
             )[0])
 
-        if torch.distributed.get_rank() == 0 and len(self.logger.loggers)>0:
+        if torch.distributed.get_rank() == 0 and len(self.logger.loggers)>1:
             self.log_visualization(data_iter[0:1])
 
         if self.megatron_model.with_distributed_adam:

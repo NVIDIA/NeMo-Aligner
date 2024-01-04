@@ -31,7 +31,7 @@ from nemo_aligner.utils.train_script_utils import (
 from megatron.core.utils import divide
 from megatron.core import parallel_state
 import torch
-from nemo_aligner.models.mm.draft.draft_RMs import pickscore_RM, aesthetic_RM
+from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 import sys
 from nemo_aligner.utils.utils import load_from_nemo
 from nemo_aligner.models.mm.draft.alignable_sd_model import AlignableSDModel
@@ -74,7 +74,6 @@ def main(cfg) -> None:
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
-    
     #TODO: Check if tf32 is necassary. Brought from stable diffusion training script (sd_train.py)
     torch.backends.cuda.matmul.allow_tf32 = True
     #TODO: @ataghibakhsh Fix the dataset_path issue
@@ -85,6 +84,22 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
     #TODO: @geshen: For the Stable Diffusion, I am currently getting the vae and unet separately
     ptl_model = MegatronLatentDiffusion(cfg.model, trainer).to(torch.cuda.current_device())
+
+    if cfg.model.get('peft', None):
+        if cfg.model.peft.enable:
+            peft_cfg_cls = PEFT_CONFIG_MAP[cfg.model.peft.peft_scheme]
+
+            if cfg.model.peft.restore_from_path is not None:
+                # initialize peft weights from a checkpoint instead of randomly
+                # This is not the same as resume training because optimizer states are not restored.
+                logging.info("PEFT Weights will be loaded from", cfg.model.peft.restore_from_path)
+                ptl_model.load_adapters(cfg.model.peft.restore_from_path, peft_cfg_cls(cfg.model))
+
+            elif peft_cfg_cls is not None:
+                logging.info("Adding adapter weights to the model for PEFT")
+                ptl_model.add_adapter(peft_cfg_cls(cfg.model))
+            else:
+                logging.info(f"Running full finetuning since no peft scheme is given.\n{ptl_model.summarize()}")
     
     with open_dict(cfg):
         cfg.model.precision = cfg.trainer.precision
@@ -135,7 +150,7 @@ def main(cfg) -> None:
 
     #TODO: What would be cleanest way to add the RM? 
     #TODO: @ataghibakhsh Later replace with NeMo RMs
-    
+
     reward_model = get_reward_model(cfg.RM, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
     
 

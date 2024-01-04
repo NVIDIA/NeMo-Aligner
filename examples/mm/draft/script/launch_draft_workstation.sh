@@ -6,7 +6,7 @@ export PYTHONPATH=/opt/NeMo:/opt/nemo-aligner:$PYTHONPATH
 
 ACTOR_NUM_DEVICES=2
 ACTOR_MICRO_BS=1
-GRAD_ACCUMULATION=4
+GRAD_ACCUMULATION=1
 ACTOR_GLOBAL_BATCH_SIZE=$((ACTOR_MICRO_BS*ACTOR_NUM_DEVICES*GRAD_ACCUMULATION))
 KL_COEF=0.1
 LR=0.0005
@@ -41,6 +41,7 @@ git config --global --add safe.directory /opt/nemo-aligner \
     model.first_stage_config.from_pretrained=${VAE_CKPT} \
     model.micro_batch_size=${ACTOR_MICRO_BS} \
     model.global_batch_size=${ACTOR_GLOBAL_BATCH_SIZE} \
+    model.peft.enable=False \
     trainer.val_check_interval=20 \
     trainer.gradient_clip_val=10.0 \
     trainer.devices=${ACTOR_NUM_DEVICES} \

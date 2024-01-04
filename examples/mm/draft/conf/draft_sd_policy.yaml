@@ -142,6 +142,9 @@ model:
     use_checkpoint: False
     legacy: False
     use_flash_attention: False
+    enable_amp_o2_fp16: False
+    resblock_gn_groups: 32
+    lora_network_alpha: null
 
   first_stage_config:
     _target_: nemo.collections.multimodal.models.stable_diffusion.ldm.autoencoder.AutoencoderKL
@@ -209,6 +212,20 @@ model:
       webdataset:
           infinite_sampler: False
           local_root_path:  /opt/nemo-aligner/datasets/animals45.tar # /opt/nemo-aligner/laion_data/2B-en-5_10_0_tarfiles/{00000..00059}.tar # /opt/rlhf/laion_shard.tar # 
+  
+  peft:
+    enable: False
+    peft_scheme: "sdlora"
+    restore_from_path: null
+    lora_tuning:
+      adapter_dim: 32
+      adapter_dropout: 0.0
+      column_init_method: 'xavier' # IGNORED if linear_adapter is used, options: xavier, zero or normal
+      row_init_method: 'zero' # IGNORED if linear_adapter is used, options: xavier, zero or normal
+      layer_selection:  null  # selects in which layers to add lora adapters. e.g. [1,12] will add lora to layer 1 (lowest) and 12. null will apply adapters to all layers
+      weight_tying: False
+      position_embedding_strategy: null 
+      network_alpha: null
 
 RM:
   trainer:
