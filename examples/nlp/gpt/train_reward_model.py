@@ -27,9 +27,9 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_regression_rm_datasets,
     build_train_valid_test_rm_datasets,
 )
-
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.models.nlp.gpt.megatron_gpt_regression_reward_model import regression_rm_custom_collate
+from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -149,6 +149,8 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
+    timer = Timer(cfg.exp_manager.get("max_time_per_run"))
+
     rm_trainer = SupervisedTrainer(
         cfg=cfg.trainer.rm,
         model=ptl_model,
@@ -159,6 +161,7 @@ def main(cfg) -> None:
         test_dataloader=None,
         logger=logger,
         ckpt_callback=ckpt_callback,
+        run_timer=timer,
     )
 
     if custom_trainer_state_dict is not None:

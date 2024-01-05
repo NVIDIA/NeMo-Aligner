@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Misc helper functions"""
-
 import gc
 import os
 import re
@@ -24,7 +23,7 @@ from unittest.mock import patch
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
-from omegaconf import OmegaConf
+from omegaconf import DictConfig, OmegaConf
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
@@ -123,7 +122,31 @@ def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_
         checkpoint_cfg.pop("target", None)
         checkpoint_cfg.pop("nemo_version", None)
 
-    return OmegaConf.merge(checkpoint_cfg, model_cfg_to_overwrite)
+    if "overwrite_base_config" in model_cfg_to_overwrite:
+        remove_overwritten_fields(checkpoint_cfg, model_cfg_to_overwrite.overwrite_base_config)
+
+    merged_cfg = OmegaConf.merge(checkpoint_cfg, model_cfg_to_overwrite)
+
+    # Remove the "overwrite_base_config" key to avoid cluttering the model config.
+    merged_cfg.pop("overwrite_base_config", None)
+
+    return merged_cfg
+
+
+def remove_overwritten_fields(base_config, overwrite_config):
+    """
+    Remove from `base_config` fields associated to a `True` value in `overwrite_config`.
+    """
+    for key, value in overwrite_config.items():
+        if key not in base_config:
+            continue
+
+        if isinstance(value, DictConfig) and isinstance(base_config[key], DictConfig):
+            remove_overwritten_fields(base_config[key], value)
+        else:
+            assert isinstance(value, bool), "the overwrite config can only contain boolean values"
+            if value:
+                base_config.pop(key)
 
 
 def masked_mean(values, mask, dim=None):
