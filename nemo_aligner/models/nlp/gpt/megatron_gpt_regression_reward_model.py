@@ -30,7 +30,9 @@ from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRew
 from nemo_aligner.utils.train_utils import set_sync_funcs
 
 
-def regression_rm_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
+def regression_rm_custom_collate(
+    batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False
+):
     inputs = [item["inputs"] for item in batch]
     lengths = torch.LongTensor([item["lengths"] for item in batch])
     labels = [item["labels"] for item in batch]
@@ -157,7 +159,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
 
     def get_loss_and_metrics(self, batch, forward_only):
         seq_length = batch["inputs"].shape[1]
-        
+
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
 
