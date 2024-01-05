@@ -80,8 +80,13 @@ class SearchCallable:
         self.model_name = model_name
         self.lock = lock
         self.infer_fn = infer_fn
-        self.inputs = (Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),)
-        self.outputs = (Tensor(name="output", shape=(-1,), dtype=bytes),)
+        self.inputs = (Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
+                       Tensor(name="session", shape=(-1,), dtype=bytes, optional=False),
+                       Tensor(name="action", shape=(-1,), dtype=np.int32, optional=True),
+                       Tensor(name="depth", shape=(-1,), dtype=np.int32, optional=True),)
+        self.outputs = (Tensor(name="action", shape=(-1,), dtype=np.int32),
+                        Tensor(name="policy", shape=(-1,), dtype=np.float32),
+                        )
 
     @batch
     @lock_method("self.lock")
@@ -92,10 +97,30 @@ class SearchCallable:
         sentences = inputs.pop("sentences", None)
         if sentences is not None:
             sentences = decode_bytes_ndarray(sentences)
-        sentences = [i.item() for i in sentences]
-        output = self.infer_fn(sentences)
-        print(output)
+            sentences = [i.item() for i in sentences]
+            print('sentences', sentences)
+
+        session_data = inputs.pop("session", None)
+        session = decode_bytes_ndarray(session_data)
+        session = session[0].item()
+        print('session', session)
+
+        action = inputs.pop("action", None)
+        print('action', action)
+
+        depth = inputs.pop("depth", None)
+        print('depth', depth)
+
+        # output = self.infer_fn(sentences)
+        # print(output)
         # rewards, exceeded = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
 
         output_dict = {}
+        if action is not None:
+            batch_size = action.shape[0]
+            output_dict['action'] = np.array([[1,2,3]]*batch_size)
+            output_dict['policy'] = np.array([[3.0,4.0,5.0]]*batch_size)
+        else:
+            output_dict['action'] = np.array([[1,2,3]])
+            output_dict['policy'] = np.array([[3.0,4.0,5.0]])
         return output_dict

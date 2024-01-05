@@ -238,9 +238,10 @@ def main(cfg) -> None:
     strategy = GPTModelTextGenerationStrategy(model)
     strategy_args = {"strategy": strategy}
 
-    def get_infer_fn(model, length_params, sampling_params, **strategy_args):
-        tokens_to_generate = length_params["max_length"]
-        min_tokens_to_generate = length_params["min_length"]
+    def get_infer_fn(model, sampling_params, **strategy_args):
+        # one token at a time
+        tokens_to_generate = 1
+        min_tokens_to_generate = 1
         add_BOS = sampling_params["add_BOS"]
         all_probs = sampling_params["all_probs"]
         compute_logprob = sampling_params["compute_logprob"]
@@ -271,15 +272,14 @@ def main(cfg) -> None:
 
         return infer_fn
 
-    infer_fn = get_infer_fn(model, length_params, sampling_params, **strategy_args)
+    infer_fn = get_infer_fn(model, sampling_params, **strategy_args)
+    infer_fn = lambda : None
+    # r = infer_fn(["hello", "ok"])
+    # print(r)
 
-    r = infer_fn(["hello", "ok"])
-    print(r)
+    # import sys
 
-    import sys
-
-    sys.exit(0)
-
+    # sys.exit(0)
     if torch.distributed.get_rank() == 0:
         infer_callable = SearchCallable(model_name="reward_model", infer_fn=infer_fn, lock=threading.Lock())
         triton_config = TritonConfig(
@@ -292,7 +292,7 @@ def main(cfg) -> None:
         dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
         model_config = ModelConfig(batching=True, max_batch_size=max_batch_size, batcher=dynamic_batcher)
 
-        with Triton(config=triton_config) as triton:
+        with Triton(config=triton_config, max_batch_size=16) as triton:
             triton.bind(
                 model_name=infer_callable.model_name,
                 infer_func=infer_callable.infer,

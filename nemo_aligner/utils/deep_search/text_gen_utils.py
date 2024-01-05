@@ -556,88 +556,87 @@ def sample_sequence_batch(
 
             if parallel_state.is_pipeline_last_stage():
 
-                if compute_logprob:
-                    output = output[0]["logits"]
-                    output = tensor_parallel.gather_from_tensor_model_parallel_region(output)
-                    assert output is not None
-                    logits = output[:, -1].view(batch_size, -1).contiguous()
+                # if compute_logprob:
+                #     output = output[0]["logits"]
+                #     output = tensor_parallel.gather_from_tensor_model_parallel_region(output)
+                #     assert output is not None
+                #     logits = output[:, -1].view(batch_size, -1).contiguous()
 
-                else:
-                    logits = output[0]["logits"][:, -1].contiguous()
-                    logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
-                    assert logits is not None
-                    logits = logits.view(batch_size, -1)
+                # else:
+                #     logits = output[0]["logits"][:, -1].contiguous()
+                #     logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
+                #     assert logits is not None
+                #     logits = logits.view(batch_size, -1)
+                logits = output[0]["logits"][:, -1].contiguous()
+                logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
+                assert logits is not None
+                logits = logits.view(batch_size, -1)
 
-                # make sure it will generate at least min_length
-                min_length = extra.get("min_tokens_to_generate", 0)
-                if min_length > 0:
-                    within_min_length = (context_length - context_lengths) < min_length
-                    logits[within_min_length, eod_id] = -float("Inf")
+
+                # # make sure it will generate at least min_length
+                # min_length = extra.get("min_tokens_to_generate", 0)
+                # if min_length > 0:
+                #     within_min_length = (context_length - context_lengths) < min_length
+                #     logits[within_min_length, eod_id] = -float("Inf")
 
                 # make sure it won't sample outside the vocab_size range
                 logits[:, tokenizer.vocab_size :] = -float("Inf")
 
                 # started indicates whether the current token step passes the context_length, so we make sure not to overwrite the context tokens
 
-                started = context_lengths <= context_length
-                if extra.get("greedy", False):
-                    prev = torch.argmax(logits, dim=-1).view(-1)
-                else:
-                    logits = logits.float()
-                    logits /= temperature
-                    # handle repetition penality
-                    logits = repetition_penalty(logits, extra.get("repetition_penalty", 1.2), all_generated_indices)
-                    logits = top_k_logits(
-                        logits, top_k=extra.get("top_k", 0), top_p=extra.get("top_p", 0.9), started=started
-                    )
-                    probs = F.softmax(logits, dim=-1)
-                    prev = torch.multinomial(probs, num_samples=1).view(-1)
+                # started = context_lengths <= context_length
+                # if extra.get("greedy", False):
+                #     prev = torch.argmax(logits, dim=-1).view(-1)
+                # else:
+                #     logits = logits.float()
+                #     logits /= temperature
+                #     # handle repetition penality
+                #     logits = repetition_penalty(logits, extra.get("repetition_penalty", 1.2), all_generated_indices)
+                #     logits = top_k_logits(
+                #         logits, top_k=extra.get("top_k", 0), top_p=extra.get("top_p", 0.9), started=started
+                #     )
+                #     probs = F.softmax(logits, dim=-1)
+                #     prev = torch.multinomial(probs, num_samples=1).view(-1)
+                updated_logits, actions = torch.topk(logits, extra.get("top_k", 0))
+                probs = F.softmax(updated_logits, dim=-1)
+                # logits = logits.float()
+                # # logits /= temperature
+                # # # handle repetition penality
+                # # logits = repetition_penalty(logits, extra.get("repetition_penalty", 1.2), all_generated_indices)
+                # logits = top_k_logits(
+                #     logits, top_k=extra.get("top_k", 0), top_p=extra.get("top_p", 0.9), started=started
+                # )
+                # probs = F.softmax(logits, dim=-1)
+                # prev = torch.multinomial(probs, num_samples=1).view(-1)
 
                 # Clamp the predicted out of vocabulary tokens
-                prev = torch.clamp(prev, max=tokenizer.vocab_size - 1)
-                new_tokens = switch(tokens[:, context_length].view(-1), prev, started)
+                # prev = torch.clamp(prev, max=tokenizer.vocab_size - 1)
+
+                # new_tokens = switch(tokens[:, context_length].view(-1), prev, started)
 
                 # Replace sampled tokens w/ done token if EOD has already been sampled
-                new_tokens = switch(new_tokens, eod_id, is_done)
+                # new_tokens = switch(new_tokens, eod_id, is_done)
 
                 # post process the inference tokens based on the strategy
-                inference_strategy.post_process(tokens, new_tokens, context_length)
+                # inference_strategy.post_process(tokens, new_tokens, context_length)
 
                 # Insert either new predicted or next prompt token
-                tokens[:, context_length] = new_tokens
-
-                if compute_logprob:
-                    if output_logits is None:
-                        output = F.log_softmax(output[:, :context_length, :], 2)
-
-                        indices = torch.unsqueeze(tokens[:, 1 : context_length + 1], 2)
-                        output_logits = torch.gather(output, 2, indices).squeeze(2)
-                        all_generated_indices = indices[:, :, 0]
-                        if all_probs:
-                            full_logits = output
-                    else:
-                        output = F.log_softmax(output, 2)
-                        indices = torch.unsqueeze(new_tokens, 1).unsqueeze(2)
-                        new_output_logits = torch.gather(output, 2, indices).squeeze(2)
-
-                        # TODO(rprenger) we're copying output_logits every time.  Should pre-allocate
-                        output_logits = torch.cat([output_logits, new_output_logits], 1)
-                        all_generated_indices = torch.cat([all_generated_indices, indices[:, :, 0]], 1)
-                        if all_probs:
-                            full_logits = torch.cat([full_logits, output], 1)
+                # tokens[:, context_length] = new_tokens
 
                 src = parallel_state.get_pipeline_model_parallel_last_rank()
                 group = parallel_state.get_embedding_group()
-                torch.distributed.broadcast(new_tokens, src, group)
+                torch.distributed.broadcast(actions, src, group)
 
                 #                done_token = (prev == eod_id).byte() & started.byte()
                 done_token = inference_strategy.end_of_generation_condition(
                     tokens[:, : context_length + 1], prev, eod_id, end_strings
                 )
-                done_token = done_token.byte() & started.byte()
+                done_token = done_token.byte()
 
                 just_finished = (done_token & ~is_done).bool()
+
                 lengths[just_finished.view(-1)] = context_length
+
                 is_done = is_done | done_token
 
                 done = torch.all(is_done)
@@ -656,6 +655,7 @@ def sample_sequence_batch(
                 if parallel_state.is_pipeline_first_stage():
                     src = parallel_state.get_pipeline_model_parallel_last_rank()
                     group = parallel_state.get_embedding_group()
+                    actions = torch.empty_like(logits[:, :extra.get("top_k", 0)])
                     new_tokens = torch.empty_like(tokens[:, context_length])
                     torch.distributed.broadcast(new_tokens, src, group)
                     tokens[:, context_length] = new_tokens
