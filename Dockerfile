@@ -24,10 +24,9 @@ RUN pip install --upgrade-strategy only-if-needed jsonlines
 
 # NeMo
 RUN git clone -b r1.22.0 https://github.com/NVIDIA/NeMo.git
-RUN cd NeMo && git cherry-pick -X theirs fa8d416793d850f4ce56bea65e1fe28cc0d092c0
+RUN cd NeMo && git cherry-pick -X theirs fa8d416793d850f4ce56bea65e1fe28cc0d092c0 a7f0bc1903493888c31436efc2452ff721fa5a67
 WORKDIR /opt/NeMo
-# fixes a bug in NeMo when used with latest apex
-RUN sed -i 's/_fast_layer_norm(x, self.weight + 1, self.bias, self.epsilon)/_fast_layer_norm(x, self.weight + 1, self.bias, self.epsilon, False)/g' nemo/collections/nlp/modules/common/megatron/layer_norm_1p.py
+# waiting on https://github.com/NVIDIA/NeMo/pull/8130/files to get merged before deleting the following WAR
 RUN sed -i 's/shutil.rmtree(ckpt_to_dir(filepath))/shutil.rmtree(ckpt_to_dir(filepath), ignore_errors=True)/g' nemo/collections/nlp/parts/nlp_overrides.py
 RUN sed -i 's/\[all\]/\[nlp\]/g' reinstall.sh
 RUN rm -rf .git && ./reinstall.sh
@@ -43,5 +42,3 @@ WORKDIR /opt
 RUN pip install --no-deps git+https://github.com/NVIDIA/NeMo-Aligner.git@main
 
 WORKDIR /workspace
-
-ENV NVTE_APPLY_QK_LAYER_SCALING=1
