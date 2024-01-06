@@ -111,7 +111,7 @@ class SearchCallable:
         depth = inputs.pop("depth", None)
         print('depth', depth)
 
-        # output = self.infer_fn(sentences)
+        output = self.infer_fn(sentences, action, depth, session)
         # print(output)
         # rewards, exceeded = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
 
@@ -121,6 +121,7 @@ class SearchCallable:
             output_dict['action'] = np.array([[1,2,3]]*batch_size)
             output_dict['policy'] = np.array([[3.0,4.0,5.0]]*batch_size)
         else:
-            output_dict['action'] = np.array([[1,2,3]])
-            output_dict['policy'] = np.array([[3.0,4.0,5.0]])
+            batch_size = len(sentences)
+            output_dict['action'] = np.array([[1,2,3]]*batch_size)
+            output_dict['policy'] = np.array([[3.0,4.0,5.0]]*batch_size)
         return output_dict

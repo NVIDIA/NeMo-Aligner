@@ -19,6 +19,14 @@ class SearchDB:
         self.db = {}
         # node_id
         self.node_ids = {}
+        self.inference_params = {}
+        self.attention_mask = {}
+        self.position_ids = {}
+    
+    def add_init_obj(self, session_id, inference_params, attention_mask, position_ids):
+        self.inference_params[session_id] = inference_params
+        self.attention_mask[session_id] = attention_mask
+        self.position_ids[session_id] = position_ids
 
     def add(self, session_id, depth, action, node):
         key = (depth, action)
@@ -32,9 +40,21 @@ class SearchDB:
     def get(self, session_id, depth, action):
         return self.db[session_id][(depth, action)]
 
+    def get_attention_mask(self, session_id): 
+        return self.attention_mask[session_id]
+    
+    def get_position_ids(self, session_id):
+        return self.position_ids[session_id]
+    
+    def get_inference_params(self, session_id):
+        return self.inference_params[session_id]
+
     def delete(self, session_id):
         del self.db[session_id]
         self.node_id = 0
+        del self.inference_params[session_id]
+        del self.attention_mask[session_id]
+        del self.position_ids[session_id]
 
 
 def init_first_node(session_id, node_id, node, search_db):

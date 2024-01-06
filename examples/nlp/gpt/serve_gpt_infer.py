@@ -29,7 +29,6 @@ from pytriton.triton import Triton, TritonConfig
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.megatron_init import fake_initialize_model_parallel
 from nemo.collections.nlp.modules.common.text_generation_server import MegatronServer
-from nemo.collections.nlp.modules.common.text_generation_utils import generate
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
 from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
 from nemo.core.config import hydra_runner
@@ -37,8 +36,8 @@ from nemo.utils import AppState, logging
 from nemo.utils.model_utils import inject_model_parallel_rank
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils.deep_search.search_callables import SearchCallable
-from nemo_aligner.utils.deep_search.text_gen_utils import generate
-from nemo_aligner.utils.deep_search.text_generation_strategy import GPTModelTextGenerationStrategy
+from nemo_aligner.utils.deep_search.text_gen_utils import search
+from nemo_aligner.utils.deep_search.text_generation_strategy import GPTModelTextGenerationStrategy, GPTSearchTextGenerationStrategy
 from nemo_aligner.utils.train_script_utils import init_distributed
 
 try:
@@ -235,45 +234,31 @@ def main(cfg) -> None:
     }
 
     # strategy_args = {"strategy": strategy}
-    strategy = GPTModelTextGenerationStrategy(model)
+    strategy = GPTSearchTextGenerationStrategy(model)
     strategy_args = {"strategy": strategy}
 
-    def get_infer_fn(model, sampling_params, **strategy_args):
+    def get_infer_fn(model, sampling_params, length_params, **strategy_args):
         # one token at a time
-        tokens_to_generate = 1
-        min_tokens_to_generate = 1
-        add_BOS = sampling_params["add_BOS"]
-        all_probs = sampling_params["all_probs"]
-        compute_logprob = sampling_params["compute_logprob"]
-        temperature = sampling_params["temperature"]
+        tokens_to_generate = length_params["max_length"]
         top_k = sampling_params["top_k"]
-        top_p = sampling_params["top_p"]
-        greedy = sampling_params["use_greedy"]
-        repetition_penalty = sampling_params["repetition_penalty"]
         end_strings = sampling_params["end_strings"]
 
-        def infer_fn(inputs=None):
-            return generate(
-                model,
-                inputs,
-                tokens_to_generate=tokens_to_generate,
-                min_tokens_to_generate=min_tokens_to_generate,
-                add_BOS=add_BOS,
-                all_probs=all_probs,
-                compute_logprob=compute_logprob,
-                temperature=temperature,
-                top_k=top_k,
-                top_p=top_p,
-                greedy=greedy,
-                repetition_penalty=repetition_penalty,
-                end_strings=end_strings,
-                **strategy_args,
-            )
-
+        def infer_fn(inputs=None, action=None, depth=None, session_id=None):
+            return search(
+                    model,
+                    inputs,
+                    action,
+                    depth,
+                    session_id,
+                    tokens_to_generate=tokens_to_generate,  # max search depth
+                    top_k=top_k,
+                    end_strings=end_strings,
+                    **strategy_args,
+                )
         return infer_fn
 
-    infer_fn = get_infer_fn(model, sampling_params, **strategy_args)
-    infer_fn = lambda : None
+    infer_fn = get_infer_fn(model, sampling_params, length_params, **strategy_args)
+    # infer_fn = lambda : None
     # r = infer_fn(["hello", "ok"])
     # print(r)
 
@@ -292,7 +277,7 @@ def main(cfg) -> None:
         dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
         model_config = ModelConfig(batching=True, max_batch_size=max_batch_size, batcher=dynamic_batcher)
 
-        with Triton(config=triton_config, max_batch_size=16) as triton:
+        with Triton(config=triton_config) as triton:
             triton.bind(
                 model_name=infer_callable.model_name,
                 infer_func=infer_callable.infer,
