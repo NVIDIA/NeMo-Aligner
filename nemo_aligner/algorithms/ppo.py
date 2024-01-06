@@ -348,10 +348,16 @@ class PPOTrainer:
         return loss_mean, metrics
 
     def fit(self):
-        if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
-            # because we need to figure out a nice way to reset the shuffling on our dataset
-            # otherwise epoch > 1 will loop over the dataset in the same order
-            raise ValueError("epoch > 1 is not supported")
+        if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
+            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
+        ):
+            # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
+            # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
+            # to fix this, you should use MegatronPretrainingRandomBatchSampler instead, which alleviates this issue and allows
+            # random shuffling for each epoch.
+            raise ValueError(
+                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
+            )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
         if len(epoch_iter) <= 0:
@@ -395,6 +401,7 @@ class PPOTrainer:
                     table_metrics["response"],
                     table_metrics["reward"],
                 ]
+                metrics["epoch"] = self.epoch + 1
                 self.logger.log_metrics(
                     metrics, step=self.step, prefix="train_rollouts/",
                 )
@@ -507,15 +514,7 @@ class PPOTrainer:
         self.model.finish_training()
 
     def set_max_steps(self):
-        max_steps = self.cfg.get("max_steps", -1)
+        self.max_steps = (self._train_dataloader_len * (self.cfg.max_epochs - self.epoch)) + self.step
 
-        if max_steps == -1:
-            # the dataloader already knows how much longer
-            # because consumed samples is resumed
-            max_steps = self._train_dataloader_len
-        else:
-            # user specified the max step, figure out how much longer
-            # we need to run for
-            max_steps = max_steps - self.step
-
-        self.max_steps = min(max_steps, self._train_dataloader_len) + self.step
+        if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
+            self.max_steps = min(self.max_steps, max_steps)

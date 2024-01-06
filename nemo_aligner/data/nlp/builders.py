@@ -36,6 +36,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset i
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
+    MegatronPretrainingRandomBatchSampler,
 )
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
@@ -327,7 +328,7 @@ def build_dataloader(
     # Megatron sampler
     if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type is not None:
         if cfg.model.data.dataloader_type == "single":
-            cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+            cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingSampler
             batch_sampler = cls(
                 total_samples=len(dataset),
                 consumed_samples=consumed_samples,
