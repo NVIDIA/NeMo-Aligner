@@ -18,11 +18,11 @@ from statistics import mean
 import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
-from nemo.utils import logging
 
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingRandomBatchSampler,
 )
+from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
