@@ -146,7 +146,7 @@ class SupervisedTrainer:
 
         assert np.all(~np.array(exceeded)), "there are strings that exceeded the sequence length"
         response_tokens = self.model.infer({"text": context_tokens, "length": context_lengths})["response_tokens"]
-        print("#### generated response", self.tokenizer.ids_to_text(response_tokens[0].tolist()))
+        print("#### generated response", self.model.tokenizer.ids_to_text(response_tokens[0].tolist()))
         # TODO: you can run your metrics here
 
     def fit(self):
