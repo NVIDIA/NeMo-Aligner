@@ -135,6 +135,7 @@ class SupervisedTrainer:
         return loss_mean, trainer_metrics | metrics
 
     def run_generation(self, text, max_response_length=1024):
+        # TODO: you probably want to microbatch the text
         context_tokens, context_lengths, exceeded = tokenize_batch(
             self.model.tokenizer, text, self.model.cfg.encoder_seq_length, add_BOS=False
         )
@@ -147,7 +148,10 @@ class SupervisedTrainer:
         assert np.all(~np.array(exceeded)), "there are strings that exceeded the sequence length"
         response_tokens = self.model.infer({"text": context_tokens, "length": context_lengths})["response_tokens"]
         print("#### generated response", self.model.tokenizer.ids_to_text(response_tokens[0].tolist()))
+
         # TODO: you can run your metrics here
+        # dummy metric(compute it however you like, but return it as a dictionary)
+        return {"token_length": response_tokens.sum().item()}
 
     def fit(self):
         if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
@@ -174,10 +178,6 @@ class SupervisedTrainer:
             )
 
             for _, batch in zip(loop_iter, global_pbar):
-                # run generation
-                inference_metrics = self.run_generation(
-                    ["what is the meaning of life?", "can you as an LLM really code?"]
-                )
 
                 self.timer.start("train_step_time")
                 loss, metrics = self.train_single_step(batch)
@@ -206,6 +206,12 @@ class SupervisedTrainer:
                 )
 
                 if run_val:
+                    # run generation
+                    # TODO: you can put all the text you want and collect metric within the
+                    # run generation
+                    inference_metrics = self.run_generation(
+                        ["what is the meaning of life?", "can you as an LLM really code?"]
+                    )
 
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
@@ -213,6 +219,7 @@ class SupervisedTrainer:
                     self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                     val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
                     metrics.update(val_metrics)
+                    metrics.update(inference_metrics)
 
                 global_pbar.set_postfix(metrics)
 
