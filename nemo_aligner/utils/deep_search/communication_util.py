@@ -57,7 +57,7 @@ def send_generate_info(
     tokens_to_generate,
     top_k,
     end_strings,
-    session_id,
+    sessions,
 ):
     """
     Needs to be synced up with receive_generate_info
@@ -92,7 +92,7 @@ def send_generate_info(
 
     # send session id
     string_tensor = torch.as_tensor(
-        np.frombuffer(pickle.dumps(session_id), dtype=np.int8), device=torch.cuda.current_device()
+        np.frombuffer(pickle.dumps(sessions), dtype=np.int8), device=torch.cuda.current_device()
     )
     size = torch.as_tensor([string_tensor.size(0)], device=torch.cuda.current_device(), dtype=torch.int64)
     torch.distributed.broadcast(size, src, model_parallel_group)
@@ -143,7 +143,7 @@ def receive_generate_info():
     string_tensor = torch.empty(array_size[0], dtype=torch.int8, device=torch.cuda.current_device())
     torch.distributed.broadcast(string_tensor, src, model_parallel_group)
     bytes = string_tensor.cpu().numpy().tobytes()
-    session_id = pickle.loads(bytes)
+    sessions = pickle.loads(bytes)
 
     return (
         context_tokens_tensor,
@@ -153,5 +153,5 @@ def receive_generate_info():
         tokens_to_generate,
         top_k,
         end_strings,
-        session_id,
+        sessions,
     )

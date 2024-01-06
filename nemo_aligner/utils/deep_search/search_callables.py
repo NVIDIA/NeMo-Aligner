@@ -102,7 +102,7 @@ class SearchCallable:
 
         session_data = inputs.pop("session", None)
         session = decode_bytes_ndarray(session_data)
-        session = session[0].item()
+        session = [i.item() for i in session] 
         print('session', session)
 
         action = inputs.pop("action", None)
@@ -112,16 +112,17 @@ class SearchCallable:
         print('depth', depth)
 
         output = self.infer_fn(sentences, action, depth, session)
+        return output
         # print(output)
         # rewards, exceeded = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
 
-        output_dict = {}
-        if action is not None:
-            batch_size = action.shape[0]
-            output_dict['action'] = np.array([[1,2,3]]*batch_size)
-            output_dict['policy'] = np.array([[3.0,4.0,5.0]]*batch_size)
-        else:
-            batch_size = len(sentences)
-            output_dict['action'] = np.array([[1,2,3]]*batch_size)
-            output_dict['policy'] = np.array([[3.0,4.0,5.0]]*batch_size)
-        return output_dict
+        # output_dict = {}
+        # if action is not None:
+        #     batch_size = action.shape[0]
+        #     output_dict['action'] = np.array([[1,2,3]]*batch_size)
+        #     output_dict['policy'] = np.array([[3.0,4.0,5.0]]*batch_size)
+        # else:
+        #     batch_size = len(sentences)
+        #     output_dict['action'] = np.array([[1,2,3]]*batch_size)
+        #     output_dict['policy'] = np.array([[3.0,4.0,5.0]]*batch_size)
+        # return output_dict

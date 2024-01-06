@@ -111,7 +111,7 @@ def search(
     inputs=None,
     action=None,
     depth=None,
-    session_id=None,
+    sessions=None,
     tokens_to_generate=1,  # max search depth
     top_k=0,
     end_strings=["<|endoftext|>"],
@@ -159,7 +159,7 @@ def search(
             tokens_to_generate,
             top_k,
             end_strings,
-            session_id,
+            sessions,
         )
     else:
         (
@@ -170,46 +170,31 @@ def search(
             tokens_to_generate,
             top_k,
             end_strings,
-            session_id,
+            sessions,
         ) = receive_generate_info()
     
     # init the objects for inference
     init = depth[0].item() == 0
     if init:
-        inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_id)
+        inference_strategy.init(context_tokens_tensor, tokens_to_generate, sessions)
 
-    output = sample_sequence_batch(
+    output_actions, output_policys = sample_sequence_batch(
         model,
         inference_strategy,
         context_tokens_tensor,
         context_length_tensor,
         tokens_to_generate,
         end_strings=end_strings,
-        session_id=session_id,
+        sessions=sessions,
         top_k=top_k,
         init=init,
-        depth=depth,
+        depths=depth,
     )
-
-    # output = synced_generate(
-    #     model,
-    #     inference_strategy,
-    #     context_tokens_tensor,
-    #     context_length_tensor,
-    #     tokens_to_generate,
-    #     top_k=top_k,
-    #     end_strings=end_strings,
-    #     session_id=session_id,
-    #     init=init,
-    # )
-
-    if output is not None:
-        tokens, prob = output
-        output = {}
-        output["action"] = tokens
-        output["prob"] = prob
-        output = inference_strategy.post_generation_process(output)
-        return output
+    output = {}
+    output["action"] = output_actions
+    output["policy"] = output_policys
+    output = inference_strategy.post_generation_process(output)
+    return output
 
 
 def switch(val1, val2, boolean):
@@ -224,7 +209,7 @@ def sample_sequence_batch(
     context_lengths,
     tokens_to_generate,
     end_strings,
-    session_id,
+    sessions,
     top_k,
     init,
     depths):
@@ -254,37 +239,28 @@ def sample_sequence_batch(
     with torch.no_grad():
         # get min context length
         context_length = context_lengths.min().item()
-        # added eos_id to support the function generate_samples_eval that passes
-        # eos_id as an argument and needs termination when that id id found.
-        eod_id = tokenizer.eos_id
+
         counter = 0
 
         batch_size = context_tokens.size(0)
-        # initially nothing is done yet
-        is_done = torch.zeros([batch_size]).byte().cuda()
 
         tokens = context_tokens
-
-        output_logits = None
-        all_generated_indices = None  # used to track all generated indices
-        # Generate enough tokens for the longest sequence
 
         maxlen = 1 + context_lengths.max().item()
 
         maxlen = inference_strategy.clip_max_len(maxlen)
 
-        lengths = torch.ones([batch_size]).long().cuda() * maxlen
 
         output_actions = torch.cuda.IntTensor(batch_size, top_k)
         output_policy = torch.cuda.FloatTensor(batch_size, top_k)
 
         while context_length < maxlen:
             batch, tensor_shape = inference_strategy.prepare_batch_at_step(
-                tokens, micro_batch_size, context_length, init, session_id
+                tokens, micro_batch_size, context_length, init, sessions
             )
 
             if init:
-                output = inference_strategy.forward_step(batch, tensor_shape, session_id)
+                output = inference_strategy.forward_step(batch, tensor_shape, sessions, init)
             else:
                 output = None
             if parallel_state.is_pipeline_last_stage():
@@ -300,7 +276,7 @@ def sample_sequence_batch(
                 updated_logits, actions = torch.topk(logits, top_k)
                 probs = F.softmax(updated_logits, dim=-1)
 
-                batch_update_indicator = context_lengths[batch] == context_length
+                batch_update_indicator = context_lengths == context_length
                 output_actions[batch_update_indicator] = actions[batch_update_indicator].type(torch.int32)
                 output_policy[batch_update_indicator] = probs[batch_update_indicator]
  
@@ -312,16 +288,32 @@ def sample_sequence_batch(
             parent_nodes = [None] * batch_size
             actions_taken = torch.cuda.IntTensor([-1] * batch_size)
             # construct and save the root node
-            inference_strategy.save_kv_cache(session_id, depths, batch_size, context_lengths, parent_nodes, actions_taken)
-            # construct and save the first level nodes
-            depths += 1
+            inference_strategy.save_kv_cache(sessions, depths, batch_size, context_lengths, parent_nodes, actions_taken)
+        
+        # sync from last pipeline stage to src rank, so that it can be returned
+        if parallel_state.is_pipeline_last_stage():
+            src = parallel_state.get_pipeline_model_parallel_last_rank()
+            group = parallel_state.get_embedding_group()
+            torch.distributed.broadcast(output_actions, src, group)
+            torch.distributed.broadcast(output_policy, src, group)
+        elif parallel_state.is_pipeline_first_stage():
+            src = parallel_state.get_pipeline_model_parallel_last_rank()
+            group = parallel_state.get_embedding_group()
+            torch.distributed.broadcast(output_actions, src, group)
+            torch.distributed.broadcast(output_policy, src, group)
+        return output_actions, output_policy
 
-            for i in range(batch_size):
-                parent_nodes[i] = inference_strategy.get_node(session_id, 0, -1)
 
-            for j in range(top_k):
-                actions_taken = output_actions[:, j]
-                inference_strategy.save_kv_cache(session_id, depths, batch_size, context_lengths, parent_nodes, actions_taken)
+            # # construct and save the first level nodes
+            # depths += 1
+
+            # for i in range(batch_size):
+            #     session_id = sessions[i]
+            #     parent_nodes[i] = inference_strategy.get_node(session_id, 0, -1)
+
+            # for j in range(top_k):
+            #     actions_taken = output_actions[:, j]
+            #     inference_strategy.save_kv_cache(sessions, depths, batch_size, context_lengths, parent_nodes, actions_taken)
           
 
         # if parallel_state.is_pipeline_last_stage():

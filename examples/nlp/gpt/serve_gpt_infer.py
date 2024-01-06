@@ -37,7 +37,7 @@ from nemo.utils.model_utils import inject_model_parallel_rank
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils.deep_search.search_callables import SearchCallable
 from nemo_aligner.utils.deep_search.text_gen_utils import search
-from nemo_aligner.utils.deep_search.text_generation_strategy import GPTModelTextGenerationStrategy, GPTSearchTextGenerationStrategy
+from nemo_aligner.utils.deep_search.text_generation_strategy import GPTSearchTextGenerationStrategy
 from nemo_aligner.utils.train_script_utils import init_distributed
 
 try:

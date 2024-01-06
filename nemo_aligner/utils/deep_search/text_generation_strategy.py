@@ -99,8 +99,8 @@ class TextGenerationStrategy:
             self.model.eval()
         self._end_of_generation_cache = None
 
-    def forward_step(self, batch, tensor_shape, session_id):
-        func = get_forward_output_only_func(self.search_db, session_id)
+    def forward_step(self, batch, tensor_shape, sessions, init):
+        func = get_forward_output_only_func(self, sessions, init)
 
         fwd_bwd_function = get_forward_backward_func()
         output_tensor = fwd_bwd_function(
@@ -289,81 +289,6 @@ class TextGenerationStrategy:
         return end_tokens, end_strings_to_check
 
 
-class GPTModelTextGenerationStrategy(TextGenerationStrategy):
-    def __init__(self, model):
-        super().__init__(model)
-        self.forward_model = self.model.model
-        # all the model parallel worker will have a copy of the inference params
-        # to store the K-V cache
-        self.inference_params = None
-    
-    def init_batch(self, context_tokens: torch.Tensor, context_length: int, compute_attention_mask: bool):
-        """initialize the batch data before the inference steps."""
-        # Move to GPU.
-        tokenizer = self.model.tokenizer
-        tokens = context_tokens.contiguous().cuda()
-        # Get the attention mask and postition ids.
-        self.attention_mask, _, self.position_ids = get_ltor_masks_and_position_ids(
-            tokens,
-            tokenizer.eos_id,
-            self.model.cfg.get("reset_position_ids", False),
-            self.model.cfg.get("reset_attention_mask", False),
-            self.model.cfg.get("eod_mask_loss", False),
-            compute_attention_mask=compute_attention_mask,
-        )
-
-    def clip_max_len(self, maxlen: int) -> int:
-        """ clip the max len based on the LM model max sequence length"""
-
-        # for positional embedding types that allow length extrapolation, don't clip the max length
-        if self.model.cfg.get("position_embedding_type", "learned_absolute") == "learned_absolute":
-            if maxlen > self.model.cfg.encoder_seq_length + 1:
-                maxlen = self.model.cfg.encoder_seq_length + 1
-        return maxlen
-
-    def prepare_batch_at_step(
-        self,
-        tokens: torch.Tensor,
-        maxlen: int,
-        micro_batch_size: int,
-        step: int,
-        context_length: int,
-        compute_attention_mask: bool = True,
-    ) -> Tuple[List[torch.Tensor], List[int]]:
-        """
-        generate the batch used in inference for each of the steps
-        """
-        # types2use = None
-        if step == 0:
-            # Allocate memory for the entire context.
-            tokens2use = tokens[:, :context_length]
-            positions2use = self.position_ids[:, :context_length]
-            # init inference params
-            # self.inference_params = InferenceParams(max_batch_size=micro_batch_size, max_sequence_length=maxlen)
-            # not using type2use. uncomment it if it is used
-            # if type_ids is not None:
-            #     types2use = type_ids[:, :context_length]
-        else:
-            if step == 1:
-                self.inference_params.sequence_len_offset = context_length - 1
-            else:
-                self.inference_params.sequence_len_offset += 1
-            # Set this to false so the memory is not reallocated.
-            tokens2use = tokens[:, context_length - 1].view(micro_batch_size, -1)
-            positions2use = self.position_ids[:, context_length - 1].view(micro_batch_size, -1)
-            # not using type2use. uncomment it if it is used
-            # if type_ids is not None:
-            #     types2use = type_ids[:, context_length - 1].view(batch_size, -1)
-
-        """Prepare batch for each of the inference steps"""
-        attention_mask_repeat = None
-        if compute_attention_mask:
-            attention_mask_repeat = torch.concat([self.attention_mask for _ in range(micro_batch_size)])
-
-        batch = [tokens2use, attention_mask_repeat, positions2use]
-        tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
-        return batch, tensor_shape
-
 
 class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
 
@@ -375,16 +300,16 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         self.inference_params = None
 
 
-    def init(self, context_tokens: torch.Tensor, max_depth: int, session_id: str):
+    def init(self, context_tokens: torch.Tensor, max_depth: int, sessions: List[str]):
         batch_size = context_tokens.shape[0]
         seq_len = context_tokens.shape[1]
         self.search_db: SearchDB = SearchDB()
 
-        inference_params = InferenceParams(max_batch_size=batch_size, max_sequence_length=seq_len + 1)
         tokens = context_tokens.contiguous().cuda()
         attention_mask, position_ids = _get_ltor_masks_and_position_ids(batch_size, seq_len + max_depth, tokens.device)
-        self.search_db.add_init_obj(session_id, inference_params, attention_mask, position_ids)
-
+        inference_params = InferenceParams(max_batch_size=batch_size, max_sequence_length=seq_len + 1)
+        for session_id in sessions:
+            self.search_db.add_init_obj(session_id, inference_params, attention_mask, position_ids)
 
     def init_batch(self, context_tokens: torch.Tensor, context_length: int, compute_attention_mask: bool):
         """initialize the batch data before the inference steps."""
@@ -405,13 +330,14 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         micro_batch_size: int,
         context_length: int,
         init: bool = False,
-        session_id: str = None,
+        sessions: List[str] = None,
     ) -> Tuple[List[torch.Tensor], List[int]]:
         """
         generate the batch used in inference for each of the steps
         """
         if init:
             tokens2use = tokens[:, :context_length]
+            session_id = sessions[0]
             attention_mask_3d = self.search_db.get_attention_mask(session_id)[..., :context_length, :context_length]
             positions2use = self.search_db.get_position_ids(session_id)[..., :context_length]
         # # types2use = None
@@ -445,11 +371,21 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
         return batch, tensor_shape
 
-    def save_kv_cache(self, session_id: str, depths: torch.Tensor, bathch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor):
+    def get_inference_params(self, sessions: List[str], init: bool = False):
+        if init:
+            # init inference params, any session id is fine
+            return self.search_db.get_inference_params(sessions[0])
+        else:
+            # reconstruct a new inference param from the search db 
+            pass
+
+    def save_kv_cache(self, sessions: List[str], depths: torch.Tensor, bathch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor):
         for bid in range(bathch_size): 
             context_length = context_lengths[bid].item()
             depth = depths[bid].item()
-            state = State.get_state(self.root_inference_params, depth, context_length, bid)
+            session_id = sessions[bid]
+            infer_params = self.search_db.get_inference_params(session_id)
+            state = State.get_state(infer_params, depth, context_length, bid)
             # self.search_db.add_kv_cache(session_id, depth, tokens, kv_cache)
             parent_node = parent_nodes[bid]
             action_taken = actions_taken[bid].item()
@@ -459,3 +395,13 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
     
     def get_node(self, session_id: str, depth: int, action: int):
         return self.search_db.get(session_id, depth, action)
+
+    def post_generation_process(self, output):
+        """
+        At the end of the text generation, post process the results
+        Args:
+            output  (dict): the text generation output dictionary
+        """
+        for key in output.keys():
+            output[key] = output[key].cpu().numpy()
+        return output

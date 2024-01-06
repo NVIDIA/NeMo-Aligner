@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-
+import torch
 import numpy as np
 from megatron.core import InferenceParams
 
@@ -41,8 +41,8 @@ class State:
             # key_value_memory_dict [length, batch_size, ...]
             kv_cache = {
                 key: (
-                    infer_params.key_value_memory_dict[key][0][:context_len, 0].detach().numpy(),
-                    infer_params.key_value_memory_dict[key][1][:context_len, 0].detach().numpy(),
+                    infer_params.key_value_memory_dict[key][0][:context_len, batch_id].detach().cpu().type(torch.float32).numpy(),
+                    infer_params.key_value_memory_dict[key][1][:context_len, batch_id].detach().cpu().type(torch.float32).numpy(),
                 )
                 for key in infer_params.key_value_memory_dict
             }
@@ -50,8 +50,8 @@ class State:
         else:
             kv_cache = {
                 key: (
-                    infer_params.key_value_memory_dict[key][0][length - 1 : length, batch_id].detach().numpy(),
-                    infer_params.key_value_memory_dict[key][1][length - 1 : length, batch_id].detach().numpy(),
+                    infer_params.key_value_memory_dict[key][0][length - 1 : length, batch_id].detach().cpu().type(torch.float32).numpy(),
+                    infer_params.key_value_memory_dict[key][1][length - 1 : length, batch_id].detach().cpu().type(torch.float32).numpy(),
                 )
                 for key in infer_params.key_value_memory_dict
             }
