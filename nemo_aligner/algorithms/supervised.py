@@ -15,13 +15,14 @@
 from collections import defaultdict
 from statistics import mean
 
+import numpy as np
 import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
+
 from nemo.utils import logging
-
-
 from nemo_aligner.utils.distributed import SyncTimer
+from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
 
@@ -133,6 +134,21 @@ class SupervisedTrainer:
 
         return loss_mean, trainer_metrics | metrics
 
+    def run_generation(self, text, max_response_length=1024):
+        context_tokens, context_lengths, exceeded = tokenize_batch(
+            self.model.tokenizer, text, self.model.cfg.encoder_seq_length, add_BOS=False
+        )
+
+        # nemo requires us to pad the response length up before we do anything...
+        context_tokens = torch.nn.functional.pad(
+            context_tokens, (0, max_response_length), value=self.model.tokenizer.eos_id
+        )
+
+        assert np.all(~np.array(exceeded)), "there are strings that exceeded the sequence length"
+        response_tokens = self.model.infer({"text": context_tokens, "length": context_lengths})["response_tokens"]
+        print("#### generated response", self.tokenizer.ids_to_text(response_tokens[0].tolist()))
+        # TODO: you can run your metrics here
+
     def fit(self):
         if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
             # because we need to figure out a nice way to reset the shuffling on our dataset
@@ -158,6 +174,11 @@ class SupervisedTrainer:
             )
 
             for _, batch in zip(loop_iter, global_pbar):
+                # run generation
+                inference_metrics = self.run_generation(
+                    ["what is the meaning of life?", "can you as an LLM really code?"]
+                )
+
                 self.timer.start("train_step_time")
                 loss, metrics = self.train_single_step(batch)
                 self.timer.stop("train_step_time")
@@ -185,6 +206,7 @@ class SupervisedTrainer:
                 )
 
                 if run_val:
+
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
                     # so we use the incremented self.step

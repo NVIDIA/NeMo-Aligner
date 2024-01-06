@@ -19,8 +19,10 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
+from nemo.collections.nlp.modules.common.text_generation_utils import get_default_length_params
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
+from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -98,3 +100,24 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         mbs = int(self.cfg.data.train_ds.micro_batch_size)
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
+
+    @torch.no_grad()
+    def infer(self, inference_batch):
+        prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
+        prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
+
+        inputs = (prompt_tokens, prompt_lengths)
+
+        # TODO: insert strategy here and other params
+        # right now i am using the default
+        length_params = get_default_length_params()
+        actor_output = self.generate(inputs, length_params=length_params)
+
+        response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
+
+        rollout_batch = {
+            "response_tokens": response_tokens,
+        }
+
+        # return in GPU, trainer needs to move to cpu
+        return rollout_batch
