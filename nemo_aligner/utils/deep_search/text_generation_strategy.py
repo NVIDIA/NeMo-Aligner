@@ -385,7 +385,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         tokens = torch.cuda.LongTensor(tokens)
         batch_size, token_len = tokens.shape
         true_context_lengths = torch.cuda.IntTensor(context_lengths) + depths[:, 0]
-        new_context_lengths = true_context_lengths - true_context_lengths.min() + 1
+        new_context_lengths = true_context_lengths - true_context_lengths.min() 
         max_len = true_context_lengths.max().item()
         inference = InferenceParams(max_batch_size=batch_size, max_sequence_length=max_len + 1)
         inference.sequence_len_offset = max_len - token_len

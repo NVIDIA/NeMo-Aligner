@@ -180,8 +180,7 @@ def search(
     if init:
         inference_strategy.init(context_tokens_tensor, tokens_to_generate, sessions)
     else:
-        inference_strategy.compute_inference_params(sessions, depth, action)
-        pass
+        context_tokens_tensor, context_length_tensor = inference_strategy.compute_inference_params(sessions, depth, action)
 
     output_actions, output_policys = sample_sequence_batch(
         model,
