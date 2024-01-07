@@ -15,8 +15,8 @@
 from megatron.core import InferenceParams, parallel_state
 
 
-def get_forward_output_only_func(text_gen_strategy, sessions, init):
-    inference_params = text_gen_strategy.get_inference_params(sessions, init)
+def get_forward_output_only_func(text_gen_strategy, sessions):
+    inference_params = text_gen_strategy.get_inference_params(sessions)
 
     def fwd_output_only_func(dataloader_iter, model):
         batch = next(dataloader_iter)

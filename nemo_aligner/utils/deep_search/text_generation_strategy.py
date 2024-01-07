@@ -99,8 +99,8 @@ class TextGenerationStrategy:
             self.model.eval()
         self._end_of_generation_cache = None
 
-    def forward_step(self, batch, tensor_shape, sessions, init):
-        func = get_forward_output_only_func(self, sessions, init)
+    def forward_step(self, batch, tensor_shape, sessions):
+        func = get_forward_output_only_func(self, sessions)
 
         fwd_bwd_function = get_forward_backward_func()
         output_tensor = fwd_bwd_function(
@@ -315,6 +315,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         init: bool = False,
         sessions: List[str] = None,
         step: int = 0,
+        true_context_lengths: torch.Tensor = None,
     ) -> Tuple[List[torch.Tensor], List[int]]:
         """
         generate the batch used in inference for each of the steps
@@ -329,12 +330,32 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                 tokens2use = tokens[:, context_length - 1].view(micro_batch_size, -1)
                 positions2use = self.search_db.get_position_ids(session_id)[..., :context_length]
                 positions2use = positions2use[:, context_length - 1].view(micro_batch_size, -1)
-                inference_params = self.get_inference_params(sessions, init)
+                inference_params = self.get_inference_params(sessions)
                 # update the sequence length offset
                 if step == 1:
                     inference_params.sequence_len_offset = context_length - 1
                 else:
                     inference_params.sequence_len_offset += 1
+        else:
+            session_id = sessions[0]
+            minlen = true_context_lengths.min().item()  # the last token is not yet computed,
+            # we are going to compute the last token first in the first step
+            # context [0, 1, ..., minlen - 2] minlen -1, 
+            # tokens                           [tokens0,   tokens1, ... ]
+            #                                       | compute the token0 first
+            # need attention mask of length minlen + step
+            # need position ids of length minlen + step
+            # sequence_len_offset should start with minlen - 1
+            attention_mask_3d = self.search_db.get_attention_mask(session_id)[..., :minlen + step, :minlen + step]
+            tokens2use = tokens[:, step].view(micro_batch_size, -1)
+            positions2use = self.search_db.get_position_ids(session_id)[..., :minlen + step]
+            positions2use = positions2use.view(micro_batch_size, -1)
+            inference_params = self.get_inference_params(sessions)
+            if step == 0:
+                assert inference_params.sequence_len_offset == minlen - 1
+            else:
+                assert step > 0
+                inference_params.sequence_len_offset += 1
                    
 
 
@@ -370,15 +391,10 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
         return batch, tensor_shape
 
-    def get_inference_params(self, sessions: List[str], init: bool = False):
+    def get_inference_params(self, sessions: List[str]):
         # inference_params works for all batches in the sessions
         # TODO, change the key to hash(sessions)
-        if init:
-            # init inference params, any session id is fine
-            return self.search_db.get_inference_params(sessions[0])
-        else:
-            # reconstruct a new inference param from the search db 
-            pass
+        return self.search_db.get_inference_params(sessions[0])
     
     def compute_inference_params(self, sessions: List[str], depths: torch.Tensor, actions: torch.Tensor):
         updated_kv_cache, tokens, context_lengths = get_kv_cache(actions, depths, sessions, self.search_db)
@@ -401,7 +417,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                 inference.key_value_memory_dict[key] = (torch.cuda.FloatTensor(keys), torch.cuda.FloatTensor(vals))
         for session_id in sessions:
             self.search_db.add_inference_params(session_id, inference)
-        return tokens, new_context_lengths
+        return tokens, new_context_lengths, true_context_lengths
         
 
     def save_kv_cache(self, sessions: List[str], depths: torch.Tensor, bathch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, context_tokens: torch.Tensor = None):

@@ -177,10 +177,11 @@ def search(
     
     # init the objects for inference
     init = depth[0].item() == 0
+    true_context_length = None
     if init:
         inference_strategy.init(context_tokens_tensor, tokens_to_generate, sessions)
     else:
-        context_tokens_tensor, context_length_tensor = inference_strategy.compute_inference_params(sessions, depth, action)
+        context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(sessions, depth, action)
 
     output_actions, output_policys = sample_sequence_batch(
         model,
@@ -193,6 +194,7 @@ def search(
         top_k=top_k,
         init=init,
         depths=depth,
+        true_context_length=true_context_length,
     )
     output = {}
     output["action"] = output_actions
@@ -216,7 +218,8 @@ def sample_sequence_batch(
     sessions,
     top_k,
     init,
-    depths):
+    depths,
+    true_context_length=None,):
     # Importing here to avoid circular import errors
 
     app_state = AppState()
@@ -260,13 +263,10 @@ def sample_sequence_batch(
 
         while context_length < maxlen:
             batch, tensor_shape = inference_strategy.prepare_batch_at_step(
-                tokens, micro_batch_size, context_length, init, sessions, counter,
+                tokens, micro_batch_size, context_length, init, sessions, counter, true_context_length
             )
 
-            if init:
-                output = inference_strategy.forward_step(batch, tensor_shape, sessions, init)
-            else:
-                output = None
+            output = inference_strategy.forward_step(batch, tensor_shape, sessions)
             if parallel_state.is_pipeline_last_stage():
 
                 logits = output[0]["logits"][:, -1].contiguous() # output[0]["logits"] shape[batch_size, length, partial vocab_size]
@@ -304,6 +304,22 @@ def sample_sequence_batch(
             for j in range(top_k):
                 actions_taken = output_actions[:, j]
                 inference_strategy.save_kv_cache(sessions, depths, batch_size, context_lengths, parent_nodes, actions_taken, None)
+        else:
+            # construct and save the next level nodes
+            parent_nodes = [None] * batch_size
+
+            for i in range(batch_size):
+                session_id = sessions[i]
+                depth = depths[i].item()
+                context = context_lengths[i].item()
+                action = context_tokens[i, context].item()
+                parent_nodes[i] = inference_strategy.get_node(session_id, depth, action)
+
+            depths += 1
+
+            for j in range(top_k):
+                actions_taken = output_actions[:, j]
+                inference_strategy.save_kv_cache(sessions, depths, batch_size, true_context_length, parent_nodes, actions_taken, None)
         
         # sync from last pipeline stage to src rank, so that it can be returned
         if parallel_state.is_pipeline_last_stage():
