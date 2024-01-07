@@ -382,11 +382,29 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
     
     def compute_inference_params(self, sessions: List[str], depths: torch.Tensor, actions: torch.Tensor):
         updated_kv_cache, tokens, context_lengths = get_kv_cache(actions, depths, sessions, self.search_db)
-        pass
-        
+        tokens = torch.cuda.LongTensor(tokens)
+        batch_size, token_len = tokens.shape
+        true_context_lengths = torch.cuda.IntTensor(context_lengths) + depths[:, 0]
+        new_context_lengths = true_context_lengths - true_context_lengths.min() + 1
+        max_len = true_context_lengths.max().item()
+        inference = InferenceParams(max_batch_size=batch_size, max_sequence_length=max_len + 1)
+        inference.sequence_len_offset = max_len - token_len
+        inference.key_value_memory_dict = updated_kv_cache
+        # make kv cache into tensors
+        for key in inference.key_value_memory_dict.keys():
+            keys, vals = inference.key_value_memory_dict[key]
+            if self.model.cfg.precision == "fp16":
+                inference.key_value_memory_dict[key] = (torch.cuda.HalfTensor(keys), torch.cuda.HalfTensor(vals))
+            elif self.model.cfg.precision == "bf16-mixed":
+                inference.key_value_memory_dict[key] = (torch.cuda.BFloat16Tensor(keys), torch.cuda.BFloat16Tensor(vals))
+            else:
+                inference.key_value_memory_dict[key] = (torch.cuda.FloatTensor(keys), torch.cuda.FloatTensor(vals))
+        for session_id in sessions:
+            self.search_db.add_inference_params(session_id, inference)
+        return tokens, new_context_lengths
         
 
-    def save_kv_cache(self, sessions: List[str], depths: torch.Tensor, bathch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor):
+    def save_kv_cache(self, sessions: List[str], depths: torch.Tensor, bathch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, context_tokens: torch.Tensor = None):
         for bid in range(bathch_size): 
             context_length = context_lengths[bid].item()
             depth = depths[bid].item()
@@ -397,7 +415,12 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             parent_node = parent_nodes[bid]
             action_taken = actions_taken[bid].item()
             # here prior visit_count and C are not used, set to any numbers
-            node = Node(state=state, parent=parent_node, action=action_taken, prior=0.0, visit_count=0, C=2.0)
+            if action_taken == -1:
+                # root node, need to add all context tokens
+                tokens = context_tokens[bid, :context_length].cpu().numpy().tolist()
+                node = Node(state=state, parent=parent_node, action=tokens, prior=0.0, visit_count=0, C=2.0)
+            else:
+                node = Node(state=state, parent=parent_node, action=action_taken, prior=0.0, visit_count=0, C=2.0)
             self.search_db.add(session_id, depth, action_taken, node)
     
     def get_node(self, session_id: str, depth: int, action: int):

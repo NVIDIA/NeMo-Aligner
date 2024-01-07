@@ -133,7 +133,9 @@ def search(
             # it is the selected actions during tree search from node at depth, type int32
             # depth is a tensor of shape [batch_size, 1]
             # from the action and depth values, we can retrieve the node
-            batch_size = action.size(0)
+            action = torch.cuda.IntTensor(action)
+            depth = torch.cuda.IntTensor(depth)
+            batch_size = action.shape[0]
             context_tokens_tensor = torch.cuda.LongTensor(batch_size, 1)
             context_length_tensor = torch.cuda.LongTensor(batch_size)
 
@@ -178,7 +180,8 @@ def search(
     if init:
         inference_strategy.init(context_tokens_tensor, tokens_to_generate, sessions)
     else:
-        inference_strategy.init(None, tokens_to_generate, sessions)
+        inference_strategy.compute_inference_params(sessions, depth, action)
+        pass
 
     output_actions, output_policys = sample_sequence_batch(
         model,
@@ -290,7 +293,18 @@ def sample_sequence_batch(
             parent_nodes = [None] * batch_size
             actions_taken = torch.cuda.IntTensor([-1] * batch_size)
             # construct and save the root node
-            inference_strategy.save_kv_cache(sessions, depths, batch_size, context_lengths, parent_nodes, actions_taken)
+            inference_strategy.save_kv_cache(sessions, depths, batch_size, context_lengths, parent_nodes, actions_taken, context_tokens)
+
+            # construct and save the first level nodes
+            depths += 1
+
+            for i in range(batch_size):
+                session_id = sessions[i]
+                parent_nodes[i] = inference_strategy.get_node(session_id, 0, -1)
+
+            for j in range(top_k):
+                actions_taken = output_actions[:, j]
+                inference_strategy.save_kv_cache(sessions, depths, batch_size, context_lengths, parent_nodes, actions_taken, None)
         
         # sync from last pipeline stage to src rank, so that it can be returned
         if parallel_state.is_pipeline_last_stage():

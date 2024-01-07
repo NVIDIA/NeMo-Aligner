@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import numpy as np
+import torch
 
 
 class SearchDB:
@@ -48,6 +49,9 @@ class SearchDB:
     
     def get_inference_params(self, session_id):
         return self.inference_params[session_id]
+    
+    def add_inference_params(self, session_id, inference_params):
+        self.inference_params[session_id] = inference_params
 
     def delete(self, session_id):
         del self.db[session_id]
@@ -67,6 +71,8 @@ def get_kv_cache(selected_actions, depths, sessions, search_db: SearchDB):
     batched_tokens = []
     context_lengths = []
     for action, depth, session_id in zip(selected_actions, depths, sessions):
+        action = action.item()
+        depth = depth.item()
         node = search_db.get(session_id, depth, action)
         assert node.state.depth == depth
         assert node.action == action
@@ -78,8 +84,12 @@ def get_kv_cache(selected_actions, depths, sessions, search_db: SearchDB):
             if node.parent is None:
                 tmp_key = next(iter(node.state.kv_cache.keys()))
                 context_lengths.append(node.state.kv_cache[tmp_key][0].shape[0])
-            if node.action is not None:
-                tokens.append(node.action)
+            # if node.action is List
+            if isinstance(node.action, list):
+                context_tokens = node.action
+                # reverse the order
+                context_tokens.reverse()
+                tokens.extend(context_tokens)
             for key in node.state.kv_cache.keys():
                 new_kv_cache[key].append(node.state.kv_cache[key])
         # reverse the tokens order
@@ -96,13 +106,15 @@ def get_kv_cache(selected_actions, depths, sessions, search_db: SearchDB):
             new_kv_cache[key] = (keys, vals)
         batched_kv_cache.append(new_kv_cache)
         batched_tokens.append(np.array(tokens))
+    full_length = torch.cuda.IntTensor(context_lengths) + depths[:, 0]
     # before concat, make sure the batch size is the same
-    max_depth = depths.max()
-    min_depth = depths.min()
-    paddings = max_depth - depths
+    max_depth = full_length.max()
+    min_depth = full_length.min()
+    paddings = max_depth - full_length
 
     token_list = []
     for token, padding in zip(batched_tokens, paddings):
+        padding = padding.item()
         token = np.pad(token, ((0, padding),), "constant", constant_values=0)
         token_list.append(token)
         
@@ -116,6 +128,7 @@ def get_kv_cache(selected_actions, depths, sessions, search_db: SearchDB):
         keys = []
         vals = []
         for item, padding in zip(batched_kv_cache, paddings):
+            padding = padding.item()
             key_item = item[key][0][:, None, ...]
             key_item = np.pad(key_item, ((0, padding + 1), (0, 0), (0, 0), (0, 0)), "constant", constant_values=0)
             keys.append(key_item)
