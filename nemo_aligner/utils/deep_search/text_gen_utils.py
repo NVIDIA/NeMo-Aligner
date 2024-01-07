@@ -177,6 +177,8 @@ def search(
     init = depth[0].item() == 0
     if init:
         inference_strategy.init(context_tokens_tensor, tokens_to_generate, sessions)
+    else:
+        inference_strategy.init(None, tokens_to_generate, sessions)
 
     output_actions, output_policys = sample_sequence_batch(
         model,
@@ -256,7 +258,7 @@ def sample_sequence_batch(
 
         while context_length < maxlen:
             batch, tensor_shape = inference_strategy.prepare_batch_at_step(
-                tokens, micro_batch_size, context_length, init, sessions
+                tokens, micro_batch_size, context_length, init, sessions, counter,
             )
 
             if init:

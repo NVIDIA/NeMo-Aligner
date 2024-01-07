@@ -62,10 +62,11 @@ def init_first_node(session_id, node_id, node, search_db):
     search_db.add(session_id, node_id, node)
 
 
-def get_kv_cache(selected_actions, depths, session_id, search_db: SearchDB):
+def get_kv_cache(selected_actions, depths, sessions, search_db: SearchDB):
     batched_kv_cache = []
     batched_tokens = []
-    for action, depth in zip(selected_actions, depths):
+    context_lengths = []
+    for action, depth, session_id in zip(selected_actions, depths, sessions):
         node = search_db.get(session_id, depth, action)
         assert node.state.depth == depth
         assert node.action == action
@@ -74,6 +75,9 @@ def get_kv_cache(selected_actions, depths, session_id, search_db: SearchDB):
         new_kv_cache = {key: [node.state.kv_cache[key]] for key in node.state.kv_cache.keys()}
         while node.parent is not None:
             node = node.parent
+            if node.parent is None:
+                tmp_key = next(iter(node.state.kv_cache.keys()))
+                context_lengths.append(node.state.kv_cache[tmp_key][0].shape[0])
             if node.action is not None:
                 tokens.append(node.action)
             for key in node.state.kv_cache.keys():
@@ -99,7 +103,7 @@ def get_kv_cache(selected_actions, depths, session_id, search_db: SearchDB):
 
     token_list = []
     for token, padding in zip(batched_tokens, paddings):
-        token = np.pad(token, ((0, padding),), "constant", constant_values=-1)
+        token = np.pad(token, ((0, padding),), "constant", constant_values=0)
         token_list.append(token)
         
     # concat tokens, shape [batch_size, length]
@@ -121,4 +125,4 @@ def get_kv_cache(selected_actions, depths, session_id, search_db: SearchDB):
         keys = np.concatenate(keys, axis=1)
         vals = np.concatenate(vals, axis=1)
         output_kv_cache[key] = (keys, vals)
-    return output_kv_cache, tokens
+    return output_kv_cache, tokens, context_lengths

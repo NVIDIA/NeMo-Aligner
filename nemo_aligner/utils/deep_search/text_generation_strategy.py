@@ -26,7 +26,7 @@ from transformers import CLIPImageProcessor
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.collections.nlp.modules.common.megatron.utils import build_attention_mask_3d, get_ltor_masks_and_position_ids
 from nemo_aligner.utils.deep_search.forward_only import get_forward_output_only_func
-from nemo_aligner.utils.deep_search.mcts.search_db import SearchDB
+from nemo_aligner.utils.deep_search.mcts.search_db import SearchDB, get_kv_cache
 from nemo_aligner.utils.deep_search.mcts.mcts import Node, State
 
 try:
@@ -153,23 +153,6 @@ class TextGenerationStrategy:
            compute_attention_mask: bool: set to True to compute attention mask (not needed for FA)
         Args:
             context_tokens (torch.Tensor):  The padded context tokens including the space for tokens to be generated 
-        """
-        pass
-
-    @abc.abstractclassmethod
-    def prepare_batch_at_step(
-        self, tokens: torch.Tensor, maxlen: int, micro_batch_size: int, step: int, context_length: int
-    ) -> Tuple[List[torch.Tensor], List[int]]:
-        """
-        generate the batch used in inference for each of the steps
-        Args:
-            tokens  (torch.Tensor): the context tokens
-            maxlen (int): the maximum length in the context tokens
-            micro_batch_size (int): text generation batch size
-            step (int): the inference step count
-            context_length (int): the new token position in the tokens
-        returns:
-            a tuple of list of tensor arguments for the model and a list of tensor shape required by forward method
         """
         pass
 
@@ -331,15 +314,31 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         context_length: int,
         init: bool = False,
         sessions: List[str] = None,
+        step: int = 0,
     ) -> Tuple[List[torch.Tensor], List[int]]:
         """
         generate the batch used in inference for each of the steps
         """
         if init:
-            tokens2use = tokens[:, :context_length]
             session_id = sessions[0]
             attention_mask_3d = self.search_db.get_attention_mask(session_id)[..., :context_length, :context_length]
-            positions2use = self.search_db.get_position_ids(session_id)[..., :context_length]
+            if step == 0:
+                tokens2use = tokens[:, :context_length]
+                positions2use = self.search_db.get_position_ids(session_id)[..., :context_length]
+            else:
+                tokens2use = tokens[:, context_length - 1].view(micro_batch_size, -1)
+                positions2use = self.search_db.get_position_ids(session_id)[..., :context_length]
+                positions2use = positions2use[:, context_length - 1].view(micro_batch_size, -1)
+                inference_params = self.get_inference_params(sessions, init)
+                # update the sequence length offset
+                if step == 1:
+                    inference_params.sequence_len_offset = context_length - 1
+                else:
+                    inference_params.sequence_len_offset += 1
+                   
+
+
+                
         # # types2use = None
         # if step == 0:
         #     # Allocate memory for the entire context.
@@ -372,12 +371,20 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         return batch, tensor_shape
 
     def get_inference_params(self, sessions: List[str], init: bool = False):
+        # inference_params works for all batches in the sessions
+        # TODO, change the key to hash(sessions)
         if init:
             # init inference params, any session id is fine
             return self.search_db.get_inference_params(sessions[0])
         else:
             # reconstruct a new inference param from the search db 
             pass
+    
+    def compute_inference_params(self, sessions: List[str], depths: torch.Tensor, actions: torch.Tensor):
+        updated_kv_cache, tokens, context_lengths = get_kv_cache(actions, depths, sessions, self.search_db)
+        pass
+        
+        
 
     def save_kv_cache(self, sessions: List[str], depths: torch.Tensor, bathch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor):
         for bid in range(bathch_size): 
