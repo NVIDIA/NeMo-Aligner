@@ -266,6 +266,15 @@ def sample_sequence_batch(
                 tokens, micro_batch_size, context_length, init, sessions, counter, true_context_length
             )
 
+            batch_update_indicator = context_lengths == context_length
+
+            if not batch_update_indicator.any():
+                # if there is nothing to update, skip the computation
+                context_length += 1
+                counter += 1
+                continue
+
+
             output = inference_strategy.forward_step(batch, tensor_shape, sessions)
             if parallel_state.is_pipeline_last_stage():
 
@@ -280,7 +289,6 @@ def sample_sequence_batch(
                 updated_logits, actions = torch.topk(logits, top_k)
                 probs = F.softmax(updated_logits, dim=-1)
 
-                batch_update_indicator = context_lengths == context_length
                 output_actions[batch_update_indicator] = actions[batch_update_indicator].type(torch.int32)
                 output_policy[batch_update_indicator] = probs[batch_update_indicator]
  
