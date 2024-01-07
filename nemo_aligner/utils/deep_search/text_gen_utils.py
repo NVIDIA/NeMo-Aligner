@@ -294,6 +294,19 @@ def sample_sequence_batch(
  
             context_length += 1
             counter += 1
+
+        # sync from last pipeline stage to src rank, so that it can be returned
+        if parallel_state.is_pipeline_last_stage():
+            src = parallel_state.get_pipeline_model_parallel_last_rank()
+            group = parallel_state.get_pipeline_model_parallel_group()
+            torch.distributed.broadcast(output_actions, src, group)
+            torch.distributed.broadcast(output_policy, src, group)
+        else:
+            src = parallel_state.get_pipeline_model_parallel_last_rank()
+            group = parallel_state.get_pipeline_model_parallel_group()
+            torch.distributed.broadcast(output_actions, src, group)
+            torch.distributed.broadcast(output_policy, src, group)
+ 
         # after inference, save the kv cache to the search db
         # inference_strategy.save_kv_cache(session_id)
         if init:
@@ -328,18 +341,6 @@ def sample_sequence_batch(
             for j in range(top_k):
                 actions_taken = output_actions[:, j]
                 inference_strategy.save_kv_cache(sessions, depths, batch_size, true_context_length, parent_nodes, actions_taken, None)
-        
-        # sync from last pipeline stage to src rank, so that it can be returned
-        if parallel_state.is_pipeline_last_stage():
-            src = parallel_state.get_pipeline_model_parallel_last_rank()
-            group = parallel_state.get_embedding_group()
-            torch.distributed.broadcast(output_actions, src, group)
-            torch.distributed.broadcast(output_policy, src, group)
-        elif parallel_state.is_pipeline_first_stage():
-            src = parallel_state.get_pipeline_model_parallel_last_rank()
-            group = parallel_state.get_embedding_group()
-            torch.distributed.broadcast(output_actions, src, group)
-            torch.distributed.broadcast(output_policy, src, group)
         return output_actions, output_policy
 
 
