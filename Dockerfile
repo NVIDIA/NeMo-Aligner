@@ -6,6 +6,8 @@ ARG APEX_TAG=master
 ARG TE_TAG=release_v1.1
 ARG MLM_TAG=core_r0.4.0
 ARG NEMO_TAG=r1.22.0
+ARG PYTRITON_VERSION=0.4.1
+ARG PROTOBUF_VERSION=4.24.4
 
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
@@ -27,7 +29,6 @@ RUN pip uninstall -y transformer-engine && \
     NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
 
 # install latest apex
-#RUN cd apex && pip install -v --disable-pip-version-check --no-cache-dir --no-build-isolation --config-settings "--build-option=--cpp_ext" --config-settings "--build-option=--cuda_ext" --config-settings "--build-option=--distributed_adam" --config-settings "--build-option=--permutation_search" --config-settings "--build-option=--bnp" --config-settings "--build-option=--xentropy" --config-settings "--build-option=--focal_loss" --config-settings "--build-option=--index_mul_2d" --config-settings "--build-option=--deprecated_fused_adam" --config-settings "--build-option=--fast_layer_norm" --config-settings "--build-option=--fmha" --config-settings "--build-option=--fast_multihead_attn" --config-settings "--build-option=--transducer" --config-settings "--build-option=--cudnn_gbn" --config-settings "--build-option=--fused_conv_bias_relu" .
 RUN pip uninstall -y apex && \
     git clone https://github.com/NVIDIA/apex && \
 	cd apex && \
@@ -38,8 +39,8 @@ RUN pip uninstall -y apex && \
     pip install install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
 
 # place any util pkgs here
-RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==0.4.1
-RUN pip install -U --no-deps protobuf==4.24.4
+RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==$PYTRITON_VERSION
+RUN pip install -U --no-deps protobuf==$PROTOBUF_VERSION
 RUN pip install --upgrade-strategy only-if-needed jsonlines
 
 # NeMo
