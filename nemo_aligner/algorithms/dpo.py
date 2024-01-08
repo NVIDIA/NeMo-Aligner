@@ -223,6 +223,7 @@ class DPOTrainer:
                 self.consumed_samples += self.model.cfg.global_batch_size
                 metrics["consumed_samples"] = self.consumed_samples
                 metrics["step_time"] = train_step_time
+                metrics["epoch"] = self.epoch + 1
                 self.logger.log_metrics(
                     metrics, step=self.step, prefix="train/",
                 )
@@ -278,7 +279,7 @@ class DPOTrainer:
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
     def set_max_steps(self):
-        self.max_steps = self._train_dataloader_len + self.step
+        self.max_steps = (self._train_dataloader_len * (self.cfg.max_epochs - self.epoch)) + self.step
 
         if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
