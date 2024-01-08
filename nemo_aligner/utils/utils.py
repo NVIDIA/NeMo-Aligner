@@ -14,13 +14,13 @@
 
 """Misc helper functions"""
 import gc
+import itertools
 import os
 import re
 import tempfile
 from contextlib import contextmanager
 from functools import partial
 from unittest.mock import patch
-import itertools
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
@@ -398,9 +398,10 @@ def convert_to_amp_o2_format(state_dict):
 
     return new_state_dict
 
+
 def get_iterator_k_split_list(batch, num_microbatches):
-    
-    assert len(batch) % num_microbatches == 0,  "Issue with batch size configuration!"
-    microbatches = [batch[i:i + num_microbatches] for i in range(0, len(batch), num_microbatches)]
-    
+
+    assert len(batch) % num_microbatches == 0, "Issue with batch size configuration!"
+    microbatches = [batch[i : i + num_microbatches] for i in range(0, len(batch), num_microbatches)]
+
     return itertools.chain(microbatches)

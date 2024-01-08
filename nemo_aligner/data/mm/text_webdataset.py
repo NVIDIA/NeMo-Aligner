@@ -14,9 +14,7 @@
 import torch
 
 from nemo.collections.multimodal.data.common.webdataset import WebDatasetCommon
-from nemo.collections.multimodal.data.stable_diffusion.augmentation.augmentations import (
-    identical_transform,
-)
+from nemo.collections.multimodal.data.stable_diffusion.augmentation.augmentations import identical_transform
 
 
 def build_train_valid_datasets(
@@ -29,7 +27,7 @@ def build_train_valid_datasets(
         print(inp)
         for input in inp:
             out_dict = dict()
-            out_dict['captions'] = input
+            out_dict["captions"] = input
             yield out_dict
 
     def transform_fn(sample):

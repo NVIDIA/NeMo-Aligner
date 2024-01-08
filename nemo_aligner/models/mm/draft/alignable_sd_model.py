@@ -17,24 +17,25 @@ from collections import defaultdict, deque
 from contextlib import nullcontext
 from functools import partial
 from typing import Any, Callable, Iterable, List, Mapping, Optional, Tuple, Union
+
 import numpy as np
 import torch
-from PIL import Image
 import torch.nn.functional as F
+import wandb
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
+from PIL import Image
+from tqdm import tqdm
 
+import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
+from nemo.collections.multimodal.models.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
 from nemo.collections.nlp.models.language_modeling.megatron.gpt_model import GPTModel
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
-from nemo.collections.multimodal.models.stable_diffusion.ldm.ddpm import MegatronLatentDiffusion, LatentDiffusion
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_ltor_masks_and_position_ids,
 )
-from tqdm import tqdm
-import wandb
-import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.utils import AppState, logging
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
@@ -46,6 +47,7 @@ from nemo_aligner.utils.distributed import (
     gather_tensor,
     run_if_model_parallel_src,
 )
+from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     clip_gradients,
     finish_validation_step,
@@ -54,7 +56,6 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_validation_step,
     set_sync_funcs,
 )
-from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.utils import (
     calculate_dialogue_response_lengths,
     collate_with_batch_max_sequence_length,
@@ -85,77 +86,86 @@ BatchType = Mapping[str, torch.tensor]
 
 
 class AlignableSDModel(AlignableGenerativeInterface):
-    def __init__(self, model, reward_model, tokenizer, optimizer, config: DictConfig, megatron_model: MegatronLatentDiffusion, logger):
+    def __init__(
+        self,
+        model,
+        reward_model,
+        tokenizer,
+        optimizer,
+        config: DictConfig,
+        megatron_model: MegatronLatentDiffusion,
+        logger,
+    ):
         self.model = model
         self.init_model = LatentDiffusion(config, None).to(torch.cuda.current_device()).eval()
         self.reward_model = reward_model
         self.tokenizer = tokenizer
         self.optimizer = optimizer
         self.cfg = config
-        self.megatron_model = megatron_model 
+        self.megatron_model = megatron_model
         self.logger = logger
 
         self.generation_counter = 0
         self.with_distributed_adam = self.megatron_model.with_distributed_adam
-        self.megatron_amp_o2 = self.cfg.get('megatron_amp_O2', False)
-        self.megatron_model.megatron_amp_o2 = self.cfg.get('megatron_amp_O2', False)
+        self.megatron_amp_o2 = self.cfg.get("megatron_amp_O2", False)
+        self.megatron_model.megatron_amp_o2 = self.cfg.get("megatron_amp_O2", False)
         self.model.first_stage_model.requires_grad_(False)
 
         self.distributed_adam_offload_manager = None
 
-        self.height = self.cfg.infer.get('height', 512)
-        self.width = self.cfg.infer.get('width', 512)
-        self.downsampling_factor = self.cfg.infer.get('down_factor', 8)
+        self.height = self.cfg.infer.get("height", 512)
+        self.width = self.cfg.infer.get("width", 512)
+        self.downsampling_factor = self.cfg.infer.get("down_factor", 8)
         self.in_channels = self.model.model.diffusion_model.in_channels
         self.unconditional_guidance_scale = self.cfg.infer.get("unconditional_guidance_scale", 7.5)
-        self.sampler_type = self.cfg.infer.get('sampler_type', 'DDIM')
-        self.inference_steps = self.cfg.infer.get('inference_steps', 50)
-        self.eta = self.cfg.infer.get('eta', 0)
+        self.sampler_type = self.cfg.infer.get("sampler_type", "DDIM")
+        self.inference_steps = self.cfg.infer.get("inference_steps", 50)
+        self.eta = self.cfg.infer.get("eta", 0)
 
-        #TODO @geshen: In train_utils.py, the prepare_for_training_step funtions requires the following which are not available for Stable Diffusion
+        # TODO @geshen: In train_utils.py, the prepare_for_training_step funtions requires the following which are not available for Stable Diffusion
         self.model.initialize_ub = False
         self.model.rampup_batch_size = False
         self.model.with_distributed_adam = False
 
-
     def finish_inference(self):
         return
-    
-    #TODO @geshen @sahilj: allreduce_gradients is not defined for Stable Diffusion for grad_reductions
+
+    # TODO @geshen @sahilj: allreduce_gradients is not defined for Stable Diffusion for grad_reductions
     def finish_training_step(self):
         self.grad_reductions()
         # grad_reductions(self)
 
     def infer(self):
         return
-    
+
     def prepare_for_inference(self):
         return
-    
+
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
         prepare_for_training_step(self.model, zero_grad=False)
 
     def generate_rollout_batch(self):
-        return 
+        return
+
     def prepare_for_generation(self):
-        #self.model.eval()
+        # self.model.eval()
         self.megatron_model._reset_activation_checkpointing_args()
         self.megatron_model._reset_sequence_parallelism_args()
-        return 
+        return
 
     def finished_generation(self):
         self.megatron_model._restore_activation_checkpointing_args()
         self.megatron_model._restore_sequence_parallelism_args()
-        return 
-    
+        return
+
     @torch.no_grad()
     def generate_log_images(self, latents, latent_shape, prompts, model):
 
         # setup default values for inference configs
-    
+
         # get autocast_dtype
-        if self.cfg.precision == 'bf16':
+        if self.cfg.precision == "bf16":
             autocast_dtype = torch.bfloat16
         elif int(self.cfg.precision) == 32:
             autocast_dtype = torch.float
@@ -163,16 +173,18 @@ class AlignableSDModel(AlignableGenerativeInterface):
             autocast_dtype = torch.half
         else:
             raise ValueError('precision must be in [32, 16, "bf16"]')
-    
+
         with torch.no_grad(), torch.cuda.amp.autocast(
             enabled=autocast_dtype in (torch.half, torch.bfloat16), dtype=autocast_dtype,
         ):
-    
-            sampler = sampling_utils.initialize_sampler(model, self.sampler_type.upper())            
+
+            sampler = sampling_utils.initialize_sampler(model, self.sampler_type.upper())
 
             batch = prompts
             batch_size = len(prompts)
-            cond, u_cond = sampling_utils.encode_prompt_batch(model.cond_stage_model, batch, self.unconditional_guidance_scale, 1)
+            cond, u_cond = sampling_utils.encode_prompt_batch(
+                model.cond_stage_model, batch, self.unconditional_guidance_scale, 1
+            )
 
             samples, intermediates, _, _, _, _ = sampler.sample(
                 S=self.inference_steps,
@@ -185,33 +197,45 @@ class AlignableSDModel(AlignableGenerativeInterface):
                 eta=self.eta,
                 x_T=latents,
                 log_every_t=1,
-                truncation_steps = 0,
+                truncation_steps=0,
                 return_logprobs=False,
-                return_mean_var=False
-
+                return_mean_var=False,
             )
 
-
             # # transforms trajectores from a list of T+1 (b x image) tensors to a tensor of shape (b * (T+1), ...)
-            trajectories_predx0 = torch.stack(intermediates['pred_x0'], dim=0).transpose(0, 1).contiguous().view(-1, *intermediates['pred_x0'][0].shape[1:])
+            trajectories_predx0 = (
+                torch.stack(intermediates["pred_x0"], dim=0)
+                .transpose(0, 1)
+                .contiguous()
+                .view(-1, *intermediates["pred_x0"][0].shape[1:])
+            )
 
             vae_batch_size = 8
             vae_decoder_output = []
-            idx_denoised_imgs = [self.inference_steps + (self.inference_steps+1)*i for i in range(batch_size)]
+            idx_denoised_imgs = [self.inference_steps + (self.inference_steps + 1) * i for i in range(batch_size)]
 
             for i in range(0, batch_size, vae_batch_size):
-                image = self.model.differentiable_decode_first_stage(trajectories_predx0[idx_denoised_imgs[i: i + vae_batch_size]])
+                image = self.model.differentiable_decode_first_stage(
+                    trajectories_predx0[idx_denoised_imgs[i : i + vae_batch_size]]
+                )
 
                 vae_decoder_output.append(image)
 
-
             vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
-            vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1)*255.0
+            vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1) * 255.0
 
-            log_reward = [self.reward_model.get_reward(vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch).item() for i in range(batch_size)]
-            log_img  = [np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0)) for i in range(batch_size)]
+            log_reward = [
+                self.reward_model.get_reward(
+                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch
+                ).item()
+                for i in range(batch_size)
+            ]
+            log_img = [
+                np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0))
+                for i in range(batch_size)
+            ]
             return log_img, log_reward
- 
+
     @torch.no_grad()
     def log_visualization(self, prompts):
 
@@ -219,9 +243,15 @@ class AlignableSDModel(AlignableGenerativeInterface):
 
         latent_shape = [batch_size, self.height // self.downsampling_factor, self.width // self.downsampling_factor]
         latents = torch.randn(
-            [batch_size, self.in_channels, self.height // self.downsampling_factor, self.width // self.downsampling_factor], generator=None
+            [
+                batch_size,
+                self.in_channels,
+                self.height // self.downsampling_factor,
+                self.width // self.downsampling_factor,
+            ],
+            generator=None,
         ).to(torch.cuda.current_device())
-        
+
         image_draft, reward_draft = self.generate_log_images(latents, latent_shape, prompts, self.model)
         image_init, reward_init = self.generate_log_images(latents, latent_shape, prompts, self.init_model)
 
@@ -230,16 +260,30 @@ class AlignableSDModel(AlignableGenerativeInterface):
         for i in range(len(image_draft)):
             images.append(image_draft[i])
             images.append(image_init[i])
-            captions.append("DRaFT: "+prompts[i]+", Reward = "+str(reward_draft[i]))
-            captions.append("SD: "+prompts[i]+", Reward = "+str(reward_init[i]))
+            captions.append("DRaFT: " + prompts[i] + ", Reward = " + str(reward_draft[i]))
+            captions.append("SD: " + prompts[i] + ", Reward = " + str(reward_init[i]))
 
-        self.logger.loggers[1].log_image(key="Inference Images", images = [wandb.Image(Image.fromarray(img.round().astype("uint8"))) for img in images], caption=captions)
-     
+        self.logger.loggers[1].log_image(
+            key="Inference Images",
+            images=[wandb.Image(Image.fromarray(img.round().astype("uint8"))) for img in images],
+            caption=captions,
+        )
 
-    def generate(self, prompts, latent_shape, x_T, return_trajectory=True, return_logprobs=False, return_decoded=False, return_conds=True, return_mean_var=True, rng=None):
-    
+    def generate(
+        self,
+        prompts,
+        latent_shape,
+        x_T,
+        return_trajectory=True,
+        return_logprobs=False,
+        return_decoded=False,
+        return_conds=True,
+        return_mean_var=True,
+        rng=None,
+    ):
+
         # get autocast_dtype
-        if self.cfg.precision == 'bf16':
+        if self.cfg.precision == "bf16":
             autocast_dtype = torch.bfloat16
         elif int(self.cfg.precision) == 32:
             autocast_dtype = torch.float
@@ -247,11 +291,10 @@ class AlignableSDModel(AlignableGenerativeInterface):
             autocast_dtype = torch.half
         else:
             raise ValueError('precision must be in [32, 16, "bf16"]')
-    
+
         with torch.cuda.amp.autocast(
             enabled=autocast_dtype in (torch.half, torch.bfloat16), dtype=autocast_dtype,
         ):
-            
 
             batch = prompts
             batch_size = len(prompts)
@@ -266,14 +309,14 @@ class AlignableSDModel(AlignableGenerativeInterface):
             sampler_draft = sampling_utils.initialize_sampler(self.model, self.sampler_type.upper())
             sampler_init = sampling_utils.initialize_sampler(self.init_model, self.sampler_type.upper())
 
-            cond, u_cond = sampling_utils.encode_prompt_batch(self.model.cond_stage_model, batch, self.unconditional_guidance_scale, 1)
+            cond, u_cond = sampling_utils.encode_prompt_batch(
+                self.model.cond_stage_model, batch, self.unconditional_guidance_scale, 1
+            )
 
             sampler_draft.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
             sampler_init.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
-            
 
             timesteps = sampler_draft.ddpm_num_timesteps if ddim_use_original_steps else sampler_draft.ddim_timesteps
-            
 
             time_range = reversed(range(0, timesteps)) if ddim_use_original_steps else np.flip(timesteps)
             total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
@@ -286,59 +329,67 @@ class AlignableSDModel(AlignableGenerativeInterface):
             truncation_steps = self.cfg.truncation_steps
 
             for i, step in enumerate(iterator):
-                
+
                 if i < total_steps - truncation_steps:
                     with torch.no_grad():
-                        img_draft, pred_x0_draft, eps_t_draft = sampler_draft.single_ddim_denoise_step(prev_img_draft,
-                                                        total_steps,
-                                                        i,
-                                                        b,
-                                                        device_draft,
-                                                        step,
-                                                        cond,
-                                                        unconditional_guidance_scale=self.unconditional_guidance_scale,
-                                                        unconditional_conditioning=u_cond)
+                        img_draft, pred_x0_draft, eps_t_draft = sampler_draft.single_ddim_denoise_step(
+                            prev_img_draft,
+                            total_steps,
+                            i,
+                            b,
+                            device_draft,
+                            step,
+                            cond,
+                            unconditional_guidance_scale=self.unconditional_guidance_scale,
+                            unconditional_conditioning=u_cond,
+                        )
 
                         prev_img_draft = img_draft
                 else:
-                    
-                    img_draft, pred_x0_draft, eps_t_draft = sampler_draft.single_ddim_denoise_step(prev_img_draft,
-                                                        total_steps,
-                                                        i,
-                                                        b,
-                                                        device_draft,
-                                                        step,
-                                                        cond,
-                                                        unconditional_guidance_scale=self.unconditional_guidance_scale,
-                                                        unconditional_conditioning=u_cond)
+
+                    img_draft, pred_x0_draft, eps_t_draft = sampler_draft.single_ddim_denoise_step(
+                        prev_img_draft,
+                        total_steps,
+                        i,
+                        b,
+                        device_draft,
+                        step,
+                        cond,
+                        unconditional_guidance_scale=self.unconditional_guidance_scale,
+                        unconditional_conditioning=u_cond,
+                    )
                     list_eps_draft.append(eps_t_draft)
                     with torch.no_grad():
-                        _, _, eps_t_init = sampler_init.single_ddim_denoise_step(prev_img_draft,
-                                                            total_steps,
-                                                            i,
-                                                            b,
-                                                            device_draft,
-                                                            step,
-                                                            cond,
-                                                            unconditional_guidance_scale=self.unconditional_guidance_scale,
-                                                            unconditional_conditioning=u_cond)
+                        _, _, eps_t_init = sampler_init.single_ddim_denoise_step(
+                            prev_img_draft,
+                            total_steps,
+                            i,
+                            b,
+                            device_draft,
+                            step,
+                            cond,
+                            unconditional_guidance_scale=self.unconditional_guidance_scale,
+                            unconditional_conditioning=u_cond,
+                        )
                         list_eps_init.append(eps_t_init)
                     prev_img_draft = img_draft
 
             last_states = [pred_x0_draft]
 
-            trajectories_predx0 = torch.stack(last_states, dim=0).transpose(0, 1).contiguous().view(-1, *last_states[0].shape[1:])
+            trajectories_predx0 = (
+                torch.stack(last_states, dim=0).transpose(0, 1).contiguous().view(-1, *last_states[0].shape[1:])
+            )
             t_eps_draft = torch.stack(list_eps_draft).to(torch.device("cuda"))
-            t_eps_init  = torch.stack(list_eps_init).to(torch.device("cuda"))
+            t_eps_init = torch.stack(list_eps_init).to(torch.device("cuda"))
 
             vae_batch_size = 8
             vae_decoder_output = []
             for i in range(0, batch_size, vae_batch_size):
-                image = self.model.differentiable_decode_first_stage(trajectories_predx0[i: i + vae_batch_size])
+                image = self.model.differentiable_decode_first_stage(trajectories_predx0[i : i + vae_batch_size])
                 vae_decoder_output.append(image)
 
             vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
-            vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1)*255.0
+            vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1) * 255.0
 
             return vae_decoder_output, t_eps_draft, t_eps_init
 
@@ -361,19 +412,28 @@ class AlignableSDModel(AlignableGenerativeInterface):
         """no need to offload adam states here
         """
 
-    
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
 
             self.generation_counter += 1
-            torch.cuda.manual_seed(0 + self.generation_counter*1000+torch.distributed.get_rank())
-            torch.manual_seed(0 + self.generation_counter*1000+torch.distributed.get_rank())
+            torch.cuda.manual_seed(0 + self.generation_counter * 1000 + torch.distributed.get_rank())
+            torch.manual_seed(0 + self.generation_counter * 1000 + torch.distributed.get_rank())
 
             batch_size = len(dataloader_iter)
 
-            latent_shape = [batch_size, self.height // self.downsampling_factor, self.width // self.downsampling_factor]
+            latent_shape = [
+                batch_size,
+                self.height // self.downsampling_factor,
+                self.width // self.downsampling_factor,
+            ]
             latents = torch.randn(
-                [batch_size, self.in_channels, self.height // self.downsampling_factor, self.width // self.downsampling_factor], generator=None
+                [
+                    batch_size,
+                    self.in_channels,
+                    self.height // self.downsampling_factor,
+                    self.width // self.downsampling_factor,
+                ],
+                generator=None,
             ).to(torch.cuda.current_device())
 
             output_tensor_draft, epsilons_draft, epsilons_init = self.generate(dataloader_iter, latent_shape, latents)
@@ -393,47 +453,48 @@ class AlignableSDModel(AlignableGenerativeInterface):
                 loss = -rewards.mean() + kl_penalty * self.cfg.kl_coeff
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
-                
+
                 return (
-                    loss, 
-                    {'loss' : reduced_loss, 
-                     'kl_penalty': kl_penalty},
+                    loss,
+                    {"loss": reduced_loss, "kl_penalty": kl_penalty},
                 )
 
             return output_tensor_draft, loss_func
 
         return fwd_output_and_loss_func
-    
+
     def calculate_gaussian_kl_penalty_shared_var(self, curr_eps, init_eps):
 
         diff = curr_eps - init_eps
-        kl = torch.sum(diff ** 2, dim=(1,2,3,4), keepdim=True).flatten()# / (stds**2) 
+        kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()  # / (stds**2)
         dimensionality = torch.numel(curr_eps[0])
         kl /= dimensionality
 
         return kl
-    
+
     def get_loss_and_metrics(self, data_iter, forward_only=False):
-        
+
         fwd_bwd_function = get_forward_backward_func()
 
         losses_reduced_per_micro_batch = []
 
-        #TODO @ataghibakhsh @geshen @sahilj: For grad accumulation, we currently have to do the for loop and fwd_bwd_function doesn't take care of that
+        # TODO @ataghibakhsh @geshen @sahilj: For grad accumulation, we currently have to do the for loop and fwd_bwd_function doesn't take care of that
         for i in range(0, len(data_iter), self.cfg.micro_batch_size):
-            data_item = data_iter[i:i + self.cfg.micro_batch_size]
-            
-            losses_reduced_per_micro_batch.append(fwd_bwd_function(
-                forward_step_func=self.get_forward_output_and_loss_func(),
-                data_iterator=[data_item], #4
-                model=self.model,
-                num_microbatches=self.cfg.micro_batch_size, #4
-                forward_only=forward_only,
-                seq_length=None,
-                micro_batch_size=self.cfg.micro_batch_size, #1
-            )[0])
+            data_item = data_iter[i : i + self.cfg.micro_batch_size]
 
-        if torch.distributed.get_rank() == 0 and len(self.logger.loggers)>1:
+            losses_reduced_per_micro_batch.append(
+                fwd_bwd_function(
+                    forward_step_func=self.get_forward_output_and_loss_func(),
+                    data_iterator=[data_item],  # 4
+                    model=self.model,
+                    num_microbatches=self.cfg.micro_batch_size,  # 4
+                    forward_only=forward_only,
+                    seq_length=None,
+                    micro_batch_size=self.cfg.micro_batch_size,  # 1
+                )[0]
+            )
+
+        if torch.distributed.get_rank() == 0 and len(self.logger.loggers) > 1:
             self.log_visualization(data_iter[0:1])
 
         if self.megatron_model.with_distributed_adam:
@@ -459,10 +520,8 @@ class AlignableSDModel(AlignableGenerativeInterface):
             torch.distributed.broadcast(metric_mean, get_last_rank())
 
             metrics[key] = metric_mean.cpu().item()
-        
 
         return metrics["loss"], metrics
-
 
     def grad_reductions(self):
         # when using sequence parallelism, the sequence parallel layernorm grads must be all-reduced

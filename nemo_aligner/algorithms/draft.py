@@ -15,9 +15,11 @@ import torch
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
+
 # from nemo_aligner.utils.utils import get_iterator_k_split_list
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
+
 
 class DraftTrainer:
     def __init__(
@@ -30,8 +32,8 @@ class DraftTrainer:
         val_dataloader,
         test_dataloader,
         ckpt_callback,
-    ):  
-        
+    ):
+
         self.model = model
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
@@ -53,9 +55,8 @@ class DraftTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-
     def run_training(self, batch):
-        
+
         # data_iter = get_iterator_k_split_list(dataloader_iter, get_num_microbatches())
         self.model.prepare_for_training()
 
@@ -75,8 +76,7 @@ class DraftTrainer:
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
         lr = self.optimizer.param_groups[0]["lr"]
 
-        metrics.update({"lr": lr, "grad_norm": grad_norm, 
-                        "rewards": -loss_mean, "kl_penalty": metrics["kl_penalty"]})
+        metrics.update({"lr": lr, "grad_norm": grad_norm, "rewards": -loss_mean, "kl_penalty": metrics["kl_penalty"]})
 
         self.optimizer.step()
         self.scheduler.step()
@@ -87,18 +87,19 @@ class DraftTrainer:
 
         return loss_mean, metrics
 
-
     def fit(self):
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
-        
+
         if len(epoch_iter) <= 0:
             # epoch done
             return
 
         for _ in epoch_iter:
 
-            global_pbar = tqdm(self.train_dataloader, initial=self.step, total=self.max_steps, leave=True, desc="DRaFT Step")
+            global_pbar = tqdm(
+                self.train_dataloader, initial=self.step, total=self.max_steps, leave=True, desc="DRaFT Step"
+            )
 
             for dataloader_iter in global_pbar:
 
@@ -114,13 +115,12 @@ class DraftTrainer:
                 self.step += 1
 
                 self.model.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
-                
 
-                metrics = metrics | {"epoch":self.epoch, "training_steps":self.step}
+                metrics = metrics | {"epoch": self.epoch, "training_steps": self.step}
 
                 # TODO(geshen): maybe use the dataloader instead
                 self.consumed_samples += self.cfg.global_batch_size
- 
+
                 global_pbar.set_postfix(metrics)
                 self.model.logger.log_metrics(
                     metrics, step=self.step, prefix="train_metrics/",
@@ -138,12 +138,10 @@ class DraftTrainer:
                 if self.step % self.cfg.save_interval == 0:
                     step_metrics = {k: torch.as_tensor(v) for k, v in step_metrics.items()}
                     self.save(step_metrics, is_train_end=False)
-     
+
             self.epoch += 1
-        
-        self.save(
-        monitor_candidates, is_train_end=True
-        )
+
+        self.save(monitor_candidates, is_train_end=True)
 
         self.model.logger.finalize()
 
@@ -184,7 +182,7 @@ class DraftTrainer:
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
         self.model.finish_training()
-    
+
     def set_max_steps(self):
         max_steps = self.cfg.get("max_steps", -1)
 
@@ -198,4 +196,3 @@ class DraftTrainer:
             max_steps = max_steps - self.step
 
         self.max_steps = min(max_steps, self._train_dataloader_len) + self.step
-
