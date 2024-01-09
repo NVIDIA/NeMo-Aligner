@@ -59,6 +59,7 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
 
         self.ref_policy_kl_penalty = self.cfg.dpo.get("ref_policy_kl_penalty", 0.0)
         self.avg_log_probs = self.cfg.dpo.get("average_log_probs", False)
+        self.label_smoothing = self.cfg.dpo.get("label_smoothing", 0.0)
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels):
@@ -193,9 +194,13 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
-        chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards)
 
-        loss = -torch.nn.functional.logsigmoid(chosen_rewards - reject_rewards)
+        chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
+        logits = chosen_rewards - reject_rewards
+        loss = (
+            -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * logits) * (1.0 - self.label_smoothing)
+            -torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * logits) * self.label_smoothing
+        )
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
