@@ -31,6 +31,7 @@ from nemo.collections.nlp.modules.common.text_generation_strategy import model_i
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
 from nemo.utils import AppState
 from nemo_aligner.utils.deep_search.communication_util import receive_generate_info, send_generate_info, get_model_parallel_src_rank
+import torch.distributed as dist
 
 try:
     from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
@@ -268,16 +269,16 @@ def sample_sequence_batch(
 
             batch_update_indicator = context_lengths == context_length
 
-            if not batch_update_indicator.any():
+            if (not init) and (not batch_update_indicator.any()):
                 # if there is nothing to update, skip the computation
+                # only works for depths > 0 nodes
                 context_length += 1
                 counter += 1
                 continue
 
-
             output = inference_strategy.forward_step(batch, tensor_shape, sessions)
             if parallel_state.is_pipeline_last_stage():
-
+                # get last rank
                 logits = output[0]["logits"][:, -1].contiguous() # output[0]["logits"] shape[batch_size, length, partial vocab_size]
                 logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
                 assert logits is not None
@@ -294,7 +295,6 @@ def sample_sequence_batch(
  
             context_length += 1
             counter += 1
-
         # sync from last pipeline stage to src rank, so that it can be returned
         if parallel_state.is_pipeline_last_stage():
             src = parallel_state.get_pipeline_model_parallel_last_rank()
@@ -306,7 +306,6 @@ def sample_sequence_batch(
             group = parallel_state.get_pipeline_model_parallel_group()
             torch.distributed.broadcast(output_actions, src, group)
             torch.distributed.broadcast(output_policy, src, group)
- 
         # after inference, save the kv cache to the search db
         # inference_strategy.save_kv_cache(session_id)
         if init:
@@ -335,6 +334,10 @@ def sample_sequence_batch(
                 context = context_lengths[i].item()
                 action = context_tokens[i, context].item()
                 parent_nodes[i] = inference_strategy.get_node(session_id, depth, action)
+                parent_context_length = true_context_length[i].item() - 1
+                # need to correct the parent_nodes's k-v cache
+                inference_strategy.update_kv_cache(sessions, parent_nodes[i], depth, parent_context_length, i)
+
 
             depths += 1
 

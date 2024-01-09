@@ -418,10 +418,15 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         for session_id in sessions:
             self.search_db.add_inference_params(session_id, inference)
         return tokens, new_context_lengths, true_context_lengths
+
+    def update_kv_cache(self, sessions: List[str], node: Node, depth: int, context_length:int, batch_id: int):
+        infer_params = self.get_inference_params(sessions)
+        state = State.get_state(infer_params, depth, context_length, batch_id)
+        node.state = state
         
 
-    def save_kv_cache(self, sessions: List[str], depths: torch.Tensor, bathch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, context_tokens: torch.Tensor = None):
-        for bid in range(bathch_size): 
+    def save_kv_cache(self, sessions: List[str], depths: torch.Tensor, batch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, context_tokens: torch.Tensor = None):
+        for bid in range(batch_size): 
             context_length = context_lengths[bid].item()
             depth = depths[bid].item()
             session_id = sessions[bid]

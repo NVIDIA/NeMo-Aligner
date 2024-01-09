@@ -86,10 +86,13 @@ def get_kv_cache(selected_actions, depths, sessions, search_db: SearchDB):
                 context_lengths.append(node.state.kv_cache[tmp_key][0].shape[0])
             # if node.action is List
             if isinstance(node.action, list):
-                context_tokens = node.action
+                # make a copy
+                context_tokens = node.action.copy()
                 # reverse the order
                 context_tokens.reverse()
                 tokens.extend(context_tokens)
+            else:
+                tokens.append(node.action)
             for key in node.state.kv_cache.keys():
                 new_kv_cache[key].append(node.state.kv_cache[key])
         # reverse the tokens order
