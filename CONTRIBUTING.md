@@ -4,13 +4,17 @@ Thanks for the interest in contributing to NeMo-Aligner. We do all of NeMo-Align
 
 # Pull Requests (PR) Guidelines
 
-**Send your PRs to the `main` branch**
+**Send your PRs to the `main` or `dev` branch**
 
 1) Make sure your PR does one thing. Have a clear answer to "What does this PR do?".
 2) Read General Principles and style guide below
 3) Make sure you sign your commits. E.g. use ``git commit -sS`` when committing.
 4) Make sure all unittests finish successfully before sending PR ``pytest`` or (if your dev box does not have GPU) ``pytest --cpu`` from the root folder
 5) Send your PR and request a review
+
+**NOTE**: The `main` branch uses a fixed NeMo version which we will update on every release. The `dev` branch is the branch that has all commits from `main` but uses NeMo's main branch: this branch is less stable but we run nightly tests on it to make sure everything works. We only provide the dockerfile that works with `main`, which is the branch most PRs should target unless they require the latest NeMo main (in which case they should target `dev`).
+
+Every release `dev` and `main` will sync to be the same.
 
 ## Unit tests
 Quick unit tests (locally, while developing)
