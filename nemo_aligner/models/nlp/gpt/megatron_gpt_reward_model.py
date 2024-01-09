@@ -131,11 +131,11 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
             # only do the torch.cat if it's available
             lengths, tokens = None, None
-            #position_ids = (
+            # position_ids = (
             #    torch.cat((batch["position_ids"], batch["position_ids"]), dim=0)
             #    if batch["position_ids"] is not None
             #    else None
-            #)
+            # )
 
             if batch["chosen_length"] is not None and batch["rejected_length"] is not None:
                 # Combine chosen and rejected lengths and then tokens.

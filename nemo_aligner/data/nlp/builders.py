@@ -51,9 +51,9 @@ from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 def build_dataset_generic(cls, cfg, data_prefix, data_impl, seq_length, seed, tokenizer, name):
     if isinstance(data_prefix, (ListConfig, list)):
         data_prefix = data_prefix[0]
-    
+
     assert isinstance(data_prefix, str), "data.data_prefix values must be either a list or a string"
-    
+
     if data_impl.startswith("json"):
         with open(data_prefix, "r", encoding="utf_8") as fr:
             data_payload = [json.loads(line.strip()) for line in fr]
@@ -79,7 +79,7 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, seq_length, seed, to
         seed=seed,
         drop_last=drop_last,
     )
-    
+
     return dataset
 
 

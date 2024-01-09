@@ -27,8 +27,8 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_regression_rm_datasets,
     build_train_valid_test_rm_datasets,
 )
-from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.models.nlp.gpt.megatron_gpt_regression_reward_model import regression_rm_custom_collate
+from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -90,7 +90,7 @@ def main(cfg) -> None:
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
     # use the entire dataset
-    #train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
+    # train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
 
     if reward_model_type == RewardModelType.BINARY_RANKING:
         dataset_builder = build_train_valid_test_dpo_datasets
@@ -103,8 +103,8 @@ def main(cfg) -> None:
         cfg=cfg.model,
         data_prefix=cfg.model.data.data_prefix,
         data_impl=cfg.model.data.data_impl,
-        #splits_string=cfg.model.data.splits_string,
-        #train_valid_test_num_samples=train_valid_test_num_samples,
+        # splits_string=cfg.model.data.splits_string,
+        # train_valid_test_num_samples=train_valid_test_num_samples,
         seq_length=cfg.model.data.seq_length,
         seed=cfg.model.seed,
         tokenizer=ptl_model.tokenizer,

@@ -378,7 +378,7 @@ class RegressionRewardModelDataset(Dataset):
 
         label_tensor = torch.FloatTensor(sample_label)
         text_tensor = torch.LongTensor(sample_text)
-        
+
         attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
             text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
         )
@@ -401,8 +401,8 @@ class RegressionRewardModelDataset(Dataset):
         output = {
             "inputs": text_tensor,
             "lengths": text_tensor.shape[0],
-            #"position_ids": position_ids,
-            #"attention_mask": attention_mask,
+            # "position_ids": position_ids,
+            # "attention_mask": attention_mask,
             "loss_mask": loss_mask,
             "labels": label_tensor,
         }
