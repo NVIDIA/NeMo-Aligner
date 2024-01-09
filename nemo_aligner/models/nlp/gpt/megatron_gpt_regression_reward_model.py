@@ -23,10 +23,43 @@ from pytorch_lightning.trainer.trainer import Trainer
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
+    get_ltor_masks_and_position_ids,
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 from nemo_aligner.utils.train_utils import set_sync_funcs
+
+
+def regression_rm_custom_collate(
+    batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False
+):
+    inputs = [item["inputs"] for item in batch]
+    lengths = torch.LongTensor([item["lengths"] for item in batch])
+    labels = [item["labels"] for item in batch]
+    loss_masks = [item["loss_mask"] for item in batch]
+
+    inputs = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=eos_id)
+    labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
+    loss_mask = torch.nn.utils.rnn.pad_sequence(loss_masks, batch_first=True, padding_value=0.0)
+
+    attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+        inputs, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+    )
+    assert attention_mask.ndim == 4, "attention_mask is incorrect shape for regression_rm_custom_collate"
+    if attention_mask.shape[0] == 1:
+        # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+        # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
+        attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+
+    output = {
+        "inputs": inputs,
+        "lengths": lengths,
+        "labels": labels,
+        "attention_mask": attention_mask,
+        "position_ids": position_ids,
+        "loss_mask": loss_mask,
+    }
+    return output
 
 
 class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
@@ -125,6 +158,8 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
         return loss
 
     def get_loss_and_metrics(self, batch, forward_only):
+        seq_length = batch["inputs"].shape[1]
+
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
 
@@ -136,7 +171,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
             model=self.model,
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
-            seq_length=self.cfg.encoder_seq_length,
+            seq_length=seq_length,
             micro_batch_size=self.cfg.micro_batch_size,
         )
 
