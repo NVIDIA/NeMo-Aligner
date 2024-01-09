@@ -12,7 +12,7 @@ Thanks for the interest in contributing to NeMo-Aligner. We do all of NeMo-Align
 4) Make sure all unittests finish successfully before sending PR ``pytest`` or (if your dev box does not have GPU) ``pytest --cpu`` from the root folder
 5) Send your PR and request a review
 
-**NOTE**: The `main` branch uses a fixed nemo version which we will update on every release. The `dev` branch is the branch that has all the commits from aligner main but is up to date with nemo main, this branch is less stable but we run nightly tests on this branch to make sure everything works. We only provide the dockerfile that works with `main`.
+**NOTE**: The `main` branch uses a fixed NeMo version which we will update on every release. The `dev` branch is the branch that has all commits from `main` but uses NeMo's main branch: this branch is less stable but we run nightly tests on it to make sure everything works. We only provide the dockerfile that works with `main`, which is the branch most PRs should target unless they require the latest NeMo main (in which case they should target `dev`).
 
 Every release `dev` and `main` will sync to be the same.
 
