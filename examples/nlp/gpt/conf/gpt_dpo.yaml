@@ -62,6 +62,7 @@ model:
     ref_policy_kl_penalty: 0.2
     average_log_probs: False
     label_smoothing: 0.0
+    preference_loss: 'dpo' # dpo | ipo
   
   #encoder_seq_length: 4096
   #max_position_embeddings: ${model.encoder_seq_length}

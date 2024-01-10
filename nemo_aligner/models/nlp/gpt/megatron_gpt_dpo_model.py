@@ -60,6 +60,13 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
         self.ref_policy_kl_penalty = self.cfg.dpo.get("ref_policy_kl_penalty", 0.0)
         self.avg_log_probs = self.cfg.dpo.get("average_log_probs", False)
         self.label_smoothing = self.cfg.dpo.get("label_smoothing", 0.0)
+        self.preference_loss = self.cfg.dpo.get("preference_loss", "dpo")
+
+        supported_loss_functions = ['dpo','ipo']
+        if self.preference_loss not in supported_loss_functions:
+            raise ValueError(
+                f"Preference loss {self.preference_loss} is not supported. Supported loss functions are {supported_loss_functions}"
+            )
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels):
@@ -197,10 +204,16 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
 
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
         logits = chosen_rewards - reject_rewards
-        loss = (
-            -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * logits) * (1.0 - self.label_smoothing)
-            -torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * logits) * self.label_smoothing
-        )
+        assert self.preference_loss in ["dpo", "ipo"]
+        if self.preference_loss == "dpo":
+            loss = (
+                -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * logits) * (1.0 - self.label_smoothing)
+                -torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * logits) * self.label_smoothing
+            )
+        elif self.preference_loss == "ipo":
+            loss = (logits - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2
+        else:
+            raise ValueError(f"The loss function {self.preference_loss} is not supported.")
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
