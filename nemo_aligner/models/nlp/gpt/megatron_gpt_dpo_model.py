@@ -290,6 +290,18 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
 
             loss = torch.mean((self.ref_policy_kl_penalty * rewards_delta - gt_rewards_delta) ** 2, 0)
+        elif self.preference_loss == "kto":
+            rewards_kl = self.get_reduced_masked_logps(
+                 pi_logprobs - ref_logprobs, labels, average_log_probs=True
+            )            
+            chosen_kl, reject_kl = self.split_output_tensor(rewards_kl)
+            loss = torch.cat(
+                (
+                    1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0))),
+                    1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards)),
+                ),
+                0,
+            ).mean()
         else:
             raise NotImplementedError(f"preference_loss {self.preference_loss} is not implemented")
 
