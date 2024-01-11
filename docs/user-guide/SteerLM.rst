@@ -79,11 +79,11 @@ Untar the .nemo file to obtain the tokenizer in NeMo format (only for the 70B mo
 
 The prefix for the tokenizer would be different when extracted. Ensure that the correct tokenizer file is used when running the preceding command.
 
-<code style="color : grey ">NeMo Megatron Launcher method
+$${\color{lightblue}NeMo \space Megatron \space Launcher \space method}$$	
+
 
    Follow the `instruction from step 1-3 <https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#nemo-tools-and-resources>`_ to prepare the cluster environment before executing the code below.
 
-</code>
 
 .. code-block:: bash
 
