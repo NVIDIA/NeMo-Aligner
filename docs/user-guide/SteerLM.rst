@@ -36,13 +36,13 @@ The two methods tackle model alignment from different angles - RLHF by directly 
 
    For details of HelpSteer dataset, please refer to our paper `HelpSteer: Multi-attribute Helpfulness Dataset for SteerLM <https://arxiv.org/abs/2311.09528>`_.
 
-   For detail on leveraging scalable training and inference via integration with `NeMo-Megatron-Launcher <https://github.com/NVIDIA/NeMo-Megatron-Launcher>`_, please refer to the user guide `<https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#project-instructions-and-milestones>`_.
+   For detail on leveraging scalable training and inference via integration with `NeMo-Megatron-Launcher <https://github.com/NVIDIA/NeMo-Megatron-Launcher>`_, please refer to the `user guide <https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#project-instructions-and-milestones>`_.
 
 Train a SteerLM model 
 #####################
 
 This section is a step-by-step tutorial that walks you through how to run a full SteerLM pipeline with a Llama2 70B LLM model. 
-Each step will contain an alternative method leverage  `NeMo-Megatron-Launcher <https://github.com/NVIDIA/NeMo-Megatron-Launcher>`_ with the code block in grey.
+Each step will contain an alternative method marked <NeMo Megatron Launcher method for Step N :>, please refer to `user guide Step 1-3 in order to set up the environment <https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#nemo-tools-and-resources>`_
 It includes the following:
 
 1. Data download and preprocessing
@@ -79,20 +79,15 @@ Untar the .nemo file to obtain the tokenizer in NeMo format (only for the 70B mo
 
 The prefix for the tokenizer would be different when extracted. Ensure that the correct tokenizer file is used when running the preceding command.
 
-$${\color{lightblue}
-
-   NeMo Megatron Launcher method}$$	
-
+NeMo Megatron Launcher method for Step 1 :
 
    Follow the `instruction from step 1-3 <https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#nemo-tools-and-resources>`_ to prepare the cluster environment before executing the code below.
-
 
    .. code-block:: bash
 
       ```
       python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[conversion_hf2nemo]
       ```
-
 
 Step 2: Download and Preprocess data for Attribute Prediction Modelling
 #######################################################################
@@ -159,6 +154,15 @@ Note that you would need to set up multi-node training in your cluster env, depe
          model.reward_model_type="regression" \
          model.regression.num_attributes=9
 
+NeMo Megatron Launcher method for Step 3 :
+ 
+   Ensure modifying `config.yaml line 18 to rw_sft/training_rm <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L18>`_ to activate reward model training procedure.
+
+   .. code-block:: bash
+
+      ```
+      python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[steerlm_reg]
+      ```
 
 Step 4: Generate annotations
 ############################
@@ -247,7 +251,16 @@ For the purposes of this tutorial, the Attribute-Conditioned SFT model is traine
         exp_manager.explicit_log_dir=/results/acsft_70b \
         exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True 
 
-        
+
+NeMo Megatron Launcher method for Step 5 :
+ 
+   Ensure modifying `config.yaml line 18 to ac_sft/gpt_sft <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L18>`_ to activate Attribute-Conditioned SFT model training procedure.
+
+   .. code-block:: bash
+
+      ```
+      python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[steerlm_reg]
+      ```
 
 
 Step 6: Inference
