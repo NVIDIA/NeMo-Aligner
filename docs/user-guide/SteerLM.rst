@@ -33,7 +33,9 @@ The two methods tackle model alignment from different angles - RLHF by directly 
 
 .. note::
    For details of SteerLM, please refer to our paper `SteerLM: Attribute Conditioned SFT as an (User-Steerable) Alternative to RLHF <https://arxiv.org/abs/2310.05344>`_.
+
    For details of HelpSteer dataset, please refer to our paper `HelpSteer: Multi-attribute Helpfulness Dataset for SteerLM <https://arxiv.org/abs/2311.09528>`_.
+
    For detail on leveraging scalable training and inference via integration with [NeMo-Megatron-Launcher](https://github.com/NVIDIA/NeMo-Megatron-Launcher), please refer to the user guide `<https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#project-instructions-and-milestones>`_.
 
 Train a SteerLM model 
@@ -78,13 +80,13 @@ Untar the .nemo file to obtain the tokenizer in NeMo format (only for the 70B mo
 The prefix for the tokenizer would be different when extracted. Ensure that the correct tokenizer file is used when running the preceding command.
 
 
-###### Follow the [instruction from step 1-3](https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#nemo-tools-and-resources) to prepare the cluster environment before executing the code below.
+Follow the [instruction from step 1-3](https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#nemo-tools-and-resources) to prepare the cluster environment before executing the code below.
 
-<div style="background-color: rgb(50, 50, 50);">
-``python
-main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[conversion_hf2nemo]
-``
-</div>
+.. code-block:: bash
+
+   ```ruby
+   python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[conversion_hf2nemo]
+   ```
 
 
 Step 2: Download and Preprocess data for Attribute Prediction Modelling
