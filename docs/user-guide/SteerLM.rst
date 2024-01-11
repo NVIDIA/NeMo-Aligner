@@ -79,17 +79,19 @@ Untar the .nemo file to obtain the tokenizer in NeMo format (only for the 70B mo
 
 The prefix for the tokenizer would be different when extracted. Ensure that the correct tokenizer file is used when running the preceding command.
 
-$${\color{lightblue}NeMo \space Megatron \space Launcher \space method}$$	
+$${\color{lightblue}
+
+   NeMo Megatron Launcher method}$$	
 
 
    Follow the `instruction from step 1-3 <https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#nemo-tools-and-resources>`_ to prepare the cluster environment before executing the code below.
 
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   ```
-   python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[conversion_hf2nemo]
-   ```
+      ```
+      python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[conversion_hf2nemo]
+      ```
 
 
 Step 2: Download and Preprocess data for Attribute Prediction Modelling
