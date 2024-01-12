@@ -125,7 +125,8 @@ class SupervisedTrainer:
         lr = self.optimizer.param_groups[0]["lr"]
 
         self.optimizer.step()
-        self.scheduler.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
 
         trainer_metrics = {}
         if grad_norm is not None:
