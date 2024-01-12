@@ -102,24 +102,27 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
     @torch.no_grad()
-    def infer(self, inference_batch):
+    def infer(self, inference_batch, max_length):
         prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
 
         inputs = (prompt_tokens, prompt_lengths)
 
         length_params = get_default_length_params()
+        length_params['max_length'] = max_length
         # inference parameters such as strategy can be set through self.set_inference_config()
+        # e.g.
+        # config = {
+        #     'strategy': MyCustomInferenceStrategy(),
+        #     'sampling_params': {
+        #         'use_greedy': False,
+        #         'temperature': 0.7,
+        #         ...  # need to list all parameters explicitly
+        #     },
+        # }
+        # model.set_inference_config(config)
         inference_config = self.get_inference_config()
         if inference_config is None:
             inference_config = {}
-        actor_output = self.generate(inputs, length_params=length_params, **inference_config)
 
-        response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
-
-        rollout_batch = {
-            "response_tokens": response_tokens,
-        }
-
-        # return in GPU, trainer needs to move to cpu
-        return rollout_batch
+        return self.generate(inputs, length_params=length_params, **inference_config)
