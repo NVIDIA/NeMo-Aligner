@@ -88,9 +88,56 @@ class SearchCallable:
                         Tensor(name="policy", shape=(-1,), dtype=np.float32),
                         )
 
+    @lock_method("self.lock")
+    def infer(self, requests):
+        sessions = {}
+        for request in requests:
+            session_info = request.parameters["session"]
+            # group requests by session
+            sessions.setdefault(session_info, []).append(request)
+        assert len(sessions) == 1, "Only one session is supported for now"
+        outputs = []
+        for key in sessions:
+            choice = ServerSignal.FORWARD.cuda()
+            torch.distributed.broadcast(choice, 0)
+            session_requests = sessions[key]
+            sentences, action, depth, session = self.batch_inputs(session_requests)
+            output = self.infer_fn(sentences, action, depth, session)
+            outputs.append(output)
+        return outputs
+
+    def _get_batch(self, **inputs: np.ndarray):
+        sentences = inputs.pop("sentences", None)
+        if sentences is not None:
+            sentences = decode_bytes_ndarray(sentences)
+            sentences = [i.item() for i in sentences]
+
+        session_data = inputs.pop("session", None)
+        session = decode_bytes_ndarray(session_data)
+        session = [i.item() for i in session] 
+
+        action = inputs.pop("action", None)
+
+        depth = inputs.pop("depth", None)
+        return sentences, action, depth, session 
+    
+    def batch_inputs(self, req_list):
+        input_names = req_list[0].keys()
+        for req_dict2 in req_list[1:]:
+            if input_names != req_dict2.keys():
+                raise ValueError("Cannot batch requests with different set of inputs keys")
+
+        inputs = {}
+        for model_input in input_names:
+            concatenated_input_data = np.concatenate([req[model_input] for req in req_list])
+            inputs[model_input] = concatenated_input_data
+        outputs = self._get_batch(**inputs)
+        return outputs
+
+
     @batch
     @lock_method("self.lock")
-    def infer(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
+    def _infer(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
         choice = ServerSignal.FORWARD.cuda()
         torch.distributed.broadcast(choice, 0)
 
