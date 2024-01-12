@@ -328,9 +328,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
 
-        rewards_kl = self.get_reduced_masked_logps(
-             pi_logprobs - ref_logprobs, labels, average_log_probs=True
-        )            
+        rewards_kl = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, labels, average_log_probs=True)
 
         chosen_kl, reject_kl = self.split_output_tensor(rewards_kl)
         loss = (
