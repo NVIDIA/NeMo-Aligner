@@ -105,10 +105,10 @@ Now that we have the data we will use NeMo-Aligner to do the supervised fine tun
                model.data.num_workers=0 \
                model.data.train_ds.micro_batch_size=1 \
                model.data.train_ds.global_batch_size=128 \
-               model.data.train_ds.file_path=/path/to/databricks-dolly-15k.jsonl \
+               model.data.train_ds.file_path=/path/to/databricks-dolly-15k-output.jsonl \
                model.data.validation_ds.micro_batch_size=1 \
                model.data.validation_ds.global_batch_size=128 \
-               model.data.validation_ds.file_path=/path/to/databricks-dolly-15k.jsonl \
+               model.data.validation_ds.file_path=/path/to/databricks-dolly-15k-output.jsonl \
                exp_manager.create_wandb_logger=True \
                exp_manager.explicit_log_dir=/results \
                exp_manager.wandb_logger_kwargs.project=sft_run \
@@ -138,8 +138,8 @@ Now that we have the data we will use NeMo-Aligner to do the supervised fine tun
 
             GPFS="/path/to/nemo-aligner-repo"
 
-            TRAIN_DATA_PATH="/path/to/databricks-dolly-15k.jsonl"
-            VALID_DATA_PATH="/path/to/databricks-dolly-15k.jsonl"
+            TRAIN_DATA_PATH="/path/to/databricks-dolly-15k-output.jsonl"
+            VALID_DATA_PATH="/path/to/databricks-dolly-15k-output.jsonl"
 
             PRETRAINED_ACTOR_NEMO_FILE="/path/to/your/mcore_gpt.nemo"
 
