@@ -21,6 +21,8 @@ from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from nemo.utils import logging
+from nemo.collections.common.metrics import MetricStringToTorchMetric
+
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import clip_gradients
@@ -73,6 +75,9 @@ class SupervisedTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
+        # TODO: from config
+        self.metrics = {'code_generation_accuracy': MetricStringToTorchMetric['code_generation_accuracy']()}
+
     def validation_step(self, batch):
         self.model.prepare_for_validation_step()
 
@@ -99,6 +104,12 @@ class SupervisedTrainer:
             self.timer.stop("validation_step_time")
             validation_step_time = self.timer.get("validation_step_time")
 
+            if self.metrics is not None:
+                for name, metric in self.metrics.items():
+                    generation_output = self.run_generation(batch)
+                    # giving all available information to metrics
+                    metric.update(batch, generation_output)
+
             metrics["validation_step_time"] = validation_step_time
 
             loss_means.append(loss_mean)
@@ -108,6 +119,11 @@ class SupervisedTrainer:
             val_pbar.set_postfix(log_val_metrics)
 
         val_metrics = {k: mean(v) for k, v in val_metrics.items()}
+        # finalizing metrics
+        if self.metrics is not None:
+            for name, metric in self.metrics.items():
+                val_metrics[name] = metric.compute()
+
         return mean(loss_means), val_metrics
 
     def train_single_step(self, batch):
@@ -135,24 +151,21 @@ class SupervisedTrainer:
 
         return loss_mean, trainer_metrics | metrics
 
-    def run_generation(self, text, max_response_length=1024):
+    # TODO: max response length - customizable
+    @torch.no_grad()
+    def run_generation(self, batch, max_response_length=512):
         # TODO: you probably want to microbatch the text
-        context_tokens, context_lengths, exceeded = tokenize_batch(
-            self.model.tokenizer, text, self.model.cfg.encoder_seq_length, add_BOS=False
-        )
+        context_tokens, context_lengths = batch['contexts'], batch['context_lengths']
 
         # nemo requires us to pad the response length up before we do anything...
         context_tokens = torch.nn.functional.pad(
             context_tokens, (0, max_response_length), value=self.model.tokenizer.eos_id
         )
 
-        assert np.all(~np.array(exceeded)), "there are strings that exceeded the sequence length"
-        response_tokens = self.model.infer({"text": context_tokens, "length": context_lengths})["response_tokens"]
-        print("#### generated response", self.model.tokenizer.ids_to_text(response_tokens[0].tolist()))
+        # TODO: handle any examples exceeding max length
+        # assert np.all(~np.array(exceeded)), "there are strings that exceeded the sequence length"
 
-        # TODO: you can run your metrics here
-        # dummy metric(compute it however you like, but return it as a dictionary)
-        return {"token_length": response_tokens.sum().item()}
+        return self.model.infer({"text": context_tokens, "length": context_lengths}, max_response_length)
 
     def fit(self):
         if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
@@ -207,20 +220,12 @@ class SupervisedTrainer:
                 )
 
                 if run_val:
-                    # run generation
-                    # TODO: you can put all the text you want and collect metric within the
-                    # run generation
-                    inference_metrics = self.run_generation(
-                        ["what is the meaning of life?", "can you as an LLM really code?"]
-                    )
-
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
                     # so we use the incremented self.step
                     self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                     val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
                     metrics.update(val_metrics)
-                    metrics.update(inference_metrics)
 
                 global_pbar.set_postfix(metrics)
 
