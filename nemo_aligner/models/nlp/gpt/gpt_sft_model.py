@@ -108,10 +108,12 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
 
         inputs = (prompt_tokens, prompt_lengths)
 
-        # TODO: insert strategy here and other params
-        # right now i am using the default
         length_params = get_default_length_params()
-        actor_output = self.generate(inputs, length_params=length_params)
+        # inference parameters such as strategy can be set through self.set_inference_config()
+        inference_config = self.get_inference_config()
+        if inference_config is None:
+            inference_config = {}
+        actor_output = self.generate(inputs, length_params=length_params, **inference_config)
 
         response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
 
