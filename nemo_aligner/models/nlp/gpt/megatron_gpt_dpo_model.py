@@ -41,6 +41,11 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
 
+PREFERENCE_LOSS_FUNCTIONS = {
+    "dpo": "dpo_loss_func",
+    "ipo": "ipo_loss_func",
+    "kto": "kto_loss_func",
+}
 
 class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
     """
@@ -302,14 +307,11 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 ),
                 0,
             ).mean()
+
         else:
             raise NotImplementedError(f"preference_loss {self.preference_loss} is not implemented")
 
-        with torch.no_grad():
-            comp = chosen_rewards > reject_rewards
-            acc_chosen = comp.float().mean()
-
-        return loss, acc_chosen
+        return loss, chosen_rewards, reject_rewards
 
     def sft_loss_func(self, pi_logprobs, labels, average_log_probs=False):
         logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
