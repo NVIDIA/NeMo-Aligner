@@ -40,6 +40,11 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import cpu_weight_swap
 
+PREFERENCE_LOSS_FUNCTIONS = {
+    "dpo": "dpo_loss_func",
+    "ipo": "ipo_loss_func",
+    "kto": "kto_loss_func",
+}
 
 class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
     """
@@ -60,13 +65,14 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
         self.ref_policy_kl_penalty = self.cfg.dpo.get("ref_policy_kl_penalty", 0.0)
         self.avg_log_probs = self.cfg.dpo.get("average_log_probs", False)
         self.label_smoothing = self.cfg.dpo.get("label_smoothing", 0.0)
-        self.preference_loss = self.cfg.dpo.get("preference_loss", "dpo")
 
-        supported_loss_functions = ["dpo","ipo","kto"]
-        if self.preference_loss not in supported_loss_functions:
+        preference_loss_key = self.cfg.dpo.get("preference_loss", "dpo")
+        if preference_loss_key not in PREFERENCE_LOSS_FUNCTIONS:
             raise ValueError(
-                f"Preference loss {self.preference_loss} is not supported. Supported loss functions are {supported_loss_functions}"
+                f"Preference loss '{preference_loss_key}' is not supported. "
+                f"Supported loss functions are {list(PREFERENCE_LOSS_FUNCTIONS.keys())}"
             )
+        self.preference_loss = getattr(self, PREFERENCE_LOSS_FUNCTIONS[preference_loss_key])
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels):
@@ -198,41 +204,61 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
             return (logps * loss_mask).sum(-1)
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
-        rewards = self.get_reduced_masked_logps(
-            pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
-        )
-
-        chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
-        logits = chosen_rewards - reject_rewards
-        assert self.preference_loss in ["dpo", "ipo", "kto"]
-        if self.preference_loss == "dpo":
-            loss = (
-                -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * logits) * (1.0 - self.label_smoothing)
-                -torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * logits) * self.label_smoothing
-            )
-        elif self.preference_loss == "ipo":
-            # self.ref_policy_kl_penalty is the tau parameter in the paper
-            loss = (logits - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2
-        elif self.preference_loss == "kto":
-            rewards_kl = self.get_reduced_masked_logps(
-                 pi_logprobs - ref_logprobs, labels, average_log_probs=True
-            )            
-            chosen_kl, reject_kl = self.split_output_tensor(rewards_kl)
-            loss = torch.cat(
-                (
-                    1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0))),
-                    1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards)),
-                ),
-                0,
-            ).mean()
-        else:
-            raise ValueError(f"The loss function {self.preference_loss} is not supported.")
+        loss, chosen_rewards, reject_rewards = self.preference_loss(pi_logprobs, ref_logprobs, labels, average_log_probs)
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
             acc_chosen = comp.float().mean()
 
         return loss, acc_chosen
+    
+    def dpo_loss_func(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
+        rewards = self.get_reduced_masked_logps(
+            pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
+        )
+
+        chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards)
+        logits = chosen_rewards - reject_rewards
+        loss = (
+            -torch.nn.functional.logsigmoid(logits) * (1.0 - self.label_smoothing)
+            - torch.nn.functional.logsigmoid(-logits) * self.label_smoothing
+        )
+
+        return loss, chosen_rewards, reject_rewards
+
+    def ipo_loss_func(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
+        rewards = self.get_reduced_masked_logps(
+            pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
+        )
+
+        chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
+
+        # self.ref_policy_kl_penalty is the tau parameter in the paper
+        loss = ((chosen_rewards - reject_rewards) - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2
+
+        return loss, chosen_rewards, reject_rewards
+
+    def kto_loss_func(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
+        rewards = self.get_reduced_masked_logps(
+            pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
+        )
+
+        chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
+
+        rewards_kl = self.get_reduced_masked_logps(
+             pi_logprobs - ref_logprobs, labels, average_log_probs=True
+        )            
+
+        chosen_kl, reject_kl = self.split_output_tensor(rewards_kl)
+
+        loss = torch.cat(
+            (
+                1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0))),
+                1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards)),
+            ),
+            0,
+        ).mean()
+        return loss, chosen_rewards, reject_rewards
 
     def get_loss_and_metrics(self, batch, forward_only):
         seq_length = batch["chosen"].shape[1]
