@@ -46,6 +46,7 @@ PREFERENCE_LOSS_FUNCTIONS = {
     "kto": "kto_loss_func",
 }
 
+
 class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
     """
     Megatron GPT DPO Model Training.
@@ -204,14 +205,16 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
             return (logps * loss_mask).sum(-1)
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
-        loss, chosen_rewards, reject_rewards = self.preference_loss(pi_logprobs, ref_logprobs, labels, average_log_probs)
+        loss, chosen_rewards, reject_rewards = self.preference_loss(
+            pi_logprobs, ref_logprobs, labels, average_log_probs
+        )
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
             acc_chosen = comp.float().mean()
 
         return loss, acc_chosen
-    
+
     def dpo_loss_func(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
@@ -245,16 +248,16 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
 
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
 
-        rewards_kl = self.get_reduced_masked_logps(
-             pi_logprobs - ref_logprobs, labels, average_log_probs=True
-        )            
+        rewards_kl = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, labels, average_log_probs=True)
 
         chosen_kl, reject_kl = self.split_output_tensor(rewards_kl)
 
         loss = torch.cat(
             (
-                1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0))),
-                1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards)),
+                1.0
+                - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0))),
+                1.0
+                - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards)),
             ),
             0,
         ).mean()
