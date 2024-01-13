@@ -32,6 +32,7 @@ from nemo.collections.nlp.modules.common.transformer.text_generation import Leng
 from nemo.utils import AppState
 from nemo_aligner.utils.deep_search.communication_util import receive_generate_info, send_generate_info, get_model_parallel_src_rank
 import torch.distributed as dist
+from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor
 
 try:
     from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
@@ -177,6 +178,20 @@ def search(
             context_ids,
             session_info,
         ) = receive_generate_info()
+
+    # distributed batch to data parallel groups
+    # Select subset of data needed for this rank.
+    dp_size = parallel_state.get_data_parallel_world_size()
+    dp_rank = parallel_state.get_data_parallel_rank()
+    context_length_tensor = context_length_tensor.chunk(dp_size)[dp_rank]
+    context_tokens_tensor = context_tokens_tensor.chunk(dp_size)[dp_rank]
+    action = action.chunk(dp_size)[dp_rank]
+    depth = depth.chunk(dp_size)[dp_rank]
+    # chunk the context_ids, which is a list of strings
+    batch_size = len(context_ids)
+    assert batch_size % dp_size == 0
+    chuck_size = batch_size // dp_size
+    context_ids = context_ids[dp_rank * chuck_size : (dp_rank + 1) * chuck_size]
     
     # init the objects for inference
     init = depth[0].item() == 0
@@ -200,10 +215,24 @@ def search(
         depths=depth,
         true_context_length=true_context_length,
     )
+
+    result_output_actions_list = gather_tensor(
+        output_actions, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_actions.dtype
+    )
+
+    result_output_policys_list = gather_tensor(
+        output_policys, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_policys.dtype
+    )
+
     output = {}
-    output["action"] = output_actions
-    output["policy"] = output_policys
-    output = inference_strategy.post_generation_process(output)
+    if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+        # concate the output_actions and output_policys
+        output["action"] = torch.cat(result_output_actions_list, dim=0)
+        output["policy"] = torch.cat(result_output_policys_list, dim=0)
+        # gather the output from data parallel workers
+        output = inference_strategy.post_generation_process(output)
+    else:
+        pass
     return output
 
 
