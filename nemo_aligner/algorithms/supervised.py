@@ -17,6 +17,7 @@ from statistics import mean
 
 import numpy as np
 import torch
+import hydra
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
@@ -27,6 +28,7 @@ from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
+from nemo_aligner.utils.utils import InferenceMetricsHandler
 
 
 class SupervisedTrainer:
@@ -75,8 +77,8 @@ class SupervisedTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-        # TODO: from config
-        self.metrics = {'code_generation_accuracy': MetricStringToTorchMetric['code_generation_accuracy']()}
+        # amy metrics that require running full token-by-token inference during validation
+        self.inference_metrics_handler = InferenceMetricsHandler(cfg.get('metrics'))
 
     def validation_step(self, batch):
         self.model.prepare_for_validation_step()
@@ -103,14 +105,11 @@ class SupervisedTrainer:
             loss_mean, metrics = self.validation_step(batch)
             self.timer.stop("validation_step_time")
             validation_step_time = self.timer.get("validation_step_time")
-
-            if self.metrics is not None:
-                for name, metric in self.metrics.items():
-                    generation_output = self.run_generation(batch)
-                    # giving all available information to metrics
-                    metric.update(batch, generation_output)
-
             metrics["validation_step_time"] = validation_step_time
+
+            if self.inference_metrics_handler.has_metrics():
+                generation_output = self.run_generation(batch)
+                self.inference_metrics_handler.update(batch, generation_output)
 
             loss_means.append(loss_mean)
             for k, v in metrics.items():
@@ -119,10 +118,8 @@ class SupervisedTrainer:
             val_pbar.set_postfix(log_val_metrics)
 
         val_metrics = {k: mean(v) for k, v in val_metrics.items()}
-        # finalizing metrics
-        if self.metrics is not None:
-            for name, metric in self.metrics.items():
-                val_metrics[name] = metric.compute()
+        val_metrics.update(self.inference_metrics_handler.compute())
+        self.inference_metrics_handler.reset()
 
         return mean(loss_means), val_metrics
 
@@ -151,10 +148,8 @@ class SupervisedTrainer:
 
         return loss_mean, trainer_metrics | metrics
 
-    # TODO: max response length - customizable
     @torch.no_grad()
     def run_generation(self, batch, max_response_length=512):
-        # TODO: you probably want to microbatch the text
         context_tokens, context_lengths = batch['contexts'], batch['context_lengths']
 
         # nemo requires us to pad the response length up before we do anything...
