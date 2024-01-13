@@ -131,7 +131,7 @@ def main(cfg) -> None:
         restore_path=cfg.model.restore_from_path,
     )
     # setting default inference parameters if specified in the config
-    inference_params = cfg.model.get("inference", {})
+    inference_params = dict(cfg.model.get("inference", {}))
     if 'strategy' in inference_params:
         inference_params['strategy'] = hydra.utils.instantiate(inference_params['strategy'], model=ptl_model)
     ptl_model.set_inference_params(**inference_params)
