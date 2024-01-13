@@ -113,6 +113,7 @@ def search(
     action=None,
     depth=None,
     context_ids=None,
+    session_info=None,
     tokens_to_generate=1,  # max search depth
     top_k=0,
     end_strings=["<|endoftext|>"],
@@ -125,7 +126,7 @@ def search(
     else:
         raise ValueError("strategy is not specified")
     tokenizer = model.tokenizer
-    if torch.distributed.get_rank() == get_model_parallel_src_rank():
+    if torch.distributed.get_rank() == 0:
         if inputs is None:
             # not the first node
             assert action is not None
@@ -163,6 +164,7 @@ def search(
             top_k,
             end_strings,
             context_ids,
+            session_info,
         )
     else:
         (
@@ -174,6 +176,7 @@ def search(
             top_k,
             end_strings,
             context_ids,
+            session_info,
         ) = receive_generate_info()
     
     # init the objects for inference

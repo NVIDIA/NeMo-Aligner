@@ -101,7 +101,7 @@ class SearchCallable:
             torch.distributed.broadcast(choice, 0)
             session_requests = sessions[key]
             sentences, action, depth, context_ids = self.batch_inputs(session_requests)
-            output = self.infer_fn(sentences, action, depth, context_ids)
+            output = self.infer_fn(sentences, action, depth, context_ids, key)
             outputs[key] = output
         outputs = self._split_result(outputs, requests)
         return outputs

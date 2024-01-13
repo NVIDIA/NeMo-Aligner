@@ -133,9 +133,8 @@ def main(cfg) -> None:
     )
 
     assert (
-        cfg.trainer.devices * cfg.trainer.num_nodes
-        == cfg.tensor_model_parallel_size * cfg.pipeline_model_parallel_size
-    ), "devices * num_nodes should equal tensor_model_parallel_size * pipeline_model_parallel_size"
+        cfg.trainer.devices * cfg.trainer.num_nodes % (cfg.tensor_model_parallel_size * cfg.pipeline_model_parallel_size) == 0
+    ), "devices * num_nodes should equal to multiple of (tensor_model_parallel_size * pipeline_model_parallel_size)"
     print_gpu_memory_usage()
 
     if cfg.gpt_model_file:
@@ -243,13 +242,14 @@ def main(cfg) -> None:
         top_k = sampling_params["top_k"]
         end_strings = sampling_params["end_strings"]
 
-        def infer_fn(inputs=None, action=None, depth=None, session_id=None):
+        def infer_fn(inputs=None, action=None, depth=None, context_ids=None, session_info=None):
             return search(
                     model,
                     inputs,
                     action,
                     depth,
-                    session_id,
+                    context_ids,
+                    session_info,
                     tokens_to_generate=tokens_to_generate,  # max search depth
                     top_k=top_k,
                     end_strings=end_strings,

@@ -16,6 +16,7 @@ import pickle
 
 import numpy as np
 import torch
+from nemo_aligner.utils.distributed import broadcast_2d_tensor, broadcast_python_obj
 
 
 try:
@@ -57,93 +58,58 @@ def send_generate_info(
     tokens_to_generate,
     top_k,
     end_strings,
-    sessions,
+    context_ids,
+    session_info,
+
 ):
     """
     Needs to be synced up with receive_generate_info
     """
-    model_parallel_group = parallel_state.get_model_parallel_group()
-    src = get_model_parallel_src_rank()
+    src = 0
+
+    broadcast_2d_tensor(context_tokens_tensor, src, None, dtype=torch.int64)
+    broadcast_2d_tensor(context_length_tensor.reshape(-1, 1), src, None, dtype=torch.int64)
+
+    broadcast_2d_tensor(action, src, None, dtype=torch.int32)
+    broadcast_2d_tensor(depth, src, None, dtype=torch.int32)
+
+
     # Send the sizes of the tensors
     input_info = [
-        context_tokens_tensor.size(0),  # batch_size
-        context_tokens_tensor.size(1),  # seq_len
         tokens_to_generate,
         top_k,
     ]
     input_info_tensor = torch.cuda.IntTensor(input_info)
-    torch.distributed.broadcast(input_info_tensor, src, model_parallel_group)
+    torch.distributed.broadcast(input_info_tensor, src, None)
 
-    # Send variables to all ranks
-    torch.distributed.broadcast(context_length_tensor, src, model_parallel_group)
-    torch.distributed.broadcast(context_tokens_tensor, src, model_parallel_group)
+    broadcast_python_obj(end_strings, src, None)
+    broadcast_python_obj(context_ids, src, None)
+    broadcast_python_obj(session_info, src, None)
 
-    # send action and depth
-    torch.distributed.broadcast(action, src, model_parallel_group)
-    torch.distributed.broadcast(depth, src, model_parallel_group)
-
-    # send end strings
-    string_tensor = torch.as_tensor(
-        np.frombuffer(pickle.dumps(end_strings), dtype=np.int8), device=torch.cuda.current_device()
-    )
-    size = torch.as_tensor([string_tensor.size(0)], device=torch.cuda.current_device(), dtype=torch.int64)
-    torch.distributed.broadcast(size, src, model_parallel_group)
-    torch.distributed.broadcast(string_tensor, src, model_parallel_group)
-
-    # send session id
-    string_tensor = torch.as_tensor(
-        np.frombuffer(pickle.dumps(sessions), dtype=np.int8), device=torch.cuda.current_device()
-    )
-    size = torch.as_tensor([string_tensor.size(0)], device=torch.cuda.current_device(), dtype=torch.int64)
-    torch.distributed.broadcast(size, src, model_parallel_group)
-    torch.distributed.broadcast(string_tensor, src, model_parallel_group)
 
 def receive_generate_info():
     """
     Needs to be synced up with send_generate_info
     """
-    model_parallel_group = parallel_state.get_model_parallel_group()
-    src = get_model_parallel_src_rank()
-    input_info_tensor = torch.empty(4, dtype=torch.int32, device=torch.cuda.current_device())
-    torch.distributed.broadcast(input_info_tensor, src, model_parallel_group)
-    batch_size = int(input_info_tensor[0].item())
-    seq_len = int(input_info_tensor[1].item())
-    tokens_to_generate = int(input_info_tensor[2].item())
-    top_k = int(input_info_tensor[3].item())
+    src = 0
 
-    context_length_tensor = torch.empty(batch_size, dtype=torch.int64, device=torch.cuda.current_device())
-    context_tokens_tensor = torch.empty(batch_size, seq_len, dtype=torch.int64, device=torch.cuda.current_device())
-    # receive context, length tensors variables to all ranks
-    torch.distributed.broadcast(context_length_tensor, src, model_parallel_group)
-    torch.distributed.broadcast(context_tokens_tensor, src, model_parallel_group)
+    context_tokens_tensor = broadcast_2d_tensor(None, src, None, dtype=torch.int64)
+    context_length_tensor = broadcast_2d_tensor(None, src, None, dtype=torch.int64)
+    context_length_tensor.squeeze_(1)
 
     # receive action and depth
-    action = torch.empty(batch_size, 1, dtype=torch.int32, device=torch.cuda.current_device())
-    depth = torch.empty(batch_size, 1, dtype=torch.int32, device=torch.cuda.current_device())
-    torch.distributed.broadcast(action, src, model_parallel_group)
-    torch.distributed.broadcast(depth, src, model_parallel_group)
+    action = broadcast_2d_tensor(None, src, None, dtype=torch.int32)
+    depth = broadcast_2d_tensor(None, src, None, dtype=torch.int32)
+
+    input_info_tensor = torch.empty(2, dtype=torch.int32, device=torch.cuda.current_device())
+    torch.distributed.broadcast(input_info_tensor, src, None)
+    tokens_to_generate = int(input_info_tensor[0].item())
+    top_k = int(input_info_tensor[1].item())
 
 
-    # receive end strings
-    # get the size of the string
-    array_size = torch.empty(1, dtype=torch.int64, device=torch.cuda.current_device())
-    torch.distributed.broadcast(array_size, src, model_parallel_group)
-
-    # get the string
-    string_tensor = torch.empty(array_size[0], dtype=torch.int8, device=torch.cuda.current_device())
-    torch.distributed.broadcast(string_tensor, src, model_parallel_group)
-    bytes = string_tensor.cpu().numpy().tobytes()
-    end_strings = pickle.loads(bytes)
-
-    # receive session id
-    # get the size of the string
-    array_size = torch.empty(1, dtype=torch.int64, device=torch.cuda.current_device())
-    torch.distributed.broadcast(array_size, src, model_parallel_group)
-
-    string_tensor = torch.empty(array_size[0], dtype=torch.int8, device=torch.cuda.current_device())
-    torch.distributed.broadcast(string_tensor, src, model_parallel_group)
-    bytes = string_tensor.cpu().numpy().tobytes()
-    sessions = pickle.loads(bytes)
+    end_strings = broadcast_python_obj(None, src, None)
+    context_ids = broadcast_python_obj(None, src, None)
+    session_info = broadcast_python_obj(None, src, None)
 
     return (
         context_tokens_tensor,
@@ -153,5 +119,6 @@ def receive_generate_info():
         tokens_to_generate,
         top_k,
         end_strings,
-        sessions,
+        context_ids,
+        session_info,
     )
