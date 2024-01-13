@@ -29,17 +29,22 @@ class SearchDB:
         self.attention_mask[session_id] = attention_mask
         self.position_ids[session_id] = position_ids
 
-    def add(self, session_id, depth, action, node):
+    def add(self, session_info, context_id, depth, action, node):
         key = (depth, action)
-        if session_id not in self.db:
+        if session_info not in self.db:
             session = {}
-            self.db[session_id] = session
+            self.db[session_info] = session
         else:
-            session = self.db[session_id]
-        session[key] = node
+            session = self.db[session_info]
+        if context_id not in session:
+            context_nodes = {}
+            session[context_id] = context_nodes
+        else:
+            context_nodes = session[context_id]
+        context_nodes[key] = node
 
-    def get(self, session_id, depth, action):
-        return self.db[session_id][(depth, action)]
+    def get(self, session_info, context_id, depth, action):
+        return self.db[session_info][context_id][(depth, action)]
 
     def get_attention_mask(self, session_id): 
         return self.attention_mask[session_id]
@@ -61,19 +66,14 @@ class SearchDB:
         del self.position_ids[session_id]
 
 
-def init_first_node(session_id, node_id, node, search_db):
-    root_node = node
-    search_db.add(session_id, node_id, node)
-
-
-def get_kv_cache(selected_actions, depths, sessions, search_db: SearchDB):
+def get_kv_cache(selected_actions, depths, session_info, context_ids, search_db: SearchDB):
     batched_kv_cache = []
     batched_tokens = []
     context_lengths = []
-    for action, depth, session_id in zip(selected_actions, depths, sessions):
+    for action, depth, context_id in zip(selected_actions, depths, context_ids):
         action = action.item()
         depth = depth.item()
-        node = search_db.get(session_id, depth, action)
+        node = search_db.get(session_info, context_id, depth, action)
         assert node.state.depth == depth
         assert node.action == action
         tokens = []

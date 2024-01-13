@@ -99,8 +99,8 @@ class TextGenerationStrategy:
             self.model.eval()
         self._end_of_generation_cache = None
 
-    def forward_step(self, batch, tensor_shape, sessions):
-        func = get_forward_output_only_func(self, sessions)
+    def forward_step(self, batch, tensor_shape, session_info):
+        func = get_forward_output_only_func(self, session_info)
 
         fwd_bwd_function = get_forward_backward_func()
         output_tensor = fwd_bwd_function(
@@ -283,7 +283,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         self.inference_params = None
 
 
-    def init(self, context_tokens: torch.Tensor, max_depth: int, sessions: List[str]):
+    def init(self, context_tokens: torch.Tensor, max_depth: int, session_id: str):
         batch_size = context_tokens.shape[0]
         seq_len = context_tokens.shape[1]
         self.search_db: SearchDB = SearchDB()
@@ -291,8 +291,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         tokens = context_tokens.contiguous().cuda()
         attention_mask, position_ids = _get_ltor_masks_and_position_ids(batch_size, seq_len + max_depth, tokens.device)
         inference_params = InferenceParams(max_batch_size=batch_size, max_sequence_length=seq_len + 1)
-        for session_id in sessions:
-            self.search_db.add_init_obj(session_id, inference_params, attention_mask, position_ids)
+        self.search_db.add_init_obj(session_id, inference_params, attention_mask, position_ids)
 
     def init_batch(self, context_tokens: torch.Tensor, context_length: int, compute_attention_mask: bool):
         """initialize the batch data before the inference steps."""
@@ -313,7 +312,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         micro_batch_size: int,
         context_length: int,
         init: bool = False,
-        sessions: List[str] = None,
+        session_info: str = None,
         step: int = 0,
         true_context_lengths: torch.Tensor = None,
     ) -> Tuple[List[torch.Tensor], List[int]]:
@@ -321,23 +320,21 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         generate the batch used in inference for each of the steps
         """
         if init:
-            session_id = sessions[0]
-            attention_mask_3d = self.search_db.get_attention_mask(session_id)[..., :context_length, :context_length]
+            attention_mask_3d = self.search_db.get_attention_mask(session_info)[..., :context_length, :context_length]
             if step == 0:
                 tokens2use = tokens[:, :context_length]
-                positions2use = self.search_db.get_position_ids(session_id)[..., :context_length]
+                positions2use = self.search_db.get_position_ids(session_info)[..., :context_length]
             else:
                 tokens2use = tokens[:, context_length - 1].view(micro_batch_size, -1)
-                positions2use = self.search_db.get_position_ids(session_id)[..., :context_length]
+                positions2use = self.search_db.get_position_ids(session_info)[..., :context_length]
                 positions2use = positions2use[:, context_length - 1].view(micro_batch_size, -1)
-                inference_params = self.get_inference_params(sessions)
+                inference_params = self.get_inference_params(session_info)
                 # update the sequence length offset
                 if step == 1:
                     inference_params.sequence_len_offset = context_length - 1
                 else:
                     inference_params.sequence_len_offset += 1
         else:
-            session_id = sessions[0]
             minlen = true_context_lengths.min().item()  # the last token is not yet computed,
             # we are going to compute the last token first in the first step
             # context [0, 1, ..., minlen - 2] minlen -1, 
@@ -346,11 +343,11 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             # need attention mask of length minlen + step
             # need position ids of length minlen + step
             # sequence_len_offset should start with minlen - 1
-            attention_mask_3d = self.search_db.get_attention_mask(session_id)[..., :minlen + step, :minlen + step]
+            attention_mask_3d = self.search_db.get_attention_mask(session_info)[..., :minlen + step, :minlen + step]
             tokens2use = tokens[:, step].view(micro_batch_size, -1)
-            positions2use = self.search_db.get_position_ids(session_id)[..., :minlen + step]
+            positions2use = self.search_db.get_position_ids(session_info)[..., :minlen + step]
             positions2use = positions2use.view(micro_batch_size, -1)
-            inference_params = self.get_inference_params(sessions)
+            inference_params = self.get_inference_params(session_info)
             if step == 0:
                 assert inference_params.sequence_len_offset == minlen - 1
             else:
@@ -391,13 +388,13 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
         return batch, tensor_shape
 
-    def get_inference_params(self, sessions: List[str]):
+    def get_inference_params(self, session_info: str):
         # inference_params works for all batches in the sessions
         # TODO, change the key to hash(sessions)
-        return self.search_db.get_inference_params(sessions[0])
+        return self.search_db.get_inference_params(session_info)
     
-    def compute_inference_params(self, sessions: List[str], depths: torch.Tensor, actions: torch.Tensor):
-        updated_kv_cache, tokens, context_lengths = get_kv_cache(actions, depths, sessions, self.search_db)
+    def compute_inference_params(self, session_info: str, context_ids: List[str], depths: torch.Tensor, actions: torch.Tensor):
+        updated_kv_cache, tokens, context_lengths = get_kv_cache(actions, depths, session_info, context_ids, self.search_db)
         tokens = torch.cuda.LongTensor(tokens)
         batch_size, token_len = tokens.shape
         true_context_lengths = torch.cuda.IntTensor(context_lengths) + depths[:, 0]
@@ -415,22 +412,20 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                 inference.key_value_memory_dict[key] = (torch.cuda.BFloat16Tensor(keys), torch.cuda.BFloat16Tensor(vals))
             else:
                 inference.key_value_memory_dict[key] = (torch.cuda.FloatTensor(keys), torch.cuda.FloatTensor(vals))
-        for session_id in sessions:
-            self.search_db.add_inference_params(session_id, inference)
+        self.search_db.add_inference_params(session_info, inference)
         return tokens, new_context_lengths, true_context_lengths
 
-    def update_kv_cache(self, sessions: List[str], node: Node, depth: int, context_length:int, batch_id: int):
-        infer_params = self.get_inference_params(sessions)
+    def update_kv_cache(self, session_info: str, node: Node, depth: int, context_length:int, batch_id: int):
+        infer_params = self.get_inference_params(session_info)
         state = State.get_state(infer_params, depth, context_length, batch_id)
         node.state = state
-        
 
-    def save_kv_cache(self, sessions: List[str], depths: torch.Tensor, batch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, context_tokens: torch.Tensor = None):
+    def save_kv_cache(self, session_info: str, context_ids: List[str], depths: torch.Tensor, batch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, context_tokens: torch.Tensor = None):
         for bid in range(batch_size): 
             context_length = context_lengths[bid].item()
             depth = depths[bid].item()
-            session_id = sessions[bid]
-            infer_params = self.search_db.get_inference_params(session_id)
+            context_id = context_ids[bid]
+            infer_params = self.search_db.get_inference_params(session_info)
             state = State.get_state(infer_params, depth, context_length, bid)
             # self.search_db.add_kv_cache(session_id, depth, tokens, kv_cache)
             parent_node = parent_nodes[bid]
@@ -442,10 +437,10 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                 node = Node(state=state, parent=parent_node, action=tokens, prior=0.0, visit_count=0, C=2.0)
             else:
                 node = Node(state=state, parent=parent_node, action=action_taken, prior=0.0, visit_count=0, C=2.0)
-            self.search_db.add(session_id, depth, action_taken, node)
+            self.search_db.add(session_info, context_id, depth, action_taken, node)
     
-    def get_node(self, session_id: str, depth: int, action: int):
-        return self.search_db.get(session_id, depth, action)
+    def get_node(self, session_info: str, context_id: str, depth: int, action: int):
+        return self.search_db.get(session_info, context_id, depth, action)
 
     def post_generation_process(self, output):
         """

@@ -35,7 +35,7 @@ class TestHistoryTrackingNode:
         assert state.kv_cache[2][0].shape == (11, 10, 10)
         assert state.kv_cache[2][1].shape == (11, 10, 10)
         root_node = Node(state=state, parent=None, action=None, prior=0.0, visit_count=0, C=2.0)
-        search_db.add("session1", 0, -1, root_node)
+        search_db.add("session1", "context1", 0, -1, root_node)
 
         full_actions1 = np.arange(0, 1000, 1)
         # shuffle
@@ -48,7 +48,7 @@ class TestHistoryTrackingNode:
             assert child_state.kv_cache[1][0].shape == (1, 10, 10)
             child_node = Node(state=child_state, parent=root_node, action=action, prior=0.0, visit_count=0, C=2.0)
             root_node.children.append(child_node)
-            search_db.add("session1", 1, action, child_node)
+            search_db.add("session1", "context1", 1, action, child_node)
         depth1_child = child_node
 
 
@@ -64,14 +64,14 @@ class TestHistoryTrackingNode:
             assert child_state.kv_cache[1][0].shape == (1, 10, 10)
             child_node = Node(state=child_state, parent=depth1_child, action=action, prior=0.0, visit_count=0, C=2.0)
             root_node.children.append(child_node)
-            search_db.add("session1", 2, action, child_node)
+            search_db.add("session1", "context1" 2, action, child_node)
 
 
         # construction kv cache for selected actions
         K = 30
         selected_actions =  np.concatenate([mock_actions1[:K//2], mock_actions2[:K//2]], axis=0)
         selected_depths = np.concatenate([np.ones(K//2, dtype=np.int), np.ones(K//2, dtype=np.int) * 2], axis=0)
-        updated_kv_cache, tokens = get_kv_cache(selected_actions, selected_depths, 'session1', search_db)
+        updated_kv_cache, tokens = get_kv_cache(selected_actions, selected_depths, 'session1', "context1", search_db)
         assert len(updated_kv_cache) == 2
         assert updated_kv_cache[1][0].shape == (14, 30, 10, 10)
         assert updated_kv_cache[1][1].shape == (14, 30, 10, 10)

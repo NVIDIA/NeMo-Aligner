@@ -125,7 +125,6 @@ def search(
         inference_strategy = strategy_args["strategy"]
     else:
         raise ValueError("strategy is not specified")
-    tokenizer = model.tokenizer
     if torch.distributed.get_rank() == 0:
         if inputs is None:
             # not the first node
@@ -183,9 +182,9 @@ def search(
     init = depth[0].item() == 0
     true_context_length = None
     if init:
-        inference_strategy.init(context_tokens_tensor, tokens_to_generate, context_ids)
+        inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_info)
     else:
-        context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(context_ids, depth, action)
+        context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(session_info, context_ids, depth, action)
 
     output_actions, output_policys = sample_sequence_batch(
         model,
@@ -195,6 +194,7 @@ def search(
         tokens_to_generate,
         end_strings=end_strings,
         context_ids=context_ids,
+        session_info=session_info,
         top_k=top_k,
         init=init,
         depths=depth,
@@ -220,6 +220,7 @@ def sample_sequence_batch(
     tokens_to_generate,
     end_strings,
     context_ids,
+    session_info,
     top_k,
     init,
     depths,
@@ -267,7 +268,7 @@ def sample_sequence_batch(
 
         while context_length < maxlen:
             batch, tensor_shape = inference_strategy.prepare_batch_at_step(
-                tokens, micro_batch_size, context_length, init, context_ids, counter, true_context_length
+                tokens, micro_batch_size, context_length, init, session_info, counter, true_context_length
             )
 
             batch_update_indicator = context_lengths == context_length
@@ -279,7 +280,7 @@ def sample_sequence_batch(
                 counter += 1
                 continue
 
-            output = inference_strategy.forward_step(batch, tensor_shape, context_ids)
+            output = inference_strategy.forward_step(batch, tensor_shape, session_info)
             if parallel_state.is_pipeline_last_stage():
                 # get last rank
                 logits = output[0]["logits"][:, -1].contiguous() # output[0]["logits"] shape[batch_size, length, partial vocab_size]
@@ -315,36 +316,36 @@ def sample_sequence_batch(
             parent_nodes = [None] * batch_size
             actions_taken = torch.cuda.IntTensor([-1] * batch_size)
             # construct and save the root node
-            inference_strategy.save_kv_cache(context_ids, depths, batch_size, context_lengths, parent_nodes, actions_taken, context_tokens)
+            inference_strategy.save_kv_cache(session_info, context_ids, depths, batch_size, context_lengths, parent_nodes, actions_taken, context_tokens)
 
             # construct and save the first level nodes
             depths += 1
 
             for i in range(batch_size):
-                session_id = context_ids[i]
-                parent_nodes[i] = inference_strategy.get_node(session_id, 0, -1)
+                context_id = context_ids[i]
+                parent_nodes[i] = inference_strategy.get_node(session_info, context_id, 0, -1)
 
             for j in range(top_k):
                 actions_taken = output_actions[:, j]
-                inference_strategy.save_kv_cache(context_ids, depths, batch_size, context_lengths, parent_nodes, actions_taken, None)
+                inference_strategy.save_kv_cache(session_info, context_ids, depths, batch_size, context_lengths, parent_nodes, actions_taken, None)
         else:
             # construct and save the next level nodes
             parent_nodes = [None] * batch_size
 
             for i in range(batch_size):
-                session_id = context_ids[i]
+                context_id = context_ids[i]
                 depth = depths[i].item()
                 context = context_lengths[i].item()
                 action = context_tokens[i, context].item()
-                parent_nodes[i] = inference_strategy.get_node(session_id, depth, action)
+                parent_nodes[i] = inference_strategy.get_node(session_info, context_id, depth, action)
                 parent_context_length = true_context_length[i].item() - 1
                 # need to correct the parent_nodes's k-v cache
-                inference_strategy.update_kv_cache(context_ids, parent_nodes[i], depth, parent_context_length, i)
+                inference_strategy.update_kv_cache(session_info, parent_nodes[i], depth, parent_context_length, i)
 
 
             depths += 1
 
             for j in range(top_k):
                 actions_taken = output_actions[:, j]
-                inference_strategy.save_kv_cache(context_ids, depths, batch_size, true_context_length, parent_nodes, actions_taken, None)
+                inference_strategy.save_kv_cache(session_info, context_ids, depths, batch_size, true_context_length, parent_nodes, actions_taken, None)
         return output_actions, output_policy
