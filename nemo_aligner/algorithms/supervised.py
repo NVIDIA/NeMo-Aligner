@@ -78,7 +78,7 @@ class SupervisedTrainer:
         )
 
         # amy metrics that require running full token-by-token inference during validation
-        self.inference_metrics_handler = InferenceMetricsHandler(cfg.get('metrics'))
+        self.inference_metrics_handler = InferenceMetricsHandler(cfg.get('inference_metrics'))
 
     def validation_step(self, batch):
         self.model.prepare_for_validation_step()

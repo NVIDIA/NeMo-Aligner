@@ -87,6 +87,19 @@ model:
   attention_dropout: 0.0
   ffn_dropout: 0.0
 
+  # can be used to customize behavior of model.generate for inference metrics
+  # note that you only need to specify parameters that are different from the default values
+  #
+  # inference:
+  #   sampling_params:
+  #     greedy: False
+  #     temperature: 0.7
+  #   length_params:
+  #     max_length: 512
+  #   strategy:
+  #     _target_: <custom strategy class>
+  #     <any required arguments>
+
   data:
     chat: False # whether use chatbot data or not
     chat_prompt_tokens:  # special tokens for the chat prompts, a dictionary of {token_type: token}. note that some tokenizer may combine the characters at the junction between {end_of_turn}{turn_start}. e.g. '<im end><im start>', the '><' sometimes is merged to be a single token. This is not supported, try to avoid
@@ -95,19 +108,6 @@ model:
       label_start: "\x12"
       end_of_turn: "\x0A"  # \0x0A is '\n'
       end_of_name: "\x0A"  # \0x0A is '\n'
-
-    # can be used to customize behavior of model.generate for inference metrics
-    # note that you only need to specify parameters that are different from the default values
-    #
-    # sampling_params:
-    #   greedy: False
-    #   temperature: 0.7
-    # length_params:
-    #   max_length: 512
-    # inference_strategy:
-    #   _target_: <custom strategy class>
-    #   <any required arguments>
-
 
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
     num_workers: 1
