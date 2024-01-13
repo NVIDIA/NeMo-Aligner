@@ -112,7 +112,7 @@ def search(
     inputs=None,
     action=None,
     depth=None,
-    sessions=None,
+    context_ids=None,
     tokens_to_generate=1,  # max search depth
     top_k=0,
     end_strings=["<|endoftext|>"],
@@ -162,7 +162,7 @@ def search(
             tokens_to_generate,
             top_k,
             end_strings,
-            sessions,
+            context_ids,
         )
     else:
         (
@@ -173,16 +173,16 @@ def search(
             tokens_to_generate,
             top_k,
             end_strings,
-            sessions,
+            context_ids,
         ) = receive_generate_info()
     
     # init the objects for inference
     init = depth[0].item() == 0
     true_context_length = None
     if init:
-        inference_strategy.init(context_tokens_tensor, tokens_to_generate, sessions)
+        inference_strategy.init(context_tokens_tensor, tokens_to_generate, context_ids)
     else:
-        context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(sessions, depth, action)
+        context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(context_ids, depth, action)
 
     output_actions, output_policys = sample_sequence_batch(
         model,
@@ -191,7 +191,7 @@ def search(
         context_length_tensor,
         tokens_to_generate,
         end_strings=end_strings,
-        sessions=sessions,
+        context_ids=context_ids,
         top_k=top_k,
         init=init,
         depths=depth,
@@ -216,7 +216,7 @@ def sample_sequence_batch(
     context_lengths,
     tokens_to_generate,
     end_strings,
-    sessions,
+    context_ids,
     top_k,
     init,
     depths,
@@ -264,7 +264,7 @@ def sample_sequence_batch(
 
         while context_length < maxlen:
             batch, tensor_shape = inference_strategy.prepare_batch_at_step(
-                tokens, micro_batch_size, context_length, init, sessions, counter, true_context_length
+                tokens, micro_batch_size, context_length, init, context_ids, counter, true_context_length
             )
 
             batch_update_indicator = context_lengths == context_length
@@ -276,7 +276,7 @@ def sample_sequence_batch(
                 counter += 1
                 continue
 
-            output = inference_strategy.forward_step(batch, tensor_shape, sessions)
+            output = inference_strategy.forward_step(batch, tensor_shape, context_ids)
             if parallel_state.is_pipeline_last_stage():
                 # get last rank
                 logits = output[0]["logits"][:, -1].contiguous() # output[0]["logits"] shape[batch_size, length, partial vocab_size]
@@ -312,230 +312,36 @@ def sample_sequence_batch(
             parent_nodes = [None] * batch_size
             actions_taken = torch.cuda.IntTensor([-1] * batch_size)
             # construct and save the root node
-            inference_strategy.save_kv_cache(sessions, depths, batch_size, context_lengths, parent_nodes, actions_taken, context_tokens)
+            inference_strategy.save_kv_cache(context_ids, depths, batch_size, context_lengths, parent_nodes, actions_taken, context_tokens)
 
             # construct and save the first level nodes
             depths += 1
 
             for i in range(batch_size):
-                session_id = sessions[i]
+                session_id = context_ids[i]
                 parent_nodes[i] = inference_strategy.get_node(session_id, 0, -1)
 
             for j in range(top_k):
                 actions_taken = output_actions[:, j]
-                inference_strategy.save_kv_cache(sessions, depths, batch_size, context_lengths, parent_nodes, actions_taken, None)
+                inference_strategy.save_kv_cache(context_ids, depths, batch_size, context_lengths, parent_nodes, actions_taken, None)
         else:
             # construct and save the next level nodes
             parent_nodes = [None] * batch_size
 
             for i in range(batch_size):
-                session_id = sessions[i]
+                session_id = context_ids[i]
                 depth = depths[i].item()
                 context = context_lengths[i].item()
                 action = context_tokens[i, context].item()
                 parent_nodes[i] = inference_strategy.get_node(session_id, depth, action)
                 parent_context_length = true_context_length[i].item() - 1
                 # need to correct the parent_nodes's k-v cache
-                inference_strategy.update_kv_cache(sessions, parent_nodes[i], depth, parent_context_length, i)
+                inference_strategy.update_kv_cache(context_ids, parent_nodes[i], depth, parent_context_length, i)
 
 
             depths += 1
 
             for j in range(top_k):
                 actions_taken = output_actions[:, j]
-                inference_strategy.save_kv_cache(sessions, depths, batch_size, true_context_length, parent_nodes, actions_taken, None)
+                inference_strategy.save_kv_cache(context_ids, depths, batch_size, true_context_length, parent_nodes, actions_taken, None)
         return output_actions, output_policy
-
-
-            # # construct and save the first level nodes
-            # depths += 1
-
-            # for i in range(batch_size):
-            #     session_id = sessions[i]
-            #     parent_nodes[i] = inference_strategy.get_node(session_id, 0, -1)
-
-            # for j in range(top_k):
-            #     actions_taken = output_actions[:, j]
-            #     inference_strategy.save_kv_cache(sessions, depths, batch_size, context_lengths, parent_nodes, actions_taken)
-          
-
-        # if parallel_state.is_pipeline_last_stage():
-
-        #     # if compute_logprob:
-        #     #     output = output[0]["logits"]
-        #     #     output = tensor_parallel.gather_from_tensor_model_parallel_region(output)
-        #     #     assert output is not None
-        #     #     logits = output[:, -1].view(batch_size, -1).contiguous()
-
-        #     # else:
-        #     #     logits = output[0]["logits"][:, -1].contiguous()
-        #     #     logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
-        #     #     assert logits is not None
-        #     #     logits = logits.view(batch_size, -1)
-        #     logits = output[0]["logits"][:, -1].contiguous()
-        #     logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
-        #     assert logits is not None
-        #     logits = logits.view(batch_size, -1)
-
-
-        #     # # make sure it will generate at least min_length
-        #     # min_length = extra.get("min_tokens_to_generate", 0)
-        #     # if min_length > 0:
-        #     #     within_min_length = (context_length - context_lengths) < min_length
-        #     #     logits[within_min_length, eod_id] = -float("Inf")
-
-        #     # make sure it won't sample outside the vocab_size range
-        #     logits[:, tokenizer.vocab_size :] = -float("Inf")
-
-        #     # started indicates whether the current token step passes the context_length, so we make sure not to overwrite the context tokens
-
-        #     # started = context_lengths <= context_length
-        #     # if extra.get("greedy", False):
-        #     #     prev = torch.argmax(logits, dim=-1).view(-1)
-        #     # else:
-        #     #     logits = logits.float()
-        #     #     logits /= temperature
-        #     #     # handle repetition penality
-        #     #     logits = repetition_penalty(logits, extra.get("repetition_penalty", 1.2), all_generated_indices)
-        #     #     logits = top_k_logits(
-        #     #         logits, top_k=extra.get("top_k", 0), top_p=extra.get("top_p", 0.9), started=started
-        #     #     )
-        #     #     probs = F.softmax(logits, dim=-1)
-        #     #     prev = torch.multinomial(probs, num_samples=1).view(-1)
-        #     updated_logits, actions = torch.topk(logits, top_k)
-        #     probs = F.softmax(updated_logits, dim=-1)
-        #     # logits = logits.float()
-        #     # # logits /= temperature
-        #     # # # handle repetition penality
-        #     # # logits = repetition_penalty(logits, extra.get("repetition_penalty", 1.2), all_generated_indices)
-        #     # logits = top_k_logits(
-        #     #     logits, top_k=extra.get("top_k", 0), top_p=extra.get("top_p", 0.9), started=started
-        #     # )
-        #     # probs = F.softmax(logits, dim=-1)
-        #     # prev = torch.multinomial(probs, num_samples=1).view(-1)
-
-        #     # Clamp the predicted out of vocabulary tokens
-        #     # prev = torch.clamp(prev, max=tokenizer.vocab_size - 1)
-
-        #     # new_tokens = switch(tokens[:, context_length].view(-1), prev, started)
-
-        #     # Replace sampled tokens w/ done token if EOD has already been sampled
-        #     # new_tokens = switch(new_tokens, eod_id, is_done)
-
-        #     # post process the inference tokens based on the strategy
-        #     # inference_strategy.post_process(tokens, new_tokens, context_length)
-
-        #     # Insert either new predicted or next prompt token
-        #     # tokens[:, context_length] = new_tokens
-
-        #     src = parallel_state.get_pipeline_model_parallel_last_rank()
-        #     group = parallel_state.get_embedding_group()
-        #     torch.distributed.broadcast(actions, src, group)
-
-        #     #                done_token = (prev == eod_id).byte() & started.byte()
-        #     done_token = inference_strategy.end_of_generation_condition(
-        #         tokens[:, : context_length + 1], prev, eod_id, end_strings
-        #     )
-        #     done_token = done_token.byte()
-
-        #     just_finished = (done_token & ~is_done).bool()
-
-        #     lengths[just_finished.view(-1)] = context_length
-
-        #     is_done = is_done | done_token
-
-        #     done = torch.all(is_done)
-        #     src = parallel_state.get_pipeline_model_parallel_last_rank()
-        #     group = parallel_state.get_pipeline_model_parallel_group()
-        #     torch.distributed.broadcast(done, src, group)
-        #     if compute_logprob:
-        #         if all_probs:
-        #             yield tokens, lengths, output_logits, full_logits
-        #         else:
-        #             yield tokens, lengths, output_logits, None
-        #     else:
-        #         yield tokens, lengths, None, None
-
-        # else:
-        #     if parallel_state.is_pipeline_first_stage():
-        #         src = parallel_state.get_pipeline_model_parallel_last_rank()
-        #         group = parallel_state.get_embedding_group()
-        #         actions = torch.empty_like(logits[:, :top_k])
-        #         new_tokens = torch.empty_like(tokens[:, context_length])
-        #         torch.distributed.broadcast(new_tokens, src, group)
-        #         tokens[:, context_length] = new_tokens
-        #         yield tokens, None, None, None
-        #     else:
-        #         yield None, None, None, None
-
-        #     done = torch.cuda.ByteTensor([0])
-        #     src = parallel_state.get_pipeline_model_parallel_last_rank()
-        #     group = parallel_state.get_pipeline_model_parallel_group()
-        #     torch.distributed.broadcast(done, src, group)
-
-
-def synced_generate(
-    model,
-    inference_strategy,
-    context_tokens_tensor,
-    context_length_tensor,
-    tokens_to_generate, # max search depth
-    top_k,
-    end_strings,
-    session_id,
-    init,
-):
-    context_length = context_length_tensor.min().item()
-
-    output = sample_sequence_batch(
-        model,
-        inference_strategy,
-        context_tokens_tensor,
-        context_length_tensor,
-        tokens_to_generate,
-        end_strings=end_strings,
-        session_id=session_id,
-        top_k=top_k,
-        init=init,
-    )
-
-    # for tokens, lengths, output_logits, full_logits in batch_token_iterator:
-    #     context_length += 1
-
-    # if parallel_state.is_pipeline_last_stage():
-    #     src = parallel_state.get_pipeline_model_parallel_last_rank()
-    #     group = parallel_state.get_embedding_group()
-    #     if compute_logprob:
-    #         torch.distributed.broadcast(output_logits, src, group)
-    #     if all_probs:
-    #         src = parallel_state.get_pipeline_model_parallel_last_rank()
-    #         group = parallel_state.get_embedding_group()
-    #         torch.distributed.broadcast(full_logits, src, group)
-
-    # else:
-    #     if parallel_state.is_pipeline_first_stage():
-    #         src = parallel_state.get_pipeline_model_parallel_last_rank()
-    #         group = parallel_state.get_embedding_group()
-
-    #         if compute_logprob:
-    #             precision = model._trainer.precision
-    #             dtype = torch.float32
-
-    #             output_logits = torch.empty(
-    #                 tokens.size(0), context_length - 1, dtype=dtype, device=torch.device("cuda")
-    #             )
-    #             torch.distributed.broadcast(output_logits, src, group)
-
-    #         if all_probs:
-    #             src = parallel_state.get_pipeline_model_parallel_last_rank()
-    #             group = parallel_state.get_embedding_group()
-    #             full_logits = torch.empty(
-    #                 tokens.size(0),
-    #                 context_length - 1,
-    #                 model.padded_vocab_size,
-    #                 dtype=dtype,
-    #                 device=torch.device("cuda"),
-    #             )
-    #             torch.distributed.broadcast(full_logits, src, group)
-    # if tokens is not None:
-    #     return tokens[:, :context_length], output_logits, full_logits

@@ -81,7 +81,7 @@ class SearchCallable:
         self.lock = lock
         self.infer_fn = infer_fn
         self.inputs = (Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
-                       Tensor(name="session", shape=(-1,), dtype=bytes, optional=False),
+                       Tensor(name="context_ids", shape=(-1,), dtype=bytes, optional=False),
                        Tensor(name="action", shape=(-1,), dtype=np.int32, optional=True),
                        Tensor(name="depth", shape=(-1,), dtype=np.int32, optional=True),)
         self.outputs = (Tensor(name="action", shape=(-1,), dtype=np.int32),
@@ -100,8 +100,8 @@ class SearchCallable:
             choice = ServerSignal.FORWARD.cuda()
             torch.distributed.broadcast(choice, 0)
             session_requests = sessions[key]
-            sentences, action, depth, session = self.batch_inputs(session_requests)
-            output = self.infer_fn(sentences, action, depth, session)
+            sentences, action, depth, context_ids = self.batch_inputs(session_requests)
+            output = self.infer_fn(sentences, action, depth, context_ids)
             outputs[key] = output
         outputs = self._split_result(outputs, requests)
         return outputs
@@ -112,14 +112,14 @@ class SearchCallable:
             sentences = decode_bytes_ndarray(sentences)
             sentences = [i.item() for i in sentences]
 
-        session_data = inputs.pop("session", None)
-        session = decode_bytes_ndarray(session_data)
-        session = [i.item() for i in session] 
+        context_data = inputs.pop("context_ids", None)
+        context = decode_bytes_ndarray(context_data)
+        context = [i.item() for i in context] 
 
         action = inputs.pop("action", None)
 
         depth = inputs.pop("depth", None)
-        return sentences, action, depth, session 
+        return sentences, action, depth, context
     
     def batch_inputs(self, req_list):
         input_names = req_list[0].keys()
@@ -161,43 +161,3 @@ class SearchCallable:
                 req_output_dict[output_name] = req_output
             out_list.append(req_output_dict)
         return out_list
-
-
-    @batch
-    @lock_method("self.lock")
-    def _infer(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
-        choice = ServerSignal.FORWARD.cuda()
-        torch.distributed.broadcast(choice, 0)
-
-        sentences = inputs.pop("sentences", None)
-        if sentences is not None:
-            sentences = decode_bytes_ndarray(sentences)
-            sentences = [i.item() for i in sentences]
-            print('sentences', sentences)
-
-        session_data = inputs.pop("session", None)
-        session = decode_bytes_ndarray(session_data)
-        session = [i.item() for i in session] 
-        print('session', session)
-
-        action = inputs.pop("action", None)
-        print('action', action)
-
-        depth = inputs.pop("depth", None)
-        print('depth', depth)
-
-        output = self.infer_fn(sentences, action, depth, session)
-        return output
-        # print(output)
-        # rewards, exceeded = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
-
-        # output_dict = {}
-        # if action is not None:
-        #     batch_size = action.shape[0]
-        #     output_dict['action'] = np.array([[1,2,3]]*batch_size)
-        #     output_dict['policy'] = np.array([[3.0,4.0,5.0]]*batch_size)
-        # else:
-        #     batch_size = len(sentences)
-        #     output_dict['action'] = np.array([[1,2,3]]*batch_size)
-        #     output_dict['policy'] = np.array([[3.0,4.0,5.0]]*batch_size)
-        # return output_dict
