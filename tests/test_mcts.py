@@ -64,14 +64,15 @@ class TestHistoryTrackingNode:
             assert child_state.kv_cache[1][0].shape == (1, 10, 10)
             child_node = Node(state=child_state, parent=depth1_child, action=action, prior=0.0, visit_count=0, C=2.0)
             root_node.children.append(child_node)
-            search_db.add("session1", "context1" 2, action, child_node)
+            search_db.add("session1", "context1", 2, action, child_node)
 
 
         # construction kv cache for selected actions
         K = 30
         selected_actions =  np.concatenate([mock_actions1[:K//2], mock_actions2[:K//2]], axis=0)
         selected_depths = np.concatenate([np.ones(K//2, dtype=np.int), np.ones(K//2, dtype=np.int) * 2], axis=0)
-        updated_kv_cache, tokens = get_kv_cache(selected_actions, selected_depths, 'session1', "context1", search_db)
+        context_ids = ['context1'] * K
+        updated_kv_cache, tokens, _ = get_kv_cache(torch.tensor(selected_actions).cuda(), torch.tensor(selected_depths.reshape(-1, 1)).cuda(), 'session1', context_ids, search_db)
         assert len(updated_kv_cache) == 2
         assert updated_kv_cache[1][0].shape == (14, 30, 10, 10)
         assert updated_kv_cache[1][1].shape == (14, 30, 10, 10)
