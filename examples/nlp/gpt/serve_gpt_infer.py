@@ -266,7 +266,7 @@ def main(cfg) -> None:
 
     # sys.exit(0)
     if torch.distributed.get_rank() == 0:
-        infer_callable = SearchCallable(model_name="reward_model", infer_fn=infer_fn, lock=threading.Lock())
+        infer_callable = SearchCallable(model_name="search", infer_fn=infer_fn, lock=threading.Lock())
         triton_config = TritonConfig(
             allow_http=True,
             allow_grpc=False,
