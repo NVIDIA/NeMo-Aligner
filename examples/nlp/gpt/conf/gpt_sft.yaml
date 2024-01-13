@@ -16,6 +16,15 @@ trainer:
     limit_val_batches: 1.0
     gradient_clip_val: 1.0
 
+
+    # can be used to register any custom metrics that require token-by-token generation
+    # inference_metrics:
+    #   my_metric_name1:
+    #     _target_: <metric class>
+    #     <any required arguments>
+    #   my_metric_name2:
+    #     ...
+
   # do not change these
   logger: False # logger provided by exp_manager
   enable_checkpointing: False
@@ -39,7 +48,7 @@ exp_manager:
     monitor: val_loss
     save_top_k: 5
     mode: min
-    save_nemo_on_train_end: False 
+    save_nemo_on_train_end: False
     filename: 'megatron_gpt_sft--{${exp_manager.checkpoint_callback_params.monitor}:.3f}-{step}-{consumed_samples}'
     model_parallel_size: ${model.tensor_model_parallel_size}
     save_best_model: False   # need to keep this false otherwise it will create multiple last.ckpt files because restore reset the previous best model
@@ -50,7 +59,7 @@ model:
   pipeline_model_parallel_size: 1 # inter-layer model parallelism
   restore_from_path: ??? # Path to an existing p-tuned/prompt tuned .nemo model you wish to add new tasks to or run inference with
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
-  save_nemo_on_validation_end: True # Saves an inference ready .nemo file every time a checkpoint is saved during training. 
+  save_nemo_on_validation_end: True # Saves an inference ready .nemo file every time a checkpoint is saved during training.
   sync_batch_comm: False
   megatron_amp_O2: False
   encoder_seq_length: 4096  # the sequence length of the encoder model, it will be overwriten by loaded GPT model
@@ -60,8 +69,8 @@ model:
   # See Reducing Activation Recomputation in Large Transformer Models: https://arxiv.org/abs/2205.05198 for more details.
   sequence_parallel: False
 
-  ## Activation Checkpoint 
-  activations_checkpoint_granularity: null # 'selective' or 'full' 
+  ## Activation Checkpoint
+  activations_checkpoint_granularity: null # 'selective' or 'full'
   activations_checkpoint_method: null # 'uniform', 'block', not used with 'selective'
   # 'uniform' divides the total number of transformer layers and checkpoints the input activation
   # of each chunk at the specified granularity
@@ -86,12 +95,26 @@ model:
       label_start: "\x12"
       end_of_turn: "\x0A"  # \0x0A is '\n'
       end_of_name: "\x0A"  # \0x0A is '\n'
+
+    # can be used to customize behavior of model.generate for inference metrics
+    # note that you only need to specify parameters that are different from the default values
+    #
+    # sampling_params:
+    #   greedy: False
+    #   temperature: 0.7
+    # length_params:
+    #   max_length: 512
+    # inference_strategy:
+    #   _target_: <custom strategy class>
+    #   <any required arguments>
+
+
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
     num_workers: 1
     dataloader_type: single  # only supports single
     train_ds:
       # Example of how to specify paths to multiple datasets
-      # file_names: 
+      # file_names:
       #   - /path/to/squad.jsonl
       #   - /path/to/mnli.jsonl
       #   - /path/to/boolq.jsonl
@@ -119,7 +142,7 @@ model:
       index_mapping_dir: null # Path to a directory to write index mapping files.
       prompt_template: "{input} {output}" # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       hf_dataset: False # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
-      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right'] 
+      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
 
     validation_ds:
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
@@ -142,12 +165,7 @@ model:
       prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       tokens_to_generate: 32 # decide how many tokens we want to generate to evaluate performance with string metrics
       hf_dataset: False # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
-      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right'] 
-
-      metric:
-        name: "loss" # Name of the evaluation metric to use. Options: ['exact_string_match', 'loss', 'rouge', 'token_f1']
-        average: null # Average the metric over the dataset. Options: ['macro', 'micro']. Works only for 'F1', 'accuracy' etc. Refer to torchmetrics for metrics where this is supported.
-        num_classes: null
+      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
 
     test_ds:
       prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
@@ -155,8 +173,8 @@ model:
   optim:
     name: distributed_fused_adam # Supports distributed optimizer for memory savings. To enable, set to 'distributed_fused_adam'. Needs Apex to be built with specific args to work.
     lr: 3e-5
-    weight_decay: 0.01 
-    betas: 
+    weight_decay: 0.01
+    betas:
     - 0.9
     - 0.98
     sched:
