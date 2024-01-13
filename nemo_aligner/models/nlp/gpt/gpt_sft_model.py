@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from omegaconf.dictconfig import DictConfig
 import torch
-import hydra
-from pytorch_lightning.trainer.trainer import Trainer
 from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
@@ -25,7 +22,6 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_sp
 from nemo.collections.nlp.modules.common.text_generation_utils import get_default_length_params, get_default_sampling_params
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
-from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -37,18 +33,16 @@ from nemo_aligner.utils.utils import configure_batch_sizes
 
 
 class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
-    def __init__(self, cfg: DictConfig, trainer: Trainer):
-        super().__init__(cfg=cfg, trainer=trainer)
-
+    def set_inference_params(self, length_params=None, sampling_params=None, strategy=None):
         # registering inference parameters with default values
-        self._sampling_params = get_default_sampling_params()
-        self._length_params = get_default_length_params()
-        self._inference_strategy = None
+        self._inference_params = {
+            "length_params": get_default_length_params().copy(),
+            "sampling_params": get_default_sampling_params().copy(),
+            "strategy": strategy,
+        }
         # overriding any non-default values from the config
-        self._sampling_params.update(self.cfg.get('sampling_params', {}))
-        self._length_params.update(self.cfg.get('length_params', {}))
-        if 'inference_strategy' in self.cfg:
-            self._inference_strategy = hydra.utils.instantiate(self.cfg.inference_strategy)
+        self._inference_params["sampling_params"].update(sampling_params or {})
+        self._inference_params["length_params"].update(length_params or {})
 
     def get_loss_and_metrics(self, batch, forward_only):
         """Take a data_iter which is an interator over the microbatches
@@ -123,13 +117,13 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
 
-        full_length_params = self._length_params.copy()
+        full_length_params = self._inference_params["length_params"].copy()
         full_length_params.update(length_params or {})
 
-        full_sampling_params = self._sampling_params.copy()
+        full_sampling_params = self._inference_params["sampling_params"].copy()
         full_sampling_params.update(sampling_params or {})
 
-        inference_strategy = self._inference_strategy or strategy
+        inference_strategy = strategy or self._inference_params["strategy"]
 
         return self.generate(
             inputs,
