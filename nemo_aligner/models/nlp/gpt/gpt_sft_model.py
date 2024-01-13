@@ -44,6 +44,12 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         self._inference_params["sampling_params"].update(sampling_params or {})
         self._inference_params["length_params"].update(length_params or {})
 
+    # TODO: just set in the init
+    def get_inference_params(self):
+        if not hasattr(self, "inference_params"):
+            self.set_inference_params()
+        return self._inference_params
+
     def get_loss_and_metrics(self, batch, forward_only):
         """Take a data_iter which is an interator over the microbatches
             and return loss as well as metrics
@@ -117,13 +123,15 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
 
-        full_length_params = self._inference_params["length_params"].copy()
+        default_params = self.get_inference_params()
+
+        full_length_params = default_params["length_params"].copy()
         full_length_params.update(length_params or {})
 
-        full_sampling_params = self._inference_params["sampling_params"].copy()
+        full_sampling_params = default_params["sampling_params"].copy()
         full_sampling_params.update(sampling_params or {})
 
-        inference_strategy = strategy or self._inference_params["strategy"]
+        inference_strategy = strategy or default_params["strategy"]
 
         return self.generate(
             inputs,
