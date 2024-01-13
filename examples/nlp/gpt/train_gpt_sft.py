@@ -133,7 +133,7 @@ def main(cfg) -> None:
     # setting default inference parameters if specified in the config
     inference_params = cfg.model.get("inference", {})
     if 'strategy' in inference_params:
-        inference_params['strategy'] = hydra.utils.instantiate(inference_params['strategy'])
+        inference_params['strategy'] = hydra.utils.instantiate(inference_params['strategy'], model=ptl_model)
     ptl_model.set_inference_params(**inference_params)
 
     with open_dict(cfg):
