@@ -214,6 +214,7 @@ class PPOTrainer:
             rollout_batch = self.model.infer(inference_batch)
             rollout_batches.append(rollout_batch)
             futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+        print(f"  flag2")
 
         if not is_validation and self.compute_init_policy_kl:
             init_policy_logprobs = self.model.get_init_policy_logprobs(rollout_batches)
@@ -230,6 +231,7 @@ class PPOTrainer:
             rewards, values = future.result() if isinstance(future, FutureResult) else future
             rollout_batch["rewards"] = rewards
             rollout_batch["values"] = values
+        print(f"  flag3")
 
         return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
 
@@ -301,7 +303,6 @@ class PPOTrainer:
         self.model.prepare_for_inference()
 
         rollout_batches, rollout_metrics = self._run_inference(dataloader_iter, num_microbatches, is_validation=False)
-
         ppo_rollout_data, ppo_rollout_metrics = map(cpu_dict, self.generate_ppo_data(rollout_batches))
 
         self.model.finish_inference()
@@ -377,6 +378,8 @@ class PPOTrainer:
             num_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
 
             for _ in global_pbar:
+                print(f"***STEP {self.step}")
+
                 step_metrics = {}
                 timing_metrics = {}
 
@@ -387,7 +390,6 @@ class PPOTrainer:
 
                 # send critic train
                 self.rm_critic.train(ppo_rollout_data)
-
                 # logging
                 table_metrics = metrics.pop("table")
                 self.train_df.loc[len(self.train_df)] = [
@@ -419,6 +421,7 @@ class PPOTrainer:
                 is_train_end = self.step == self.max_steps
                 run_val = (self.step % self.cfg.val_check_interval == 0) or is_train_end
                 if run_val:
+                    print(f"***VAL {self.step}")
                     self.timer.start("validation_time")
                     val_metrics = self.run_validation()
                     self.timer.stop("validation_time")

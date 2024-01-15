@@ -114,10 +114,10 @@ model:
 
     # params for generation
     sampling_params:
-      use_greedy: False
+      use_greedy: True
       temperature: 1.0
-      top_k: 0
-      top_p: 1.0
+      top_k: 1
+      top_p: 0.0
       repetition_penalty: 1.0
       add_BOS: False
       all_probs: False
