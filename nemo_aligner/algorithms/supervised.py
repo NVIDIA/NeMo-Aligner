@@ -15,15 +15,14 @@
 from collections import defaultdict
 from statistics import mean
 
+import hydra
 import numpy as np
 import torch
-import hydra
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-from nemo.utils import logging
 from nemo.collections.common.metrics import MetricStringToTorchMetric
-
+from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import clip_gradients
@@ -78,7 +77,7 @@ class SupervisedTrainer:
         )
 
         # amy metrics that require running full token-by-token inference during validation
-        self.inference_metrics_handler = InferenceMetricsHandler(cfg.get('inference_metrics'))
+        self.inference_metrics_handler = InferenceMetricsHandler(cfg.get("inference_metrics"))
 
     def validation_step(self, batch):
         self.model.prepare_for_validation_step()
@@ -150,18 +149,15 @@ class SupervisedTrainer:
 
     @torch.no_grad()
     def run_generation(self, batch):
-        context_tokens, context_lengths = batch['contexts'], batch['context_lengths']
+        context_tokens, context_lengths = batch["contexts"], batch["context_lengths"]
         max_prompt_length = context_lengths.max().item()
-        max_response_length = self.model.get_inference_params()['length_params']['max_length']
+        max_response_length = self.model.get_inference_params()["length_params"]["max_length"]
         max_length = max_prompt_length + max_response_length
         # nemo requires us to pad the response length up before we do anything
-        context_tokens = torch.nn.functional.pad(
-            context_tokens, (0, max_length), value=self.model.tokenizer.eos_id
-        )
+        context_tokens = torch.nn.functional.pad(context_tokens, (0, max_length), value=self.model.tokenizer.eos_id)
 
         return self.model.infer(
-            {"text": context_tokens, "length": context_lengths},
-            length_params={"max_length": max_length},
+            {"text": context_tokens, "length": context_lengths}, length_params={"max_length": max_length},
         )
 
     def fit(self):

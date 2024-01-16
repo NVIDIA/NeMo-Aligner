@@ -16,10 +16,10 @@
 import hydra
 import torch
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf, open_dict
-
 from megatron.core import parallel_state
 from megatron.core.utils import divide
+from omegaconf.omegaconf import OmegaConf, open_dict
+
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
@@ -101,7 +101,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
             gpt_cfg.seq_len_interpolation_factor = cfg.model.seq_len_interpolation_factor
 
         # TODO (igitman): this current does not work
-        gpt_cfg['inference'] = cfg.model.get('inference', {})
+        gpt_cfg["inference"] = cfg.model.get("inference", {})
 
         # This is needed when modifying a hparam file directly to load `.ckpt` files.
         # This is not needed to modify the cfg in `.nemo` files.
@@ -136,8 +136,8 @@ def main(cfg) -> None:
     # TODO (igitman): remove this when we can specify in the config directly
     # setting default inference parameters if specified in the config
     inference_params = dict(cfg.model.get("inference", {}))
-    if 'strategy' in inference_params:
-        inference_params['strategy'] = hydra.utils.instantiate(inference_params['strategy'], model=ptl_model)
+    if "strategy" in inference_params:
+        inference_params["strategy"] = hydra.utils.instantiate(inference_params["strategy"], model=ptl_model)
     ptl_model.set_inference_params(**inference_params)
 
     with open_dict(cfg):
