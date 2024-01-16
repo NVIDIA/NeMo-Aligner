@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hydra
 import torch
 from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state
@@ -33,7 +34,22 @@ from nemo_aligner.utils.utils import configure_batch_sizes
 
 
 class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
+    def __init__(self, cfg, trainer):
+        super().__init__(cfg, trainer)
+        inference_params = cfg.get('inference', {})
+        # note that this will fail is import path is not available when the model is restored
+        # this is by design as it might not be possible to use model correctly without a matching
+        # inference strategy
+        if 'strategy' in inference_params:
+            inference_params['strategy'] = hydra.utils.instantiate(inference_params['strategy'], model=self)
+        self.set_inference_params(cfg.get('inference', {}))
+
     def set_inference_params(self, length_params=None, sampling_params=None, strategy=None):
+        # TODO (igitman): the name self._inference_params is very similar to self.inference_params
+        #    that's used by the base model for another purpose. There is also self._inference_config
+        #    that has a similar role to the parameters below but is less convenient.
+        #    While there is a danger for accidental name collision and this adds confusion, it's ok for now
+        #    as we are planning to remove dependence on the MegatronGPTModel after which we can remove this note
         # registering inference parameters with default values
         self._inference_params = {
             "length_params": get_default_length_params().copy(),
@@ -44,10 +60,7 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         self._inference_params["sampling_params"].update(sampling_params or {})
         self._inference_params["length_params"].update(length_params or {})
 
-    # TODO: just set in the init
     def get_inference_params(self):
-        if not hasattr(self, "inference_params"):
-            self.set_inference_params()
         return self._inference_params
 
     def get_loss_and_metrics(self, batch, forward_only):

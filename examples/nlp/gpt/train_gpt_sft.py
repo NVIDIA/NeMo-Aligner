@@ -14,13 +14,13 @@
 
 
 import hydra
+import torch
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf, open_dict
 
+from megatron.core import parallel_state
+from megatron.core.utils import divide
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
-from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
-    MegatronPretrainingBatchSampler,
-)
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -100,6 +100,9 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         if cfg.model.get("seq_len_interpolation_factor", None) is not None:
             gpt_cfg.seq_len_interpolation_factor = cfg.model.seq_len_interpolation_factor
 
+        # TODO (igitman): this current does not work
+        gpt_cfg['inference'] = cfg.model.get('inference', {})
+
         # This is needed when modifying a hparam file directly to load `.ckpt` files.
         # This is not needed to modify the cfg in `.nemo` files.
         if add_cfg_to_tree:
@@ -130,6 +133,7 @@ def main(cfg) -> None:
         modify_config_fn=_modify_config,
         restore_path=cfg.model.restore_from_path,
     )
+    # TODO (igitman): remove this when we can specify in the config directly
     # setting default inference parameters if specified in the config
     inference_params = dict(cfg.model.get("inference", {}))
     if 'strategy' in inference_params:
@@ -208,6 +212,22 @@ def main(cfg) -> None:
         pad_samples_to_global_batch_size=not val_data_cfg.drop_last,
         load_gbs=True,
     )
+
+    # nemo uses the train dataloader to figure out
+    # max steps to take when max_steps = -1
+    # but our train dataloader is for the prompts
+    # so we instaniate a dummy dataloader
+    # to get the proper max *optimization* steps
+    # nemo treats batch size of normal dataloader as GBS/DP
+    # so we need to offset it by DP
+    dummy_train_dataloader = torch.utils.data.DataLoader(
+        dataset=train_ds, batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size())
+    )
+
+    init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_ds)
+    # make sure the dummy train dataloader is never used
+    del ptl_model._train_dl
+    del dummy_train_dataloader
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
