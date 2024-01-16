@@ -19,11 +19,11 @@ import re
 import tempfile
 from contextlib import contextmanager
 from functools import partial
-from unittest.mock import patch
 from typing import Dict
+from unittest.mock import patch
 
-import torch
 import hydra
+import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
 from omegaconf import DictConfig, OmegaConf
 
@@ -39,6 +39,7 @@ class InferenceMetricsHandler:
 
     If metrics_config is None, then all methods become no-ops and compute will return an empty dict.
     """
+
     def __init__(self, metrics_config: DictConfig):
         if metrics_config is None:
             metrics_config = {}
