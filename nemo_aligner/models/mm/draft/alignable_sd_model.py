@@ -479,6 +479,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
         losses_reduced_per_micro_batch = []
 
         # TODO @ataghibakhsh @geshen @sahilj: For grad accumulation, we currently have to do the for loop and fwd_bwd_function doesn't take care of that
+        # TODO @ataghibakhsh: input num_microbatch manually
         for i in range(0, len(data_iter), self.cfg.micro_batch_size):
             data_item = data_iter[i : i + self.cfg.micro_batch_size]
 

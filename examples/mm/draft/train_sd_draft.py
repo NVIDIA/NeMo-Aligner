@@ -46,6 +46,7 @@ mp.set_start_method("spawn", force=True)
 # TODO @geshen: to get the trainer builder for stable diffusion, training script for the Stable Diffusion has an override for training strategy,
 #             the following is brought from sd_train.py. Is that okay?
 
+# TODO @ataghibakhsh: push the following into MegatronTrainerBuilder
 
 class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
     """Builder for SD model Trainer with overrides."""
@@ -76,16 +77,18 @@ def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
     # TODO: Check if tf32 is necassary. Brought from stable diffusion training script (sd_train.py)
+    # TODO: Check if it works if we set to False
     torch.backends.cuda.matmul.allow_tf32 = True
     # TODO: @ataghibakhsh Fix the dataset_path issue
     cfg.model.data.train.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)]
-    # TODO @geshen: Please check if the following is okay to get the trainer; this is how stable diffusion training script builds the trainer
+
     trainer = MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
     # TODO: @geshen: For the Stable Diffusion, I am currently getting the vae and unet separately
+    # TODO: @ataghibakhsh: Redo with aligner style and find out the reason
     ptl_model = MegatronLatentDiffusion(cfg.model, trainer).to(torch.cuda.current_device())
-
+    # TODO: @geshen: Check why we have PEFT init here
     if cfg.model.get("peft", None):
         if cfg.model.peft.enable:
             peft_cfg_cls = PEFT_CONFIG_MAP[cfg.model.peft.peft_scheme]
@@ -116,6 +119,7 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
+    # TODO: consumed samples needs to be set
     train_dataset, val_dataset = text_webdataset.build_train_valid_datasets(cfg.model, consumed_samples=0)
     train_dataset = [d["captions"] for d in list(train_dataset)]  # TODO  make with torch Dataset
 

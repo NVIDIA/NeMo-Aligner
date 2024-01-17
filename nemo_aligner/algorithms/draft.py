@@ -87,8 +87,9 @@ class DraftTrainer:
 
         return loss_mean, metrics
 
+    # TODO @ataghibakhsh: check supervised.py and nemo aligner/models/ SFT model
     def fit(self):
-
+        # TODO @geshen: for epoch > 1, the dataloader has the same order ...
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
 
         if len(epoch_iter) <= 0:
