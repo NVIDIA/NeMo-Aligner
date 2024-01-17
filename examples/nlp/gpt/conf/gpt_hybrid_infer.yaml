@@ -1,0 +1,188 @@
+inference:
+  greedy: True # Whether or not to use sampling ; use greedy decoding otherwise
+  top_k: 50  # The number of highest probability vocabulary tokens to keep for top-k-filtering.
+  top_p: 0.9 # If set to float < 1, only the most probable tokens with probabilities that add up to top_p or higher are kept for generation.
+  temperature: 1.0 # sampling temperature
+  add_BOS: False # add the bos token at the begining of the prompt
+  tokens_to_generate: 30 # The search depth
+  all_probs: False  # whether return the log prob for all the tokens in vocab
+  repetition_penalty: 1.2  # The parameter for repetition penalty. 1.0 means no penalty.
+  min_tokens_to_generate: 0  # The minimum length of the sequence to be generated.
+  compute_logprob: False  # a flag used to compute logprob of all the input text, a very special case of running inference, default False
+  end_strings: ["<|endoftext|>", "<extra_id_1>"]  # generation will stop when one of these tokens is generated
+  micro_batch_size: 2
+  port: 2323
+
+trainer:
+  devices: 1
+  num_nodes: 1
+  accelerator: gpu
+  logger: False # logger provided by exp_manager
+  precision: 16 # 16, 32, or bf16
+  use_distributed_sampler: False
+
+pretrained_checkpoint:
+  restore_from_path: null
+ 
+model:
+  mcore_gpt: True
+  share_embeddings_and_output_weights: False
+
+  # reward_model_type: binary_ranking # ["binary_ranking, "regression"]
+  # regression:
+  #   num_attributes: 1 # dimension of regression head
+  #   merge_attributes: False # whether to merge multiple attributes into a scalar
+  #   attribute_weights: null # apply these weights to each attributes when merging them into a scalar
+  #   loss_mask_val: -100 #  mask dimensions with this value when calculating MSE loss
+  output_sequence: False  # Whether to output a single scalar or a sequence of scalars.
+  use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model
+  force_head_dtype: float32  # enforce specific dtype for the final projection in the model head
+  micro_batch_size: 1
+  global_batch_size: 64
+  megatron_amp_O2: True
+  tensor_model_parallel_size: 1
+  pipeline_model_parallel_size: 1
+  pipeline_model_parallel_split_rank: 0 # used for encoder and decoder model (0 for others)
+  encoder_seq_length: 4096
+  max_position_embeddings: ${model.encoder_seq_length}
+
+  # parameters for value output
+  value:
+    mcore_gpt: True
+
+    force_head_dtype: float32  # enforce specific dtype for the final projection in the model head
+    micro_batch_size: 1
+    global_batch_size: 64
+    megatron_amp_O2: True
+    tensor_model_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    pipeline_model_parallel_split_rank: 0 # used for encoder and decoder model (0 for others)
+    encoder_seq_length: 4096
+    max_position_embeddings: ${model.encoder_seq_length}
+    # miscellaneous
+    seed: 1234
+    num_layers: 2 # two layers
+    hidden_size: 1024 # hidden size
+    ffn_hidden_size: 2688 # ffn hidden size
+
+  # miscellaneous
+  seed: 1234
+
+  optim:
+    name: distributed_fused_adam
+    bucket_cap_mb: 200
+    overlap_grad_sync: False
+    contiguous_grad_buffer: True
+    lr: 9e-6
+    weight_decay: 0.1 
+    betas: 
+    - 0.9
+    - 0.98
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 10
+      constant_steps: 1000
+      min_lr: 9e-7
+
+  data:
+    data_impl: jsonl
+    splits_string: null
+    seq_length: ${model.encoder_seq_length}
+    skip_warmup: True
+    num_workers: 2
+    dataloader_type: single # cyclic
+    reset_position_ids: False # Reset position ids after end-of-document token
+    reset_attention_mask: False # Reset attention mask after end-of-document token
+    eod_mask_loss: False # Mask loss for the end of document tokens
+    index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
+    data_prefix: null
+
+  precision: ${trainer.precision}
+
+  # define fields from the base model's config that should be ignored when merging with this config.
+  overwrite_base_config:
+      data:
+        data_prefix: True
+
+
+# tensor_model_parallel_size: -1
+# pipeline_model_parallel_size: -1
+# pipeline_model_parallel_split_rank: -1 # used for encoder and decoder model (0 for others)
+# megatron_amp_O2: False  # Enable O2-level automatic mixed precision to save memory
+# gpt_model_file: null  # GPT nemo file path
+# checkpoint_dir: null # checkpoint file dir. This is used to load the PTL checkpoint generated during the GPT training
+# checkpoint_name: null # PTL checkpoint file name, only used for PTL checkpoint loading
+# tokenizer: # only used for PTL checkpoint loading
+#   library: sentencepiece
+#   type: null
+#   model: /dataset/models/llama2-13b/llama-tokenizer.model
+#   vocab_file: null
+#   merge_file: null
+#   tokenizer_model: /dataset/models/llama2-13b/llama-tokenizer.model
+#   sentencepiece_legacy: False
+# prompts: # prompts for GPT inference
+#   - "test 1 is working, and?"
+#   - "test 1 is working, and? what?"
+# server: False  # whether launch the API server
+# port: 5555 # the port number for the inference server
+# web_server: False # whether launch the web inference server
+# share: False  # whether create a public URL
+# username: test # user name for web client
+# password: test2  # password for web client
+# web_port: 9889 # the port number of the web server
+# chat: False # use the chat interface
+# chatbot_config:
+#   value: False   # whether to inject the value attributes
+#   attributes:
+#     - name: Quality
+#       min: 0
+#       max: 4
+#       key: quality
+#       type: int
+#       default: 4
+#     - name: Toxicity
+#       min: 0
+#       max: 4
+#       key: toxcity
+#       type: int
+#       default: 0
+#     - name: Humor
+#       min: 0
+#       max: 4
+#       key: humor
+#       type: int
+#       default: 0
+#     - name: Creativity
+#       min: 0
+#       max: 4
+#       key: creativity
+#       type: int
+#       default: 0
+#     - name: Violence
+#       min: 0
+#       max: 4
+#       key: violence
+#       type: int
+#       default: 0
+#     - name: Helpfulness
+#       min: 0
+#       max: 4
+#       key: helpfulness
+#       type: int
+#       default: 4
+#     - name: Not_Appropriate
+#       min: 0
+#       max: 4
+#       key: not_appropriate
+#       type: int
+#       default: 0
+#     - name: Language
+#       choices: ['ar', 'bg', 'bn', 'ca', 'cs', 'da', 'de', 'el', 'en', 'eo', 'es', 'eu', 'fa', 'fi', 'fr', 'gl', 'he', 'hu', 'id', 'it', 'ja', 'ko', 'nb', 'nl', 'pl', 'pt', 'ro', 'ru', 'sk', 'sv', 'th', 'tr', 'uk', 'vi', 'zh']
+#       key: lang
+#       type: list
+#       default: en
+#    
+#   user: User
+#   assistant: Assistant
+#   system: "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions.\n\n"
+# 

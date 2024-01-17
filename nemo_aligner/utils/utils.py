@@ -29,6 +29,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_an
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
+from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
 
@@ -45,7 +46,7 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
         if not self.__load_base_model_only:
             return super().restore_from(*args, **kwargs)
 
-        with patch.object(GPTRewardModel, "return_rm_head_in_state_dict", False):
+        with patch.object(GPTRewardModel, "return_rm_head_in_state_dict", False) and patch.object(GPTHybridModel, "return_value_head_in_state_dict", False):
             output = super().restore_from(*args, **kwargs)
 
         return output
