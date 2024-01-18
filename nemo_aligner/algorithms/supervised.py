@@ -20,10 +20,10 @@ from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from nemo.utils import logging
+from nemo_aligner.metrics import InferenceMetricsHandler
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
-from nemo_aligner.metrics import InferenceMetricsHandler
 
 
 class SupervisedTrainer:
