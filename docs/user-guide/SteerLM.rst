@@ -43,6 +43,7 @@ Train a SteerLM model
 
 This section is a step-by-step tutorial that walks you through how to run a full SteerLM pipeline with a Llama2 70B LLM model. 
 Each step will contain an alternative method marked **NeMo Megatron Launcher method for Step N :**, please refer to `user guide Step 1-3 in order to set up the environment <https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#nemo-tools-and-resources>`_
+
 It includes the following:
 
 1. Data download and preprocessing
@@ -99,6 +100,23 @@ First, download and convert both datasets into a common format.
    python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_openassistant_data.py --output_directory=data/oasst
       
    python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_helpsteer_data.py --output_directory=data/helpsteer
+
+
+**NeMo Megatron Launcher method for Step 2 :**
+
+   Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L5>`_ to activate steerLM data preparation.
+   
+   There are currently 2 datasets supported : openassistant or helpsteer
+
+   If you wish to prepare both dataset, then run the below twice but change `steerlm_data_prep.yaml line 9 and fill in either openassistant or helpsteer <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep.yaml#L9>`_ to prepare the dataset of your choice.
+   
+
+   .. code-block:: bash
+
+      ```
+      python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR/data/ stages=[data_preparation]
+      ```
+
 
 Then, merge the two datasets for the train and val subset respectively.
 
