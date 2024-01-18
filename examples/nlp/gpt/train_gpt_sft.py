@@ -13,7 +13,6 @@
 # limitations under the License.
 
 
-import hydra
 import torch
 import torch.multiprocessing as mp
 from megatron.core import parallel_state
@@ -89,7 +88,6 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
             prompt_template = get_prompt_template_example(cfg.model.data.chat_prompt_tokens)
             gpt_cfg.data.train_ds.prompt_template = prompt_template
             gpt_cfg.data.validation_ds.prompt_template = prompt_template
-            gpt_cfg.data.test_ds.prompt_template = prompt_template
 
         sft_cls = GPTSFTModel
         gpt_cfg.target = f"{sft_cls.__module__}.{sft_cls.__name__}"
@@ -100,7 +98,6 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         if cfg.model.get("seq_len_interpolation_factor", None) is not None:
             gpt_cfg.seq_len_interpolation_factor = cfg.model.seq_len_interpolation_factor
 
-        # TODO (igitman): this current does not work
         gpt_cfg["inference"] = cfg.model.get("inference", {})
 
         # This is needed when modifying a hparam file directly to load `.ckpt` files.
@@ -133,12 +130,6 @@ def main(cfg) -> None:
         modify_config_fn=_modify_config,
         restore_path=cfg.model.restore_from_path,
     )
-    # TODO (igitman): remove this when we can specify in the config directly
-    # setting default inference parameters if specified in the config
-    inference_params = dict(cfg.model.get("inference", {}))
-    if "strategy" in inference_params:
-        inference_params["strategy"] = hydra.utils.instantiate(inference_params["strategy"], model=ptl_model)
-    ptl_model.set_inference_params(**inference_params)
 
     with open_dict(cfg):
         # overwrite the model config with the config from the checkpoint

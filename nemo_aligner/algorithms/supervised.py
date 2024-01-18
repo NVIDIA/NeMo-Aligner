@@ -15,19 +15,15 @@
 from collections import defaultdict
 from statistics import mean
 
-import hydra
-import numpy as np
 import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-from nemo.collections.common.metrics import MetricStringToTorchMetric
 from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer
-from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
-from nemo_aligner.utils.utils import InferenceMetricsHandler
+from nemo_aligner.metrics import InferenceMetricsHandler
 
 
 class SupervisedTrainer:
@@ -76,7 +72,7 @@ class SupervisedTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-        # amy metrics that require running full token-by-token inference during validation
+        # any metrics that require running full token-by-token inference during validation
         self.inference_metrics_handler = InferenceMetricsHandler(cfg.get("inference_metrics"))
 
     def validation_step(self, batch):

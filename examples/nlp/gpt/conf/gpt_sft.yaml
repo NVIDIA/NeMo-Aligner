@@ -16,14 +16,13 @@ trainer:
     limit_val_batches: 1.0
     gradient_clip_val: 1.0
 
-
     # can be used to register any custom metrics that require token-by-token generation
     # inference_metrics:
     #   my_metric_name1:
+    #     _target_: nemo_aligner.metrics.ExactStringMatchMetric
+    #   my_metric_name2:
     #     _target_: <metric class>
     #     <any required arguments>
-    #   my_metric_name2:
-    #     ...
 
   # do not change these
   logger: False # logger provided by exp_manager
@@ -133,7 +132,6 @@ model:
       #   - 0.5
       #   - 0.25
       #   - 0.25
-      concat_sampling_probabilities: null # When providing a list of datasets, this arg defines the sampling probabilities from each dataset when strategy='random'
       label_key: 'output'
       add_eos: True
       add_sep: False
@@ -146,7 +144,6 @@ model:
 
     validation_ds:
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
-      names: null # Names of the corresponding datasets used to log metrics.
       global_batch_size: ${model.data.train_ds.global_batch_size}
       micro_batch_size: ${model.data.train_ds.micro_batch_size}
       shuffle: False
@@ -158,17 +155,12 @@ model:
       add_eos: ${model.data.train_ds.add_eos}
       add_sep: ${model.data.train_ds.add_sep}
       add_bos: ${model.data.train_ds.add_bos}
-      write_predictions_to_file: False
-      output_file_path_prefix: null # Prefix of the file to write predictions to.
       truncation_field: ${model.data.train_ds.truncation_field} # Options: keys in prompt_template
       index_mapping_dir: null # Path to a directory to write index mapping files.
       prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       tokens_to_generate: 32 # decide how many tokens we want to generate to evaluate performance with string metrics
       hf_dataset: False # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
       truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
-
-    test_ds:
-      prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
 
   optim:
     name: distributed_fused_adam # Supports distributed optimizer for memory savings. To enable, set to 'distributed_fused_adam'. Needs Apex to be built with specific args to work.
