@@ -201,7 +201,7 @@ def search(
     else:
         context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(session_info, context_ids, depth, action)
 
-    output_actions, output_policys = sample_sequence_batch(
+    output_actions, output_policys, output_values = sample_sequence_batch(
         model,
         inference_strategy,
         context_tokens_tensor,
@@ -224,11 +224,16 @@ def search(
         output_policys, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_policys.dtype
     )
 
+    result_output_values_list = gather_tensor(
+        output_values, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_values.dtype
+    )
+
     output = {}
     if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
         # concate the output_actions and output_policys
         output["action"] = torch.cat(result_output_actions_list, dim=0)
         output["policy"] = torch.cat(result_output_policys_list, dim=0)
+        output["value"] = torch.cat(result_output_values_list, dim=0)
         # gather the output from data parallel workers
         output = inference_strategy.post_generation_process(output)
     else:
@@ -294,6 +299,7 @@ def sample_sequence_batch(
 
         output_actions = torch.cuda.IntTensor(batch_size, top_k)
         output_policy = torch.cuda.FloatTensor(batch_size, top_k)
+        output_values = torch.cuda.FloatTensor(batch_size)
 
         while context_length < maxlen:
             batch, tensor_shape = inference_strategy.prepare_batch_at_step(
@@ -325,6 +331,9 @@ def sample_sequence_batch(
 
                 output_actions[batch_update_indicator] = actions[batch_update_indicator].type(torch.int32)
                 output_policy[batch_update_indicator] = probs[batch_update_indicator]
+                if 'value' in output[0]:
+                    value = output[0]['value'][:, -1]
+                    output_values[batch_update_indicator] = value[batch_update_indicator]
  
             context_length += 1
             counter += 1
@@ -334,11 +343,13 @@ def sample_sequence_batch(
             group = parallel_state.get_pipeline_model_parallel_group()
             torch.distributed.broadcast(output_actions, src, group)
             torch.distributed.broadcast(output_policy, src, group)
+            torch.distributed.broadcast(output_values, src, group)
         else:
             src = parallel_state.get_pipeline_model_parallel_last_rank()
             group = parallel_state.get_pipeline_model_parallel_group()
             torch.distributed.broadcast(output_actions, src, group)
             torch.distributed.broadcast(output_policy, src, group)
+            torch.distributed.broadcast(output_values, src, group)
         # after inference, save the kv cache to the search db
         # inference_strategy.save_kv_cache(session_id)
         if init:
@@ -377,4 +388,4 @@ def sample_sequence_batch(
             for j in range(top_k):
                 actions_taken = output_actions[:, j]
                 inference_strategy.save_kv_cache(session_info, context_ids, depths, batch_size, true_context_length, parent_nodes, actions_taken, None)
-        return output_actions, output_policy
+        return output_actions, output_policy, output_values

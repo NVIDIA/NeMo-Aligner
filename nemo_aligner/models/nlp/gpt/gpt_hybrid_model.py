@@ -255,7 +255,7 @@ class GPTHybridModel(GPTModel):
 
 
             hidden_states_raw = self.value_head(hidden_states_raw, attention_mask=attention_mask, inference_params=inference_params, rotary_pos_emb=rotary_pos_emb)
-            output = self.rm_head(hidden_states_raw, None)
+            value = self.rm_head(hidden_states_raw, None)
             if labels is None:
                 output = logits.transpose(0, 1).contiguous()
                 return output, value

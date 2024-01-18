@@ -37,6 +37,7 @@ class SearchCallable:
                        Tensor(name="depth", shape=(-1,), dtype=np.int32, optional=True),)
         self.outputs = (Tensor(name="action", shape=(-1,), dtype=np.int32),
                         Tensor(name="policy", shape=(-1,), dtype=np.float32),
+                        Tensor(name="value", shape=(-1,), dtype=np.float32),
                         )
 
     @lock_method("self.lock")
