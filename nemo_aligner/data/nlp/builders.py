@@ -23,6 +23,7 @@ from functools import partial
 import numpy as np
 import torch
 from megatron.core import parallel_state
+from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
@@ -322,8 +323,8 @@ def build_dataloader(
         app_state = AppState()
 
         #reshard away PP
-        data_parallel_size = torch.distributed.get_world_size() // parallel_state.get_tensor_model_parallel_world_size()
-        data_parallel_rank = app_state.global_rank // parallel_state.get_tensor_model_parallel_world_size()
+        data_parallel_size = divide(torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size())
+        data_parallel_rank = divide(app_state.global_rank, parallel_state.get_tensor_model_parallel_world_size())
         print(f"adjusting dataloader for TRTLLM PP resharding dpsize - {data_parallel_size} dprank - {data_parallel_rank} {app_state.global_rank}")
 
     else:
@@ -339,8 +340,8 @@ def build_dataloader(
                 total_samples=len(dataset),
                 consumed_samples=consumed_samples,
                 micro_batch_size=mbs,
-                data_parallel_rank=parallel_state.get_data_parallel_rank(),
-                data_parallel_size=parallel_state.get_data_parallel_world_size(),
+                data_parallel_rank=data_parallel_rank,
+                data_parallel_size=data_parallel_size,
                 drop_last=drop_last,
                 global_batch_size=gbs,
                 pad_samples_to_global_batch_size=pad_samples_to_global_batch_size,

@@ -38,14 +38,19 @@ from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 
-def compute_num_rollout_microbatches(dataloader, use_trtllm = False):
+
+def get_custom_data_parallel_world_size(use_trtllm=False):
+    data_parallel_size = parallel_state.get_data_parallel_world_size()
+
     if use_trtllm:
-        data_parallel_size = torch.distributed.get_world_size() // parallel_state.get_tensor_model_parallel_world_size()
-    else:
-        data_parallel_size = parallel_state.get_data_parallel_world_size()
+        data_parallel_size = divide(torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size())
+
+    return data_parallel_size
+
+def compute_num_rollout_microbatches(dataloader, use_trtllm=False):
     return divide(
         divide(dataloader.batch_sampler.global_batch_size, dataloader.batch_sampler.micro_batch_size),
-        data_parallel_size,
+        get_custom_data_parallel_world_size(use_trtllm=use_trtllm),
     )
 
 
@@ -179,7 +184,7 @@ class PPOTrainer:
             ppo_rollout_data[k] = pad_tensors_to_max_global_seq_len(
                 ppo_rollout_data[k],
                 pad_value=pad_value,
-                group=parallel_state.get_data_parallel_group(),
+                group=parallel_state.get_data_parallel_group(), #TODO: fix for TRT metric accumulate because of resharding
                 sequence_length_to_pad_to=rollout_batch_seq_length,
             )
 
@@ -188,7 +193,7 @@ class PPOTrainer:
             tensor = ppo_rollout_data[key]
 
             global_mean, global_var = masked_global_mean_var(
-                tensor, mask, group=parallel_state.get_data_parallel_group(),
+                tensor, mask, group=parallel_state.get_data_parallel_group(), # TODO: fix 
             )
             ppo_rollout_metrics[f"global_{key}_mean"] = global_mean.item()
             ppo_rollout_metrics[f"global_{key}_std"] = global_var.sqrt().item()
@@ -197,7 +202,7 @@ class PPOTrainer:
             ppo_rollout_data["advantages"] = normalize_tensor(
                 ppo_rollout_data["advantages"],
                 ppo_rollout_data["mask"],
-                group=parallel_state.get_data_parallel_group(),
+                group=parallel_state.get_data_parallel_group(), # TODO: fix
             )
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
@@ -269,7 +274,7 @@ class PPOTrainer:
             dtype=torch.float32,
             device=torch.cuda.current_device(),
         )
-        torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())
+        torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group()) # TODO FIX
 
         (
             global_response_lengths,
@@ -308,7 +313,7 @@ class PPOTrainer:
         self.model.finish_inference()
 
         self.consumed_samples += (
-            ppo_rollout_data["response_tokens"].size(0) * parallel_state.get_data_parallel_world_size()
+            ppo_rollout_data["response_tokens"].size(0) * parallel_state.get_data_parallel_world_size() # TODO: fix
         )
         return ppo_rollout_data, rollout_metrics | ppo_rollout_metrics | {"consumed_samples": self.consumed_samples}
 
