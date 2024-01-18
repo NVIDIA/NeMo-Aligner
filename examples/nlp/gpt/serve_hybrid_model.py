@@ -40,6 +40,27 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 from pytorch_lightning.trainer.trainer import Trainer
 from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
 import datetime
+from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
+from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
+from nemo_aligner.servers.constants import ServerSignal
+from nemo_aligner.utils.deep_search.search_callables import SearchCallable
+from nemo_aligner.utils.deep_search.text_gen_utils import search
+from pytriton.triton import Triton, TritonConfig
+import torch
+from pytriton.model_config import ModelConfig
+from pytriton.model_config.common import DynamicBatcher
+import threading
+
+
+try:
+    from megatron.core import parallel_state
+
+    HAVE_MEGATRON_CORE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_MEGATRON_CORE = False
+
+ENDPOINT_BIND_ADDRESS = "0.0.0.0"
+
 
 """Script to start Reward Model training"""
 
@@ -96,74 +117,91 @@ def main(cfg) -> None:
     #     consumed_samples = 0
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
+    # ptl_model.save_to("hybrid_model.nemo")
 
-    ptl_model.save_to("hybrid_model.nemo")
+    dp_size = parallel_state.get_data_parallel_world_size()
+    max_batch_size = cfg.inference.micro_batch_size * dp_size
 
-    # # use the entire dataset
-    # train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
+    length_params: LengthParam = {
+        "max_length": cfg.inference.tokens_to_generate,
+        "min_length": cfg.inference.min_tokens_to_generate,
+    }
 
-    # if reward_model_type == RewardModelType.BINARY_RANKING:
-    #     dataset_builder = build_train_valid_test_rm_datasets
-    # elif reward_model_type == RewardModelType.REGRESSION:
-    #     dataset_builder = build_train_valid_test_regression_rm_datasets
-    # else:
-    #     raise ValueError(f"Only support binary_ranking and regression reward model, but get {reward_model_type} ")
+    sampling_params: SamplingParam = {
+        "use_greedy": cfg.inference.greedy,
+        "temperature": cfg.inference.temperature,
+        "top_k": cfg.inference.top_k,
+        "top_p": cfg.inference.top_p,
+        "repetition_penalty": cfg.inference.repetition_penalty,
+        "add_BOS": cfg.inference.add_BOS,
+        "all_probs": cfg.inference.all_probs,
+        "compute_logprob": cfg.inference.compute_logprob,
+        "end_strings": cfg.inference.end_strings,
+    }
 
-    # train_ds, validation_ds, _ = dataset_builder(
-    #     cfg=cfg.model,
-    #     data_prefix=cfg.model.data.data_prefix,
-    #     data_impl=cfg.model.data.data_impl,
-    #     splits_string=cfg.model.data.splits_string,
-    #     train_valid_test_num_samples=train_valid_test_num_samples,
-    #     seq_length=cfg.model.data.seq_length,
-    #     seed=cfg.model.seed,
-    #     tokenizer=ptl_model.tokenizer,
-    # )
+    # strategy_args = {"strategy": strategy}
+    strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
+    strategy_args = {"strategy": strategy}
 
-    # train_dataloader = build_dataloader(
-    #     cfg=cfg,
-    #     dataset=train_ds,
-    #     consumed_samples=consumed_samples,
-    #     mbs=cfg.model.micro_batch_size,
-    #     gbs=cfg.model.global_batch_size,
-    #     load_gbs=True,
-    # )
+    def get_infer_fn(model, sampling_params, length_params, **strategy_args):
+        # one token at a time
+        tokens_to_generate = length_params["max_length"]
+        top_k = sampling_params["top_k"]
+        end_strings = sampling_params["end_strings"]
 
-    # val_dataloader = build_dataloader(
-    #     cfg=cfg,
-    #     dataset=validation_ds,
-    #     consumed_samples=0,
-    #     mbs=cfg.model.micro_batch_size,
-    #     gbs=cfg.model.global_batch_size,
-    #     load_gbs=True,
-    # )
+        def infer_fn(inputs=None, action=None, depth=None, context_ids=None, session_info=None):
+            return search(
+                    model,
+                    inputs,
+                    action,
+                    depth,
+                    context_ids,
+                    session_info,
+                    tokens_to_generate=tokens_to_generate,  # max search depth
+                    top_k=top_k,
+                    end_strings=end_strings,
+                    **strategy_args,
+                )
+        return infer_fn
 
-    # init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
-    # optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
+    infer_fn = get_infer_fn(ptl_model, sampling_params, length_params, **strategy_args)
+    # infer_fn = lambda : None
+    # r = infer_fn(["hello", "ok"], context_ids=['context1', 'context2'], session_info='session')
+    # print(r)
 
-    # ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
+    # import sys
 
-    # logger.log_hyperparams(OmegaConf.to_container(cfg))
+    # sys.exit(0)
 
-    # timer = Timer(cfg.exp_manager.get("max_time_per_run"))
+    if torch.distributed.get_rank() == 0:
+        infer_callable = SearchCallable(model_name="search", infer_fn=infer_fn, lock=threading.Lock())
+        triton_config = TritonConfig(
+            allow_http=True,
+            allow_grpc=False,
+            allow_metrics=False,
+            http_address=ENDPOINT_BIND_ADDRESS,
+            http_port=cfg.inference.port,
+        )
+        dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
+        model_config = ModelConfig(batching=True, max_batch_size=max_batch_size, batcher=dynamic_batcher)
 
-    # rm_trainer = SupervisedTrainer(
-    #     cfg=cfg.trainer.rm,
-    #     model=ptl_model,
-    #     optimizer=optimizer,
-    #     scheduler=scheduler,
-    #     train_dataloader=train_dataloader,
-    #     val_dataloader=val_dataloader,
-    #     test_dataloader=None,
-    #     logger=logger,
-    #     ckpt_callback=ckpt_callback,
-    #     run_timer=timer,
-    # )
-
-    # if custom_trainer_state_dict is not None:
-    #     rm_trainer.load_state_dict(custom_trainer_state_dict)
-
-    # rm_trainer.fit()
+        with Triton(config=triton_config) as triton:
+            triton.bind(
+                model_name=infer_callable.model_name,
+                infer_func=infer_callable.infer,
+                inputs=infer_callable.inputs,
+                outputs=infer_callable.outputs,
+                config=model_config,
+            )
+            triton.serve()
+    else:
+        while True:
+            choice = ServerSignal.INVALID.cuda()
+            torch.distributed.broadcast(choice, 0)
+            if choice.item() == ServerSignal.FORWARD:
+                infer_fn()
+            else:
+                raise RuntimeError(f"Invalid operation: {choice.item()}")
 
 
 if __name__ == "__main__":

@@ -335,7 +335,6 @@ class GPTHybridModel(GPTModel):
     def forward(
         self,
         input_ids: Tensor,
-        lengths: Tensor,
         position_ids: Tensor,
         attention_mask: Tensor,
         decoder_input: Tensor = None,
@@ -345,7 +344,7 @@ class GPTHybridModel(GPTModel):
         # TODO(geshen): hack to get the hidden states
         # and for mcore to not call the output layer
         with patch.object(self, "post_process", False):
-            hidden_states = super().forward(
+            hidden_states_raw = super().forward(
                 input_ids=input_ids,
                 position_ids=position_ids,
                 attention_mask=attention_mask,
@@ -354,10 +353,22 @@ class GPTHybridModel(GPTModel):
                 inference_params=inference_params,
             )
 
+        value = None
         if self.post_process:
-            return self.value_head(hidden_states, attention_mask=attention_mask, )
-
-        return hidden_states
+            # logits and loss
+            output_weight = None
+            if self.share_embeddings_and_output_weights:
+                output_weight = self.shared_embedding_or_output_weight()
+            # added all the post process stuff here
+            logits, _ = self.output_layer(hidden_states_raw, weight=output_weight)
+            # value = self.value_head(hidden_states_raw, attention_mask=attention_mask, )
+            if labels is None:
+                output = logits.transpose(0, 1).contiguous()
+                return output, value
+            output = self.compute_language_model_loss(labels, logits)
+        else:
+            output = hidden_states_raw
+        return output, value
 
     def sharded_state_dict(self, prefix=""):
         # need to turn post process off to not load the output layer

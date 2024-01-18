@@ -25,7 +25,7 @@ from transformers import CLIPImageProcessor
 
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.collections.nlp.modules.common.megatron.utils import build_attention_mask_3d, get_ltor_masks_and_position_ids
-from nemo_aligner.utils.deep_search.forward_only import get_forward_output_only_func
+from nemo_aligner.utils.deep_search.forward_only import get_forward_output_only_func, get_forward_output_only_func_hybrid
 from nemo_aligner.utils.deep_search.mcts.search_db import SearchDB, get_kv_cache
 from nemo_aligner.utils.deep_search.mcts.mcts import Node, State
 
@@ -408,7 +408,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             keys, vals = inference.key_value_memory_dict[key]
             if self.model.cfg.precision == "fp16":
                 inference.key_value_memory_dict[key] = (torch.cuda.HalfTensor(keys), torch.cuda.HalfTensor(vals))
-            elif self.model.cfg.precision == "bf16-mixed":
+            elif self.model.cfg.precision == "bf16-mixed" or self.model.cfg.precision == "bf16":
                 inference.key_value_memory_dict[key] = (torch.cuda.BFloat16Tensor(keys), torch.cuda.BFloat16Tensor(vals))
             else:
                 inference.key_value_memory_dict[key] = (torch.cuda.FloatTensor(keys), torch.cuda.FloatTensor(vals))
@@ -451,3 +451,22 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         for key in output.keys():
             output[key] = output[key].cpu().numpy()
         return output
+
+
+class HybridGPTSearchTextGenerationStrategy(GPTSearchTextGenerationStrategy):
+
+    def forward_step(self, batch, tensor_shape, session_info):
+        func = get_forward_output_only_func_hybrid(self, session_info)
+
+        fwd_bwd_function = get_forward_backward_func()
+        output_tensor = fwd_bwd_function(
+            forward_step_func=func,
+            data_iterator=iter([batch,]),
+            model=[self.forward_model],
+            num_microbatches=get_num_microbatches(),
+            forward_only=True,
+            seq_length=tensor_shape[0],
+            micro_batch_size=tensor_shape[1],
+        )
+
+        return output_tensor

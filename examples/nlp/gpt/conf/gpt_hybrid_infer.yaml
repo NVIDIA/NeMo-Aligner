@@ -18,7 +18,7 @@ trainer:
   num_nodes: 1
   accelerator: gpu
   logger: False # logger provided by exp_manager
-  precision: 16 # 16, 32, or bf16
+  precision: bf16 # 16, 32, or bf16
   use_distributed_sampler: False
 
 pretrained_checkpoint:
