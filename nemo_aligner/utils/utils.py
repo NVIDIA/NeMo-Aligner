@@ -19,10 +19,8 @@ import re
 import tempfile
 from contextlib import contextmanager
 from functools import partial
-from typing import Dict
 from unittest.mock import patch
 
-import hydra
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
 from omegaconf import DictConfig, OmegaConf
@@ -32,40 +30,6 @@ from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-
-
-class InferenceMetricsHandler:
-    """A wrapper around metrics objects that will call update/compute/reset on all registered metrics.
-
-    If metrics_config is None, then all methods become no-ops and compute will return an empty dict.
-    """
-
-    def __init__(self, metrics_config: DictConfig):
-        if metrics_config is None:
-            metrics_config = {}
-        self.metrics = hydra.utils.instantiate(metrics_config)
-
-    def has_metrics(self) -> bool:
-        """Returns True if there are metrics to compute."""
-        return len(self.metrics) > 0
-
-    def update(self, batch: Dict, generation_output: Dict):
-        """Calling .update on all metrics.
-
-        Batch and generation output are coming directly from
-        validation dataloader and model.generate respectively.
-        """
-        for metric in self.metrics.values():
-            metric.update(batch, generation_output)
-
-    def compute(self) -> Dict[str, float]:
-        """Returns a dictionary with finalized metric values."""
-        return {name: metric.compute() for name, metric in self.metrics.items()}
-
-    def reset(self):
-        """Will reset state of all metrics to prepare for the next validation run."""
-        for metric in self.metrics.values():
-            metric.reset()
 
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
