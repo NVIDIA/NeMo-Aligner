@@ -29,12 +29,12 @@ model:
   share_embeddings_and_output_weights: False
 
   # reward_model_type: binary_ranking # ["binary_ranking, "regression"]
-  # regression:
-  #   num_attributes: 1 # dimension of regression head
-  #   merge_attributes: False # whether to merge multiple attributes into a scalar
-  #   attribute_weights: null # apply these weights to each attributes when merging them into a scalar
-  #   loss_mask_val: -100 #  mask dimensions with this value when calculating MSE loss
-  output_sequence: False  # Whether to output a single scalar or a sequence of scalars.
+  regression:
+    num_attributes: 1 # dimension of regression head
+    merge_attributes: False # whether to merge multiple attributes into a scalar
+    attribute_weights: null # apply these weights to each attributes when merging them into a scalar
+    loss_mask_val: -100 #  mask dimensions with this value when calculating MSE loss
+  output_sequence: True  # Whether to output a single scalar or a sequence of scalars.
   use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model
   force_head_dtype: float32  # enforce specific dtype for the final projection in the model head
   micro_batch_size: 1
@@ -48,22 +48,10 @@ model:
 
   # parameters for value output
   value:
-    mcore_gpt: True
-
-    force_head_dtype: float32  # enforce specific dtype for the final projection in the model head
-    micro_batch_size: 1
-    global_batch_size: 64
-    megatron_amp_O2: True
-    tensor_model_parallel_size: 1
-    pipeline_model_parallel_size: 1
-    pipeline_model_parallel_split_rank: 0 # used for encoder and decoder model (0 for others)
-    encoder_seq_length: 4096
     max_position_embeddings: ${model.encoder_seq_length}
-    # miscellaneous
     seed: 1234
     num_layers: 2 # two layers
-    hidden_size: 1024 # hidden size
-    ffn_hidden_size: 2688 # ffn hidden size
+    tensor_model_parallel_size: ${model.tensor_model_parallel_size}
 
   # miscellaneous
   seed: 1234

@@ -88,9 +88,13 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                 "`share_embeddings_and_output_weights` is not supported with the reward model since we don't use the "
                 "normal output layer. Overriding it to False"
             )
+        # this is the hack to get the transformer config for value head
+        # first need to backup current cfg
+        bak_cfg = self.cfg
         self.cfg = self.cfg.value
         transformer_config_value = self.build_transformer_config()
-        self.cfg = self.cfg
+        # restore the cfg
+        self.cfg = bak_cfg
 
         model = GPTHybridModel(
             config=self.transformer_config,

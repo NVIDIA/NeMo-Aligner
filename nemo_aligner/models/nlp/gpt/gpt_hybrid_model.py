@@ -31,126 +31,20 @@ from megatron.core.transformer.transformer_block import TransformerBlock, Transf
 from megatron.core.transformer.custom_layers.transformer_engine import TENorm
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
+from nemo_aligner.models.nlp.gpt.gpt_reward_model import RewardModelHead
 
 
 """Megatron Core based Reward Model"""
 
 
-class RewardModelHead(RowParallelLinear):
-    """
-    Reward model head to convert from output_size to scalar reward.
-    """
-
-    def __init__(
-        self,
-        input_size,
-        output_size,
-        *,
-        config: ModelParallelConfig,
-        init_method: Callable,
-        bias: bool = True,
-        input_is_parallel: bool = False,
-        stride: int = 1,
-        keep_master_weight_for_test: bool = False,
-        skip_bias_add: bool = False,
-        # RM args
-        output_sequence: bool = False,
-        use_avg_pool: bool = False,
-        dtype: torch.dtype = torch.float32,
-        merge_attributes: bool = False,
-        attributes_weights: Optional[List[Union[float, int]]] = None,
-    ):
-        config = deepcopy(config)
-        config.params_dtype = dtype
-
-        assert output_size > 0, "Output size of reward model head should be greater than zero"
-
-        super().__init__(
-            input_size,
-            output_size,
-            config=config,
-            init_method=init_method,
-            bias=bias,
-            input_is_parallel=input_is_parallel,
-            stride=stride,
-            keep_master_weight_for_test=keep_master_weight_for_test,
-            skip_bias_add=skip_bias_add,
-        )
-
-        self.output_sequence = output_sequence
-        self.use_avg_pool = use_avg_pool
-        self.dtype = dtype
-        self.merge_attributes = merge_attributes
-
-        if attributes_weights is None:
-            self.attributes_weights = torch.full((self.output_size,), 1.0 / self.output_size)
-        else:
-            self.attributes_weights = torch.tensor(attributes_weights, dtype=torch.float)
-
-        assert self.attributes_weights.size(0) == self.output_size
-
-    def _compute_attributes(self, hidden_states, lengths):
-        """
-        for critic, return a tensor with shape [B x S x self.output_size]
-        for reward, return a tensor with shape [B x self.output_size]
-        """
-
-        # we sometimes want to run our RM head in FP32, this allows it
-        autocast_context = torch.autocast(device_type=hidden_states.device.type, dtype=self.dtype)
-
-        # hidden_size is S x B x D
-        if self.output_sequence:
-            with autocast_context:
-                output = super().forward(hidden_states.to(self.weight.dtype))[0]  # [S x B x self.output_size]
-
-            # Making it contiguous is required at least by `torch.distributed.gather()`.
-            return output.permute(1, 0, 2).contiguous()  # [B x S x self.output_size]
-
-        if self.use_avg_pool:
-            # lengths is shape B and arange is shape S, broadcast it to S x B
-            # S x 1 op with B -> mask for S x B
-            mask = torch.arange(hidden_states.size(0), device=lengths.device).unsqueeze(-1) < lengths
-
-            # S x B x D * S x B x 1
-            last_state = (hidden_states * mask.unsqueeze(-1)).sum(0)
-
-            # divide by mean post hoc
-            # sum implicitly casts back to fp32, but the autocast will handle it below if needed
-            last_state = last_state / lengths.unsqueeze(-1)
-        else:
-            last_state = hidden_states[lengths - 1, torch.arange(lengths.shape[0], device=hidden_states.device), :]
-
-        # B x D -> 1 x B x D b/c RowParallel wants S x B x D
-        last_state = last_state.unsqueeze(0)
-
-        # squeeze out the S term on dim 0, we always add bias
-        with autocast_context:
-            output = super().forward(last_state.to(self.weight.dtype))[0].squeeze(0)
-
-        return output
-
-    def forward(self, hidden_states, lengths):
-        attributes = self._compute_attributes(
-            hidden_states, lengths
-        )  # [B x S x self.output_size] or [B x self.output_size]
-
-        self.attributes_weights = self.attributes_weights.to(attributes.device)
-        if self.output_sequence:
-            # a sequence of multi-attribute rewards, used for critic model, returning tensor with shape [B x S]
-            assert attributes.dim() == 3, "for critic, attributes should have shape [B x S x self.output_size]"
-            return attributes @ self.attributes_weights
-
-        else:
-            assert attributes.dim() == 2, "for reward, attributes should have shape [B x self.output_size]"
-            if not self.merge_attributes:
-                # do not merge attributes during regression rm training
-                return attributes
-            else:
-                # during ppo, returning tensor with shape [B x 1]
-                return (attributes @ self.attributes_weights).unsqueeze(-1)
-
-
 class ValueHead(TransformerBlock):
+    """Value head is a transformer block.
+       Override the build_layers method so we can change the layer number offset to
+       start from the last layer of the decoder.
+       This is needed because the kv-cache dict in the inference parameters uses 
+       layer number as key. The rename can make sure there is no key clash and we 
+       can reuse the same inference parameters for both the decoder and the value head.
+    """
 
     def __init__(
         self,
@@ -172,37 +66,18 @@ class ValueHead(TransformerBlock):
  
 
     def _build_layers(self):
-        # Transformer layers.
-        # @jcasper can we improve how we deal with layer_number?
-        # currently it's only used in CoreAttention?
-        # if self.apply_query_key_layer_scaling:
-        #     coeff = self.layer_number
-        #     self.norm_factor *= coeff
+
         def build_layer(layer_spec, layer_number):
             return build_module(layer_spec, config=self.config, layer_number=layer_number,)
 
         # offset is implicit in TransformerLayer
+        # add self.layer_number_offset to prevent key clash in inference parameters 
         self.layers = torch.nn.ModuleList(
             [
                 build_layer(layer_spec, i + 1 + self.layer_number_offset)
                 for i, layer_spec in enumerate(self.submodules.layer_specs)
             ]
         )
-
-        # # TODO: add back standalone_embedding_stage
-        # if self.num_layers == 0:
-        #     # When a standalone embedding stage is used (e.g.,
-        #     # args.standalone_embedding_stage == True), virtual pipeline ranks
-        #     # on pipeline rank 0 will have zero transformer layers assigned to
-        #     # them. This results in the model's input and output tensors to be
-        #     # the same, which will cause failure for certain output tensor
-        #     # optimizations (e.g., pipeline output deallocation). To remedy
-        #     # this, we assign a 'no-op' layer on these ranks, which will
-        #     # disconnect the input tensor from the output tensor.
-        #     self.num_layers = 1
-        #     self.layers = torch.nn.ModuleList([NoopTransformerLayer(1)])
-        # else:
-        #     self.layers = torch.nn.ModuleList([build_layer(i + 1 + offset) for i in range(self.num_layers)])
 
         if self.post_process and self.post_layer_norm:
             # Final layer norm before output.
@@ -213,6 +88,11 @@ class ValueHead(TransformerBlock):
             )
 
     def layer_sharded_state_dict(self, layer, prefix=''):
+        """need to override this method to change the layer number offset which is based on the layer number.
+        Otherwise the sharded_pp_offset will be wrong.
+        The right behavior of shard_pp_offset should be (0, layer_number, num_layers), where layer number is the 
+        layer number in the value head, and num_layers are the total number of layers in the value head.
+        """
         offset = 0
         num_layers = layer.config.num_layers
 
@@ -320,18 +200,20 @@ class GPTHybridModel(GPTModel):
             pre_process=True,
             post_process=True,
             layer_number_offset=len(self.decoder.submodules.layer_specs))
+            assert output_sequence is True, "output_sequence must be True for hybrid model"
+            assert num_attributes == 1, "num_attributes must be 1 for hybrid model"
 
-            # self.rm_head = RewardModelHead(
-            #     self.config.hidden_size,
-            #     num_attributes,
-            #     config=config,
-            #     init_method=self.config.init_method,
-            #     output_sequence=output_sequence,
-            #     use_avg_pool=use_avg_pool,
-            #     dtype=self.dtype if head_dtype is None else head_dtype,
-            #     merge_attributes=merge_attributes,
-            #     attributes_weights=attribute_weights,
-            # )
+            self.rm_head = RewardModelHead(
+                self.config.hidden_size,
+                num_attributes,
+                config=config,
+                init_method=self.config.init_method,
+                output_sequence=output_sequence,
+                use_avg_pool=use_avg_pool,
+                dtype=self.dtype if head_dtype is None else head_dtype,
+                merge_attributes=merge_attributes,
+                attributes_weights=attribute_weights,
+            )
 
     def forward(
         self,
@@ -372,7 +254,8 @@ class GPTHybridModel(GPTModel):
                 rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
 
 
-            value = self.value_head(hidden_states_raw, attention_mask=attention_mask, inference_params=inference_params, rotary_pos_emb=rotary_pos_emb)
+            hidden_states_raw = self.value_head(hidden_states_raw, attention_mask=attention_mask, inference_params=inference_params, rotary_pos_emb=rotary_pos_emb)
+            output = self.rm_head(hidden_states_raw, None)
             if labels is None:
                 output = logits.transpose(0, 1).contiguous()
                 return output, value
@@ -390,5 +273,24 @@ class GPTHybridModel(GPTModel):
             value_head_prefix = f"{prefix}value_head."
             value_head_state_dict = self.value_head.sharded_state_dict(prefix=value_head_prefix)
             sharded_state_dict.update(value_head_state_dict)
+
+            rm_head_prefix = f"{prefix}rm_head."
+            rm_head_state_dict = self.rm_head.state_dict(prefix=rm_head_prefix, keep_vars=True)
+
+            # weights are sharded row wise
+            weight_key = f"{rm_head_prefix}weight"
+
+            sharded_state_dict[weight_key] = make_tp_sharded_tensor_for_checkpoint(
+                tensor=rm_head_state_dict[weight_key],
+                key=weight_key,
+                replica_id=parallel_state.get_data_parallel_rank(),
+                allow_shape_mismatch=False,
+                tp_axis=1,
+            )
+
+            # biases are not sharded
+            bias_key = f"{rm_head_prefix}bias"
+            sharded_state_dict[bias_key] = make_sharded_tensor_for_checkpoint(rm_head_state_dict[bias_key], bias_key)
+
 
         return sharded_state_dict
