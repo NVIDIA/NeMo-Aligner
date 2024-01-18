@@ -310,6 +310,7 @@ class GPTHybridModel(GPTModel):
             rotary_percent=rotary_percent,
             seq_len_interpolation_factor=seq_len_interpolation_factor,
         )
+        self.head_config = head_config
 
         # if last stage or no PP
         if post_process:
@@ -361,7 +362,17 @@ class GPTHybridModel(GPTModel):
                 output_weight = self.shared_embedding_or_output_weight()
             # added all the post process stuff here
             logits, _ = self.output_layer(hidden_states_raw, weight=output_weight)
-            # value = self.value_head(hidden_states_raw, attention_mask=attention_mask, )
+
+            # Rotary positional embeddings (embedding is None for PP intermediate devices)
+            rotary_pos_emb = None
+            if self.position_embedding_type == 'rope':
+                rotary_seq_len = self.rotary_pos_emb.get_rotary_seq_len(
+                    inference_params, self.value_head, decoder_input, self.head_config
+                )
+                rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
+
+
+            value = self.value_head(hidden_states_raw, attention_mask=attention_mask, inference_params=inference_params, rotary_pos_emb=rotary_pos_emb)
             if labels is None:
                 output = logits.transpose(0, 1).contiguous()
                 return output, value
