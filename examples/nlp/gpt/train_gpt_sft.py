@@ -98,7 +98,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         if cfg.model.get("seq_len_interpolation_factor", None) is not None:
             gpt_cfg.seq_len_interpolation_factor = cfg.model.seq_len_interpolation_factor
 
-        gpt_cfg["inference"] = cfg.model.get("inference", {})
+        gpt_cfg.inference = cfg.model.get("inference", {})
 
         # This is needed when modifying a hparam file directly to load `.ckpt` files.
         # This is not needed to modify the cfg in `.nemo` files.
@@ -220,7 +220,6 @@ def main(cfg) -> None:
     del ptl_model._train_dl
     del dummy_train_dataloader
 
-    init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
