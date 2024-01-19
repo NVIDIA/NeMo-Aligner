@@ -46,8 +46,6 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         if "strategy" in inference_params:
             if inference_params["strategy"] is not None:
                 inference_params["strategy"] = hydra.utils.instantiate(inference_params["strategy"], model=self)
-            else:
-                inference_params["strategy"] = None
         self.set_inference_params(**inference_params)
 
     def set_inference_params(self, length_params=None, sampling_params=None, strategy=None):
