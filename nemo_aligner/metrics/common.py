@@ -60,20 +60,20 @@ def get_prediction(idx, batch, generation_output):
     """A helper function to get predicted output for a typical dataloader format."""
     elem_metadata = batch["metadata"][idx]
     # need to remove original prompt from the generated output as it's always included
-    if 'conversations' in elem_metadata:  # chat format
+    if "conversations" in elem_metadata:  # chat format
         # chat format has a conversation key of turns from User-Assistant-User-Assistant-...
         # they are all bundled together into the prompt and we predict the last part after "Assistant:"
         # ignoring whatever is there (which is the "ground-truth" prediction)
         # so to get just the LLM prediction we are finding the last "User" part and taking
         # everything after that (which is done via a call to .split and taking the last part)
-        last_prompt_part = elem_metadata['conversations'][-2]['value']
-        if last_prompt_part not in generation_output['sentences'][idx]:
+        last_prompt_part = elem_metadata["conversations"][-2]["value"]
+        if last_prompt_part not in generation_output["sentences"][idx]:
             raise RuntimeError("Something is wrong! Prompt is not constructed in the expected way.")
-        pred_output = generation_output['sentences'][idx].split(last_prompt_part)[-1]
+        pred_output = generation_output["sentences"][idx].split(last_prompt_part)[-1]
     else:  # input-output format
-        if not generation_output['sentences'][idx].startswith(elem_metadata['input']):
+        if not generation_output["sentences"][idx].startswith(elem_metadata["input"]):
             raise RuntimeError("Something is wrong! Prompt is not constructed in the expected way.")
-        pred_output = generation_output['sentences'][idx][len(elem_metadata['input']):]
+        pred_output = generation_output["sentences"][idx][len(elem_metadata["input"]) :]
     return pred_output
 
 
@@ -89,6 +89,7 @@ def get_target(idx, batch):
 
 class ExactStringMatchMetric(Metric):
     """Computing exact string match between predicted and target outputs."""
+
     def __init__(self, **kwargs):
         super().__init__(dist_sync_on_step=False, **kwargs)
 
