@@ -4,7 +4,7 @@ WANDB="8256bec8f68d1a0ee4a3208685a8db0474d3806b"
  
 export PYTHONPATH=/opt/NeMo:/opt/nemo-aligner:$PYTHONPATH
 
-ACTOR_NUM_DEVICES=2
+ACTOR_NUM_DEVICES=1
 ACTOR_MICRO_BS=1
 GRAD_ACCUMULATION=1
 ACTOR_GLOBAL_BATCH_SIZE=$((ACTOR_MICRO_BS*ACTOR_NUM_DEVICES*GRAD_ACCUMULATION))
@@ -20,7 +20,7 @@ DIR_SAVE_CKPT_PATH="/opt/nemo-aligner/draft_saved_ckpts"
 
 mkdir -p ${DIR_SAVE_CKPT_PATH}
 
-ACTOR_DEVICE="0,1"
+ACTOR_DEVICE="0"
 echo "Running DRaFT on ${ACTOR_DEVICE}"
 git config --global --add safe.directory /opt/nemo-aligner \
 && wandb login ${WANDB} \
@@ -34,7 +34,7 @@ git config --global --add safe.directory /opt/nemo-aligner \
     model.infer.eta=0.0 \
     model.kl_coeff=${KL_COEF} \
     model.truncation_steps=1 \
-    model.max_epochs=40 \
+    model.max_epochs=1 \
     model.max_steps=4000 \
     model.save_interval=500 \
     model.unet_config.from_pretrained=${ACTOR_CKPT} \

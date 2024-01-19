@@ -49,6 +49,8 @@ pretrained_checkpoint:
   restore_from_path: /opt/nemo-aligner/checkpoints/model_weights.ckpt
 
 model:
+  val_check_interval: 0
+  limit_val_batches: 0
   save_interval: 500
   kl_coeff: 10
   truncation_steps: 1

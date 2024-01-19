@@ -107,26 +107,28 @@ class AlignableSDModel(AlignableGenerativeInterface):
 
         self.generation_counter = 0
         self.with_distributed_adam = self.megatron_model.with_distributed_adam
-        self.megatron_amp_o2 = self.cfg.get("megatron_amp_O2", False)
-        self.megatron_model.megatron_amp_o2 = self.cfg.get("megatron_amp_O2", False)
-        self.model.first_stage_model.requires_grad_(False)
+        self.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
+        self.megatron_model.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
+        self.model.model.first_stage_model.requires_grad_(False)
 
         self.distributed_adam_offload_manager = None
 
         self.height = self.cfg.infer.get("height", 512)
         self.width = self.cfg.infer.get("width", 512)
         self.downsampling_factor = self.cfg.infer.get("down_factor", 8)
-        self.in_channels = self.model.model.diffusion_model.in_channels
+        self.in_channels = self.model.model.model.diffusion_model.in_channels
         self.unconditional_guidance_scale = self.cfg.infer.get("unconditional_guidance_scale", 7.5)
         self.sampler_type = self.cfg.infer.get("sampler_type", "DDIM")
         self.inference_steps = self.cfg.infer.get("inference_steps", 50)
         self.eta = self.cfg.infer.get("eta", 0)
 
         # TODO @geshen: In train_utils.py, the prepare_for_training_step funtions requires the following which are not available for Stable Diffusion
-        self.model.initialize_ub = False
-        self.model.rampup_batch_size = False
-        self.model.with_distributed_adam = False
+        self.model.model.initialize_ub = False
+        self.model.model.rampup_batch_size = False
+        self.model.model.with_distributed_adam = False
 
+    def get_parameters_with_grad(self):
+        return self.model.get_parameters_with_grad()
     def finish_inference(self):
         return
 
@@ -143,7 +145,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
-        prepare_for_training_step(self.model, zero_grad=False)
+        prepare_for_training_step(self.model.model, zero_grad=False)
 
     def generate_rollout_batch(self):
         return
@@ -215,7 +217,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
             idx_denoised_imgs = [self.inference_steps + (self.inference_steps + 1) * i for i in range(batch_size)]
 
             for i in range(0, batch_size, vae_batch_size):
-                image = self.model.differentiable_decode_first_stage(
+                image = self.model.model.differentiable_decode_first_stage(
                     trajectories_predx0[idx_denoised_imgs[i : i + vae_batch_size]]
                 )
 
@@ -252,7 +254,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
             generator=None,
         ).to(torch.cuda.current_device())
 
-        image_draft, reward_draft = self.generate_log_images(latents, latent_shape, prompts, self.model)
+        image_draft, reward_draft = self.generate_log_images(latents, latent_shape, prompts, self.model.model)
         image_init, reward_init = self.generate_log_images(latents, latent_shape, prompts, self.init_model)
 
         images = []
@@ -304,13 +306,13 @@ class AlignableSDModel(AlignableGenerativeInterface):
             prev_img_draft = x_T
             ddim_use_original_steps = False
 
-            device_draft = self.model.betas.device
+            device_draft = self.model.model.betas.device
 
-            sampler_draft = sampling_utils.initialize_sampler(self.model, self.sampler_type.upper())
+            sampler_draft = sampling_utils.initialize_sampler(self.model.model, self.sampler_type.upper())
             sampler_init = sampling_utils.initialize_sampler(self.init_model, self.sampler_type.upper())
 
             cond, u_cond = sampling_utils.encode_prompt_batch(
-                self.model.cond_stage_model, batch, self.unconditional_guidance_scale, 1
+                self.model.model.cond_stage_model, batch, self.unconditional_guidance_scale, 1
             )
 
             sampler_draft.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
@@ -385,7 +387,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
             vae_batch_size = 8
             vae_decoder_output = []
             for i in range(0, batch_size, vae_batch_size):
-                image = self.model.differentiable_decode_first_stage(trajectories_predx0[i : i + vae_batch_size])
+                image = self.model.model.differentiable_decode_first_stage(trajectories_predx0[i : i + vae_batch_size])
                 vae_decoder_output.append(image)
 
             vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
@@ -472,7 +474,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
 
         return kl
 
-    def get_loss_and_metrics(self, data_iter, forward_only=False):
+    def get_loss_and_metrics(self, batch, forward_only=False):
 
         fwd_bwd_function = get_forward_backward_func()
 
@@ -480,14 +482,14 @@ class AlignableSDModel(AlignableGenerativeInterface):
 
         # TODO @ataghibakhsh @geshen @sahilj: For grad accumulation, we currently have to do the for loop and fwd_bwd_function doesn't take care of that
         # TODO @ataghibakhsh: input num_microbatch manually
-        for i in range(0, len(data_iter), self.cfg.micro_batch_size):
-            data_item = data_iter[i : i + self.cfg.micro_batch_size]
+        for i in range(0, len(batch), self.cfg.micro_batch_size):
+            data_item = batch[i : i + self.cfg.micro_batch_size]
 
             losses_reduced_per_micro_batch.append(
                 fwd_bwd_function(
                     forward_step_func=self.get_forward_output_and_loss_func(),
                     data_iterator=[data_item],  # 4
-                    model=self.model,
+                    model=self.model.model,
                     num_microbatches=self.cfg.micro_batch_size,  # 4
                     forward_only=forward_only,
                     seq_length=None,
@@ -496,7 +498,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
             )
 
         if torch.distributed.get_rank() == 0 and len(self.logger.loggers) > 1:
-            self.log_visualization(data_iter[0:1])
+            self.log_visualization(batch[0:1])
 
         if self.megatron_model.with_distributed_adam:
             # synchronize asynchronous grad reductions
@@ -534,7 +536,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
             # note: not necessary, but reduces performance degradation
             # from multiple simultaneous NCCL calls
             self.optimizer._finish_bucket_grad_sync()
-        elif self.megatron_model.megatron_amp_o2:
+        elif self.megatron_model.megatron_amp_O2:
             # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
             if parallel_state.get_pipeline_model_parallel_world_size() > 1 or self.cfg.get("sequence_parallel", False):
                 # main grads are stored in the MainParamsOptimizer wrapper

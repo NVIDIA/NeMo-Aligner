@@ -18,7 +18,7 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
-
+from nemo_aligner.utils.distributed import Timer
 from nemo.collections.multimodal.models.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
@@ -27,6 +27,7 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.draft import DraftTrainer
+from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.mm import text_webdataset
 from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_rm_datasets
 from nemo_aligner.models.mm.draft.alignable_sd_model import AlignableSDModel
@@ -160,20 +161,23 @@ def main(cfg) -> None:
     reward_model = get_reward_model(cfg.RM, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
 
     alignable_model = AlignableSDModel(
-        ptl_model.model, reward_model, ptl_model.tokenizer, optimizer, cfg.model, ptl_model, logger=logger
+        ptl_model, reward_model, ptl_model.tokenizer, optimizer, cfg.model, ptl_model, logger=logger
     )
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
+    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:1:30:00"))
 
-    draft_trainer = DraftTrainer(
+    draft_trainer = SupervisedTrainer(
         cfg=cfg.model,
         model=alignable_model,
         optimizer=optimizer,
         scheduler=scheduler,
         train_dataloader=train_dataloader,
-        val_dataloader=None,
-        test_dataloader=None,
+        val_dataloader=[],
+        test_dataloader=[],
+        logger=logger,
         ckpt_callback=ckpt_callback,
+        run_timer=timer
     )
 
     if custom_trainer_state_dict is not None:
