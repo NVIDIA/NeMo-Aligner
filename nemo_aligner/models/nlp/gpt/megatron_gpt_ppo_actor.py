@@ -272,7 +272,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
         return logprobs
 
-    def prepare_for_inference(self):
+    def prepare_for_inference(self, init_engine=True):
         """normally we would configure the micro batch calculator here
             but the nemo generation already does the configuration"""
         self._reset_activation_checkpointing_args()
@@ -280,9 +280,12 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         set_eval(self)
         self.offload_adam_states()
 
+        if not init_engine:
+            return
+            
+
         if self.use_trtllm_generation:
             self.trtllm_generate.refit(self.model)
-
 
     @torch.no_grad()
     def infer(self, inference_batch):
@@ -362,21 +365,32 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
     def offload_adam_states(self):
         if self.distributed_adam_offload_manager is None:
 
+            for v in self._optimizer._grad_buffers.values():
+                v.data = v.data.to("cpu", non_blocking=True)
+
             self.distributed_adam_offload_manager = (
                 offload_distributed_adam(self._optimizer.state_dict(state_dict_format=1, gather_on_root=False))
                 if self.to_offload_adam_states and self.with_distributed_adam
                 else nullcontext()
             )
 
+            # reference cycles? have to call it here idk why
+            self._optimizer.zero_grad(set_to_none=True)
+
             # offload onto cpu
             self.distributed_adam_offload_manager.__enter__()
 
+
     def onload_adam_states(self):
         if self.distributed_adam_offload_manager is not None:
+            for v in self._optimizer._grad_buffers.values():
+                v.data = v.data.to(device=torch.cuda.current_device(), non_blocking=True)
+
             # load back onto GPU
             self.distributed_adam_offload_manager.__exit__(None, None, None)
 
         self.distributed_adam_offload_manager = None
+
 
     def get_ltor_masks_and_position_ids(self, tokens):
         attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(

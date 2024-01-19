@@ -54,6 +54,11 @@ def compute_num_rollout_microbatches(dataloader, use_trtllm=False):
     )
 
 
+def print_mem(prefix):
+    pyt = torch.cuda.memory_allocated() / (1024**3)
+    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024**3)
+    print(f"Mem Usage | {prefix} | {pyt} {el} | {el-pyt}")
+
 class PPOTrainer:
     """Trainer to coordinate PPO training
     """
@@ -306,10 +311,12 @@ class PPOTrainer:
     @torch.no_grad()
     def generate_rollouts(self, dataloader_iter, num_microbatches):
         self.model.prepare_for_inference()
+        print_mem(f"mem before generate step {self.step}")
 
         rollout_batches, rollout_metrics = self._run_inference(dataloader_iter, num_microbatches, is_validation=False)
         ppo_rollout_data, ppo_rollout_metrics = map(cpu_dict, self.generate_ppo_data(rollout_batches))
 
+        print_mem(f"mem after generate step {self.step}")
         self.model.finish_inference()
 
         self.consumed_samples += (
@@ -318,11 +325,14 @@ class PPOTrainer:
         return ppo_rollout_data, rollout_metrics | ppo_rollout_metrics | {"consumed_samples": self.consumed_samples}
 
     def run_training(self, dataloader_iter):
+        print_mem(f"mem before train step {self.step}")
         self.model.prepare_for_training()
 
         for batch in dataloader_iter:
             self.timer.start("train_step_time")
+            print_mem(f"mem before optim zero grad train step {self.step}")
             self.optimizer.zero_grad()
+            print_mem(f"mem after optim zero grad train step {self.step}")
 
             self.model.prepare_for_training_step()
             loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
@@ -332,7 +342,9 @@ class PPOTrainer:
             grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
             lr = self.optimizer.param_groups[0]["lr"]
 
+            print_mem(f"mem before optim step train step {self.step}")
             self.optimizer.step()
+            print_mem(f"mem after optim step train step {self.step}")
             self.scheduler.step()
 
             if grad_norm is not None:
@@ -352,7 +364,44 @@ class PPOTrainer:
         self.model.finish_training()
 
         # zero grad again incase it frees up grad mem
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
+
+        clear_memory()
+        print_mem(f"mem after train step {self.step}")
+
+        self.model.prepare_for_inference(init_engine=False)
+        clear_memory()
+        print_mem(f"### mem after train step optim offloaded {self.step}")
+
+        # self.model._optimizer._grads_buckets.clear()
+        # print_mem(f"### mem after optim explicit clear {self.step}")
+
+        import gc
+
+        if torch.distributed.get_rank() == 0:
+
+            # if we do this we need to set the zero_grad to have set_to_none=True
+            # for k, v in self.model._optimizer._grad_buffers.items():
+            #     print("#### BASE", v.storage().data_ptr())
+            #     v.data = v.data.cpu()
+            
+            # self.optimizer.zero_grad(set_to_none=True)
+            self.model.to("cpu")
+            print_mem(f"### mem now {self.step}")
+
+            for obj in gc.get_objects():
+                try:
+                    if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                        print(obj.storage().data_ptr(), obj.storage().device, obj.storage().size(), obj.storage().dtype, obj.shape)
+                        if obj.get_device() >= 0:
+                            print("### FOUND", torch.device, torch.shape)
+                except: pass
+
+            breakpoint()
+            print_mem(f"### mem now {self.step}")
+            
+        torch.distributed.barrier()
+
         return loss_mean, metrics
 
     def fit(self):
