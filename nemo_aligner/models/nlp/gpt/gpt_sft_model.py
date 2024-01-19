@@ -40,11 +40,14 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
     def __init__(self, cfg, trainer):
         super().__init__(cfg, trainer)
         inference_params = dict(cfg.get("inference", {}))
-        # note that this will fail is import path is not available when the model is restored
+        # note that this will fail if import path is not available when the model is restored
         # this is by design as it might not be possible to use model correctly without a matching
         # inference strategy
         if "strategy" in inference_params:
-            inference_params["strategy"] = hydra.utils.instantiate(inference_params["strategy"], model=self)
+            if inference_params["strategy"] is not None:
+                inference_params["strategy"] = hydra.utils.instantiate(inference_params["strategy"], model=self)
+            else:
+                inference_params["strategy"] = None
         self.set_inference_params(**inference_params)
 
     def set_inference_params(self, length_params=None, sampling_params=None, strategy=None):

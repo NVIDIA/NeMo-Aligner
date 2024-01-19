@@ -14,7 +14,7 @@
 
 # A couple of common metrics as well as a handler class to provide a unified interface.
 
-from typing import Dict
+from typing import Dict, Optional
 
 import hydra
 import torch
@@ -28,7 +28,7 @@ class InferenceMetricsHandler:
     If metrics_config is None, then all methods become no-ops and compute will return an empty dict.
     """
 
-    def __init__(self, metrics_config: DictConfig):
+    def __init__(self, metrics_config: Optional[DictConfig]):
         if metrics_config is None:
             metrics_config = {}
         self.metrics = hydra.utils.instantiate(metrics_config)
@@ -61,10 +61,19 @@ def get_prediction(idx, batch, generation_output):
     elem_metadata = batch['metadata'][idx]
     # need to remove original prompt from the generated output as it's always included
     if 'conversations' in elem_metadata:  # chat format
-        # last one is the target, so splitting on the one before that
-        pred_output = generation_output['sentences'][idx].split(elem_metadata['conversations'][-2]['value'])[-1]
+        # chat format has a conversation key of turns from User-Assistant-User-Assistant-...
+        # they are all bundled together into the prompt and we predict the last part after "Assistant:"
+        # ignoring whatever is there (which is the "ground-truth" prediction)
+        # so to get just the LLM prediction we are finding the last "User" part and taking
+        # everything after that (which is done via a call to .split and taking the last part)
+        last_prompt_part = elem_metadata['conversations'][-2]['value']
+        if last_prompt_part not in generation_output['sentences'][idx]:
+            raise RuntimeError("Something is wrong! Prompt is not constructed in the expected way.")
+        pred_output = generation_output['sentences'][idx].split(last_prompt_part)[-1]
     else:  # input-output format
-        pred_output = generation_output['sentences'][idx][len(batch['metadata'][idx]['input']):]
+        if not generation_output['sentences'][idx].startswith(elem_metadata['input']):
+            raise RuntimeError("Something is wrong! Prompt is not constructed in the expected way.")
+        pred_output = generation_output['sentences'][idx][len(elem_metadata['input']):]
     return pred_output
 
 
@@ -80,8 +89,8 @@ def get_target(idx, batch):
 
 class ExactStringMatchMetric(Metric):
     """Computing exact string match between predicted and target outputs."""
-    def __init__(self, *args, **kwargs):
-        super().__init__(dist_sync_on_step=False)
+    def __init__(self, **kwargs):
+        super().__init__(dist_sync_on_step=False, **kwargs)
 
         self.add_state("correct", default=torch.tensor(0, device='cuda'), dist_reduce_fx="sum")
         self.add_state("total", default=torch.tensor(0, device='cuda'), dist_reduce_fx="sum")
