@@ -13,10 +13,7 @@
 # limitations under the License.
 
 
-import torch
 import torch.multiprocessing as mp
-from megatron.core import parallel_state
-from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
@@ -204,22 +201,7 @@ def main(cfg) -> None:
         load_gbs=True,
     )
 
-    # nemo uses the train dataloader to figure out
-    # max steps to take when max_steps = -1
-    # but our train dataloader is for the prompts
-    # so we instaniate a dummy dataloader
-    # to get the proper max *optimization* steps
-    # nemo treats batch size of normal dataloader as GBS/DP
-    # so we need to offset it by DP
-    dummy_train_dataloader = torch.utils.data.DataLoader(
-        dataset=train_ds, batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size())
-    )
-
-    init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_ds)
-    # make sure the dummy train dataloader is never used
-    del ptl_model._train_dl
-    del dummy_train_dataloader
-
+    init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)

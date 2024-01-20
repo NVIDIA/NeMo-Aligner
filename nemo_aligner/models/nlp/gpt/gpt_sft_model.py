@@ -152,9 +152,14 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
 
         inference_strategy = strategy or default_params["strategy"]
 
-        return self.generate(
+        # need to disable activation checkpoint granularity for inference
+        self._reset_activation_checkpointing_args()
+        outputs = self.generate(
             inputs,
             length_params=full_length_params,
             sampling_params=full_sampling_params,
             strategy=inference_strategy,
         )
+        self._restore_activation_checkpointing_args()
+
+        return outputs
