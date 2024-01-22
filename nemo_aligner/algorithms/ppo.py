@@ -43,9 +43,12 @@ def get_custom_data_parallel_world_size(use_trtllm=False):
     data_parallel_size = parallel_state.get_data_parallel_world_size()
 
     if use_trtllm:
-        data_parallel_size = divide(torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size())
+        data_parallel_size = divide(
+            torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size()
+        )
 
     return data_parallel_size
+
 
 def compute_num_rollout_microbatches(dataloader, use_trtllm=False):
     return divide(
@@ -55,9 +58,10 @@ def compute_num_rollout_microbatches(dataloader, use_trtllm=False):
 
 
 def print_mem(prefix):
-    pyt = torch.cuda.memory_allocated() / (1024**3)
-    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024**3)
+    pyt = torch.cuda.memory_allocated() / (1024 ** 3)
+    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
     print(f"Mem Usage | {prefix} | {pyt} {el} | {el-pyt}")
+
 
 class PPOTrainer:
     """Trainer to coordinate PPO training
@@ -189,7 +193,7 @@ class PPOTrainer:
             ppo_rollout_data[k] = pad_tensors_to_max_global_seq_len(
                 ppo_rollout_data[k],
                 pad_value=pad_value,
-                group=parallel_state.get_data_parallel_group(), #TODO: fix for TRT metric accumulate because of resharding
+                group=parallel_state.get_data_parallel_group(),  # TODO: fix for TRT metric accumulate because of resharding
                 sequence_length_to_pad_to=rollout_batch_seq_length,
             )
 
@@ -198,7 +202,7 @@ class PPOTrainer:
             tensor = ppo_rollout_data[key]
 
             global_mean, global_var = masked_global_mean_var(
-                tensor, mask, group=parallel_state.get_data_parallel_group(), # TODO: fix 
+                tensor, mask, group=parallel_state.get_data_parallel_group(),  # TODO: fix
             )
             ppo_rollout_metrics[f"global_{key}_mean"] = global_mean.item()
             ppo_rollout_metrics[f"global_{key}_std"] = global_var.sqrt().item()
@@ -207,7 +211,7 @@ class PPOTrainer:
             ppo_rollout_data["advantages"] = normalize_tensor(
                 ppo_rollout_data["advantages"],
                 ppo_rollout_data["mask"],
-                group=parallel_state.get_data_parallel_group(), # TODO: fix
+                group=parallel_state.get_data_parallel_group(),  # TODO: fix
             )
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
@@ -221,10 +225,15 @@ class PPOTrainer:
         print(f"num_microbatches {num_microbatches}")
 
         for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
+
             rollout_batch = self.model.infer(inference_batch)
             rollout_batches.append(rollout_batch)
             futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
         print(f"  flag2")
+
+        logprobs = self.model.get_init_policy_logprobs(rollout_batches)
+        for logprob, rollout_batch in zip(logprobs, rollout_batches):
+            rollout_batch["logprobs"] = logprob
 
         if not is_validation and self.compute_init_policy_kl:
             init_policy_logprobs = self.model.get_init_policy_logprobs(rollout_batches)
@@ -279,7 +288,7 @@ class PPOTrainer:
             dtype=torch.float32,
             device=torch.cuda.current_device(),
         )
-        torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group()) # TODO FIX
+        torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())  # TODO FIX
 
         (
             global_response_lengths,
@@ -320,11 +329,12 @@ class PPOTrainer:
         self.model.finish_inference()
 
         self.consumed_samples += (
-            ppo_rollout_data["response_tokens"].size(0) * parallel_state.get_data_parallel_world_size() # TODO: fix
+            ppo_rollout_data["response_tokens"].size(0) * parallel_state.get_data_parallel_world_size()  # TODO: fix
         )
         return ppo_rollout_data, rollout_metrics | ppo_rollout_metrics | {"consumed_samples": self.consumed_samples}
 
     def run_training(self, dataloader_iter):
+
         print_mem(f"mem before train step {self.step}")
         self.model.prepare_for_training()
 
@@ -363,44 +373,7 @@ class PPOTrainer:
 
         self.model.finish_training()
 
-        # zero grad again incase it frees up grad mem
-        self.optimizer.zero_grad(set_to_none=True)
-
-        clear_memory()
-        print_mem(f"mem after train step {self.step}")
-
-        self.model.prepare_for_inference(init_engine=False)
-        clear_memory()
-        print_mem(f"### mem after train step optim offloaded {self.step}")
-
-        # self.model._optimizer._grads_buckets.clear()
-        # print_mem(f"### mem after optim explicit clear {self.step}")
-
-        import gc
-
-        if torch.distributed.get_rank() == 0:
-
-            # if we do this we need to set the zero_grad to have set_to_none=True
-            # for k, v in self.model._optimizer._grad_buffers.items():
-            #     print("#### BASE", v.storage().data_ptr())
-            #     v.data = v.data.cpu()
-            
-            # self.optimizer.zero_grad(set_to_none=True)
-            self.model.to("cpu")
-            print_mem(f"### mem now {self.step}")
-
-            for obj in gc.get_objects():
-                try:
-                    if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
-                        print(obj.storage().data_ptr(), obj.storage().device, obj.storage().size(), obj.storage().dtype, obj.shape)
-                        if obj.get_device() >= 0:
-                            print("### FOUND", torch.device, torch.shape)
-                except: pass
-
-            breakpoint()
-            print_mem(f"### mem now {self.step}")
-            
-        torch.distributed.barrier()
+        self.optimizer.zero_grad()
 
         return loss_mean, metrics
 
@@ -427,6 +400,7 @@ class PPOTrainer:
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
 
             num_rollout_micro_batches = compute_num_rollout_microbatches(self.train_dataloader, self.cfg.use_trtllm)
+
             dp_size = parallel_state.get_data_parallel_world_size()
 
             num_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
@@ -437,6 +411,7 @@ class PPOTrainer:
                 step_metrics = {}
                 timing_metrics = {}
 
+                clear_memory()
                 self.timer.start("rollout_time")
                 ppo_rollout_data, metrics = self.generate_rollouts(dataloader_iter, num_rollout_micro_batches)
                 self.timer.stop("rollout_time")
