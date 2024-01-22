@@ -119,7 +119,7 @@ def main(cfg) -> None:
         mbs=cfg.model.ppo.rollout_micro_batch_size,
         gbs=cfg.model.ppo.num_rollout_samples,
         collate_fn=collate_fn,
-        load_gbs=True,
+        load_gbs=False,
     )
 
     val_dataloader = build_dataloader(
@@ -129,7 +129,7 @@ def main(cfg) -> None:
         mbs=cfg.model.ppo.val_rollout_micro_batch_size,
         gbs=cfg.model.ppo.num_val_samples,
         collate_fn=collate_fn,
-        load_gbs=True,
+        load_gbs=False,
     )
 
     # nemo uses the train dataloader to figure out

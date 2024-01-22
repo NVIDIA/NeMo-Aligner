@@ -35,6 +35,7 @@ from nemo_aligner.utils.ppo_utils import (
     calculate_ppo_rewards,
     create_mask,
 )
+from nemo_aligner.utils.samplers import MegatronPretrainingRandomSampler
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress
@@ -348,15 +349,15 @@ class PPOTrainer:
         return loss_mean, metrics
 
     def fit(self):
-        if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
+        if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomSampler)) and (
             self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
         ):
             # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
             # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
-            # to fix this, you should use MegatronPretrainingRandomBatchSampler instead, which alleviates this issue and allows
+            # to fix this, you should use MegatronPretrainingRandomSampler instead, which alleviates this issue and allows
             # random shuffling for each epoch.
             raise ValueError(
-                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
+                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomSampler` as the batch_sampler for your train dataloader"
             )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
