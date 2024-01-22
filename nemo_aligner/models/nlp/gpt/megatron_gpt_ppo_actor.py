@@ -310,18 +310,11 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self.offload_adam_states()
 
         if self.use_trtllm_generation:
-            # TODO: how bad is this overhead?
-            self.trtllm_generate.refit(self.model)
-
-            tic = time.time()
-            self.trtllm_generate.refit(self.model)
-            tok = time.time()
             # want to move it here so we can do the transposing on GPU
             # and then move to cpu
-
-            # self.force_move_model_to_cpu()
-            # clear_memory()
-            print("### entire RFFIT TOOK", tok - tic)
+            self.force_move_model_to_cpu()
+            self.trtllm_generate.refit(self.model)
+            clear_memory()
 
     @torch.no_grad()
     def infer(self, inference_batch):
