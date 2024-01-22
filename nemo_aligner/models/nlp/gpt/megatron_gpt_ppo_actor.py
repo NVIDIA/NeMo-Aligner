@@ -414,11 +414,24 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
     def onload_adam_states(self):
         if self.distributed_adam_offload_manager is not None:
-            for v in self._optimizer._grad_buffers.values():
-                v.data = v.data.to(device=torch.cuda.current_device(), non_blocking=True)
+            self.force_move_model_to_cpu() # TODO: remove, but for now it frees the mem pressure
+
+            print_mem("before optim full on load")
+
+            if len(self._optimizer._grad_buffers.values()) == 0:
+                self._optimizer.zero_grad(set_to_none=True)
+            else:
+                for v in self._optimizer._grad_buffers.values():
+                    v.data = v.data.to(device=torch.cuda.current_device(), non_blocking=True)
+
+            print_mem("after grad buffer")
 
             # load back onto GPU
+            print_mem("before onload optim state")
             self.distributed_adam_offload_manager.__exit__(None, None, None)
+            print_mem("after onload optim state")
+
+            self.cuda()
 
         self.distributed_adam_offload_manager = None
 
