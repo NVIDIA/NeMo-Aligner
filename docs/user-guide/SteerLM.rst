@@ -102,13 +102,13 @@ First, download and convert both datasets into a common format.
    python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_helpsteer_data.py --output_directory=data/helpsteer
 
 
-**NeMo Megatron Launcher method for Step 2 :**
+**NeMo Megatron Launcher method for Step 2 -Stage 1 :**
 
-   Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L5>`_ to activate steerLM data preparation.
+   Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep1 <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L5>`_ to activate steerLM data preparation.
    
    There are currently 2 datasets supported : openassistant or helpsteer
 
-   If you wish to prepare both dataset, then run the below twice but change `steerlm_data_prep.yaml line 9 and fill in either openassistant or helpsteer <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep.yaml#L9>`_ to prepare the dataset of your choice.
+   If you wish to prepare both dataset, then run the below twice but change `steerlm_data_prep1.yaml line 10 and fill in either openassistant or helpsteer <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep1.yaml#L10>`_ to prepare the dataset of your choice.
    
 
    .. code-block:: bash
@@ -137,6 +137,23 @@ Finally, preprocess the data into regression reward model training format.
    python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
       --input-file=data/merge_val.jsonl \
       --output-file=data/merge_val_reg.jsonl
+
+
+**NeMo Megatron Launcher method for Step 2 - Stage 2 :**
+
+   Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep2_reg <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L5>`_ to process steerLM data to regression format.
+   
+   There are currently 2 datasets supported : openassistant or helpsteer
+
+   Prepare train and val dataset via running the below twice but change `steerlm_data_prep2_reg.yaml line 10-11 and change the dataset name to train/val accordingly <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep2_reg.yaml#L10-11>`_ to prepare the dataset of your choice.
+   
+
+   .. code-block:: bash
+
+      ```
+      python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR/data/ stages=[data_preparation]
+      ```
+
 
 
 Step 3: Train the regression reward model on OASST+HelpSteer data
