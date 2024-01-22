@@ -313,8 +313,8 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             # want to move it here so we can do the transposing on GPU
             # and then move to cpu
             self.force_move_model_to_cpu()
-            self.trtllm_generate.refit(self.model)
             clear_memory()
+            self.trtllm_generate.refit(self.model)
 
     @torch.no_grad()
     def infer(self, inference_batch):
