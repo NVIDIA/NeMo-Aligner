@@ -374,7 +374,9 @@ class PPOTrainer:
 
             dataloader_iter = iter(self.train_dataloader)
 
-            global_pbar = tqdm(dataloader_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
+            global_pbar = tqdm(
+                dataloader_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step"
+            )
 
             num_rollout_micro_batches = compute_num_rollout_microbatches(self.train_dataloader)
             dp_size = parallel_state.get_data_parallel_world_size()
