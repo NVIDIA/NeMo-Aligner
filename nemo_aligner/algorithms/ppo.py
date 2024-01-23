@@ -23,6 +23,7 @@ from tqdm import tqdm
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
+from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
 from nemo_aligner.utils.distributed import (
     SyncTimer,
     masked_global_mean_var,
@@ -35,7 +36,6 @@ from nemo_aligner.utils.ppo_utils import (
     calculate_ppo_rewards,
     create_mask,
 )
-from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress
