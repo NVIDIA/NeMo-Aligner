@@ -231,7 +231,7 @@ class PPOTrainer:
             futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
         print(f"  flag2")
 
-        logprobs = self.model.get_init_policy_logprobs(rollout_batches)
+        logprobs = self.model.get_logprobs(rollout_batches)
         for logprob, rollout_batch in zip(logprobs, rollout_batches):
             rollout_batch["logprobs"] = logprob
 
