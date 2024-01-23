@@ -225,7 +225,7 @@ class SupervisedTrainer:
         if extra_candidates is None:
             extra_candidates = {}
 
-        monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
+        monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict(is_train_end).items()}
         monitor_candidates.update(extra_candidates)
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
@@ -236,11 +236,11 @@ class SupervisedTrainer:
         if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
 
-    def state_dict(self):
+    def state_dict(self, is_train_end=False):
         return {
             "step": self.step,
             "consumed_samples": self.consumed_samples,
-            "epoch": self.epoch,
+            "epoch": self.epoch + int(is_train_end),
         }
 
     def load_state_dict(self, state_dict):
