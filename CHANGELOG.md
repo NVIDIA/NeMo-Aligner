@@ -7,10 +7,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### New features and optimizations
 - Added public-facing official Dockerfile for NeMo-Aligner
-- Added the ability to do multi-epoch (cfg.max_epochs > 1) training for reward models, DPO, and PPO
+- Added the ability to do multi-epoch (cfg.max_epochs > 1) training for reward models, DPO, PPO, and SFT
 
 ### Breaking changes
-- We have changed the shuffle logic in the data sampler for multi-epoch training, so training runs using identical parameters
+- We have changed the shuffle logic in the data sampler to support multi-epoch training, so training runs using identical parameters
   will not give the same results anymore because the shuffle logic has changed (specifically the seed value is modified slightly per epoch).
   If you run CI/regression type tests, then be warned that the test may break due to this shuffle change.
 

@@ -46,7 +46,7 @@ from nemo_aligner.data.nlp.datasets import (
     RewardModelDataset,
     RLHFDataset,
 )
-from nemo_aligner.utils.samplers import MegatronPretrainingRandomSampler
+from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
