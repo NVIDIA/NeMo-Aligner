@@ -374,7 +374,7 @@ class PPOTrainer:
 
             dataloader_iter = iter(self.train_dataloader)
 
-            global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
+            global_pbar = tqdm(dataloader_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
 
             num_rollout_micro_batches = compute_num_rollout_microbatches(self.train_dataloader)
             dp_size = parallel_state.get_data_parallel_world_size()
@@ -470,11 +470,11 @@ class PPOTrainer:
 
         self.logger.finalize()
 
-    def state_dict(self):
+    def state_dict(self, is_train_end=False):
         return {
             "step": self.step,
             "consumed_samples": self.consumed_samples,
-            "epoch": self.epoch,
+            "epoch": self.epoch + int(is_train_end),
             "ppo_optimization_step": self.ppo_optimization_step,
         }
 
@@ -503,7 +503,7 @@ class PPOTrainer:
         if extra_candidates is None:
             extra_candidates = {}
 
-        monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
+        monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict(is_train_end).items()}
         monitor_candidates.update(extra_candidates)
 
         future = self.rm_critic.save()
