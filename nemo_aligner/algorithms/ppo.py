@@ -86,8 +86,11 @@ class PPOTrainer:
         # keep track of how many times we optimized the actor
         self.ppo_optimization_step = 0
 
-        # used to compute the max step
-        self._train_dataloader_len = len(train_dataloader)
+        # compute `max_steps`
+        sampler = self.train_dataloader.batch_sampler
+        if not sampler.drop_last:
+            raise NotImplementedError("`drop_last=False` is not currently supported")
+        self.num_steps_per_epoch = sampler.total_samples // sampler.global_batch_size
         self.set_max_steps()
 
         self.compute_init_policy_kl = self.cfg.initial_policy_kl_penalty > 0
@@ -366,17 +369,15 @@ class PPOTrainer:
             return
 
         for _ in epoch_iter:
-            loop_iter = range(self.step, self.max_steps)
+            num_steps_in_epoch = self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
+            loop_iter = range(num_steps_in_epoch)
 
-            # TODO(geshen): to change for when we support > 1 epoch
-            if len(loop_iter) <= 0:
+            if not loop_iter:
                 return  # training ended
 
             dataloader_iter = iter(self.train_dataloader)
 
-            global_pbar = tqdm(
-                dataloader_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step"
-            )
+            global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
 
             num_rollout_micro_batches = compute_num_rollout_microbatches(self.train_dataloader)
             dp_size = parallel_state.get_data_parallel_world_size()
@@ -517,7 +518,7 @@ class PPOTrainer:
         self.model.finish_training()
 
     def set_max_steps(self):
-        self.max_steps = (self._train_dataloader_len * (self.cfg.max_epochs - self.epoch)) + self.step
+        self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
 
         if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
