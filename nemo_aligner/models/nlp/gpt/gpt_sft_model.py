@@ -12,25 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Optional, Tuple
+
 import hydra
 import torch
-from typing import Tuple, Optional
 from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
-from nemo.collections.nlp.modules.common.text_generation_strategy import TextGenerationStrategy
-from nemo.collections.nlp.modules.common.transformer.text_generation import (
-    LengthParam,
-    OutputType,
-    SamplingParam,
-)
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
+from nemo.collections.nlp.modules.common.text_generation_strategy import TextGenerationStrategy
 from nemo.collections.nlp.modules.common.text_generation_utils import (
     get_default_length_params,
     get_default_sampling_params,
 )
+from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import (
@@ -38,8 +35,8 @@ from nemo_aligner.utils.train_utils import (
     grad_reductions,
     prepare_for_training_step,
     prepare_for_validation_step,
-    set_sync_funcs,
     set_eval,
+    set_sync_funcs,
     set_train,
 )
 from nemo_aligner.utils.utils import configure_batch_sizes
@@ -168,8 +165,8 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         )
         # adding predictions key which contains only model predictions without the prompt
         output["predictions"] = [
-            self.tokenizer.ids_to_text(tokens[length.item() :][: max_response_length])
-            for tokens, length in zip(output['token_ids'], prompt_lengths)
+            self.tokenizer.ids_to_text(tokens[length.item() :][:max_response_length])
+            for tokens, length in zip(output["token_ids"], prompt_lengths)
         ]
         return output
 
@@ -194,7 +191,6 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         self._reset_activation_checkpointing_args()
         self._reset_sequence_parallelism_args()
         set_eval(self)
-
 
     def finish_inference(self):
         self._restore_activation_checkpointing_args()
