@@ -31,7 +31,7 @@ from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.mm import text_webdataset
 from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_rm_datasets
 from nemo_aligner.models.mm.draft.alignable_sd_model import AlignableSDModel
-from nemo_aligner.models.mm.draft.draft_RMs import get_reward_model
+from nemo_aligner.models.mm.draft.image_text_rms import get_reward_model
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,

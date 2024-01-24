@@ -30,7 +30,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_an
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
-# from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
+from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
