@@ -111,7 +111,7 @@ class GPTGenerateTRTLLM():
             batch_size=self.generation_batch_size, 
             max_context_length=int(max(prompt_lengths)), 
             max_new_tokens=self.max_generation_length,
-            max_attention_window_size=512
+            max_attention_window_size=2084
         )
 
         output_ids = decoder.decode(

@@ -324,7 +324,7 @@ def build_dataloader(
 
         #reshard away PP
         data_parallel_size = divide(torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size())
-        data_parallel_rank = divide(app_state.global_rank, parallel_state.get_tensor_model_parallel_world_size())
+        data_parallel_rank = app_state.global_rank // parallel_state.get_tensor_model_parallel_world_size()
         print(f"adjusting dataloader for TRTLLM PP resharding dpsize - {data_parallel_size} dprank - {data_parallel_rank} {app_state.global_rank}")
 
     else:
