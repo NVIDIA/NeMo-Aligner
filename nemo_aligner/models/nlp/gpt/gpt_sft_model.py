@@ -14,10 +14,17 @@
 
 import hydra
 import torch
+from typing import Tuple, Optional
 from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
+from nemo.collections.nlp.modules.common.text_generation_strategy import TextGenerationStrategy
+from nemo.collections.nlp.modules.common.transformer.text_generation import (
+    LengthParam,
+    OutputType,
+    SamplingParam,
+)
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.modules.common.text_generation_utils import (
@@ -32,6 +39,8 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_training_step,
     prepare_for_validation_step,
     set_sync_funcs,
+    set_eval,
+    set_train,
 )
 from nemo_aligner.utils.utils import configure_batch_sizes
 
@@ -54,15 +63,13 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         #    that has a similar role to the parameters below but is less convenient.
         #    While there is a danger for accidental name collision and this adds confusion, it's ok for now
         #    as we are planning to remove dependence on the MegatronGPTModel after which we can remove this note
-        # registering inference parameters with default values
+
+        # registering inference parameters or default values
         self._inference_params = {
-            "length_params": get_default_length_params().copy(),
-            "sampling_params": get_default_sampling_params().copy(),
+            "length_params": length_params or get_default_length_params(),
+            "sampling_params": sampling_params or get_default_sampling_params(),
             "strategy": strategy,
         }
-        # overriding any non-default values from the config
-        self._inference_params["sampling_params"].update(sampling_params or {})
-        self._inference_params["length_params"].update(length_params or {})
 
     def get_inference_params(self):
         return self._inference_params
@@ -134,30 +141,62 @@ class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
+    def generate(
+        self,
+        inputs: Tuple[torch.Tensor, torch.Tensor],  # we do not support non-tensor inputs
+        length_params: LengthParam,
+        sampling_params: SamplingParam = None,
+        *,
+        strategy: Optional[TextGenerationStrategy] = None,
+    ) -> OutputType:
+        """Same as base model generate, except the following
+
+        1. Going to apply padding to max length
+        2. Going to append "predictions" key which is the model output without the prompt
+        """
+        prompt_tokens, prompt_lengths = inputs
+        max_prompt_length = prompt_lengths.max().item()
+        max_response_length = length_params["max_length"]
+        max_length = max_prompt_length + max_response_length
+        # # nemo requires us to pad the response length up before we do anything
+        prompt_tokens = torch.nn.functional.pad(prompt_tokens, (0, max_length), value=self.tokenizer.eos_id)
+        output = super().generate(
+            inputs=(prompt_tokens, prompt_lengths),
+            length_params=length_params,
+            sampling_params=sampling_params,
+            strategy=strategy,
+        )
+        # adding predictions key which contains only model predictions without the prompt
+        output["predictions"] = [
+            self.tokenizer.ids_to_text(tokens[length.item() :][: max_response_length])
+            for tokens, length in zip(output['token_ids'], prompt_lengths)
+        ]
+        return output
+
     @torch.no_grad()
     def infer(self, inference_batch, length_params=None, sampling_params=None, strategy=None):
         prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
-        inputs = (prompt_tokens, prompt_lengths)
-
         default_params = self.get_inference_params()
 
-        full_length_params = default_params["length_params"].copy()
-        full_length_params.update(length_params or {})
-
-        full_sampling_params = default_params["sampling_params"].copy()
-        full_sampling_params.update(sampling_params or {})
-
-        inference_strategy = strategy or default_params["strategy"]
-
-        # need to disable activation checkpoint granularity for inference
-        self._reset_activation_checkpointing_args()
+        self.prepare_for_inference()
         outputs = self.generate(
-            inputs,
-            length_params=full_length_params,
-            sampling_params=full_sampling_params,
-            strategy=inference_strategy,
+            (prompt_tokens, prompt_lengths),
+            length_params=length_params or default_params["length_params"],
+            sampling_params=sampling_params or default_params["sampling_params"],
+            strategy=strategy or default_params["strategy"],
         )
-        self._restore_activation_checkpointing_args()
+        self.finish_inference()
 
         return outputs
+
+    def prepare_for_inference(self):
+        self._reset_activation_checkpointing_args()
+        self._reset_sequence_parallelism_args()
+        set_eval(self)
+
+
+    def finish_inference(self):
+        self._restore_activation_checkpointing_args()
+        self._restore_sequence_parallelism_args()
+        set_train(self)
