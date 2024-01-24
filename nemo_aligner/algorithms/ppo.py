@@ -363,6 +363,7 @@ class PPOTrainer:
             )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
+        logging.info(f"{self.step=}, {self.epoch=}, {self.cfg.max_epochs=}")
         if len(epoch_iter) <= 0:
             # epoch done
             return
@@ -370,9 +371,7 @@ class PPOTrainer:
         for _ in epoch_iter:
             num_steps_in_epoch = self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
             loop_iter = range(num_steps_in_epoch)
-
-            if not loop_iter:
-                return  # training ended
+            logging.info(f"{num_steps_in_epoch=}")
 
             dataloader_iter = iter(self.train_dataloader)
 
@@ -384,7 +383,8 @@ class PPOTrainer:
             num_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
 
             self.run_timer.start_time()
-            for _ in global_pbar:
+            for step_idx in global_pbar:
+                logging.info(f"{step_idx=}, {self.step=}")
                 step_metrics = {}
                 timing_metrics = {}
 
