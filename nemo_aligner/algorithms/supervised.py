@@ -145,16 +145,7 @@ class SupervisedTrainer:
 
     @torch.no_grad()
     def run_generation(self, batch):
-        context_tokens, context_lengths = batch["contexts"], batch["context_lengths"]
-        max_prompt_length = context_lengths.max().item()
-        max_response_length = self.model.get_inference_params()["length_params"]["max_length"]
-        max_length = max_prompt_length + max_response_length
-        # nemo requires us to pad the response length up before we do anything
-        context_tokens = torch.nn.functional.pad(context_tokens, (0, max_length), value=self.model.tokenizer.eos_id)
-
-        return self.model.infer(
-            {"text": context_tokens, "length": context_lengths}, length_params={"max_length": max_length},
-        )
+        return self.model.infer({"text": batch["contexts"], "length": batch["context_lengths"]})
 
     def fit(self):
         if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
