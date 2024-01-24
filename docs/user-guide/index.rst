@@ -5,7 +5,7 @@
 .. toctree::
    :maxdepth: 4
 
-
+   SFT.rst
    RLHF.rst
    SteerLM.rst
    DPO.rst
