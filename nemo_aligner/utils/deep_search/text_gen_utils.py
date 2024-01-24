@@ -146,9 +146,12 @@ def search(
             # need to initialize the root node, kv-cache
             assert action is None
             assert depth is None
-            context_tokens_tensor, context_length_tensor = inference_strategy.tokenize_batch(
-                inputs, 0, False
-            )
+            if isinstance(inputs, tuple): # tuple of (context_tokens_tensor, context_length_tensor)
+                context_tokens_tensor, context_length_tensor = inputs
+            else:
+                context_tokens_tensor, context_length_tensor = inference_strategy.tokenize_batch(
+                    inputs, 0, False
+                )
             batch_size = context_tokens_tensor.size(0)
             depth = torch.cuda.IntTensor(batch_size, 1)
             depth[:] = 0

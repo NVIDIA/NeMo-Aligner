@@ -10,7 +10,7 @@ inference:
   min_tokens_to_generate: 0  # The minimum length of the sequence to be generated.
   compute_logprob: False  # a flag used to compute logprob of all the input text, a very special case of running inference, default False
   end_strings: ["<|endoftext|>", "<extra_id_1>"]  # generation will stop when one of these tokens is generated
-  micro_batch_size: 2
+  micro_batch_size: 16
   port: 2323
 
 trainer:

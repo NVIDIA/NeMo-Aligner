@@ -344,8 +344,12 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             # need position ids of length minlen + step
             # sequence_len_offset should start with minlen - 1
             attention_mask_3d = self.search_db.get_attention_mask(session_info)[..., :minlen + step, :minlen + step]
+            attention_mask_3d = attention_mask_3d[0:1] # only need one copy
             tokens2use = tokens[:, step].view(micro_batch_size, -1)
             positions2use = self.search_db.get_position_ids(session_info)[..., :minlen + step]
+            if positions2use.shape[0] != micro_batch_size:
+                # repeate the position ids
+                positions2use = positions2use[0:1, ...].repeat(micro_batch_size, 1)
             positions2use = positions2use.view(micro_batch_size, -1)
             inference_params = self.get_inference_params(session_info)
             if step == 0:
