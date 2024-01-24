@@ -17,9 +17,7 @@
 from typing import Dict, Optional
 
 import hydra
-import torch
 from omegaconf import DictConfig
-from torchmetrics import Metric
 
 
 class InferenceMetricsHandler:
@@ -54,23 +52,3 @@ class InferenceMetricsHandler:
         """Will reset state of all metrics to prepare for the next validation run."""
         for metric in self.metrics.values():
             metric.reset()
-
-
-class ExactStringMatchMetric(Metric):
-    """Computing exact string match between predicted and target outputs."""
-
-    def __init__(self, **kwargs):
-        super().__init__(dist_sync_on_step=False, **kwargs)
-
-        self.add_state("correct", default=torch.tensor(0, device="cuda"), dist_reduce_fx="sum")
-        self.add_state("total", default=torch.tensor(0, device="cuda"), dist_reduce_fx="sum")
-
-    def update(self, batch, generation_output):
-        for idx in range(len(batch["metadata"])):
-            pred_output = generation_output["predictions"][idx]
-            target_output = batch["metadata"][idx]["output"]
-            self.correct += pred_output == target_output
-            self.total += 1
-
-    def compute(self):
-        return self.correct.float() / self.total

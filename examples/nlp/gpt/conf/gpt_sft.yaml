@@ -19,7 +19,7 @@ trainer:
     # can be used to register any custom metrics that require token-by-token generation
     # inference_metrics:
     #   my_metric_name1:
-    #     _target_: nemo_aligner.metrics.ExactStringMatchMetric
+    #     _target_: <metric class>
     #   my_metric_name2:
     #     _target_: <metric class>
     #     <any required arguments>
@@ -87,13 +87,22 @@ model:
   ffn_dropout: 0.0
 
   # can be used to customize behavior of model.generate for inference metrics
-  # note that you only need to specify parameters that are different from the default values
+  # note that you have to specify all parameters explicitly even if they match defaults
+  # as long as you change at least one parameter
   #
   # inference:
   #   sampling_params:
-  #     greedy: False
+  #     use_greedy: False
   #     temperature: 0.7
+  #     top_k: 0
+  #     top_p: 0.95
+  #     repetition_penalty: 1.0
+  #     add_BOS: True
+  #     all_probs: False
+  #     compute_logprob: False
+  #     end_strings: ["<|endoftext|>", "<extra_id_1>"]
   #   length_params:
+  #     min_length: 0
   #     max_length: 512
   #   strategy:
   #     _target_: <custom strategy class>
