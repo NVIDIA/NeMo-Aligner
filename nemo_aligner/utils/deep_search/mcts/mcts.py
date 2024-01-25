@@ -19,6 +19,7 @@ import numpy as np
 from megatron.core import InferenceParams
 from pytriton.client import ModelClient
 import hashlib
+import tqdm
 
 
 def context_to_id(context: str) -> str:
@@ -158,15 +159,16 @@ class MCTSParallel:
         # decoded_text = "".join(state).replace('▁', ' ').lstrip()
         return decoded_text
     
-    def get_value_and_terminated(self, node, data_id):
-        depth = node.depth
+    def get_text(self, node):
         all_tokens = []
         all_tokens += node.state[::-1]
         while node.parent is not None:
             node = node.parent
             all_tokens += node.state[::-1]
         text = self.decode_text(all_tokens[::-1])
-
+        return text
+   
+    def get_value_and_terminated(self, text, data_id, depth):
         terminate = False
         for fun in self.terminate_fns:
             if fun(text, depth):
@@ -233,7 +235,8 @@ class MCTSParallel:
                     node = node.select()
                 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
-                value, is_terminal = self.get_value_and_terminated(node, spg.data_id)
+                text = self.get_text(node)
+                value, is_terminal = self.get_value_and_terminated(text, spg.data_id, node.depth)
 
                 if is_terminal:
                     # if terminal, then backpropagate the value, and skip the expansion of the node because spg.node is None
@@ -271,3 +274,65 @@ class MCTSParallel:
 
                 node.backpropagate(spg_value.item())
 
+
+def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max_steps: int, temperature: float):
+    # equavalent to the alpha zero self play
+    # for a list of parallel_searche instances
+    # do the mcts search to find the best action and improved policy
+    # move on to next next state until either the end of chat is reached or the max_steps is reached
+    # collect the memory from all the improved response during the self play
+    return_memory = []
+    
+    # play each of the spg to the end 
+    count = 0
+    # add a progress bar to show the progress of the self play
+    total_steps = max_steps
+    pb = tqdm.tqdm(total=total_steps, desc=f'Self Play') 
+    while len(parallel_searches) > 0:
+        # TODO need to clear the session memory in the server
+        count += 1
+        pb.update(1)
+        # show number os paralell searches left in the progress bar
+        pb.set_postfix({'searches': len(parallel_searches)})
+
+        # start to do the mcts search 
+        mcts.search(parallel_searches)
+        
+        # loop from large to small so that we can remove search instances as we go
+        for i in range(len(parallel_searches))[::-1]:
+            spg = parallel_searches[i]
+            action_size = len(spg.root.children)
+            action_probs = np.zeros(action_size, dtype=np.float32)
+            actions = np.zeros(action_size, dtype=np.int32)
+            for child_id, child in enumerate(spg.root.children):
+                action_probs[child_id] = child.visit_count
+                actions[child_id] = child.action
+            action_probs /= np.sum(action_probs)
+
+            # the spg.root.state is the neutral state set at the beginning of the search 
+            spg.memory.append((spg.root.state, action_probs, actions))
+
+            temperature_action_probs = action_probs ** (1.0 / temperature)
+            temperature_action_probs /= np.sum(temperature_action_probs)
+            action_index = np.random.choice(action_size, p=temperature_action_probs) # Divide temperature_action_probs with its sum in case of an error
+            action = actions[action_index].item()
+
+            spg.state = spg.state + [action]
+
+            #  get the value and termination condition from the current taken `action`
+            text = mcts.decode_text(spg.state)
+            value, is_terminal = mcts.get_value_and_terminated(text, spg.data_id, i+1)
+
+            if is_terminal:
+                # loop through all the steps and add to the memory
+                # need to update the value based on the game play at the end of the games
+                for tokens, hist_action_probs, actions in spg.memory:
+                    hist_outcome = value
+                    return_memory.append((
+                        tokens,
+                        hist_action_probs,
+                        hist_outcome
+                    ))
+                del parallel_searches[i]
+
+    return return_memory
