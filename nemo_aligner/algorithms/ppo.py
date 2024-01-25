@@ -363,13 +363,16 @@ class PPOTrainer:
             )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
-        logging.info(f"{self.step=}, {self.epoch=}, {self.cfg.max_epochs=}")
+        logging.info(f"{self.step=}, {self.num_steps_per_epoch=}, {self.epoch=}, {self.cfg.max_epochs=}")
         if len(epoch_iter) <= 0:
             # epoch done
             return
 
         for _ in epoch_iter:
-            num_steps_in_epoch = self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
+            num_steps_in_epoch = min(
+                self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
+            )
+            # num_steps_in_epoch = self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
             loop_iter = range(num_steps_in_epoch)
             logging.info(f"{num_steps_in_epoch=}")
 
@@ -469,7 +472,9 @@ class PPOTrainer:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
 
+        logging.info("All done, finalizing logger")
         self.logger.finalize()
+        logging.info("Returning from `fit()`")
 
     def state_dict(self):
         return {
