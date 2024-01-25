@@ -362,6 +362,9 @@ class PPOTrainer:
                 "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomSampler` as the batch_sampler for your train dataloader"
             )
 
+        logging.info(
+            f"fit() starting - {self.step=}, {self.num_steps_per_epoch=}, {self.epoch=}, {self.cfg.max_epochs=}"
+        )
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
@@ -372,6 +375,9 @@ class PPOTrainer:
                 self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
             )
             loop_iter = range(num_steps_in_epoch)
+            logging.info(
+                f"Starting epoch {self.epoch=} - {self.step=}, {self.num_steps_per_epoch=}, {self.max_steps=}, {num_steps_in_epoch=}"
+            )
 
             if not loop_iter:
                 return  # training ended
@@ -386,7 +392,8 @@ class PPOTrainer:
             num_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
 
             self.run_timer.start_time()
-            for _ in global_pbar:
+            for step_idx in global_pbar:
+                logging.info(f"{step_idx=}, {self.step=}")
                 step_metrics = {}
                 timing_metrics = {}
 

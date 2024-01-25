@@ -257,6 +257,8 @@ class CriticServerTrainer:
 
         global_pbar = tqdm(gbs_iterator, total=num_gbs, leave=True, desc="Training steps")
 
+        logging.info(f"Training critic - {batch['tokens'].shape=}")
+
         for gbs in global_pbar:
             # get the batch we need to process for DP
             dp_batch = list(get_iterator_k_split(gbs, parallel_state.get_data_parallel_world_size()))[
