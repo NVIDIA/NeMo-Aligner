@@ -21,12 +21,18 @@ from pytriton.client import ModelClient
 import hashlib
 
 
+def context_to_id(context: str) -> str:
+    # generate unique context ids using hash function
+    output = hashlib.md5(context.encode())
+    return output.hexdigest()
+
 
 class ParallelSearch:
     """a class to store the state, root node, and current node of a single player game
     """
-    def __init__(self, state):
+    def __init__(self, state, data_id):
         self.state = state # list of tokens 
+        self.data_id = data_id # data id of the state
         # memory is a list of (state, improved policy, player) tuples
         # from the root state to the end of the game
         self.memory = []
@@ -139,34 +145,40 @@ class Node:
 
 
 class MCTSParallel:
-    def __init__(self, args, url, model_name, tokenizer, session_info='session'):
+    def __init__(self, args, url, model_name, tokenizer, session_info='session', score_fn=None, terminate_fns=None):
         self.args = args
         self.client = ModelClient(url, model_name) 
         self.tokenizer = tokenizer
         self.session = session_info
+        self.score_fn = score_fn
+        self.terminate_fns = terminate_fns
     
     def decode_text(self, state):
         decoded_text = self.tokenizer.decode(state)
         # decoded_text = "".join(state).replace('▁', ' ').lstrip()
         return decoded_text
     
-    def context_to_id(self, context: str) -> str:
-        # generate unique context ids using hash function
-        output = hashlib.md5(context.encode())
-        return output.hexdigest()
-
-    def get_value_and_terminated(self, node):
+    def get_value_and_terminated(self, node, data_id):
         depth = node.depth
         all_tokens = []
         all_tokens += node.state[::-1]
         while node.parent is not None:
             node = node.parent
             all_tokens += node.state[::-1]
-        terminate = self.args['max_depth'] <= depth
         text = self.decode_text(all_tokens[::-1])
+
+        terminate = False
+        for fun in self.terminate_fns:
+            if fun(text, depth):
+                terminate = True
+                break
+        
+        value = 0.0
+        if terminate:
+            value = self.score_fn.score(text, data_id)
         print(text)
         # check 
-        return 0, terminate
+        return value, terminate
        
     @torch.no_grad()
     def search(self, ps: List[ParallelSearch]):
@@ -174,8 +186,8 @@ class MCTSParallel:
         # spGames: list of spGame
         inputs = [self.decode_text(spg.state) for spg in ps]
 
-        context_input_map = {self.context_to_id(input_item): input_item for input_item in inputs}
-        input_context_map = {input_item: self.context_to_id(input_item) for input_item in inputs}
+        context_input_map = {context_to_id(input_item): input_item for input_item in inputs}
+        input_context_map = {input_item: context_to_id(input_item) for input_item in inputs}
 
         streamline_inputs = [b for _, b in context_input_map.items()]
         streamline_context_ids = [a for a, _ in context_input_map.items()]
@@ -198,9 +210,10 @@ class MCTSParallel:
             spg_policy = input_policy_map[spg_input]
             spg_action = input_action_map[spg_input]
             context_id = input_context_map[spg_input]
+            action_size = spg_action.shape[0]
 
             spg_policy = (1 - self.args['dirichlet_epsilon']) * spg_policy + self.args['dirichlet_epsilon'] \
-                * np.random.dirichlet([self.args['dirichlet_alpha']] * self.args['action_size'], size=1)[0]
+                * np.random.dirichlet([self.args['dirichlet_alpha']] * action_size, size=1)[0]
  
             # no need to handle the case that no valid moves
             # because the we search the states[i] which has at least one valid move
@@ -220,7 +233,7 @@ class MCTSParallel:
                     node = node.select()
                 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
-                value, is_terminal = self.get_value_and_terminated(node)
+                value, is_terminal = self.get_value_and_terminated(node, spg.data_id)
 
                 if is_terminal:
                     # if terminal, then backpropagate the value, and skip the expansion of the node because spg.node is None
@@ -257,3 +270,4 @@ class MCTSParallel:
                 node.expand(spg_policy, spg_action)
 
                 node.backpropagate(spg_value.item())
+
