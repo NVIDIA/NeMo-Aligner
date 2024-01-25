@@ -397,11 +397,3 @@ def convert_to_amp_o2_format(state_dict):
         new_state_dict[new_key] = state_dict[key]
 
     return new_state_dict
-
-
-def get_iterator_k_split_list(batch, num_microbatches):
-
-    assert len(batch) % num_microbatches == 0, "Issue with batch size configuration!"
-    microbatches = [batch[i : i + num_microbatches] for i in range(0, len(batch), num_microbatches)]
-
-    return itertools.chain(microbatches)

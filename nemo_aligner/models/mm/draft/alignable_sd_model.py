@@ -93,7 +93,6 @@ class AlignableSDModel(AlignableGenerativeInterface):
         tokenizer,
         optimizer,
         config: DictConfig,
-        megatron_model: MegatronLatentDiffusion,
         logger,
     ):
         self.model = model
@@ -102,13 +101,12 @@ class AlignableSDModel(AlignableGenerativeInterface):
         self.tokenizer = tokenizer
         self.optimizer = optimizer
         self.cfg = config
-        self.megatron_model = megatron_model
         self.logger = logger
 
         self.generation_counter = 0
-        self.with_distributed_adam = self.megatron_model.with_distributed_adam
+        self.with_distributed_adam = self.model.with_distributed_adam
         self.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
-        self.megatron_model.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
+        self.model.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
         self.model.model.first_stage_model.requires_grad_(False)
 
         self.distributed_adam_offload_manager = None
@@ -152,13 +150,13 @@ class AlignableSDModel(AlignableGenerativeInterface):
 
     def prepare_for_generation(self):
         # self.model.eval()
-        self.megatron_model._reset_activation_checkpointing_args()
-        self.megatron_model._reset_sequence_parallelism_args()
+        self.model._reset_activation_checkpointing_args()
+        self.model._reset_sequence_parallelism_args()
         return
 
     def finished_generation(self):
-        self.megatron_model._restore_activation_checkpointing_args()
-        self.megatron_model._restore_sequence_parallelism_args()
+        self.model._restore_activation_checkpointing_args()
+        self.model._restore_sequence_parallelism_args()
         return
 
     @torch.no_grad()
@@ -500,7 +498,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
         if torch.distributed.get_rank() == 0 and len(self.logger.loggers) > 1:
             self.log_visualization(batch[0:1])
 
-        if self.megatron_model.with_distributed_adam:
+        if self.model.with_distributed_adam:
             # synchronize asynchronous grad reductions
             # note: not necessary, but reduces performance degradation
             # from multiple simultaneous NCCL calls
@@ -508,7 +506,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
         else:
             # async grad allreduce is not currently implemented for O1/autocasting mixed precision training
             # so we all-reduce gradients after the pipeline
-            self.megatron_model.allreduce_gradients()
+            self.model.allreduce_gradients()
 
         metrics = {}
 
@@ -529,14 +527,14 @@ class AlignableSDModel(AlignableGenerativeInterface):
     def grad_reductions(self):
         # when using sequence parallelism, the sequence parallel layernorm grads must be all-reduced
         if parallel_state.get_tensor_model_parallel_world_size() > 1 and self.cfg.get("sequence_parallel", False):
-            self.megatron_model.allreduce_sequence_parallel_gradients()
+            self.model.allreduce_sequence_parallel_gradients()
 
-        if self.megatron_model.with_distributed_adam:
+        if self.model.with_distributed_adam:
             # synchronize asynchronous grad reductions
             # note: not necessary, but reduces performance degradation
             # from multiple simultaneous NCCL calls
             self.optimizer._finish_bucket_grad_sync()
-        elif self.megatron_model.megatron_amp_O2:
+        elif self.model.megatron_amp_O2:
             # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
             if parallel_state.get_pipeline_model_parallel_world_size() > 1 or self.cfg.get("sequence_parallel", False):
                 # main grads are stored in the MainParamsOptimizer wrapper
@@ -544,8 +542,8 @@ class AlignableSDModel(AlignableGenerativeInterface):
         else:
             # async grad allreduce is not currently implemented for O1/autocasting mixed precision training
             # so we all-reduce gradients after the pipeline
-            self.megatron_model.allreduce_gradients()  # @sangkug we think this is causing memory to blow up (hurts perf)
+            self.model.allreduce_gradients()  # @sangkug we think this is causing memory to blow up (hurts perf)
 
         if parallel_state.get_pipeline_model_parallel_world_size() > 1:
             # when using pipeline parallelism the first and last stage must keep embeddings in sync
-            self.megatron_model.allreduce_first_last_embeddings()
+            self.model.allreduce_first_last_embeddings()

@@ -20,7 +20,7 @@ from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 from nemo_aligner.utils.distributed import Timer
 from nemo.collections.multimodal.models.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
-from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
+from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.core.config import hydra_runner
@@ -44,44 +44,14 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 mp.set_start_method("spawn", force=True)
 
-# TODO @geshen: to get the trainer builder for stable diffusion, training script for the Stable Diffusion has an override for training strategy,
-#             the following is brought from sd_train.py. Is that okay?
-
-# TODO @ataghibakhsh: push the following into MegatronTrainerBuilder
-
-class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
-    """Builder for SD model Trainer with overrides."""
-
-    def _training_strategy(self) -> NLPDDPStrategy:
-        """
-        Returns a ddp strategy passed to Trainer.strategy.
-        """
-        ddp_overlap = self.cfg.model.get("ddp_overlap", True)
-        if ddp_overlap:
-            return NLPDDPStrategy(
-                no_ddp_communication_hook=False,
-                gradient_as_bucket_view=self.cfg.model.gradient_as_bucket_view,
-                find_unused_parameters=True,
-                bucket_cap_mb=256,
-            )
-        else:
-            return NLPDDPStrategy(
-                no_ddp_communication_hook=True,
-                gradient_as_bucket_view=self.cfg.model.gradient_as_bucket_view,
-                find_unused_parameters=False,
-            )
-
-
 @hydra_runner(config_path="conf", config_name="train_sd_draft")
 def main(cfg) -> None:
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
-    # TODO: Check if tf32 is necassary. Brought from stable diffusion training script (sd_train.py)
-    # TODO: Check if it works if we set to False
+
+    # TODO: has to be set true for PyTorch 1.12 and later.
     torch.backends.cuda.matmul.allow_tf32 = True
-    # TODO: @ataghibakhsh Fix the dataset_path issue
-    cfg.model.data.train.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)]
 
     trainer = MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
     exp_manager(trainer, cfg.exp_manager)
@@ -120,9 +90,8 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    # TODO: consumed samples needs to be set
-    train_dataset, val_dataset = text_webdataset.build_train_valid_datasets(cfg.model, consumed_samples=0)
-    train_dataset = [d["captions"] for d in list(train_dataset)]  # TODO  make with torch Dataset
+    train_dataset, _ = text_webdataset.build_train_valid_datasets(cfg.model, consumed_samples=consumed_samples)
+    train_dataset = [d["captions"] for d in list(train_dataset)]  
 
     train_dataloader = build_dataloader(
         cfg,
@@ -155,13 +124,10 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
-    # TODO: What would be cleanest way to add the RM?
-    # TODO: @ataghibakhsh Later replace with NeMo RMs
-
     reward_model = get_reward_model(cfg.RM, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
 
     alignable_model = AlignableSDModel(
-        ptl_model, reward_model, ptl_model.tokenizer, optimizer, cfg.model, ptl_model, logger=logger
+        ptl_model, reward_model, ptl_model.tokenizer, optimizer, cfg.model, logger=logger
     )
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)

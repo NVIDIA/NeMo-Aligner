@@ -4,7 +4,7 @@ WANDB="8256bec8f68d1a0ee4a3208685a8db0474d3806b"
  
 export PYTHONPATH=/opt/NeMo:/opt/nemo-aligner:$PYTHONPATH
 
-ACTOR_NUM_DEVICES=1
+ACTOR_NUM_DEVICES=2
 ACTOR_MICRO_BS=1
 GRAD_ACCUMULATION=1
 ACTOR_GLOBAL_BATCH_SIZE=$((ACTOR_MICRO_BS*ACTOR_NUM_DEVICES*GRAD_ACCUMULATION))
@@ -17,10 +17,11 @@ ACTOR_CKPT="/opt/nemo-aligner/checkpoints/model_weights.ckpt"
 VAE_CKPT="/opt/nemo-aligner/checkpoints/vae.bin"
 ACTOR_WANDB_NAME=draft-ws-LR_${LR}-KL_${KL_COEF}-BS_${ACTOR_GLOBAL_BATCH_SIZE}
 DIR_SAVE_CKPT_PATH="/opt/nemo-aligner/draft_saved_ckpts"
+DATASET_PATH="/opt/nemo-aligner/datasets/animals45.tar"
 
 mkdir -p ${DIR_SAVE_CKPT_PATH}
 
-ACTOR_DEVICE="0"
+ACTOR_DEVICE="0,1"
 echo "Running DRaFT on ${ACTOR_DEVICE}"
 git config --global --add safe.directory /opt/nemo-aligner \
 && wandb login ${WANDB} \
@@ -42,6 +43,8 @@ git config --global --add safe.directory /opt/nemo-aligner \
     model.micro_batch_size=${ACTOR_MICRO_BS} \
     model.global_batch_size=${ACTOR_GLOBAL_BATCH_SIZE} \
     model.peft.enable=False \
+    model.data.train.dataset_path=${DATASET_PATH} \
+    model.data.webdataset.local_root_path=${DATASET_PATH} \
     trainer.val_check_interval=20 \
     trainer.gradient_clip_val=10.0 \
     trainer.devices=${ACTOR_NUM_DEVICES} \
