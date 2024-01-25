@@ -53,7 +53,7 @@ class MegatronPretrainingRandomSampler(BaseMegatronSampler):
         self.seed = seed
 
     def __len__(self):
-        active_total_samples = self.total_samples - self.last_batch_size
+        active_total_samples = self.total_samples - (self.last_batch_size if self.drop_last else 0)
         num_available_samples = (
             active_total_samples * (1 + (self.consumed_samples // active_total_samples))
         ) - self.consumed_samples

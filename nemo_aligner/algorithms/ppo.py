@@ -363,7 +363,6 @@ class PPOTrainer:
             )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
-        logging.info(f"{self.step=}, {self.num_steps_per_epoch=}, {self.epoch=}, {self.cfg.max_epochs=}")
         if len(epoch_iter) <= 0:
             # epoch done
             return
@@ -372,9 +371,10 @@ class PPOTrainer:
             num_steps_in_epoch = min(
                 self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
             )
-            # num_steps_in_epoch = self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
             loop_iter = range(num_steps_in_epoch)
-            logging.info(f"{num_steps_in_epoch=}")
+
+            if not loop_iter:
+                return  # training ended
 
             dataloader_iter = iter(self.train_dataloader)
 
@@ -386,8 +386,7 @@ class PPOTrainer:
             num_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
 
             self.run_timer.start_time()
-            for step_idx in global_pbar:
-                logging.info(f"{step_idx=}, {self.step=}")
+            for _ in global_pbar:
                 step_metrics = {}
                 timing_metrics = {}
 
@@ -397,7 +396,6 @@ class PPOTrainer:
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
                 # send critic train
-                clear_memory()
                 self.rm_critic.train(ppo_rollout_data)
 
                 # logging
@@ -472,9 +470,7 @@ class PPOTrainer:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
 
-        logging.info("All done, finalizing logger")
         self.logger.finalize()
-        logging.info("Returning from `fit()`")
 
     def state_dict(self):
         return {
