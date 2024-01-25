@@ -13,4 +13,4 @@
 # limitations under the License.
 
 # importing all available metrics here to make it easier to import from the config
-from nemo_aligner.metrics.common import ExactStringMatchMetric, InferenceMetricsHandler
+from nemo_aligner.metrics.common import InferenceMetricsHandler
