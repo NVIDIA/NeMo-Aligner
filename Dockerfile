@@ -32,7 +32,7 @@ RUN pip uninstall -y transformer-engine && \
 # install latest apex
 RUN pip uninstall -y apex && \
     git clone https://github.com/NVIDIA/apex && \
-	cd apex && \
+    cd apex && \
     if [ ! -z $APEX_TAG ]; then \
         git fetch origin $APEX_TAG && \
         git checkout FETCH_HEAD; \
@@ -69,6 +69,7 @@ RUN pip uninstall -y megatron-core && \
     fi && \
     pip install -e .
 
+# NeMo Aligner
 RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
     cd NeMo-Aligner && \
     git pull && \
