@@ -419,12 +419,13 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         self.search_db.add_inference_params(session_info, inference)
         return tokens, new_context_lengths, true_context_lengths
 
-    def update_kv_cache(self, session_info: str, node: Node, depth: int, context_length:int, batch_id: int):
+    def update_kv_cache(self, session_info: str, node: Node, depth: int, context_length:int, batch_id: int, value: float):
         infer_params = self.get_inference_params(session_info)
         state = State.get_state(infer_params, depth, context_length, batch_id)
         node.state = state
+        node.value_sum = value
 
-    def save_kv_cache(self, session_info: str, context_ids: List[str], depths: torch.Tensor, batch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, context_tokens: torch.Tensor = None):
+    def save_kv_cache(self, session_info: str, context_ids: List[str], depths: torch.Tensor, batch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, action_policy: torch.Tensor, action_value: torch.Tensor, context_tokens: torch.Tensor = None):
         for bid in range(batch_size): 
             context_length = context_lengths[bid].item()
             depth = depths[bid].item()
@@ -434,13 +435,20 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             # self.search_db.add_kv_cache(session_id, depth, tokens, kv_cache)
             parent_node = parent_nodes[bid]
             action_taken = actions_taken[bid].item()
+            prior_prob = action_policy[bid].item()
+            value = None
+            if action_value is not None:
+                value = action_value[bid].item()
             # here prior visit_count and C are not used, set to any numbers
             if action_taken == -1:
                 # root node, need to add all context tokens
                 tokens = context_tokens[bid, :context_length].cpu().numpy().tolist()
-                node = Node(state=state, parent=parent_node, action=tokens, prior=0.0, visit_count=0, C=2.0)
+                node = Node(state=state, parent=parent_node, action=tokens, prior=0.0, visit_count=0, C=2.0, value_sum=value)
             else:
-                node = Node(state=state, parent=parent_node, action=action_taken, prior=0.0, visit_count=0, C=2.0)
+                node = Node(state=state, parent=parent_node, action=action_taken, prior=prior_prob, visit_count=0, C=2.0, value_sum=value)
+            # add child node to the parent node
+            if parent_node is not None:
+                parent_node.children.append(node)
             self.search_db.add(session_info, context_id, depth, action_taken, node)
     
     def get_node(self, session_info: str, context_id: str, depth: int, action: int):

@@ -46,6 +46,29 @@ class SearchDB:
     def get(self, session_info, context_id, depth, action):
         return self.db[session_info][context_id][(depth, action)]
 
+    def get_infer_cache(self, session_info, context_id, depth, action):
+        if session_info not in self.db:
+            return None
+        if context_id not in self.db[session_info]:
+            return None
+        if (depth, action) not in self.db[session_info][context_id]:
+            return None
+        node = self.db[session_info][context_id][(depth, action)]
+        if node.value_sum is None:
+            return None
+        
+        output = {}
+        output['value'] = node.value_sum
+        actions = []
+        policy = []
+        for child in node.children:
+            actions.append(child.action)
+            policy.append(child.prior)
+        output['action'] = np.array(actions)
+        output['policy'] = np.array(policy)
+        output['value'] = np.array(node.value_sum)
+        return output
+
     def get_attention_mask(self, session_id): 
         return self.attention_mask[session_id]
     

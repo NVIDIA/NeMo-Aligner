@@ -83,7 +83,7 @@ class State:
 
 
 class Node:
-    def __init__(self, state, parent=None, action=None, prior=0.0, visit_count=0, C=2.0, depth=0, context_id = None):
+    def __init__(self, state, parent=None, action=None, prior=0.0, visit_count=0, C=2.0, depth=0, context_id = None, value_sum=0.0):
         """Node used in MCTS
         Args:
             state (State): inference state 
@@ -102,7 +102,7 @@ class Node:
         self.children = []
 
         self.visit_count = visit_count
-        self.value_sum = 0.0
+        self.value_sum = value_sum
         # whether the parent turn is skipped or not
         self.skip_parent = False
         self.depth = depth
