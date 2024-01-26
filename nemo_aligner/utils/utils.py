@@ -114,7 +114,7 @@ def load_checkpoint_model_config(restore_path):
 
 def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_meta_info=True):
     """load the config in the model checkpoint and then overwrite it
-        with whatever is provided 
+        with whatever is provided
     """
     checkpoint_cfg = load_checkpoint_model_config(restore_path)
 

@@ -104,18 +104,19 @@ def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
     ptl_trainer._checkpoint_connector._restore_modules_and_callbacks(ptl_trainer.ckpt_path)
     ptl_trainer._checkpoint_connector.restore_training_state()
     ptl_trainer._checkpoint_connector.resume_end()
-    scheduler = ptl_model._scheduler["scheduler"]
+    if ptl_model._scheduler is not None:
+        scheduler = ptl_model._scheduler["scheduler"]
 
-    # restore the previous state of the learning rate
-    if scheduler.last_epoch > 0:
-        # NOTE: we are doing this because load_state_dict on a LRScheduler
-        # does not do anything that restores the learning rate on the optimizer
-        # stepping here will restore it properly
-        scheduler.step(scheduler.last_epoch)
+        # restore the previous state of the learning rate
+        if scheduler.last_epoch > 0:
+            # NOTE: we are doing this because load_state_dict on a LRScheduler
+            # does not do anything that restores the learning rate on the optimizer
+            # stepping here will restore it properly
+            scheduler.step(scheduler.last_epoch)
 
 
 def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
-    """get a function we can conveniently call within the trainer that saves the checkpoint  
+    """get a function we can conveniently call within the trainer that saves the checkpoint
     """
     for callback in ptl_trainer.callbacks:
         if isinstance(callback, NeMoModelCheckpoint):

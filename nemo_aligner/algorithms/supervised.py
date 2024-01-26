@@ -18,9 +18,9 @@ from statistics import mean
 import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
+
 from nemo.utils import logging
-
-
+from nemo_aligner.metrics import InferenceMetricsHandler
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
@@ -72,6 +72,9 @@ class SupervisedTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
+        # any metrics that require running full token-by-token inference during validation
+        self.inference_metrics_handler = InferenceMetricsHandler(cfg.get("inference_metrics"))
+
     def validation_step(self, batch):
         self.model.prepare_for_validation_step()
 
@@ -97,8 +100,11 @@ class SupervisedTrainer:
             loss_mean, metrics = self.validation_step(batch)
             self.timer.stop("validation_step_time")
             validation_step_time = self.timer.get("validation_step_time")
-
             metrics["validation_step_time"] = validation_step_time
+
+            if self.inference_metrics_handler.has_metrics():
+                generation_output = self.run_generation(batch)
+                self.inference_metrics_handler.update(batch, generation_output)
 
             loss_means.append(loss_mean)
             for k, v in metrics.items():
@@ -107,6 +113,9 @@ class SupervisedTrainer:
             val_pbar.set_postfix(log_val_metrics)
 
         val_metrics = {k: mean(v) for k, v in val_metrics.items()}
+        val_metrics.update(self.inference_metrics_handler.compute())
+        self.inference_metrics_handler.reset()
+
         return mean(loss_means), val_metrics
 
     def train_single_step(self, batch):
@@ -124,7 +133,8 @@ class SupervisedTrainer:
         lr = self.optimizer.param_groups[0]["lr"]
 
         self.optimizer.step()
-        self.scheduler.step()
+        if self.scheduler is not None:
+            self.scheduler.step()
 
         trainer_metrics = {}
         if grad_norm is not None:
@@ -132,6 +142,10 @@ class SupervisedTrainer:
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
 
         return loss_mean, trainer_metrics | metrics
+
+    @torch.no_grad()
+    def run_generation(self, batch):
+        return self.model.infer({"text": batch["contexts"], "length": batch["context_lengths"]})
 
     def fit(self):
         if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
@@ -158,6 +172,7 @@ class SupervisedTrainer:
             )
 
             for _, batch in zip(loop_iter, global_pbar):
+
                 self.timer.start("train_step_time")
                 loss, metrics = self.train_single_step(batch)
                 self.timer.stop("train_step_time")
