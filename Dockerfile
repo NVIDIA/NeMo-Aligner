@@ -8,6 +8,7 @@ ARG MLM_TAG=core_r0.4.0
 ARG NEMO_TAG=r1.22.0
 ARG PYTRITON_VERSION=0.4.1
 ARG PROTOBUF_VERSION=4.24.4
+ARG ALIGNER_COMMIT=main
 
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
@@ -31,7 +32,7 @@ RUN pip uninstall -y transformer-engine && \
 # install latest apex
 RUN pip uninstall -y apex && \
     git clone https://github.com/NVIDIA/apex && \
-	cd apex && \
+    cd apex && \
     if [ ! -z $APEX_TAG ]; then \
         git fetch origin $APEX_TAG && \
         git checkout FETCH_HEAD; \
@@ -68,9 +69,14 @@ RUN pip uninstall -y megatron-core && \
     fi && \
     pip install -e .
 
-WORKDIR /opt
-
-# install the latest NeMo-Aligner
-RUN pip install --no-deps git+https://github.com/NVIDIA/NeMo-Aligner.git@main
+# NeMo Aligner
+RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
+    cd NeMo-Aligner && \
+    git pull && \
+    if [ ! -z $ALIGNER_COMMIT ]; then \
+        git fetch origin $ALIGNER_COMMIT && \
+        git checkout FETCH_HEAD; \
+    fi && \
+    pip install --no-deps -e .
 
 WORKDIR /workspace

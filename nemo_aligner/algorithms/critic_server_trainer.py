@@ -72,11 +72,12 @@ class CriticServerTrainer:
             Tensor(name="sequence_lengths", shape=(-1,), dtype=np.int64, optional=True),
             Tensor(name="add_EOS", shape=(1,), dtype=np.bool_, optional=True),
         )
-        self.infer_outputs = (
+        self.infer_outputs = [
             Tensor(name="values", shape=(-1,), dtype=np.float32),
-            Tensor(name="rewards", shape=(-1,), dtype=np.float32),
             Tensor(name="exceeded", shape=(1,), dtype=np.int32),
-        )
+        ]
+        if self.combine_rm_and_critic_server:
+            self.infer_outputs.append(Tensor(name="rewards", shape=(-1,), dtype=np.float32))
 
         self.train_inputs = (
             Tensor(name="tokens", shape=(-1, -1,), dtype=np.int64, optional=False),
@@ -101,11 +102,13 @@ class CriticServerTrainer:
         torch.distributed.broadcast(choice, 0)
 
         rewards, values, exceeded = self.run_inference(inputs=inputs)
-        return {
+        output = {
             "values": values,
-            "rewards": rewards,
             "exceeded": exceeded,
         }
+        if self.combine_rm_and_critic_server:
+            output["rewards"] = rewards
+        return output
 
     @sample
     @lock_method("self.lock")
@@ -222,7 +225,7 @@ class CriticServerTrainer:
                 rewards, values, exceeded = outputs
             else:
                 values, exceeded = outputs
-                rewards = np.array((1,), np.float32)
+                rewards = None
         else:
             self.infer_fn()
             rewards, values, exceeded = None, None, None
