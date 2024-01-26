@@ -20,6 +20,8 @@ class GSK8KFeedback(Feedback):
         super().__init__()
         self.gsk8k_path = gsk8k_path
         self.gsk8k = pd.read_parquet(self.gsk8k_path)
+#        new_row= {'question': "what is 3+2?", "answer": "3+2=5 #### 5"}
+#        self.gsk8k.loc[0] = new_row
 
     def score(self, response, data_id):
         """

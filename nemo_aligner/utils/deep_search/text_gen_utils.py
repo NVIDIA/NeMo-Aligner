@@ -180,28 +180,32 @@ def dp_search(
         true_context_length=true_context_length,
     )
 
-    result_output_actions_list = gather_tensor(
-        output_actions, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_actions.dtype
-    )
+    # result_output_actions_list = gather_tensor(
+    #     output_actions, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_actions.dtype
+    # )
 
-    result_output_policys_list = gather_tensor(
-        output_policys, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_policys.dtype
-    )
+    # result_output_policys_list = gather_tensor(
+    #     output_policys, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_policys.dtype
+    # )
 
-    result_output_values_list = gather_tensor(
-        output_values, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_values.dtype
-    )
+    # result_output_values_list = gather_tensor(
+    #     output_values, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_values.dtype
+    # )
 
     output = {}
-    if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
-        # concate the output_actions and output_policys
-        output["action"] = torch.cat(result_output_actions_list, dim=0)
-        output["policy"] = torch.cat(result_output_policys_list, dim=0)
-        output["value"] = torch.cat(result_output_values_list, dim=0)
-        # gather the output from data parallel workers
-        output = inference_strategy.post_generation_process(output)
-    else:
-        pass
+    output['action'] = output_actions
+    output['policy'] = output_policys
+    output['value'] = output_values
+    output = inference_strategy.post_generation_process(output)
+    # if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+    #     # concate the output_actions and output_policys
+    #     output["action"] = torch.cat(result_output_actions_list, dim=0)
+    #     output["policy"] = torch.cat(result_output_policys_list, dim=0)
+    #     output["value"] = torch.cat(result_output_values_list, dim=0)
+    #     # gather the output from data parallel workers
+    #     output = inference_strategy.post_generation_process(output)
+    # else:
+    #     pass
     return output
 
 
