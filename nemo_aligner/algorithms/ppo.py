@@ -237,6 +237,7 @@ class PPOTrainer:
 
             rollout_batch = self.model.infer(inference_batch)
             rollout_batches.append(rollout_batch)
+            futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
         print(f"  flag2")
 
         # after rollout batch
