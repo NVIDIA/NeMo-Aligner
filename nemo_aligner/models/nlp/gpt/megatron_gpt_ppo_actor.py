@@ -381,6 +381,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
 
+    def after(self):
         if self.use_trtllm_generation:
             print_mem("pre trt free")
             self.trtllm_generate.free()
@@ -395,6 +396,10 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             self.cuda()
             print_mem("post model restore")
 
+    def finish_inference(self):
+        # training will onload the adam states, no need to onload it here
+        self._restore_activation_checkpointing_args()
+        self._restore_sequence_parallelism_args()
         set_train(self)
 
     def offload_adam_states(self):
@@ -430,8 +435,6 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             print_mem("before onload optim state")
             self.distributed_adam_offload_manager.__exit__(None, None, None)
             print_mem("after onload optim state")
-
-            self.cuda()
 
         self.distributed_adam_offload_manager = None
 
