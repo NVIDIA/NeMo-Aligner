@@ -37,6 +37,15 @@ from nemo_aligner.models.nlp.gpt.gpt_reward_model import RewardModelHead
 """Megatron Core based Reward Model"""
 
 
+def init_method_constant(constant):
+    """Init method to zero"""
+
+    def init_(tensor):
+        return torch.nn.init.constant_(tensor, constant)
+
+    return init_
+
+
 class ValueHead(TransformerBlock):
     """Value head is a transformer block.
        Override the build_layers method so we can change the layer number offset to
@@ -207,7 +216,7 @@ class GPTHybridModel(GPTModel):
                 self.config.hidden_size,
                 num_attributes,
                 config=config,
-                init_method=self.config.init_method,
+                init_method=init_method_constant(0.0),
                 output_sequence=output_sequence,
                 use_avg_pool=use_avg_pool,
                 dtype=self.dtype if head_dtype is None else head_dtype,

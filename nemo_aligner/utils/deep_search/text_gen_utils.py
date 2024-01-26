@@ -105,6 +105,104 @@ def top_k_logits(logits, top_k=0, top_p=0.0, filter_value=-float("Inf"), started
 
     return logits
 
+def dp_search(
+    model,
+    inputs=None,
+    action=None,
+    depth=None,
+    context_ids=None,
+    session_info=None,
+    tokens_to_generate=1,  # max search depth
+    top_k=0,
+    end_strings=["<|endoftext|>"],
+    **strategy_args,
+) -> OutputType:
+    """
+    similar to the search function, but the assumption is that dp_search is called 
+    by rank0 inside each data parallel group. no need of gather and broadcast. 
+    """
+
+    if "strategy" in strategy_args:
+        inference_strategy = strategy_args["strategy"]
+    else:
+        raise ValueError("strategy is not specified")
+
+    if inputs is None:
+        # not the first node
+        assert action is not None
+        assert depth is not None
+        # action is a tensor of shape [batch_size, 1], type int32
+        # it is the selected actions during tree search from node at depth, type int32
+        # depth is a tensor of shape [batch_size, 1]
+        # from the action and depth values, we can retrieve the node
+        action = torch.cuda.IntTensor(action)
+        depth = torch.cuda.IntTensor(depth)
+        batch_size = action.shape[0]
+        context_tokens_tensor = torch.cuda.LongTensor(batch_size, 1)
+        context_length_tensor = torch.cuda.LongTensor(batch_size)
+    else:
+        # first time to run inference,
+        # need to initialize the root node, kv-cache
+        assert action is None
+        assert depth is None
+        if isinstance(inputs, tuple): # tuple of (context_tokens_tensor, context_length_tensor)
+            context_tokens_tensor, context_length_tensor = inputs
+        else:
+            context_tokens_tensor, context_length_tensor = inference_strategy.tokenize_batch(
+                inputs, 0, False
+            )
+        batch_size = context_tokens_tensor.size(0)
+        depth = torch.cuda.IntTensor(batch_size, 1)
+        depth[:] = 0
+        action = torch.cuda.IntTensor(batch_size, 1)
+        action[:] = 0
+
+    # init the objects for inference
+    init = depth[0].item() == 0
+    true_context_length = None
+    if init:
+        inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_info)
+    else:
+        context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(session_info, context_ids, depth, action)
+
+    output_actions, output_policys, output_values = sample_sequence_batch(
+        model,
+        inference_strategy,
+        context_tokens_tensor,
+        context_length_tensor,
+        tokens_to_generate,
+        end_strings=end_strings,
+        context_ids=context_ids,
+        session_info=session_info,
+        top_k=top_k,
+        init=init,
+        depths=depth,
+        true_context_length=true_context_length,
+    )
+
+    result_output_actions_list = gather_tensor(
+        output_actions, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_actions.dtype
+    )
+
+    result_output_policys_list = gather_tensor(
+        output_policys, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_policys.dtype
+    )
+
+    result_output_values_list = gather_tensor(
+        output_values, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_values.dtype
+    )
+
+    output = {}
+    if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+        # concate the output_actions and output_policys
+        output["action"] = torch.cat(result_output_actions_list, dim=0)
+        output["policy"] = torch.cat(result_output_policys_list, dim=0)
+        output["value"] = torch.cat(result_output_values_list, dim=0)
+        # gather the output from data parallel workers
+        output = inference_strategy.post_generation_process(output)
+    else:
+        pass
+    return output
 
 
 

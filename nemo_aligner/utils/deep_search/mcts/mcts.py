@@ -127,7 +127,7 @@ class Node:
         if child.visit_count == 0:
             q_value = 0.0  #
         else:
-            q_value = (child.value_sum / child.visit_count + 1) / 2
+            q_value = child.value_sum / child.visit_count # assume the q_value is probability of winning
         return q_value + self.C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
 
     def expand(self, policy, actions):
