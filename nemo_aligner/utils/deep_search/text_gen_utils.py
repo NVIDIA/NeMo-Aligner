@@ -307,7 +307,6 @@ def search(
         for a, d, context_id in zip(action, depth, context_ids):
             infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, d.item(), a.item())
             if infer is not None:
-                print('cache hit')
                 cache_hit_indicator.append(True)
                 cache_infer_results.append(infer)
             else:
@@ -359,8 +358,8 @@ def search(
                     policys.append(output_policys[count])
                     values.append(output_values[count])
                     count += 1
-            output_actions = torch.cat(actions, dim=0)
-            output_policys = torch.cat(policys, dim=0)
+            output_actions = torch.vstack(actions)
+            output_policys = torch.vstack(policys)
             output_values = torch.hstack(values)
         # combine cache and non-cache results
 
