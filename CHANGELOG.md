@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### New features and optimizations
 - Added public-facing official Dockerfile for NeMo-Aligner
 - Memory optimization in PPO that helps avoid OOM in the actor when sending training data to the critic
-- Added support for validation metrics that require token-by-token inference
+- SFT: added support for custom validation metrics based on model generations
 
 ### Breaking changes
 
