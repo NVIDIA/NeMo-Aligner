@@ -130,11 +130,19 @@ class PPOTrainer:
             # NOTE: all items in rollout batch or out of this computation
             # must have a leading B dimension
             prompt_lengths = rollout_batch["prompt_lengths"]
+
+            group = parallel_state.get_pipeline_model_parallel_group()
+            output_tensor = torch.empty(prompt_lengths.size(0) * parallel_state.get_pipeline_model_parallel_world_size(), dtype=prompt_lengths.dtype, device=torch.cuda.current_device())
+            torch.distributed.all_gather_into_tensor(output_tensor, prompt_lengths.cuda(), group=group)
+
+            prompt_lengths = output_tensor
+
             response_lengths = rollout_batch["response_lengths"]
             response_tokens = rollout_batch["response_tokens"]
             values = rollout_batch["values"]
             rewards = rollout_batch["rewards"]
             logprobs = rollout_batch["logprobs"]
+
 
             num_samples += prompt_lengths.size(0)
 
@@ -150,6 +158,7 @@ class PPOTrainer:
             rewards_with_kl = calculate_ppo_rewards(
                 values, rewards, response_lengths, init_policy_kl, self.cfg.initial_policy_kl_penalty
             )
+
             mask = create_mask(values=values, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
             # TODO(geshen): we may not need this mask
@@ -228,13 +237,12 @@ class PPOTrainer:
 
             rollout_batch = self.model.infer(inference_batch)
             rollout_batches.append(rollout_batch)
-            futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
         print(f"  flag2")
 
         # after rollout batch
         self.model.after()
+        logprobs = self.model.get_logprobs(rollout_batches)
 
-        logprobs = self.model.get_logprobs(rollout_batches, on_cuda=False)
         for logprob, rollout_batch in zip(logprobs, rollout_batches):
             rollout_batch["logprobs"] = logprob
 

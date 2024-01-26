@@ -178,6 +178,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             dp=parallel_state.get_data_parallel_world_size(),
         )
         self.onload_adam_states()
+        self.cuda()
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
@@ -314,6 +315,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             # and then move to cpu
             self.force_move_model_to_cpu()
             clear_memory()
+
             self.trtllm_generate.refit(self.model)
 
     @torch.no_grad()
@@ -339,6 +341,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         print_mem("HELLO after TRT")
 
         response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
+
         response_lengths = calculate_dialogue_response_lengths(
             tokens=response_tokens,
             prompt_lengths=prompt_lengths,
@@ -361,8 +364,6 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
     
     def get_logprobs(self, rollout_batches):
         # move model back to GPU if it's on the CPU
-        self.cuda()
-
         log_probs = []
         for rollout_batch in rollout_batches:
             log_prob = self.get_inference_log_probs(
@@ -382,6 +383,8 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self._restore_sequence_parallelism_args()
 
     def after(self):
+        self.cuda()
+
         if self.use_trtllm_generation:
             print_mem("pre trt free")
             self.trtllm_generate.free()
@@ -393,7 +396,6 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             # which will cat everything and then reallocate it anyway
             # but make sure that the cpu offload for self.weight_tensor makes sense
             clear_memory()
-            self.cuda()
             print_mem("post model restore")
 
     def finish_inference(self):
