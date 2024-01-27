@@ -159,55 +159,75 @@ def dp_search(
 
     # init the objects for inference
     init = depth[0].item() == 0
-    true_context_length = None
-    if init:
-        inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_info)
-    else:
-        context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(session_info, context_ids, depth, action)
 
-    output_actions, output_policys, output_values = sample_sequence_batch(
-        model,
-        inference_strategy,
-        context_tokens_tensor,
-        context_length_tensor,
-        tokens_to_generate,
-        end_strings=end_strings,
-        context_ids=context_ids,
-        session_info=session_info,
-        top_k=top_k,
-        init=init,
-        depths=depth,
-        true_context_length=true_context_length,
-    )
+    cache_hit_indicator = []
+    if not init:
+        # check if the data hits the cache
+        cache_infer_results = []
+        for a, d, context_id in zip(action, depth, context_ids):
+            infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, d.item(), a.item())
+            if infer is not None:
+                cache_hit_indicator.append(True)
+                cache_infer_results.append(infer)
+            else:
+                cache_hit_indicator.append(False)
+        cache_hit_indicator = torch.cuda.BoolTensor(cache_hit_indicator)
+        context_tokens_tensor = context_tokens_tensor[~cache_hit_indicator]
+        context_length_tensor = context_length_tensor[~cache_hit_indicator]
+        action = action[~cache_hit_indicator]
+        depth = depth[~cache_hit_indicator]
+        context_ids = [context_ids[i] for i in range(len(context_ids)) if not cache_hit_indicator[i]]
 
-    # result_output_actions_list = gather_tensor(
-    #     output_actions, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_actions.dtype
-    # )
+    if len(context_tokens_tensor) > 0:
+        true_context_length = None
+        if init:
+            inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_info)
+        else:
+            context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(session_info, context_ids, depth, action)
 
-    # result_output_policys_list = gather_tensor(
-    #     output_policys, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_policys.dtype
-    # )
+        output_actions, output_policys, output_values = sample_sequence_batch(
+            model,
+            inference_strategy,
+            context_tokens_tensor,
+            context_length_tensor,
+            tokens_to_generate,
+            end_strings=end_strings,
+            context_ids=context_ids,
+            session_info=session_info,
+            top_k=top_k,
+            init=init,
+            depths=depth,
+            true_context_length=true_context_length,
+        )
 
-    # result_output_values_list = gather_tensor(
-    #     output_values, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group(), dtype=output_values.dtype
-    # )
+    if not init:
+        if sum(cache_hit_indicator) > 0:
+            actions = []
+            policys = []
+            values = []
+            count = 0
+            for cache_hit in cache_hit_indicator:
+                if cache_hit:
+                    infer = cache_infer_results.pop(0)
+                    actions.append(torch.cuda.IntTensor(infer['action']))
+                    policys.append(torch.cuda.FloatTensor(infer['policy']))
+                    values.append(torch.cuda.FloatTensor(infer['value']))
+                else:
+                    # output_actions are tensors of shape [batch_size, top_k]
+                    actions.append(output_actions[count])
+                    policys.append(output_policys[count])
+                    values.append(output_values[count])
+                    count += 1
+            output_actions = torch.vstack(actions)
+            output_policys = torch.vstack(policys)
+            output_values = torch.hstack(values)
 
     output = {}
     output['action'] = output_actions
     output['policy'] = output_policys
     output['value'] = output_values
     output = inference_strategy.post_generation_process(output)
-    # if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
-    #     # concate the output_actions and output_policys
-    #     output["action"] = torch.cat(result_output_actions_list, dim=0)
-    #     output["policy"] = torch.cat(result_output_policys_list, dim=0)
-    #     output["value"] = torch.cat(result_output_values_list, dim=0)
-    #     # gather the output from data parallel workers
-    #     output = inference_strategy.post_generation_process(output)
-    # else:
-    #     pass
     return output
-
 
 
 def search(

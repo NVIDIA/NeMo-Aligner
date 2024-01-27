@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import List
+from typing import Callable, List
 import torch
 import numpy as np
 from megatron.core import InferenceParams
@@ -36,6 +36,7 @@ class ParallelSearch:
         self.data_id = data_id # data id of the state
         # memory is a list of (state, improved policy, player) tuples
         # from the root state to the end of the game
+        self.depth_offset = 0
         self.memory = []
         self.root = None
         self.node = None
@@ -146,13 +147,14 @@ class Node:
 
 
 class MCTSParallel:
-    def __init__(self, args, url, model_name, tokenizer, session_info='session', score_fn=None, terminate_fns=None):
+    def __init__(self, args, url, model_name, tokenizer, session_info='session', score_fn=None, terminate_fns=None, client_fun: Callable=None):
         self.args = args
         self.client = ModelClient(url, model_name) 
         self.tokenizer = tokenizer
         self.session = session_info
         self.score_fn = score_fn
         self.terminate_fns = terminate_fns
+        self.client_fun = client_fun
     
     def decode_text(self, state):
         decoded_text = self.tokenizer.decode(state)
@@ -181,42 +183,74 @@ class MCTSParallel:
         print(text)
         # check 
         return value, terminate
+    
+
+    def get_input_action_depth(self, ps, expandable_search):
+               # get the action to execute and depths in the search tree
+        actions = np.stack([ps[mappingIdx].node.action for mappingIdx in expandable_search])[:, np.newaxis].astype(np.int32)
+        depths = np.stack([ps[mappingIdx].node.depth for mappingIdx in expandable_search])[:, np.newaxis].astype(np.int32)
+        # get the context ids for the search nodes
+        context_ids = np.stack([ps[mappingIdx].node.context_id for mappingIdx in expandable_search])[..., np.newaxis]
+        context_data = np.char.encode(context_ids, "utf-8")
+        return actions, depths, context_data, context_ids
+ 
        
     @torch.no_grad()
     def search(self, ps: List[ParallelSearch]):
         # states: (batch_size, row_count, column_count), neutral perspective
-        # spGames: list of spGame
-        inputs = [self.decode_text(spg.state) for spg in ps]
 
-        context_input_map = {context_to_id(input_item): input_item for input_item in inputs}
-        input_context_map = {input_item: context_to_id(input_item) for input_item in inputs}
+        if ps[0].node is not None:
+            # the context is already infered
+            expandable_search = list(range(len(ps)))
+            actions, depths, context_data, context_ids = self.get_input_action_depth(ps, expandable_search)
+            # result_dict = self.client.infer_batch(action=actions, depth=depths, context_ids=context_data, parameters={"session": self.session})
+            result_dict = self.client_fun(action=actions, depth=depths, context_ids=context_data, session_info=self.session)
+            spg_policys = result_dict['policy'] 
+            spg_actions = result_dict['action']
+            c_ids = [item.item() for item in context_ids]
+        else:
+            # we need to run inferecce for all context ids
+            inputs = [self.decode_text(spg.state) for spg in ps]
 
-        streamline_inputs = [b for _, b in context_input_map.items()]
-        streamline_context_ids = [a for a, _ in context_input_map.items()]
+            context_input_map = {context_to_id(input_item): input_item for input_item in inputs}
+            input_context_map = {input_item: context_to_id(input_item) for input_item in inputs}
 
-        str_ndarray = np.array(streamline_inputs)[..., np.newaxis]
-        input_data = np.char.encode(str_ndarray, "utf-8")
+            streamline_inputs = [b for _, b in context_input_map.items()]
+            streamline_context_ids = [a for a, _ in context_input_map.items()]
 
-        context_ids = np.array(streamline_context_ids)[..., np.newaxis]
-        context_data = np.char.encode(context_ids, "utf-8")
+            str_ndarray = np.array(streamline_inputs)[..., np.newaxis]
+            input_data = np.char.encode(str_ndarray, "utf-8")
 
-        result_dict = self.client.infer_batch(sentences=input_data, context_ids=context_data, parameters={"session": self.session})
-        actions = result_dict['action']
-        policy = result_dict['policy'] # [batch, top_k]
+            context_ids = np.array(streamline_context_ids)[..., np.newaxis]
+            context_data = np.char.encode(context_ids, "utf-8")
 
-        input_action_map = {context_input[1]: action for context_input, action in zip(context_input_map.items(), actions)}
-        input_policy_map = {context_input[1]: policy for context_input, policy in zip(context_input_map.items(), policy)}
+#            result_dict = self.client.infer_batch(sentences=input_data, context_ids=context_data, parameters={"session": self.session})
+            result_dict = self.client_fun(sentences=input_data, context_ids=context_data, session_info=self.session)
 
-        for i, spg in enumerate(ps):
-            spg_input = self.decode_text(spg.state)
-            spg_policy = input_policy_map[spg_input]
-            spg_action = input_action_map[spg_input]
-            context_id = input_context_map[spg_input]
+            actions = result_dict['action']
+            policy = result_dict['policy'] # [batch, top_k]
+
+            input_action_map = {context_input[1]: action for context_input, action in zip(context_input_map.items(), actions)}
+            input_policy_map = {context_input[1]: policy for context_input, policy in zip(context_input_map.items(), policy)}
+
+            spg_policys = []
+            spg_actions = []
+            c_ids = []
+
+            for i, spg in enumerate(ps):
+                spg_input = self.decode_text(spg.state)
+                spg_policy = input_policy_map[spg_input]
+                spg_policys.append(spg_policy)
+                spg_action = input_action_map[spg_input]
+                spg_actions.append(spg_action)
+                context_id = input_context_map[spg_input]
+                c_ids.append(context_id)
+
+        for spg, spg_policy, spg_action, context_id in zip(ps, spg_policys, spg_actions, c_ids):
             action_size = spg_action.shape[0]
 
             spg_policy = (1 - self.args['dirichlet_epsilon']) * spg_policy + self.args['dirichlet_epsilon'] \
                 * np.random.dirichlet([self.args['dirichlet_alpha']] * action_size, size=1)[0]
- 
             # no need to handle the case that no valid moves
             # because the we search the states[i] which has at least one valid move
             spg.root = Node(spg.state, parent=None, action=None, prior=0.0, visit_count=1, C=self.args['C'], depth=0, context_id=context_id)
@@ -236,7 +270,7 @@ class MCTSParallel:
                 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
                 text = self.get_text(node)
-                value, is_terminal = self.get_value_and_terminated(text, spg.data_id, node.depth)
+                value, is_terminal = self.get_value_and_terminated(text, spg.data_id, node.depth + spg.depth_offset)
 
                 if is_terminal:
                     # if terminal, then backpropagate the value, and skip the expansion of the node because spg.node is None
@@ -253,12 +287,13 @@ class MCTSParallel:
 
                 # get the action to execute and depths in the search tree
                 actions = np.stack([ps[mappingIdx].node.action for mappingIdx in expandable_search])[:, np.newaxis].astype(np.int32)
-                depths = np.stack([ps[mappingIdx].node.depth for mappingIdx in expandable_search])[:, np.newaxis].astype(np.int32)
+                depths = np.stack([ps[mappingIdx].node.depth + ps[mappingIdx].depth_offset for mappingIdx in expandable_search])[:, np.newaxis].astype(np.int32)
                 # get the context ids for the search nodes
                 context_ids = np.stack([ps[mappingIdx].node.context_id for mappingIdx in expandable_search])[..., np.newaxis]
                 context_data = np.char.encode(context_ids, "utf-8")
 
-                result_dict = self.client.infer_batch(action=actions, depth=depths, context_ids=context_data, parameters={"session": self.session})
+   #             result_dict = self.client.infer_batch(action=actions, depth=depths, context_ids=context_data, parameters={"session": self.session})
+                result_dict = self.client_fun(action=actions, depth=depths, context_ids=context_data, session_info=self.session)
 
                 actions = result_dict['action']
                 policy = result_dict['policy'] # [batch, top_k]
@@ -310,7 +345,7 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             action_probs /= np.sum(action_probs)
 
             # the spg.root.state is the neutral state set at the beginning of the search 
-            spg.memory.append((spg.root.state, action_probs, actions))
+            spg.memory.append((spg.state, action_probs, actions))
 
             temperature_action_probs = action_probs ** (1.0 / temperature)
             temperature_action_probs /= np.sum(temperature_action_probs)
@@ -318,6 +353,9 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             action = actions[action_index].item()
 
             spg.state = spg.state + [action]
+            spg.node = spg.root.children[action_index]
+            spg.depth_offset += 1
+
 
             #  get the value and termination condition from the current taken `action`
             text = mcts.decode_text(spg.state)
