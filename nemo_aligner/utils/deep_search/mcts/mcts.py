@@ -150,9 +150,8 @@ class Node:
 
 
 class MCTSParallel:
-    def __init__(self, args, url, model_name, tokenizer, session_info='session', score_fn=None, terminate_fns=None, client_fun: Callable=None):
+    def __init__(self, args, tokenizer, session_info='session', score_fn=None, terminate_fns=None, client_fun: Callable=None):
         self.args = args
-        self.client = ModelClient(url, model_name) 
         self.tokenizer = tokenizer
         self.session = session_info
         self.score_fn = score_fn

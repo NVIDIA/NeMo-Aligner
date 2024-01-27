@@ -109,7 +109,6 @@ def dp_search(
     model,
     inputs=None,
     action=None,
-    depth=None,
     context_ids=None,
     session_info=None,
     tokens_to_generate=1,  # max search depth
@@ -126,17 +125,16 @@ def dp_search(
         inference_strategy = strategy_args["strategy"]
     else:
         raise ValueError("strategy is not specified")
-
+    # init the objects for inference
+    init = inputs is not None
     if inputs is None:
         # not the first node
         assert action is not None
-        assert depth is not None
         # action is a tensor of shape [batch_size, 1], type int32
         # it is the selected actions during tree search from node at depth, type int32
         # depth is a tensor of shape [batch_size, 1]
         # from the action and depth values, we can retrieve the node
         action = torch.cuda.IntTensor(action)
-        depth = torch.cuda.IntTensor(depth)
         batch_size = action.shape[0]
         context_tokens_tensor = torch.cuda.LongTensor(batch_size, 1)
         context_length_tensor = torch.cuda.LongTensor(batch_size)
@@ -144,7 +142,6 @@ def dp_search(
         # first time to run inference,
         # need to initialize the root node, kv-cache
         assert action is None
-        assert depth is None
         if isinstance(inputs, tuple): # tuple of (context_tokens_tensor, context_length_tensor)
             context_tokens_tensor, context_length_tensor = inputs
         else:
@@ -152,20 +149,15 @@ def dp_search(
                 inputs, 0, False
             )
         batch_size = context_tokens_tensor.size(0)
-        depth = torch.cuda.IntTensor(batch_size, 1)
-        depth[:] = 0
         action = torch.cuda.IntTensor(batch_size, 1)
         action[:] = 0
-
-    # init the objects for inference
-    init = depth[0].item() == 0
 
     cache_hit_indicator = []
     if not init:
         # check if the data hits the cache
         cache_infer_results = []
-        for a, d, context_id in zip(action, depth, context_ids):
-            infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, d.item(), a.item())
+        for a, context_id in zip(action, context_ids):
+            infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, a.item())
             if infer is not None:
                 cache_hit_indicator.append(True)
                 cache_infer_results.append(infer)
@@ -175,7 +167,6 @@ def dp_search(
         context_tokens_tensor = context_tokens_tensor[~cache_hit_indicator]
         context_length_tensor = context_length_tensor[~cache_hit_indicator]
         action = action[~cache_hit_indicator]
-        depth = depth[~cache_hit_indicator]
         context_ids = [context_ids[i] for i in range(len(context_ids)) if not cache_hit_indicator[i]]
 
     if len(context_tokens_tensor) > 0:
@@ -183,20 +174,17 @@ def dp_search(
         if init:
             inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_info)
         else:
-            context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(session_info, context_ids, depth, action)
+            context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(session_info, context_ids, action)
 
         output_actions, output_policys, output_values = sample_sequence_batch(
             model,
             inference_strategy,
             context_tokens_tensor,
             context_length_tensor,
-            tokens_to_generate,
-            end_strings=end_strings,
             context_ids=context_ids,
             session_info=session_info,
             top_k=top_k,
             init=init,
-            depths=depth,
             true_context_length=true_context_length,
         )
 
