@@ -16,6 +16,8 @@
 
 import os
 
+from functools import partial
+
 import numpy as np
 import torch
 
@@ -24,9 +26,23 @@ from nemo.core import Dataset
 from nemo.utils import logging
 
 
+def encode(cfg, tokenizer, text, append_eod=False):
+    if cfg.data.get("apply_ftfy", False):
+        import ftfy
+
+        text = ftfy.fix_text(text)
+
+    text_ids = tokenizer.text_to_ids(text)
+
+    if len(text_ids) > 0 and append_eod:
+        text_ids.append(tokenizer.eos_id)
+
+    return text_ids, len(text_ids)
+
+
 class RLHFDataset(Dataset):
     def __init__(
-        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+        self, cfg, tokenizer, name, data_prefix, data, seq_length, seed, drop_last=True,
     ):
         super().__init__()
         self.cfg = cfg
@@ -45,26 +61,10 @@ class RLHFDataset(Dataset):
 
         self.max_sample_length = max_sample_length
 
-        self.use_json = self.cfg.data.data_impl.startswith("json")
-
         self.shuffled_indices = list(range(len(self)))
 
         np_rng = np.random.default_rng(seed=seed)
         np_rng.shuffle(self.shuffled_indices)
-
-        # Checks
-        assert np.min(documents) >= 0
-        assert np.max(documents) < len(self.data)
-
-        # save index mappings to a configurable dir
-        self.index_mapping_dir = cfg.data.get("index_mapping_dir", None)
-
-        # create index_mapping_dir on rank 0
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            if torch.distributed.get_rank() == 0:
-                if self.index_mapping_dir is not None and not os.path.isdir(self.index_mapping_dir):
-                    os.makedirs(self.index_mapping_dir)
-            torch.distributed.barrier()
 
     def __len__(self):
         return len(self.data)
@@ -100,9 +100,8 @@ class RLHFDataset(Dataset):
         while True:
             shuffled_idx = self.shuffled_indices[idx]
             sample = self.data[shuffled_idx]
-            if self.use_json:
-                sample, _ = self.encode(sample["text"])
-            if len(sample) <= self.max_sample_length:
+            sample, sample_len = encode(self.cfg, self.tokenizer, sample["text"])
+            if sample_len <= self.max_sample_length:
                 break
             idx = (idx + 1) % len(self)
             if idx == orig_idx:
@@ -117,12 +116,8 @@ class RLHFDataset(Dataset):
             )
             mask_sample = True
 
-        if self.use_json:
-            # `sample` is a regular Python list.
-            sample_tensor = torch.tensor(sample, dtype=torch.int64)
-        else:
-            # `sample` is a NumPy array.
-            sample_tensor = torch.from_numpy(sample.astype(np.int64))
+        # `sample` is a regular Python list.
+        sample_tensor = torch.tensor(sample, dtype=torch.int64)
 
         # if we want to mask the sample we should
         # set the loss multiplier to 0
@@ -142,7 +137,7 @@ class RewardModelDataset(Dataset):
     """
 
     def __init__(
-        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+        self, cfg, tokenizer, name, data_prefix, data, seq_length, seed, drop_last=True,
     ):
         super().__init__()
         self.cfg = cfg
@@ -161,20 +156,6 @@ class RewardModelDataset(Dataset):
 
         np_rng = np.random.default_rng(seed=seed)
         np_rng.shuffle(self.shuffled_indices)
-
-        # Checks
-        assert np.min(documents) >= 0
-        assert np.max(documents) < len(self.data)
-
-        # save index mappings to a configurable dir
-        self.index_mapping_dir = cfg.data.get("index_mapping_dir", None)
-
-        # create index_mapping_dir on rank 0
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            if torch.distributed.get_rank() == 0:
-                if self.index_mapping_dir is not None and not os.path.isdir(self.index_mapping_dir):
-                    os.makedirs(self.index_mapping_dir)
-            torch.distributed.barrier()
 
     def __len__(self):
         return len(self.data) // 2
@@ -263,7 +244,7 @@ class DPOModelDataset(Dataset):
     """
 
     def __init__(
-        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+        self, cfg, tokenizer, name, data_prefix, data, seq_length, seed, drop_last=True,
     ):
         super().__init__()
         self.cfg = cfg
@@ -277,43 +258,27 @@ class DPOModelDataset(Dataset):
         self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
         self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
         self.eos_id = tokenizer.eos_id
+        self.encode = partial(encode, cfg=self.cfg, tokenizer=self.tokenizer)
 
         np_rng = np.random.default_rng(seed=seed)
         np_rng.shuffle(self.data)
 
-        # Checks
-        assert np.min(documents) >= 0
-        assert np.max(documents) < len(self.data)
-
     def __len__(self):
         return len(self.data)
-
-    def encode(self, text, append_eod=False):
-        if self.cfg.data.get("apply_ftfy", False):
-            import ftfy
-
-            text = ftfy.fix_text(text)
-
-        text_ids = self.tokenizer.text_to_ids(text)
-
-        if len(text_ids) > 0 and append_eod:
-            text_ids.append(self.tokenizer.eos_id)
-
-        return text_ids, len(text_ids)
 
     def __getitem__(self, idx):
         """Returns a pair of chosen/rejected pairs, their respective lengths, and labels.
         """
         payload = self.data[idx]
-        prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
+        prompt, prompt_len = self.encode(text=payload["prompt"], append_eod=False)
         chosen, chosen_len = self.encode(
-            payload["prompt"] + payload["chosen_response"], append_eod=self.cfg.data.get("append_eod", False)
+            text=payload["prompt"] + payload["chosen_response"], append_eod=self.cfg.data.get("append_eod", False)
         )
         reject, reject_len = self.encode(
-            payload["prompt"] + payload["rejected_response"], append_eod=self.cfg.data.get("append_eod", False)
+            text=payload["prompt"] + payload["rejected_response"], append_eod=self.cfg.data.get("append_eod", False)
         )
-        # chosen_response_only, chosen_response_len = self.encode(payload['chosen_response'])
-        # reject_response_only, reject_response_len = self.encode(payload['rejected_response'])
+        # chosen_response_only, chosen_response_len = self.encode(text=payload['chosen_response'])
+        # reject_response_only, reject_response_len = self.encode(text=payload['rejected_response'])
         chosen_labels = ([-100] * prompt_len) + chosen[prompt_len:]
         reject_labels = ([-100] * prompt_len) + reject[prompt_len:]
 
@@ -349,7 +314,7 @@ class DPOModelDataset(Dataset):
         return output
 
 
-class RegressionRewardModelDataset(RewardModelDataset):
+class RegressionRewardModelDataset(Dataset):
     """This class assumes each line of the dataset file is a dictionary with "text" and "label" field, 
         where "text" is a string representing the input prompt, and "label" is a list of float or int values. 
         Note that when training the model with multiple datasets which contain different attributes,
@@ -361,24 +326,26 @@ class RegressionRewardModelDataset(RewardModelDataset):
     """
 
     def __init__(
-        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+        self, cfg, tokenizer, name, data_prefix, data, seq_length, seed, drop_last=True,
     ):
 
-        assert cfg.data.data_impl.startswith(
-            "json"
-        ), f"data.data_impl must be either json or jsonl, but got {cfg.data.data_impl}"
+        super().__init__()
+        self.cfg = cfg
+        self.name = name
+        self.data = data
+        self.drop_last = drop_last
+        self.seq_length = seq_length
+        self.tokenizer = tokenizer
 
-        super().__init__(
-            cfg=cfg,
-            tokenizer=tokenizer,
-            name=name,
-            data_prefix=data_prefix,
-            documents=documents,
-            data=data,
-            seq_length=seq_length,
-            seed=seed,
-            drop_last=drop_last,
-        )
+        self.reset_position_ids = cfg.data.get("reset_position_ids", False)
+        self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
+        self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
+        self.eos_id = tokenizer.eos_id
+
+        self.shuffled_indices = list(range(len(self)))
+
+        np_rng = np.random.default_rng(seed=seed)
+        np_rng.shuffle(self.shuffled_indices)
 
     def __len__(self):
         return len(self.data)
@@ -392,7 +359,7 @@ class RegressionRewardModelDataset(RewardModelDataset):
         while True:
             shuffled_idx = self.shuffled_indices[idx]
             sample = self.data[shuffled_idx]
-            sample_text, sample_length = self.encode(sample["text"])
+            sample_text, sample_length = encode(self.cfg, self.tokenizer, sample["text"])
             sample_label = sample["label"]
             if idx == orig_idx:
                 orig_length = sample_length
@@ -409,14 +376,9 @@ class RegressionRewardModelDataset(RewardModelDataset):
 
         sample_label = [float(value) for value in sample_label]
 
-        label_tensor = torch.tensor(sample_label, dtype=torch.float)
+        label_tensor = torch.FloatTensor(sample_label)
+        text_tensor = torch.LongTensor(sample_text)
 
-        text_np = np.array(sample_text, dtype=np.int64)
-        text_np_pad = np.pad(
-            text_np, (0, max(0, self.seq_length - text_np.shape[0])), mode="constant", constant_values=self.eos_id
-        )
-
-        text_tensor = torch.tensor(text_np_pad)
         attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
             text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
         )
@@ -438,9 +400,9 @@ class RegressionRewardModelDataset(RewardModelDataset):
 
         output = {
             "inputs": text_tensor,
-            "lengths": text_np.shape[0],
-            "position_ids": position_ids,
-            "attention_mask": attention_mask,
+            "lengths": text_tensor.shape[0],
+            # "position_ids": position_ids,
+            # "attention_mask": attention_mask,
             "loss_mask": loss_mask,
             "labels": label_tensor,
         }
