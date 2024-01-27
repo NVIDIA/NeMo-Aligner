@@ -327,6 +327,7 @@ def search(
         for a, d, context_id in zip(action, depth, context_ids):
             infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, d.item(), a.item())
             if infer is not None:
+                print('cache hit', d.item(), a.item())
                 cache_hit_indicator.append(True)
                 cache_infer_results.append(infer)
             else:
