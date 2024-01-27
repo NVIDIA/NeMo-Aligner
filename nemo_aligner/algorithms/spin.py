@@ -152,8 +152,31 @@ class SPINTrainer:
 
         return loss_mean, {**metrics, **trainer_metrics}
     
+    def _run_inference(self, dataloader_iter, num_microbatches, is_validation):
+        """this function is run per DP so the metrics need to be computed globally
+        """
+        rollout_batches = []
+
+        for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
+            rollout_batch = self.model.infer(inference_batch)
+
+            rollout_batches.append(rollout_batch)
+
+        if not is_validation and self.compute_init_policy_kl:
+            init_policy_logprobs = self.model.get_init_policy_logprobs(rollout_batches)
+
+            if init_policy_logprobs is not None:
+                assert len(init_policy_logprobs) == len(
+                    rollout_batches
+                ), "init policy log probs must be same size as rollout batches"
+
+                for init_logprobs, rollout_batch in zip(init_policy_logprobs, rollout_batches):
+                    rollout_batch["init_logprobs"] = init_logprobs
+
+        return rollout_batches
+    
     @torch.no_grad()
-    def generate_rollouts(self, dataloader_iter, num_microbatches):
+    def generate_rollouts(self, list_of_batches):
         self.model.prepare_for_inference()
 
         rollout_batches, rollout_metrics = self._run_inference(dataloader_iter, num_microbatches, is_validation=False)
@@ -309,6 +332,7 @@ class SPINTrainer:
             else:
                 buffer.append(batch)
             if (done and buffer) or len(buffer) == 1:
+                generations_list = self.generate_rollouts(buffer)
                 logprobs = self.model.get_ref_policy_logprobs(buffer).cpu()
                 start = 0
                 for batch in buffer:
