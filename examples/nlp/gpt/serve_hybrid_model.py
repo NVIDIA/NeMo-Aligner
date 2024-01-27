@@ -149,12 +149,11 @@ def main(cfg) -> None:
         top_k = sampling_params["top_k"]
         end_strings = sampling_params["end_strings"]
 
-        def infer_fn(inputs=None, action=None, depth=None, context_ids=None, session_info=None):
+        def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
             return search(
                     model,
                     inputs,
                     action,
-                    depth,
                     context_ids,
                     session_info,
                     tokens_to_generate=tokens_to_generate,  # max search depth
