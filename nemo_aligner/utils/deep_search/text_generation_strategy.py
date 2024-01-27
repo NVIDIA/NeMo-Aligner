@@ -397,11 +397,11 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         # TODO, change the key to hash(sessions)
         return self.search_db.get_inference_params(session_info)
     
-    def compute_inference_params(self, session_info: str, context_ids: List[str], depths: torch.Tensor, actions: torch.Tensor):
-        updated_kv_cache, tokens, context_lengths = get_kv_cache(actions, depths, session_info, context_ids, self.search_db)
+    def compute_inference_params(self, session_info: str, context_ids: List[str], actions: torch.Tensor):
+        updated_kv_cache, tokens, context_lengths = get_kv_cache(actions, session_info, context_ids, self.search_db)
         tokens = torch.cuda.LongTensor(tokens)
         batch_size, token_len = tokens.shape
-        true_context_lengths = torch.cuda.IntTensor(context_lengths) + depths[:, 0]
+        true_context_lengths = torch.cuda.IntTensor([len(c) + 1 for c in context_ids])
         new_context_lengths = true_context_lengths - true_context_lengths.min() 
         max_len = true_context_lengths.max().item()
         inference = InferenceParams(max_batch_size=batch_size, max_sequence_length=max_len + 1)
@@ -419,23 +419,25 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         self.search_db.add_inference_params(session_info, inference)
         return tokens, new_context_lengths, true_context_lengths
 
-    def update_kv_cache(self, session_info: str, node: Node, depth: int, context_length:int, batch_id: int, value: float):
+    def update_kv_cache(self, session_info: str, node: Node, context_length:int, batch_id: int, value: float):
         infer_params = self.get_inference_params(session_info)
-        state = State.get_state(infer_params, depth, context_length, batch_id)
+        # it can never happen that the node is root node
+        if node.parent is None:
+            raise ValueError("The node is root node, cannot update kv cache")
+        state = State.get_state(infer_params, False, context_length, batch_id)
         node.state = state
         node.value_sum = value
 
-    def save_kv_cache(self, session_info: str, context_ids: List[str], depths: torch.Tensor, batch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, action_policy: torch.Tensor, action_value: torch.Tensor, context_tokens: torch.Tensor = None):
+    def save_kv_cache(self, session_info: str, context_ids: List[str], batch_size: int, context_lengths: torch.Tensor, parent_nodes: List[Node], actions_taken: torch.Tensor, action_policy: torch.Tensor, action_value: torch.Tensor, context_tokens: torch.Tensor = None):
         for bid in range(batch_size): 
             context_length = context_lengths[bid].item()
-            depth = depths[bid].item()
             context_id = context_ids[bid]
             infer_params = self.search_db.get_inference_params(session_info)
-            state = State.get_state(infer_params, depth, context_length, bid)
             # self.search_db.add_kv_cache(session_id, depth, tokens, kv_cache)
             parent_node = parent_nodes[bid]
             action_taken = actions_taken[bid].item()
             prior_prob = action_policy[bid].item()
+            state = State.get_state(infer_params, action_taken == -1, context_length, bid)
             value = None
             if action_value is not None:
                 value = action_value[bid].item()
@@ -449,10 +451,10 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             # add child node to the parent node
             if parent_node is not None:
                 parent_node.children.append(node)
-            self.search_db.add(session_info, context_id, depth, action_taken, node)
+            self.search_db.add(session_info, context_id, action_taken, node)
     
-    def get_node(self, session_info: str, context_id: str, depth: int, action: int):
-        return self.search_db.get(session_info, context_id, depth, action)
+    def get_node(self, session_info: str, context_id: str, action: int):
+        return self.search_db.get(session_info, context_id, action)
 
     def post_generation_process(self, output):
         """

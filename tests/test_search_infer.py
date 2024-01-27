@@ -85,12 +85,11 @@ class TestSearch:
         top_k = 50
         end_strings = ['']
 
-        def infer_fn(inputs=None, action=None, depth=None, context_ids=None, session_info=None):
+        def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
             return search(
                     self.model,
                     inputs,
                     action,
-                    depth,
                     context_ids,
                     session_info,
                     tokens_to_generate=tokens_to_generate,  # max search depth
@@ -100,18 +99,19 @@ class TestSearch:
                     )
         batched_inputs = ['hello?', 'how are you?']
         tokenizer = self.model.tokenizer
-        token_lengths = [len(tokenizer.text_to_ids(input)) for input in batched_inputs]
-        output = infer_fn(inputs=batched_inputs, action=None, depth=None, context_ids=['context1', 'context2'], session_info='session1')
+        context_ids = [tuple(tokenizer.text_to_ids(input)) for input in batched_inputs]
+        token_lengths = [len(input) for input in context_ids]
+        output = infer_fn(inputs=batched_inputs, action=None, context_ids=context_ids, session_info='session1')
         assert strategy.search_db.get_inference_params('session1').sequence_len_offset == max(token_lengths) - 1
         assert 'session1' in strategy.search_db.db
-        assert 'context1' in strategy.search_db.db['session1']
-        assert 'context2' in strategy.search_db.db['session1']
-        assert len(strategy.search_db.db['session1']['context1']) == 1 + top_k # root + children
-        assert len(strategy.search_db.db['session1']['context2']) == 1 + top_k # root + children
+        assert len(strategy.search_db.db['session1']) == 2 + top_k * 2 # root + children
         for action in output['action'][0]:
-            assert (1, action) in strategy.search_db.db['session1']['context1']
+            assert (context_ids[0], action) in strategy.search_db.db['session1']
         for action in output['action'][1]:
-            assert (1, action) in strategy.search_db.db['session1']['context2']
+            assert (context_ids[1], action) in strategy.search_db.db['session1']
+        assert (context_ids[0], -1) in strategy.search_db.db['session1']
+        assert (context_ids[1], -1) in strategy.search_db.db['session1']
+
         old_k_caches = []
         batch_size = len(batched_inputs)
         for i in range(batch_size):
@@ -123,12 +123,13 @@ class TestSearch:
             # next inference call 
             depths = np.array([[step + 1], [step + 1]], dtype=np.int32)
             actions = output['action'][:, 0:1] # greedy sampling
-            output = infer_fn(inputs=None, action=actions, depth=depths, context_ids=['context1', 'context2'], session_info='session1')
+            output = infer_fn(inputs=None, action=actions, context_ids=context_ids, session_info='session1')
             assert strategy.search_db.get_inference_params('session1').sequence_len_offset == max(token_lengths) + step
+            context_ids = [parent_ids + (child.item(),) for parent_ids, child in zip(context_ids, actions)]
             for action in output['action'][0]:
-                assert (step + 2, action) in strategy.search_db.db['session1']['context1']
+                assert (context_ids[0], action) in strategy.search_db.db['session1']
             for action in output['action'][1]:
-                assert (step + 2, action) in strategy.search_db.db['session1']['context2']
+                assert (context_ids[1], action) in strategy.search_db.db['session1']
             new_k_caches = []
             for i in range(batch_size):
                 new_k_caches.append(strategy.search_db.get_inference_params('session1').key_value_memory_dict[1][0][:, i, 0, 0])

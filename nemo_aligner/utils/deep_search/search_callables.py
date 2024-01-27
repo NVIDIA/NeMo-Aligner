@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import threading
-from typing import Dict
+from typing import Dict, List
 
 import numpy as np
 import torch
@@ -24,7 +24,21 @@ from pytriton.model_config import Tensor
 
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils.server_utils import decode_bytes_ndarray, lock_method, pad_input
+import base64
 
+
+def encode_context_data(context_data: List[List]):
+    context_data = [np.array(t).tostring() for t in context_data]
+    str_context = [base64.b64encode(t).decode()  for t in context_data]
+    str_ndarray = np.array(str_context)[..., np.newaxis]
+    context_data = np.char.encode(str_ndarray, "utf-8")
+    return context_data
+
+def decode_context_data(context_data: np.ndarray):
+    decoded_str = decode_bytes_ndarray(context_data)
+    decode_str = [base64.b64decode(t) for t in decoded_str]
+    context = [tuple(np.frombuffer(t, dtype=np.int32)) for t in decode_str]
+    return context
 
 class SearchCallable:
     def __init__(self, *, model_name: str, infer_fn: callable, lock: threading.Lock):
@@ -33,8 +47,7 @@ class SearchCallable:
         self.infer_fn = infer_fn
         self.inputs = (Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
                        Tensor(name="context_ids", shape=(-1,), dtype=bytes, optional=False),
-                       Tensor(name="action", shape=(-1,), dtype=np.int32, optional=True),
-                       Tensor(name="depth", shape=(-1,), dtype=np.int32, optional=True),)
+                       Tensor(name="action", shape=(-1,), dtype=np.int32, optional=True))
         self.outputs = (Tensor(name="action", shape=(-1,), dtype=np.int32),
                         Tensor(name="policy", shape=(-1,), dtype=np.float32),
                         Tensor(name="value", shape=(-1,), dtype=np.float32),
@@ -52,8 +65,8 @@ class SearchCallable:
             choice = ServerSignal.FORWARD.cuda()
             torch.distributed.broadcast(choice, 0)
             session_requests = sessions[key]
-            sentences, action, depth, context_ids = self.batch_inputs(session_requests)
-            output = self.infer_fn(sentences, action, depth, context_ids, key)
+            sentences, action, context_ids = self.batch_inputs(session_requests)
+            output = self.infer_fn(sentences, action, context_ids, key)
             outputs[key] = output
         outputs = self._split_result(outputs, requests)
         return outputs
@@ -65,13 +78,11 @@ class SearchCallable:
             sentences = [i.item() for i in sentences]
 
         context_data = inputs.pop("context_ids", None)
-        context = decode_bytes_ndarray(context_data)
-        context = [i.item() for i in context] 
+        context_ids = decode_context_data(context_data)
 
         action = inputs.pop("action", None)
 
-        depth = inputs.pop("depth", None)
-        return sentences, action, depth, context
+        return sentences, action, context_ids
     
     def batch_inputs(self, req_list):
         input_names = req_list[0].keys()

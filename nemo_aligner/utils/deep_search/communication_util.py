@@ -54,7 +54,6 @@ def send_generate_info(
     context_tokens_tensor,
     context_length_tensor,
     action,
-    depth,
     tokens_to_generate,
     top_k,
     end_strings,
@@ -71,7 +70,6 @@ def send_generate_info(
     broadcast_2d_tensor(context_length_tensor.reshape(-1, 1), src, None, dtype=torch.int64)
 
     broadcast_2d_tensor(action, src, None, dtype=torch.int32)
-    broadcast_2d_tensor(depth, src, None, dtype=torch.int32)
 
 
     # Send the sizes of the tensors
@@ -99,7 +97,6 @@ def receive_generate_info():
 
     # receive action and depth
     action = broadcast_2d_tensor(None, src, None, dtype=torch.int32)
-    depth = broadcast_2d_tensor(None, src, None, dtype=torch.int32)
 
     input_info_tensor = torch.empty(2, dtype=torch.int32, device=torch.cuda.current_device())
     torch.distributed.broadcast(input_info_tensor, src, None)
@@ -115,7 +112,6 @@ def receive_generate_info():
         context_tokens_tensor,
         context_length_tensor,
         action,
-        depth,
         tokens_to_generate,
         top_k,
         end_strings,

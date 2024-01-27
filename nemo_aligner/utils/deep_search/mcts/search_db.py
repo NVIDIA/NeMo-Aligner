@@ -29,31 +29,24 @@ class SearchDB:
         self.attention_mask[session_id] = attention_mask
         self.position_ids[session_id] = position_ids
 
-    def add(self, session_info, context_id, depth, action, node):
-        key = (depth, action)
+    def add(self, session_info, context_id, action, node):
+        key = (context_id, action)
         if session_info not in self.db:
             session = {}
             self.db[session_info] = session
         else:
             session = self.db[session_info]
-        if context_id not in session:
-            context_nodes = {}
-            session[context_id] = context_nodes
-        else:
-            context_nodes = session[context_id]
-        context_nodes[key] = node
+        session[key] = node
 
-    def get(self, session_info, context_id, depth, action):
-        return self.db[session_info][context_id][(depth, action)]
+    def get(self, session_info, context_id, action):
+        return self.db[session_info][(context_id, action)]
 
-    def get_infer_cache(self, session_info, context_id, depth, action):
+    def get_infer_cache(self, session_info, context_id, action):
         if session_info not in self.db:
             return None
-        if context_id not in self.db[session_info]:
+        if (context_id, action) not in self.db[session_info]:
             return None
-        if (depth, action) not in self.db[session_info][context_id]:
-            return None
-        node = self.db[session_info][context_id][(depth, action)]
+        node = self.db[session_info][(context_id, action)]
         if node.value_sum is None:
             return None
         
@@ -89,15 +82,13 @@ class SearchDB:
         del self.position_ids[session_id]
 
 
-def get_kv_cache(selected_actions, depths, session_info, context_ids, search_db: SearchDB):
+def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchDB):
     batched_kv_cache = []
     batched_tokens = []
     context_lengths = []
-    for action, depth, context_id in zip(selected_actions, depths, context_ids):
+    for action, context_id in zip(selected_actions, context_ids):
         action = action.item()
-        depth = depth.item()
-        node = search_db.get(session_info, context_id, depth, action)
-        assert node.state.depth == depth
+        node = search_db.get(session_info, context_id, action)
         assert node.action == action
         tokens = []
         tokens.append(action)
@@ -132,7 +123,7 @@ def get_kv_cache(selected_actions, depths, session_info, context_ids, search_db:
             new_kv_cache[key] = (keys, vals)
         batched_kv_cache.append(new_kv_cache)
         batched_tokens.append(np.array(tokens))
-    full_length = torch.cuda.IntTensor(context_lengths) + depths[:, 0]
+    full_length = torch.cuda.IntTensor([len(c) + 1 for c in context_ids])
     # before concat, make sure the batch size is the same
     max_depth = full_length.max()
     min_depth = full_length.min()

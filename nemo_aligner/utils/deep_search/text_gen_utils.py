@@ -234,7 +234,6 @@ def search(
     model,
     inputs=None,
     action=None,
-    depth=None,
     context_ids=None,
     session_info=None,
     tokens_to_generate=1,  # max search depth
@@ -248,17 +247,17 @@ def search(
         inference_strategy = strategy_args["strategy"]
     else:
         raise ValueError("strategy is not specified")
+    # init the objects for inference
+    init = inputs is not None
     if torch.distributed.get_rank() == 0:
         if inputs is None:
             # not the first node
             assert action is not None
-            assert depth is not None
             # action is a tensor of shape [batch_size, 1], type int32
             # it is the selected actions during tree search from node at depth, type int32
             # depth is a tensor of shape [batch_size, 1]
             # from the action and depth values, we can retrieve the node
             action = torch.cuda.IntTensor(action)
-            depth = torch.cuda.IntTensor(depth)
             batch_size = action.shape[0]
             context_tokens_tensor = torch.cuda.LongTensor(batch_size, 1)
             context_length_tensor = torch.cuda.LongTensor(batch_size)
@@ -267,7 +266,6 @@ def search(
             # first time to run inference,
             # need to initialize the root node, kv-cache
             assert action is None
-            assert depth is None
             if isinstance(inputs, tuple): # tuple of (context_tokens_tensor, context_length_tensor)
                 context_tokens_tensor, context_length_tensor = inputs
             else:
@@ -275,8 +273,6 @@ def search(
                     inputs, 0, False
                 )
             batch_size = context_tokens_tensor.size(0)
-            depth = torch.cuda.IntTensor(batch_size, 1)
-            depth[:] = 0
             action = torch.cuda.IntTensor(batch_size, 1)
             action[:] = 0
 
@@ -284,7 +280,6 @@ def search(
             context_tokens_tensor,
             context_length_tensor,
             action,
-            depth,
             tokens_to_generate,
             top_k,
             end_strings,
@@ -296,7 +291,6 @@ def search(
             context_tokens_tensor,
             context_length_tensor,
             action,
-            depth,
             tokens_to_generate,
             top_k,
             end_strings,
@@ -311,23 +305,20 @@ def search(
     context_length_tensor = context_length_tensor.chunk(dp_size)[dp_rank]
     context_tokens_tensor = context_tokens_tensor.chunk(dp_size)[dp_rank]
     action = action.chunk(dp_size)[dp_rank]
-    depth = depth.chunk(dp_size)[dp_rank]
     # chunk the context_ids, which is a list of strings
     batch_size = len(context_ids)
     assert batch_size % dp_size == 0
     chuck_size = batch_size // dp_size
     context_ids = context_ids[dp_rank * chuck_size : (dp_rank + 1) * chuck_size]
-    # init the objects for inference
-    init = depth[0].item() == 0
- 
+
     cache_hit_indicator = []
     if not init:
         # check if the data hits the cache
         cache_infer_results = []
-        for a, d, context_id in zip(action, depth, context_ids):
-            infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, d.item(), a.item())
+        for a, context_id in zip(action, context_ids):
+            infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, a.item())
             if infer is not None:
-                print('cache hit', d.item(), a.item())
+                print('cache hit', len(context_id), a.item())
                 cache_hit_indicator.append(True)
                 cache_infer_results.append(infer)
             else:
@@ -336,7 +327,6 @@ def search(
         context_tokens_tensor = context_tokens_tensor[~cache_hit_indicator]
         context_length_tensor = context_length_tensor[~cache_hit_indicator]
         action = action[~cache_hit_indicator]
-        depth = depth[~cache_hit_indicator]
         context_ids = [context_ids[i] for i in range(len(context_ids)) if not cache_hit_indicator[i]]
 
     if len(context_tokens_tensor) > 0:
@@ -344,20 +334,17 @@ def search(
         if init:
             inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_info)
         else:
-            context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(session_info, context_ids, depth, action)
+            context_tokens_tensor, context_length_tensor, true_context_length = inference_strategy.compute_inference_params(session_info, context_ids, action)
 
         output_actions, output_policys, output_values = sample_sequence_batch(
             model,
             inference_strategy,
             context_tokens_tensor,
             context_length_tensor,
-            tokens_to_generate,
-            end_strings=end_strings,
             context_ids=context_ids,
             session_info=session_info,
             top_k=top_k,
             init=init,
-            depths=depth,
             true_context_length=true_context_length,
         )
     
@@ -419,13 +406,10 @@ def sample_sequence_batch(
     inference_strategy,
     context_tokens,
     context_lengths,
-    tokens_to_generate,
-    end_strings,
     context_ids,
     session_info,
     top_k,
     init,
-    depths,
     true_context_length=None,):
     # Importing here to avoid circular import errors
 
@@ -526,40 +510,37 @@ def sample_sequence_batch(
             actions_policy = torch.cuda.FloatTensor([0.0] * batch_size)
 
             # construct and save the root node
-            inference_strategy.save_kv_cache(session_info, context_ids, depths, batch_size, context_lengths, parent_nodes, actions_taken, actions_policy, output_values, context_tokens)
+            inference_strategy.save_kv_cache(session_info, context_ids, batch_size, context_lengths, parent_nodes, actions_taken, actions_policy, output_values, context_tokens)
 
             # construct and save the first level nodes
-            depths += 1
-
             for i in range(batch_size):
                 context_id = context_ids[i]
-                parent_nodes[i] = inference_strategy.get_node(session_info, context_id, 0, -1)
+                parent_nodes[i] = inference_strategy.get_node(session_info, context_id, -1)
+                assert parent_nodes[i].parent is None
 
             for j in range(top_k):
                 # actions taken is a tensor of shape [batch_size, top_k]
                 # actions policy is a tensor of shape [batch_size, top_k]
                 actions_taken = output_actions[:, j]
                 actions_policy = output_policy[:, j]
-                inference_strategy.save_kv_cache(session_info, context_ids, depths, batch_size, context_lengths, parent_nodes, actions_taken, actions_policy, None, None)
+                children_context_ids = context_ids
+                inference_strategy.save_kv_cache(session_info, children_context_ids, batch_size, context_lengths, parent_nodes, actions_taken, actions_policy, None, None)
         else:
             # construct and save the next level nodes
             parent_nodes = [None] * batch_size
 
             for i in range(batch_size):
                 context_id = context_ids[i]
-                depth = depths[i].item()
                 context = context_lengths[i].item()
                 action = context_tokens[i, context].item()
-                parent_nodes[i] = inference_strategy.get_node(session_info, context_id, depth, action)
+                parent_nodes[i] = inference_strategy.get_node(session_info, context_id, action)
                 parent_context_length = true_context_length[i].item() - 1
                 # need to correct the parent_nodes's k-v cache
-                inference_strategy.update_kv_cache(session_info, parent_nodes[i], depth, parent_context_length, i, output_values[i].item())
-
-
-            depths += 1
+                inference_strategy.update_kv_cache(session_info, parent_nodes[i], parent_context_length, i, output_values[i].item())
 
             for j in range(top_k):
                 actions_taken = output_actions[:, j]
                 actions_policy = output_policy[:, j]
-                inference_strategy.save_kv_cache(session_info, context_ids, depths, batch_size, true_context_length, parent_nodes, actions_taken, actions_policy, None, None)
+                children_context_ids = [ context_id + (parent_node.action, ) for context_id, parent_node in zip(context_ids, parent_nodes)]
+                inference_strategy.save_kv_cache(session_info, children_context_ids, batch_size, true_context_length, parent_nodes, actions_taken, actions_policy, None, None)
         return output_actions, output_policy, output_values
