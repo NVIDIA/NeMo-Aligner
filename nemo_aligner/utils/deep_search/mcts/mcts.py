@@ -257,15 +257,17 @@ class MCTSParallel:
                 # spg.node is to save the node that needs to be expanded
                 spg.node = None
                 # start from the root node
+                depth = 0
                 node = spg.root
 
                 # select the leaf node based on ucb score
                 while node.is_fully_expanded():
                     node = node.select()
+                    depth += 1
                 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
                 text = self.get_text(node)
-                value, is_terminal = self.get_value_and_terminated(text, spg.data_id, len(node.context_id) + 1)
+                value, is_terminal = self.get_value_and_terminated(text, spg.data_id, depth)
 
                 if is_terminal:
                     # if terminal, then backpropagate the value, and skip the expansion of the node because spg.node is None
