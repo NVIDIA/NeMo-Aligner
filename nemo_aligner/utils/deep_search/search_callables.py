@@ -28,7 +28,7 @@ import base64
 
 
 def encode_context_data(context_data: List[List]):
-    context_data = [np.array(t).tostring() for t in context_data]
+    context_data = [np.array(t, dtype=np.int32).tostring() for t in context_data]
     str_context = [base64.b64encode(t).decode()  for t in context_data]
     str_ndarray = np.array(str_context)[..., np.newaxis]
     context_data = np.char.encode(str_ndarray, "utf-8")
