@@ -10,7 +10,7 @@ trainer:
 
   ppo:
     max_steps: -1  # max PPO steps (-1 to go through the whole train set)
-    val_check_interval: 10 
+    val_check_interval: 10
     save_interval: ${.val_check_interval}
     gradient_clip_val: 1.0
 
@@ -49,7 +49,7 @@ remote_critic_rm:
   # must match the same flag in the critic config
   combine_rm_and_critic_server: True
 
-  # reward model server, specify if 
+  # reward model server, specify if
   # combine_rm_and_critic server is False
   reward_model:
     name: reward_model
@@ -57,7 +57,7 @@ remote_critic_rm:
     port: 5555
 
   critic:
-    name: 
+    name:
       train: critic_train
       infer: critic_infer
       save: critic_save
@@ -146,15 +146,15 @@ model:
 
   # miscellaneous
   seed: 1234
-  
+
   optim:
     name: distributed_fused_adam
     bucket_cap_mb: 200
     overlap_grad_sync: False
     contiguous_grad_buffer: True
     lr: 9e-7
-    weight_decay: 0.1 
-    betas: 
+    weight_decay: 0.1
+    betas:
     - 0.9
     - 0.98
     sched:
