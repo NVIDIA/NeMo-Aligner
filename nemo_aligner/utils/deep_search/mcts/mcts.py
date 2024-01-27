@@ -355,6 +355,7 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             spg.state = spg.state + [action]
             spg.node = spg.root.children[action_index]
             spg.depth_offset += 1
+            spg.node.depth = spg.depth_offset
 
 
             #  get the value and termination condition from the current taken `action`
