@@ -59,52 +59,6 @@ __all__ = [
 ]
 
 
-def top_k_logits(logits, top_k=0, top_p=0.0, filter_value=-float("Inf"), started=None):
-    """
-       This function has been mostly taken from huggingface conversational
-         ai code at
-         https://medium.com/huggingface/how-to-build-a-state-of-the-art-
-              conversational-ai-with-transfer-learning-2d818ac26313 
-
-        @param logits: logits tensor
-        @param top_k: keep only top k tokens with highest probability
-        @param top_p: keep the top tokens with cumulative probability
-        @filter_value: value to set filtered tokens to
-        @started: a tensor of bools indicating whether the text generation starts for the batch
-        returns the filtered logits
-    """
-    if top_k > 0:
-        # Remove all tokens with a probability less than the
-        # last token of the top-k
-        indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
-        if started is not None:
-            for i in np.arange(indices_to_remove.size(0))[started.cpu().numpy()]:
-                logits[i, indices_to_remove[i]] = filter_value
-        else:
-            logits[indices_to_remove] = filter_value
-
-    if top_p > 0.0:
-        # Cconvert to 1D
-        sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-        cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-
-        # Remove tokens with cumulative probability above the threshold
-        sorted_indices_to_remove = cumulative_probs > top_p
-        # Shift the indices to the right to keep also the first token
-        # above the threshold
-        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-        sorted_indices_to_remove[..., 0] = 0
-        if started is not None:
-            for i in np.arange(sorted_indices.size(0))[started.cpu().numpy()]:
-                indices_to_remove = sorted_indices[i][sorted_indices_to_remove[i]]
-                logits[i, indices_to_remove] = filter_value
-        else:
-            for i in range(sorted_indices.size(0)):
-                indices_to_remove = sorted_indices[i][sorted_indices_to_remove[i]]
-                logits[i, indices_to_remove] = filter_value
-
-    return logits
-
 def dp_search(
     model,
     inputs=None,

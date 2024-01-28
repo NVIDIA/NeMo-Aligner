@@ -104,13 +104,16 @@ class TestSearch:
         output = infer_fn(inputs=batched_inputs, action=None, context_ids=context_ids, session_info='session1')
         assert strategy.search_db.get_inference_params('session1').sequence_len_offset == max(token_lengths) - 1
         assert 'session1' in strategy.search_db.db
-        assert len(strategy.search_db.db['session1']) == 2 + top_k * 2 # root + children
+        root = strategy.search_db.get('session1', context_ids[0], -1)
         for action in output['action'][0]:
-            assert (context_ids[0], action) in strategy.search_db.db['session1']
+            node = strategy.search_db.get('session1', context_ids[0], action)
+            assert node.parent == root
+            assert node.action == action
+        root = strategy.search_db.get('session1', context_ids[1], -1)
         for action in output['action'][1]:
-            assert (context_ids[1], action) in strategy.search_db.db['session1']
-        assert (context_ids[0], -1) in strategy.search_db.db['session1']
-        assert (context_ids[1], -1) in strategy.search_db.db['session1']
+            node = strategy.search_db.get('session1', context_ids[1], action)
+            assert node.parent == root
+            assert node.action == action
 
         old_k_caches = []
         batch_size = len(batched_inputs)
@@ -126,10 +129,15 @@ class TestSearch:
             output = infer_fn(inputs=None, action=actions, context_ids=context_ids, session_info='session1')
             assert strategy.search_db.get_inference_params('session1').sequence_len_offset == max(token_lengths) + step
             context_ids = [parent_ids + (child.item(),) for parent_ids, child in zip(context_ids, actions)]
+            root = strategy.search_db.get('session1', context_ids[0][:-1], actions[0].item())
             for action in output['action'][0]:
-                assert (context_ids[0], action) in strategy.search_db.db['session1']
+                node = strategy.search_db.get('session1', context_ids[0], action)
+                assert node.action == action
+                assert node.parent == root
+            root = strategy.search_db.get('session1', context_ids[1][:-1], actions[1].item())
             for action in output['action'][1]:
-                assert (context_ids[1], action) in strategy.search_db.db['session1']
+                node = strategy.search_db.get('session1', context_ids[1], action)
+                assert node.action == action
             new_k_caches = []
             for i in range(batch_size):
                 new_k_caches.append(strategy.search_db.get_inference_params('session1').key_value_memory_dict[1][0][:, i, 0, 0])
@@ -139,3 +147,28 @@ class TestSearch:
                 # make sure the context k cache matches for the new inference 
                 assert torch.allclose(old_k_caches[i][0:context_length[i] -1], new_k_caches[i][0:context_length[i] -1])
             old_k_caches = new_k_caches
+
+        # test the cache is hit
+
+        infer_result = strategy.search_db.get_infer_cache('session1', context_ids[0][:-2], context_ids[0][-2])
+        assert infer_result is not None
+        actions = strategy.search_db.get_infer_cache('session1', context_ids[0][:-2], context_ids[0][-2])['action']
+        for action in actions:
+            infer_result = strategy.search_db.get_infer_cache('session1', context_ids[0][:-1], action)
+            if action != context_ids[0][-1]:
+                assert infer_result is None
+            else:
+                assert infer_result is not None
+
+        infer_result = strategy.search_db.get_infer_cache('session1', context_ids[1][:-2], context_ids[1][-2])
+        assert infer_result is not None
+
+        actions = strategy.search_db.get_infer_cache('session1', context_ids[1][:-2], context_ids[1][-2])['action']
+
+        for action in actions:
+            infer_result = strategy.search_db.get_infer_cache('session1', context_ids[1][:-1], action)
+            if action != context_ids[1][-1]:
+                assert infer_result is None
+            else:
+                assert infer_result is not None
+
