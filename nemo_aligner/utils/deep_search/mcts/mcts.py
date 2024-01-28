@@ -17,15 +17,7 @@ from typing import Callable, List
 import torch
 import numpy as np
 from megatron.core import InferenceParams
-from pytriton.client import ModelClient
-import hashlib
 import tqdm
-
-
-def context_to_id(context: str) -> str:
-    # generate unique context ids using hash function
-    output = hashlib.md5(context.encode())
-    return output.hexdigest()
 
 
 class ParallelSearch:
@@ -47,7 +39,6 @@ class State:
         """LM search related states
 
         Args:
-            depth (int): depth of the search tree
             kv_cache (dict): dictionary of KV cache
         """
         # kv cache is a dictionary. key is layer number, value is a k, v tuple where both k and v are torch tensors of shape (seq_len, batch_size, ...)
@@ -82,7 +73,7 @@ class State:
 
 
 class Node:
-    def __init__(self, state, parent=None, action=None, prior=0.0, visit_count=0, C=2.0, depth=0, context_id = None, value_sum=0.0):
+    def __init__(self, state, parent=None, action=None, prior=0.0, visit_count=0, value_sum=0.0):
         """Node used in MCTS
         Args:
             state (State): inference state 
@@ -92,7 +83,6 @@ class Node:
             visit_count (int): visit counts for the current node. Defaults to 0.
             C (float): weight of prior. Defaults to 2.0.
         """
-        self.C = C
         self.state = state
         self.parent = parent
         self.action = action
@@ -102,43 +92,34 @@ class Node:
 
         self.visit_count = visit_count
         self.value_sum = value_sum
-        # whether the parent turn is skipped or not
-        self.skip_parent = False
-        self.depth = depth
-        self.context_id = context_id
 
     def is_fully_expanded(self):
         return len(self.children) > 0
 
-    def select(self):
+    def select(self, C):
         best_child = None
         best_ucb = -np.inf
 
         for child in self.children:
-            ucb = self.get_ucb(child)
+            ucb = self.get_ucb(child, C)
             if ucb > best_ucb:
                 best_child = child
                 best_ucb = ucb
 
         return best_child
 
-    def get_ucb(self, child):
+    def get_ucb(self, child, C):
         if child.visit_count == 0:
             q_value = 0.0  #
         else:
             q_value = child.value_sum / child.visit_count # assume the q_value is probability of winning
-        return q_value + self.C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
+        return q_value + C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
 
     def expand(self, policy, actions):
         for action, prob in zip(actions, policy):
             action = action.item()
             prob = prob.item()
-            if self.action == -1:
-                # root node expansion, children will use the same context as root
-                child = Node([action], parent=self, action=action, prior=prob, visit_count=0, C=self.C, depth=self.depth + 1, context_id=self.context_id)
-            else:
-                # child node expansion, children will use the the the context as (parent context + parent action)
-                child = Node([action], parent=self, action=action, prior=prob, visit_count=0, C=self.C, depth=self.depth + 1, context_id=self.context_id + (self.action, ))
+            child = Node([action], parent=self, action=action, prior=prob, visit_count=0)
             self.children.append(child)
         return child
 
@@ -147,6 +128,15 @@ class Node:
         self.visit_count += 1
         if self.parent is not None:
             self.parent.backpropagate(value)
+
+    def get_all_tokens(self):
+        node = self
+        all_tokens = []
+        all_tokens += node.state[::-1]
+        while node.parent is not None:
+            node = node.parent
+            all_tokens += node.state[::-1]
+        return all_tokens[::-1]
 
 
 class MCTSParallel:
@@ -163,13 +153,18 @@ class MCTSParallel:
         # decoded_text = "".join(state).replace('▁', ' ').lstrip()
         return decoded_text
     
+    def get_context_id(self, node):
+        all_tokens = node.get_all_tokens()
+        if node.parent is None:
+            # for the root node, the context id is the same as the state
+            return tuple(all_tokens)
+        else:
+            # for the child node, the context id is the same as the parent node
+            return tuple(all_tokens[:-1])
+   
     def get_text(self, node):
-        all_tokens = []
-        all_tokens += node.state[::-1]
-        while node.parent is not None:
-            node = node.parent
-            all_tokens += node.state[::-1]
-        text = self.decode_text(all_tokens[::-1])
+        all_tokens = node.get_all_tokens()
+        text = self.decode_text(all_tokens)
         return text
    
     def get_value_and_terminated(self, text, data_id, depth):
@@ -191,7 +186,11 @@ class MCTSParallel:
          # get the action to execute and depths in the search tree
         actions = np.stack([ps[mappingIdx].node.action for mappingIdx in expandable_search])[:, np.newaxis].astype(np.int32)
         # get the context ids for the search nodes
-        context_ids = [ps[mappingIdx].node.context_id for mappingIdx in expandable_search]
+        # context_ids = [ps[mappingIdx].node.context_id for mappingIdx in expandable_search]
+        context_ids = [self.get_context_id(ps[mappingIdx].node) for mappingIdx in expandable_search]
+        # # verify context ids are the same
+        # for old_context_id, new_context_id in zip(context_ids, new_context_ids):
+        #     assert old_context_id == new_context_id
         return actions, context_ids
 
        
@@ -204,10 +203,12 @@ class MCTSParallel:
             expandable_search = list(range(len(ps)))
             actions, context_ids = self.get_input_action_depth(ps, expandable_search)
             # result_dict = self.client.infer_batch(action=actions, depth=depths, context_ids=context_data, parameters={"session": self.session})
-            result_dict = self.client_fun(action=actions, context_ids=context_ids, session_info=self.session)
+            # need to remove the last token from the context id
+            infer_context_ids = [context_id[:-1] for context_id in context_ids]
+            result_dict = self.client_fun(action=actions, context_ids=infer_context_ids, session_info=self.session)
             spg_policys = result_dict['policy'] 
             spg_actions = result_dict['action']
-            c_ids = [old_context + (new.item(),)  for old_context, new in zip(context_ids, actions)]
+            c_ids = context_ids # [old_context + (new.item(),)  for old_context, new in zip(context_ids, actions)]
             # need to add the action to the context
         else:
             # we need to run inferecce for all context ids
@@ -247,7 +248,7 @@ class MCTSParallel:
                 * np.random.dirichlet([self.args['dirichlet_alpha']] * action_size, size=1)[0]
             # no need to handle the case that no valid moves
             # because the we search the states[i] which has at least one valid move
-            spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1, C=self.args['C'], depth=0, context_id=context_id)
+            spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
             spg.root.expand(spg_policy, spg_action)
         
         for search in range(self.args['num_searches']):
@@ -261,7 +262,7 @@ class MCTSParallel:
 
                 # select the leaf node based on ucb score
                 while node.is_fully_expanded():
-                    node = node.select()
+                    node = node.select(self.args['C'])
                     depth += 1
                 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
@@ -341,9 +342,8 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             action_index = np.random.choice(action_size, p=temperature_action_probs) # Divide temperature_action_probs with its sum in case of an error
             action = actions[action_index].item()
 
-            context_id = spg.state
-            spg.state = context_id + [action]
-            fake_node = Node(spg.state, parent=None, action=action, prior=0.0, visit_count=0, C=mcts.args['C'], context_id=tuple(context_id))
+            spg.state = spg.state + [action]
+            fake_node = Node(spg.state, parent=None, action=action, prior=0.0, visit_count=0)
             spg.node = fake_node
 
 

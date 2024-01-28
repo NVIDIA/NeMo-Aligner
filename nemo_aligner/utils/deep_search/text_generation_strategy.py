@@ -445,9 +445,9 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             if action_taken == -1:
                 # root node, need to add all context tokens
                 tokens = context_tokens[bid, :context_length].cpu().numpy().tolist()
-                node = Node(state=state, parent=parent_node, action=tokens, prior=0.0, visit_count=0, C=2.0, value_sum=value)
+                node = Node(state=state, parent=parent_node, action=tokens, prior=0.0, visit_count=0, value_sum=value)
             else:
-                node = Node(state=state, parent=parent_node, action=action_taken, prior=prior_prob, visit_count=0, C=2.0, value_sum=value)
+                node = Node(state=state, parent=parent_node, action=action_taken, prior=prior_prob, visit_count=0, value_sum=value)
             # add child node to the parent node
             if parent_node is not None:
                 parent_node.children.append(node)

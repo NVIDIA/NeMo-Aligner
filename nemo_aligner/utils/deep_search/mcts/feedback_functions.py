@@ -28,7 +28,7 @@ class GSK8KFeedback(Feedback):
         score the response
         """
         response = response.lower()
-        answer = self.gsk8k.iloc[data_id]['answer'].lower().split('####')[1].strip()
+        answer = self.gsk8k.iloc[data_id]['answer'].lower().split('####')[1].strip().replace(',', '')
         # predicted answer matches the answer pattern
         numbers = re.findall(r'\{{([\d,]+)\}}', response)
         # Extract the last number
