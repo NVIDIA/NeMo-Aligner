@@ -14,6 +14,7 @@
 
 """distributed utils for communicating between different ranks"""
 
+import pickle
 import time
 import warnings
 from collections import defaultdict
@@ -21,10 +22,9 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Dict, Optional, Union
 
+import numpy as np
 import torch
 from megatron.core import parallel_state, tensor_parallel
-import pickle
-import numpy as np
 
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo.utils.timers import NamedTimer
@@ -79,7 +79,7 @@ def broadcast_python_obj(obj, src, group):
             np.frombuffer(pickle.dumps(obj), dtype=np.int8), device=torch.cuda.current_device()
         )
         size = torch.as_tensor([byte_tensor.size(0)], device=torch.cuda.current_device(), dtype=torch.int64)
- 
+
         torch.distributed.broadcast(size, src, group)
         torch.distributed.broadcast(byte_tensor, src, group)
     else:

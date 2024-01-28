@@ -22,17 +22,14 @@ from megatron.core import parallel_state
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.models.gpt import GPTModel
 from megatron.core.tensor_parallel.layers import RowParallelLinear
-from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.custom_layers.transformer_engine import TENorm
+from megatron.core.transformer.spec_utils import ModuleSpec, build_module
+from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import make_sharded_tensor_for_checkpoint, make_tp_sharded_tensor_for_checkpoint
 from torch import Tensor
-from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
 
-from megatron.core.transformer.custom_layers.transformer_engine import TENorm
-from megatron.core.transformer.spec_utils import ModuleSpec, build_module
-from megatron.core.transformer.transformer_config import TransformerConfig
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import RewardModelHead
-
 
 """Megatron Core based Reward Model"""
 
@@ -66,21 +63,19 @@ class ValueHead(TransformerBlock):
     ):
         self.layer_number_offset = layer_number_offset
         super().__init__(
-            config = config,
-            spec = spec,
-            post_layer_norm = post_layer_norm,
-            pre_process = pre_process,
-            post_process = post_process,
+            config=config,
+            spec=spec,
+            post_layer_norm=post_layer_norm,
+            pre_process=pre_process,
+            post_process=post_process,
         )
- 
 
     def _build_layers(self):
-
         def build_layer(layer_spec, layer_number):
             return build_module(layer_spec, config=self.config, layer_number=layer_number,)
 
         # offset is implicit in TransformerLayer
-        # add self.layer_number_offset to prevent key clash in inference parameters 
+        # add self.layer_number_offset to prevent key clash in inference parameters
         self.layers = torch.nn.ModuleList(
             [
                 build_layer(layer_spec, i + 1 + self.layer_number_offset)
@@ -91,12 +86,10 @@ class ValueHead(TransformerBlock):
         if self.post_process and self.post_layer_norm:
             # Final layer norm before output.
             self.final_layernorm = TENorm(
-                config=self.config,
-                hidden_size=self.config.hidden_size,
-                eps=self.config.layernorm_epsilon,
+                config=self.config, hidden_size=self.config.hidden_size, eps=self.config.layernorm_epsilon,
             )
 
-    def layer_sharded_state_dict(self, layer, prefix=''):
+    def layer_sharded_state_dict(self, layer, prefix=""):
         """need to override this method to change the layer number offset which is based on the layer number.
         Otherwise the sharded_pp_offset will be wrong.
         The right behavior of shard_pp_offset should be (0, layer_number, num_layers), where layer number is the 
@@ -106,56 +99,46 @@ class ValueHead(TransformerBlock):
         num_layers = layer.config.num_layers
 
         global_layer_offset = layer.layer_number - 1  # layer.layer_number starts at 1
-        state_dict_prefix = (
-            f'{prefix}{global_layer_offset - offset}.'  # module list index in TransformerBlock
-        )
-        offset = layer.layer_number - self.layer_number_offset - 1 
-        sharded_pp_offset = [
-            (0, offset, num_layers)
-        ]  # PP sharding offset for ShardedTensors
+        state_dict_prefix = f"{prefix}{global_layer_offset - offset}."  # module list index in TransformerBlock
+        offset = layer.layer_number - self.layer_number_offset - 1
+        sharded_pp_offset = [(0, offset, num_layers)]  # PP sharding offset for ShardedTensors
 
         attn_state_dict = layer.self_attention.sharded_state_dict(
-            prefix=f'{state_dict_prefix}self_attention.',
-            sharded_key_prefix=f'{prefix}self_attention.',
+            prefix=f"{state_dict_prefix}self_attention.",
+            sharded_key_prefix=f"{prefix}self_attention.",
             sharded_offsets=sharded_pp_offset,
         )
 
         mlp_state_dict = layer.mlp.sharded_state_dict(
-            prefix=f'{state_dict_prefix}mlp.',
-            sharded_key_prefix=f'{prefix}mlp.',
-            sharded_offsets=sharded_pp_offset,
+            prefix=f"{state_dict_prefix}mlp.", sharded_key_prefix=f"{prefix}mlp.", sharded_offsets=sharded_pp_offset,
         )
 
         sharded_state_dict = {**mlp_state_dict, **attn_state_dict}
 
         return sharded_state_dict
 
-
-    def sharded_state_dict(self, prefix: str = ''):
+    def sharded_state_dict(self, prefix: str = ""):
 
         sharded_state_dict = {}
 
-        layer_prefix = f'{prefix}layers.'
+        layer_prefix = f"{prefix}layers."
         for layer in self.layers:
             sharded_state_dict.update(self.layer_sharded_state_dict(layer, layer_prefix))
 
         if self.post_process and self.post_layer_norm:
             state_dict = self.state_dict(keep_vars=True)
 
-            tensor = state_dict['final_layernorm.weight']
-            layer_name = f'{prefix}final_layernorm.weight'
+            tensor = state_dict["final_layernorm.weight"]
+            layer_name = f"{prefix}final_layernorm.weight"
             sharded_state_dict[layer_name] = make_sharded_tensor_for_checkpoint(tensor, layer_name)
 
             # RMSNorm doesn't have bias.
-            if 'final_layernorm.bias' in state_dict.keys():
-                tensor = state_dict['final_layernorm.bias']
-                layer_name = f'{prefix}final_layernorm.bias'
-                sharded_state_dict[layer_name] = make_sharded_tensor_for_checkpoint(
-                    tensor, layer_name
-                )
+            if "final_layernorm.bias" in state_dict.keys():
+                tensor = state_dict["final_layernorm.bias"]
+                layer_name = f"{prefix}final_layernorm.bias"
+                sharded_state_dict[layer_name] = make_sharded_tensor_for_checkpoint(tensor, layer_name)
 
         return sharded_state_dict
-   
 
 
 class GPTHybridModel(GPTModel):
@@ -204,11 +187,12 @@ class GPTHybridModel(GPTModel):
         # if last stage or no PP
         if post_process:
             self.value_head = ValueHead(
-            config=head_config,
-            spec=transformer_layer_spec,
-            pre_process=True,
-            post_process=True,
-            layer_number_offset=len(self.decoder.submodules.layer_specs))
+                config=head_config,
+                spec=transformer_layer_spec,
+                pre_process=True,
+                post_process=True,
+                layer_number_offset=len(self.decoder.submodules.layer_specs),
+            )
             assert output_sequence is True, "output_sequence must be True for hybrid model"
             assert num_attributes == 1, "num_attributes must be 1 for hybrid model"
 
@@ -256,14 +240,18 @@ class GPTHybridModel(GPTModel):
 
             # Rotary positional embeddings (embedding is None for PP intermediate devices)
             rotary_pos_emb = None
-            if self.position_embedding_type == 'rope':
+            if self.position_embedding_type == "rope":
                 rotary_seq_len = self.rotary_pos_emb.get_rotary_seq_len(
-                    inference_params, self.value_head, decoder_input, self.head_config
+                    inference_params, self.value_head, hidden_states_raw, self.head_config
                 )
                 rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
 
-
-            hidden_states_raw = self.value_head(hidden_states_raw, attention_mask=attention_mask, inference_params=inference_params, rotary_pos_emb=rotary_pos_emb)
+            hidden_states_raw = self.value_head(
+                hidden_states_raw,
+                attention_mask=attention_mask,
+                inference_params=inference_params,
+                rotary_pos_emb=rotary_pos_emb,
+            )
             value = self.rm_head(hidden_states_raw, None)
             if labels is None:
                 output = logits.transpose(0, 1).contiguous()
@@ -300,6 +288,5 @@ class GPTHybridModel(GPTModel):
             # biases are not sharded
             bias_key = f"{rm_head_prefix}bias"
             sharded_state_dict[bias_key] = make_sharded_tensor_for_checkpoint(rm_head_state_dict[bias_key], bias_key)
-
 
         return sharded_state_dict

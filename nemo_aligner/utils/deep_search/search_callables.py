@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 import threading
 from typing import Dict, List
 
@@ -24,15 +25,15 @@ from pytriton.model_config import Tensor
 
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils.server_utils import decode_bytes_ndarray, lock_method, pad_input
-import base64
 
 
 def encode_context_data(context_data: List[List]):
     context_data = [np.array(t, dtype=np.int32).tostring() for t in context_data]
-    str_context = [base64.b64encode(t).decode()  for t in context_data]
+    str_context = [base64.b64encode(t).decode() for t in context_data]
     str_ndarray = np.array(str_context)[..., np.newaxis]
     context_data = np.char.encode(str_ndarray, "utf-8")
     return context_data
+
 
 def decode_context_data(context_data: np.ndarray):
     decoded_str = decode_bytes_ndarray(context_data)
@@ -40,18 +41,22 @@ def decode_context_data(context_data: np.ndarray):
     context = [tuple(np.frombuffer(t, dtype=np.int32)) for t in decode_str]
     return context
 
+
 class SearchCallable:
     def __init__(self, *, model_name: str, infer_fn: callable, lock: threading.Lock):
         self.model_name = model_name
         self.lock = lock
         self.infer_fn = infer_fn
-        self.inputs = (Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
-                       Tensor(name="context_ids", shape=(-1,), dtype=bytes, optional=False),
-                       Tensor(name="action", shape=(-1,), dtype=np.int32, optional=True))
-        self.outputs = (Tensor(name="action", shape=(-1,), dtype=np.int32),
-                        Tensor(name="policy", shape=(-1,), dtype=np.float32),
-                        Tensor(name="value", shape=(-1,), dtype=np.float32),
-                        )
+        self.inputs = (
+            Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
+            Tensor(name="context_ids", shape=(-1,), dtype=bytes, optional=False),
+            Tensor(name="action", shape=(-1,), dtype=np.int32, optional=True),
+        )
+        self.outputs = (
+            Tensor(name="action", shape=(-1,), dtype=np.int32),
+            Tensor(name="policy", shape=(-1,), dtype=np.float32),
+            Tensor(name="value", shape=(-1,), dtype=np.float32),
+        )
 
     @lock_method("self.lock")
     def infer(self, requests):
@@ -83,7 +88,7 @@ class SearchCallable:
         action = inputs.pop("action", None)
 
         return sentences, action, context_ids
-    
+
     def batch_inputs(self, req_list):
         input_names = req_list[0].keys()
         for req_dict2 in req_list[1:]:
@@ -96,11 +101,10 @@ class SearchCallable:
             inputs[model_input] = concatenated_input_data
         outputs = self._get_batch(**inputs)
         return outputs
-    
 
     def _split_result(self, outputs, req_list):
 
-        # batch_size for each of the sessions 
+        # batch_size for each of the sessions
         # session_batch_size = {'session1': [batch_size1, batch_size2, ...], 'session2': [batch_size1, batch_size2, ...]}
         session_batch_size = {}
         for request in req_list:
