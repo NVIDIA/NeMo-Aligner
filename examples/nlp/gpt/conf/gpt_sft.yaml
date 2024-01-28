@@ -47,8 +47,8 @@ exp_manager:
     monitor: val_loss
     save_top_k: 5
     mode: min
-    save_nemo_on_train_end: False
-    filename: 'megatron_gpt_sft--{${exp_manager.checkpoint_callback_params.monitor}:.3f}-{step}-{consumed_samples}'
+    save_nemo_on_train_end: False 
+    filename: 'megatron_gpt_sft--{${.monitor}:.3f}-{step}-{consumed_samples}-{epoch}'
     model_parallel_size: ${model.tensor_model_parallel_size}
     save_best_model: False   # need to keep this false otherwise it will create multiple last.ckpt files because restore reset the previous best model
 
