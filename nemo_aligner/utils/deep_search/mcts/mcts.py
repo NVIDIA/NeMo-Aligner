@@ -88,7 +88,7 @@ class Node:
         self.action = action
         self.prior = prior
 
-        self.children = []
+        self.children = {}
 
         self.visit_count = visit_count
         self.value_sum = value_sum
@@ -100,7 +100,8 @@ class Node:
         best_child = None
         best_ucb = -np.inf
 
-        for child in self.children:
+        for child_action in self.children:
+            child = self.children[child_action]
             ucb = self.get_ucb(child, C)
             if ucb > best_ucb:
                 best_child = child
@@ -120,8 +121,7 @@ class Node:
             action = action.item()
             prob = prob.item()
             child = Node([action], parent=self, action=action, prior=prob, visit_count=0)
-            self.children.append(child)
-        return child
+            self.children[action] = child
 
     def backpropagate(self, value):
         self.value_sum += value
@@ -329,7 +329,9 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             action_size = len(spg.root.children)
             action_probs = np.zeros(action_size, dtype=np.float32)
             actions = np.zeros(action_size, dtype=np.int32)
-            for child_id, child in enumerate(spg.root.children):
+            for child_id, child_action in enumerate(spg.root.children.keys()):
+                child = spg.root.children[child_action] 
+                assert child_action == child.action
                 action_probs[child_id] = child.visit_count
                 actions[child_id] = child.action
             action_probs /= np.sum(action_probs)

@@ -13,6 +13,7 @@
 # limitations under the License.
 import numpy as np
 import torch
+from nemo_aligner.utils.deep_search.mcts.mcts import Node
 
 
 class SearchDB:
@@ -29,24 +30,41 @@ class SearchDB:
         self.attention_mask[session_id] = attention_mask
         self.position_ids[session_id] = position_ids
 
-    def add(self, session_info, context_id, action, node):
-        key = (context_id, action)
+    def add_root(self, session_info, context_id, node):
         if session_info not in self.db:
             session = {}
             self.db[session_info] = session
         else:
             session = self.db[session_info]
-        session[key] = node
+        for token in context_id[:-1]:
+            session[token] = Node(None, None, None, None, None, None)
+            session = session[token].children
+        session[context_id[-1]] = node
 
     def get(self, session_info, context_id, action):
-        return self.db[session_info][(context_id, action)]
+        if session_info not in self.db:
+            raise ValueError(f"{session_info} not in db")
+        db = self.db[session_info]
+        if action == -1:
+            for token in context_id[:-1]:
+                db = db[token].children
+            return db[context_id[-1]]
+        else:
+            for token in context_id:
+                db = db[token].children
+            return db[action]
 
     def get_infer_cache(self, session_info, context_id, action):
         if session_info not in self.db:
             return None
-        if (context_id, action) not in self.db[session_info]:
+        db = self.db[session_info]
+        for token in context_id:
+            if token not in db:
+                return None
+            db = db[token].children
+        if action not in db:
             return None
-        node = self.db[session_info][(context_id, action)]
+        node = db[action]
         if node.value_sum is None:
             return None
         
@@ -54,7 +72,9 @@ class SearchDB:
         output['value'] = node.value_sum
         actions = []
         policy = []
-        for child in node.children:
+        for child_action in node.children:
+            child = node.children[child_action]
+            assert child.action == child_action
             actions.append(child.action)
             policy.append(child.prior)
         output['action'] = np.array(actions)
