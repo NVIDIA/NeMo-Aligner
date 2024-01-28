@@ -9,6 +9,7 @@ trainer:
   precision: bf16
 
   ppo:
+    max_epochs: 1
     max_steps: -1  # max PPO steps (-1 to go through the whole train set)
     val_check_interval: 10
     save_interval: ${.val_check_interval}
@@ -23,7 +24,6 @@ trainer:
 
     # pick up from the model
     # *do not change this*
-    max_epochs: 1 # anything above 1 not supported
     model_gbs: ${model.global_batch_size}
     model_mbs: ${model.micro_batch_size}
 

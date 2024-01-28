@@ -30,12 +30,14 @@ from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils imp
     get_train_valid_test_split_,
 )
 from nemo.collections.nlp.data.language_modeling.megatron.blendable_dataset import BlendableDataset
-from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingSampler
+
+# from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingSampler
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
+    MegatronPretrainingRandomBatchSampler,
 )
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
@@ -44,6 +46,7 @@ from nemo_aligner.data.nlp.datasets import (
     RewardModelDataset,
     RLHFDataset,
 )
+from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
@@ -325,7 +328,7 @@ def build_dataloader(
     # Megatron sampler
     if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type is not None:
         if cfg.model.data.dataloader_type == "single":
-            cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+            cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
             batch_sampler = cls(
                 total_samples=len(dataset),
                 consumed_samples=consumed_samples,
@@ -335,6 +338,7 @@ def build_dataloader(
                 drop_last=drop_last,
                 global_batch_size=gbs,
                 pad_samples_to_global_batch_size=pad_samples_to_global_batch_size,
+                seed=cfg.model.seed,
             )
         else:
             raise ValueError('cfg.data.dataloader_type must be "single"')
