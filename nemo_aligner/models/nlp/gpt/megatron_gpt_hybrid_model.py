@@ -17,9 +17,11 @@ from typing import Any, Dict, List, Union
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
-from megatron.core import parallel_state
+from megatron.core import InferenceParams, parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.utils import divide
+from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -29,16 +31,14 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
     get_iterator_k_split,
     get_ltor_masks_and_position_ids,
 )
+from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import AppState, logging
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
 
-from omegaconf import OmegaConf
 # from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
-from megatron.core.utils import divide
-from megatron.core import InferenceParams
 from nemo_aligner.utils.deep_search.text_gen_utils import search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor
@@ -52,7 +52,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
+
 
 class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
     """
@@ -145,12 +145,12 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
             batch = batch | {"position_ids": position_ids, "attention_mask": attention_mask}
 
-# required_keys = set()
-# if parallel_state.get_pipeline_model_parallel_world_size() == 1:
-# required_keys.update(batch.keys())
-# else:
-# TODO:
-# pass
+            # required_keys = set()
+            # if parallel_state.get_pipeline_model_parallel_world_size() == 1:
+            # required_keys.update(batch.keys())
+            # else:
+            # TODO:
+            # pass
             batch = {key: val.cuda(non_blocking=True) for key, val in batch.items()}
             parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None,)
 
@@ -167,7 +167,7 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                 idx = lengths - 1
 
                 if self.cfg.mcts.train.critic_weight > 0:
-                    value_loss = (values[:, idx].flatten() - rewards.flatten()) **2
+                    value_loss = (values[:, idx].flatten() - rewards.flatten()) ** 2
                     value_loss = self.cfg.mcts.train.critic_weight * value_loss
                 else:
                     value_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
@@ -182,7 +182,7 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                     policy_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
 
                 loss = value_loss - policy_loss
-                
+
                 reduced_loss = average_losses_across_data_parallel_group([loss])
                 reduced_value_loss = average_losses_across_data_parallel_group([value_loss])
                 reduced_policy_loss = average_losses_across_data_parallel_group([policy_loss])
@@ -193,7 +193,7 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                         "loss": reduced_loss.item(),
                         "value_loss": reduced_value_loss.item(),
                         "policy_loss": reduced_policy_loss.item(),
-                    }
+                    },
                 )
 
             return parallel_logits, loss_func
@@ -318,10 +318,10 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                         self.inference_params = InferenceParams(
                             max_batch_size=tokens.size(0), max_sequence_length=inference_max_sequence_len[0].item()
                         )
-                    extra_arg['inference_params'] = self.inference_params
+                    extra_arg["inference_params"] = self.inference_params
                 else:
-                    extra_arg['set_inference_key_value_memory'] = set_inference_key_value_memory[0].item()
-                    extra_arg['inference_max_sequence_len'] = inference_max_sequence_len[0].item()
+                    extra_arg["set_inference_key_value_memory"] = set_inference_key_value_memory[0].item()
+                    extra_arg["inference_max_sequence_len"] = inference_max_sequence_len[0].item()
             output_tensor, value = model(tokens, position_ids, attention_mask, **extra_arg)
 
             # Advance inference sequence offset.
@@ -333,7 +333,7 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                     self.inference_params.sequence_len_offset += output_tensor.size(0)
 
             def id_func(output_tensor):
-                return output_tensor, {'logits': output_tensor}
+                return output_tensor, {"logits": output_tensor}
 
             return output_tensor, id_func
 

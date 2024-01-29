@@ -36,7 +36,7 @@ def compute_num_rollout_microbatches(dataloader):
     )
 
 
-steerlm_template="""<extra_id_0>System
+steerlm_template = """<extra_id_0>System
 A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
 <extra_id_1>User
 {prompt}
@@ -44,6 +44,7 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 <extra_id_1>Assistant
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
+
 
 class DeepSearchTrainer:
     """Trainer to coordinate PPO training
@@ -74,12 +75,12 @@ class DeepSearchTrainer:
         feedback = GSK8KFeedbackDataset(val_ds)
         self.model.prepare_for_inference()
 
-        inputs = [steerlm_template.format(prompt=x) for x in val_ds['question'][:total_num]]
+        inputs = [steerlm_template.format(prompt=x) for x in val_ds["question"][:total_num]]
         output = self.model.generate(inputs)
 
         score = 0
 
-        for i, item in enumerate(output['sentences']):
+        for i, item in enumerate(output["sentences"]):
             score += feedback.score(item, i)
 
         accuracy = score / total_num
@@ -89,7 +90,7 @@ class DeepSearchTrainer:
         return {"accuracy": accuracy, "text": output["sentences"]}
 
     def run_training(self, dataloader_iter):
-# self.model.prepare_for_training()
+        # self.model.prepare_for_training()
 
         for batch in dataloader_iter:
             self.optimizer.zero_grad()
@@ -116,7 +117,7 @@ class DeepSearchTrainer:
 
             self.ppo_optimization_step += 1
 
-# self.model.finish_training()
+        # self.model.finish_training()
 
         # zero grad again incase it frees up grad mem
         self.optimizer.zero_grad()

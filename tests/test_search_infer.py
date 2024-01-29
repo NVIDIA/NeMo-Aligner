@@ -99,17 +99,17 @@ class TestSearch:
         tokenizer = self.model.tokenizer
         context_ids = [tuple(tokenizer.text_to_ids(input)) for input in batched_inputs]
         token_lengths = [len(input) for input in context_ids]
-        output = infer_fn(inputs=batched_inputs, action=None, context_ids=context_ids, session_info='session1')
-        assert strategy.search_db.get_inference_params('session1').sequence_len_offset == max(token_lengths) - 1
-        assert 'session1' in strategy.search_db.db
-        root = strategy.search_db.get('session1', context_ids[0], -1)
-        for action in output['action'][0]:
-            node = strategy.search_db.get('session1', context_ids[0], action)
+        output = infer_fn(inputs=batched_inputs, action=None, context_ids=context_ids, session_info="session1")
+        assert strategy.search_db.get_inference_params("session1").sequence_len_offset == max(token_lengths) - 1
+        assert "session1" in strategy.search_db.db
+        root = strategy.search_db.get("session1", context_ids[0], -1)
+        for action in output["action"][0]:
+            node = strategy.search_db.get("session1", context_ids[0], action)
             assert node.parent == root
             assert node.action == action
-        root = strategy.search_db.get('session1', context_ids[1], -1)
-        for action in output['action'][1]:
-            node = strategy.search_db.get('session1', context_ids[1], action)
+        root = strategy.search_db.get("session1", context_ids[1], -1)
+        for action in output["action"][1]:
+            node = strategy.search_db.get("session1", context_ids[1], action)
             assert node.parent == root
             assert node.action == action
 
@@ -129,14 +129,14 @@ class TestSearch:
             output = infer_fn(inputs=None, action=actions, context_ids=context_ids, session_info="session1")
             assert strategy.search_db.get_inference_params("session1").sequence_len_offset == max(token_lengths) + step
             context_ids = [parent_ids + (child.item(),) for parent_ids, child in zip(context_ids, actions)]
-            root = strategy.search_db.get('session1', context_ids[0][:-1], actions[0].item())
-            for action in output['action'][0]:
-                node = strategy.search_db.get('session1', context_ids[0], action)
+            root = strategy.search_db.get("session1", context_ids[0][:-1], actions[0].item())
+            for action in output["action"][0]:
+                node = strategy.search_db.get("session1", context_ids[0], action)
                 assert node.action == action
                 assert node.parent == root
-            root = strategy.search_db.get('session1', context_ids[1][:-1], actions[1].item())
-            for action in output['action'][1]:
-                node = strategy.search_db.get('session1', context_ids[1], action)
+            root = strategy.search_db.get("session1", context_ids[1][:-1], actions[1].item())
+            for action in output["action"][1]:
+                node = strategy.search_db.get("session1", context_ids[1], action)
                 assert node.action == action
             new_k_caches = []
             for i in range(batch_size):
@@ -154,25 +154,24 @@ class TestSearch:
 
         # test the cache is hit
 
-        infer_result = strategy.search_db.get_infer_cache('session1', context_ids[0][:-2], context_ids[0][-2])
+        infer_result = strategy.search_db.get_infer_cache("session1", context_ids[0][:-2], context_ids[0][-2])
         assert infer_result is not None
-        actions = strategy.search_db.get_infer_cache('session1', context_ids[0][:-2], context_ids[0][-2])['action']
+        actions = strategy.search_db.get_infer_cache("session1", context_ids[0][:-2], context_ids[0][-2])["action"]
         for action in actions:
-            infer_result = strategy.search_db.get_infer_cache('session1', context_ids[0][:-1], action)
+            infer_result = strategy.search_db.get_infer_cache("session1", context_ids[0][:-1], action)
             if action != context_ids[0][-1]:
                 assert infer_result is None
             else:
                 assert infer_result is not None
 
-        infer_result = strategy.search_db.get_infer_cache('session1', context_ids[1][:-2], context_ids[1][-2])
+        infer_result = strategy.search_db.get_infer_cache("session1", context_ids[1][:-2], context_ids[1][-2])
         assert infer_result is not None
 
-        actions = strategy.search_db.get_infer_cache('session1', context_ids[1][:-2], context_ids[1][-2])['action']
+        actions = strategy.search_db.get_infer_cache("session1", context_ids[1][:-2], context_ids[1][-2])["action"]
 
         for action in actions:
-            infer_result = strategy.search_db.get_infer_cache('session1', context_ids[1][:-1], action)
+            infer_result = strategy.search_db.get_infer_cache("session1", context_ids[1][:-1], action)
             if action != context_ids[1][-1]:
                 assert infer_result is None
             else:
                 assert infer_result is not None
-

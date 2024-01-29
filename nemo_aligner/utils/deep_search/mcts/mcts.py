@@ -20,7 +20,6 @@ import numpy as np
 import torch
 import tqdm
 from megatron.core import InferenceParams
-import tqdm
 
 
 class ParallelSearch:
@@ -132,7 +131,7 @@ class Node:
         if child.visit_count == 0:
             q_value = 0.0  #
         else:
-            q_value = child.value_sum / child.visit_count # assume the q_value is probability of winning
+            q_value = child.value_sum / child.visit_count  # assume the q_value is probability of winning
         return q_value + C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
 
     def expand(self, policy, actions):
@@ -173,7 +172,7 @@ class MCTSParallel:
         decoded_text = self.tokenizer.decode(state)
         # decoded_text = "".join(state).replace('▁', ' ').lstrip()
         return decoded_text
-    
+
     def get_context_id(self, node):
         all_tokens = node.get_all_tokens()
         if node.parent is None:
@@ -182,7 +181,7 @@ class MCTSParallel:
         else:
             # for the child node, the context id is the same as the parent node
             return tuple(all_tokens[:-1])
-   
+
     def get_text(self, node):
         all_tokens = node.get_all_tokens()
         text = self.decode_text(all_tokens)
@@ -227,9 +226,9 @@ class MCTSParallel:
             # need to remove the last token from the context id
             infer_context_ids = [context_id[:-1] for context_id in context_ids]
             result_dict = self.client_fun(action=actions, context_ids=infer_context_ids, session_info=self.session)
-            spg_policys = result_dict['policy'] 
-            spg_actions = result_dict['action']
-            c_ids = context_ids # [old_context + (new.item(),)  for old_context, new in zip(context_ids, actions)]
+            spg_policys = result_dict["policy"]
+            spg_actions = result_dict["action"]
+            c_ids = context_ids  # [old_context + (new.item(),)  for old_context, new in zip(context_ids, actions)]
             # need to add the action to the context
         else:
             # we need to run inferecce for all context ids
@@ -290,7 +289,7 @@ class MCTSParallel:
 
                 # select the leaf node based on ucb score
                 while node.is_fully_expanded():
-                    node = node.select(self.args['C'])
+                    node = node.select(self.args["C"])
                     depth += 1
 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
@@ -358,7 +357,7 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             action_probs = np.zeros(action_size, dtype=np.float32)
             actions = np.zeros(action_size, dtype=np.int32)
             for child_id, child_action in enumerate(spg.root.children.keys()):
-                child = spg.root.children[child_action] 
+                child = spg.root.children[child_action]
                 assert child_action == child.action
                 action_probs[child_id] = child.visit_count
                 actions[child_id] = child.action
