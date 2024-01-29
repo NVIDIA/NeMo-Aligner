@@ -12,16 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractclassmethod
-from copy import deepcopy
-from typing import Callable, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 from unittest.mock import patch
 
 import torch
 from megatron.core import parallel_state
-from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.models.gpt import GPTModel
-from megatron.core.tensor_parallel.layers import RowParallelLinear
 from megatron.core.transformer.custom_layers.transformer_engine import TENorm
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
