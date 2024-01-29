@@ -177,7 +177,7 @@ def main(cfg) -> None:
 
     args = {
         "C": 2,
-        "num_searches": 500,
+        "num_searches": 800,
         "num_selfPlay_iterations": 10,
         "num_parallel_searchs": 1,
         "num_epochs": 4,
@@ -185,7 +185,7 @@ def main(cfg) -> None:
         "temperature": 0.2,  # use low temperature for more greedy search
         "dirichlet_epsilon": 0.0,  # turn off the dirichlet noise
         "dirichlet_alpha": 0.3,
-        "max_depth": 200,
+        "max_depth": 250,
     }
 
     termination_condition = TerminationCondition(args["max_depth"], end_strings=["<extra_id_1>"])
