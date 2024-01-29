@@ -77,9 +77,6 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             self.rew_mean = cfg.reward_standardization.mean
             self.rew_std = cfg.reward_standardization.std
 
-        self.sampling_params = self.cfg.mcts.inference.sampling_params
-        self.length_params = self.cfg.mcts.inference.length_params
-
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
 

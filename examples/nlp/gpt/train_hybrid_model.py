@@ -29,7 +29,7 @@ from nemo_aligner.utils.deep_search.mcts.mcts import MCTSParallel, ParallelSearc
 from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
 from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
-from nemo_aligner.utils.train_script_utils import init_distributed
+from nemo_aligner.utils.train_script_utils import init_distributed, resolve_and_create_trainer
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
 try:
@@ -77,11 +77,7 @@ def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
-    trainer = Trainer(
-        strategy=NLPDDPStrategy(timeout=datetime.timedelta(seconds=18000)),
-        **cfg.trainer,
-        callbacks=[CustomProgressBar()],
-    )
+    trainer = resolve_and_create_trainer(cfg, "deep_search")
 
     ptl_model = load_from_nemo(
         hybrid_model_cls,
@@ -115,9 +111,9 @@ def main(cfg) -> None:
         return native_dp_search
 
     # convert OmegaConf to dict
-    args = OmegaConf.to_container(cfg.mcts, resolve=True)
+    args = OmegaConf.to_container(cfg.model.mcts, resolve=True)
 
-    termination_condition = TerminationCondition(args["max_depth"], end_strings=cfg.inference.end_strings)
+    termination_condition = TerminationCondition(args["max_depth"], end_strings=cfg.model.mcts.end_strings)
     score_fun = GSK8KFeedback("train-00000-of-00001.parquet")
 
     dp_size = parallel_state.get_data_parallel_world_size()
@@ -129,7 +125,7 @@ def main(cfg) -> None:
         session_info="test_selfplay",
         score_fn=score_fun,
         terminate_fns=[termination_condition],
-        client_fun=get_client_fun(ptl_model, cfg.inference.top_k, args["max_depth"], **strategy_args),
+        client_fun=get_client_fun(ptl_model, cfg.model.mcts.top_k, args["max_depth"], **strategy_args),
     )
 
     for batch_id in range(args["num_self_play_iterations"]):
