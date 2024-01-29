@@ -6,13 +6,13 @@ inference:
 
 mcts:
   C: 2 # weight for the UCB piror term
-  num_searches: 500  # number of MCTS searches
+  num_searches: 800  # number of MCTS searches
   num_self_play_iterations: 2 # number of self play iterations
   self_play_batch_size: 2 # number of self play iterations
   temperature: 0.2  # use low temperature for more greedy search
   dirichlet_epsilon: 0.0  # weight for dirichelt noise added to the root state, turn off the dirichlet noise by setting this to 0
   dirichlet_alpha: 0.3 # parameter for dirichlet noise, the piror probability of the action happens 
-  max_depth: 200  # maxium depth of the search tree
+  max_depth: 250  # maxium depth of the search tree
 
 trainer:
   devices: 1
