@@ -121,15 +121,13 @@ def main(cfg) -> None:
     dp_size = parallel_state.get_data_parallel_world_size()
     dp_rank = parallel_state.get_data_parallel_rank()
 
-
     mcts = MCTSParallel(
         args,
         ptl_model.tokenizer.tokenizer,
         session_info="test_selfplay",
         score_fn=score_fun,
         terminate_fns=[termination_condition],
-        client_fun=get_client_fun(
-            ptl_model, cfg.inference.top_k, args["max_depth"], **strategy_args),
+        client_fun=get_client_fun(ptl_model, cfg.inference.top_k, args["max_depth"], **strategy_args),
     )
 
     for batch_id in range(args["num_self_play_iterations"]):
@@ -141,9 +139,7 @@ def main(cfg) -> None:
             ps.append(
                 ParallelSearch(
                     ptl_model.tokenizer.text_to_ids(
-                        steerlm_template.format(
-                            prompt=score_fun.gsk8k.iloc[data_id]["question"]
-                        )
+                        steerlm_template.format(prompt=score_fun.gsk8k.iloc[data_id]["question"])
                     ),
                     data_id,
                 )
