@@ -328,7 +328,7 @@ class MCTSParallel:
                 node.backpropagate(spg_value.item())
 
 
-def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max_steps: int, temperature: float, tokenizer):
+def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max_steps: int, temperature: float):
     # equavalent to the alpha zero self play
     # for a list of parallel_searche instances
     # do the mcts search to find the best action and improved policy
