@@ -24,32 +24,15 @@ from pytriton.model_config.common import DynamicBatcher
 from pytriton.triton import Triton, TritonConfig
 
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
-from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
+from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
-from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.supervised import SupervisedTrainer
-from nemo_aligner.data.nlp.builders import (
-    build_dataloader,
-    build_train_valid_test_regression_rm_datasets,
-    build_train_valid_test_rm_datasets,
-)
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils.deep_search.search_callables import SearchCallable
-from nemo_aligner.utils.deep_search.text_gen_utils import dp_search, search
+from nemo_aligner.utils.deep_search.text_gen_utils import search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
-from nemo_aligner.utils.distributed import Timer
-from nemo_aligner.utils.train_script_utils import (
-    CustomLoggerWrapper,
-    add_custom_checkpoint_callback,
-    extract_optimizer_scheduler_from_ptl_model,
-    init_distributed,
-    init_using_ptl,
-    resolve_and_create_trainer,
-    retrieve_custom_trainer_state_dict,
-)
+from nemo_aligner.utils.train_script_utils import init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
 try:
@@ -93,7 +76,6 @@ def main(cfg) -> None:
         callbacks=[CustomProgressBar()],
     )
 
-    # exp_manager(trainer, cfg.exp_manager)
     # logger = CustomLoggerWrapper(trainer.loggers)
 
     ptl_model = load_from_nemo(
@@ -148,7 +130,7 @@ def main(cfg) -> None:
         end_strings = sampling_params["end_strings"]
 
         def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
-            return dp_search(
+            return search(
                 model,
                 inputs,
                 action,

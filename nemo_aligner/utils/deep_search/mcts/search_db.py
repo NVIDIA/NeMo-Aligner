@@ -37,7 +37,8 @@ class SearchDB:
         else:
             session = self.db[session_info]
         for token in context_id[:-1]:
-            session[token] = Node(None, None, None, None, None, None)
+            if token not in session:
+                session[token] = Node(None, None, None, None, None, None)
             session = session[token].children
         session[context_id[-1]] = node
 

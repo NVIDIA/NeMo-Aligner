@@ -2,6 +2,8 @@ import re
 
 import pandas as pd
 
+import pandas as pd
+
 
 class Feedback(object):
     def __init__(self):

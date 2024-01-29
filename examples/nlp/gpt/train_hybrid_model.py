@@ -13,46 +13,27 @@
 # limitations under the License.
 
 import datetime
+
+import datetime
+
+import datetime
 import threading
 
 import torch
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 from pytorch_lightning.trainer.trainer import Trainer
-from pytriton.model_config import ModelConfig
-from pytriton.model_config.common import DynamicBatcher
-from pytriton.triton import Triton, TritonConfig
 
-from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
-from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
+from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
-from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.supervised import SupervisedTrainer
-from nemo_aligner.data.nlp.builders import (
-    build_dataloader,
-    build_train_valid_test_regression_rm_datasets,
-    build_train_valid_test_rm_datasets,
-)
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
-from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedback
 from nemo_aligner.utils.deep_search.mcts.mcts import MCTSParallel, ParallelSearch, deep_search
 from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
-from nemo_aligner.utils.deep_search.search_callables import SearchCallable, decode_context_data, encode_context_data
-from nemo_aligner.utils.deep_search.text_gen_utils import dp_search, search
+from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
-from nemo_aligner.utils.distributed import Timer
-from nemo_aligner.utils.train_script_utils import (
-    CustomLoggerWrapper,
-    add_custom_checkpoint_callback,
-    extract_optimizer_scheduler_from_ptl_model,
-    init_distributed,
-    init_using_ptl,
-    resolve_and_create_trainer,
-    retrieve_custom_trainer_state_dict,
-)
+from nemo_aligner.utils.train_script_utils import init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
 try:
@@ -83,7 +64,8 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 #
 
 
-@hydra_runner(config_path="conf", config_name="gpt_hybrid_infer")
+
+@hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
     """
     Binary ranking reward models use comparison based objective similar to the one found in the
@@ -106,9 +88,6 @@ def main(cfg) -> None:
         callbacks=[CustomProgressBar()],
     )
 
-    # exp_manager(trainer, cfg.exp_manager)
-    # logger = CustomLoggerWrapper(trainer.loggers)
-
     ptl_model = load_from_nemo(
         hybrid_model_cls,
         cfg.model,
@@ -118,48 +97,14 @@ def main(cfg) -> None:
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
-    # # pull values from checkpoint
-    # trainer_restore_path = trainer.ckpt_path
-    # if trainer_restore_path is not None:
-    #     custom_trainer_state_dict = retrieve_custom_trainer_state_dict(trainer)
-    #     consumed_samples = custom_trainer_state_dict["consumed_samples"]
-    # else:
-    #     custom_trainer_state_dict = None
-    #     consumed_samples = 0
-
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
-    # ptl_model.save_to("hybrid_model.nemo")
 
     dp_size = parallel_state.get_data_parallel_world_size()
-    max_batch_size = cfg.inference.micro_batch_size * dp_size
-
-    length_params: LengthParam = {
-        "max_length": cfg.inference.tokens_to_generate,
-        "min_length": cfg.inference.min_tokens_to_generate,
-    }
-
-    sampling_params: SamplingParam = {
-        "use_greedy": cfg.inference.greedy,
-        "temperature": cfg.inference.temperature,
-        "top_k": cfg.inference.top_k,
-        "top_p": cfg.inference.top_p,
-        "repetition_penalty": cfg.inference.repetition_penalty,
-        "add_BOS": cfg.inference.add_BOS,
-        "all_probs": cfg.inference.all_probs,
-        "compute_logprob": cfg.inference.compute_logprob,
-        "end_strings": cfg.inference.end_strings,
-    }
-
-    # strategy_args = {"strategy": strategy}
     strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
     strategy_args = {"strategy": strategy}
 
-    def get_client_fun(model, sampling_params, length_params, **strategy_args):
+    def get_client_fun(model, top_k, max_depth, **strategy_args):
         # one token at a time
-        tokens_to_generate = length_params["max_length"]
-        top_k = sampling_params["top_k"]
-        end_strings = sampling_params["end_strings"]
-
         def native_dp_search(sentences=None, action=None, context_ids=None, session_info=None):
             return dp_search(
                 model,
@@ -167,44 +112,21 @@ def main(cfg) -> None:
                 action=action,
                 context_ids=context_ids,
                 session_info=session_info,
-                tokens_to_generate=tokens_to_generate,  # max search depth
+                tokens_to_generate=max_depth,  # max search depth
                 top_k=top_k,
-                end_strings=end_strings,
                 **strategy_args,
             )
 
         return native_dp_search
 
-    args = {
-        "C": 2,
-        "num_searches": 800,
-        "num_selfPlay_iterations": 10,
-        "num_parallel_searchs": 1,
-        "num_epochs": 4,
-        "batch_size": 128,
-        "temperature": 0.2,  # use low temperature for more greedy search
-        "dirichlet_epsilon": 0.0,  # turn off the dirichlet noise
-        "dirichlet_alpha": 0.3,
-        "max_depth": 250,
-    }
+    # convert OmegaConf to dict
+    args = OmegaConf.to_container(cfg.mcts, resolve=True)
 
-    termination_condition = TerminationCondition(args["max_depth"], end_strings=["<extra_id_1>"])
+    termination_condition = TerminationCondition(args["max_depth"], end_strings=cfg.inference.end_strings)
     score_fun = GSK8KFeedback("train-00000-of-00001.parquet")
 
     dp_size = parallel_state.get_data_parallel_world_size()
     dp_rank = parallel_state.get_data_parallel_rank()
-
-    ps = [
-        ParallelSearch(
-            ptl_model.tokenizer.text_to_ids(
-                steerlm_template.format(
-                    prompt=score_fun.gsk8k.iloc[i + dp_rank * args["num_parallel_searchs"]]["question"]
-                )
-            ),
-            i + dp_rank * args["num_parallel_searchs"],
-        )
-        for i in range(args["num_parallel_searchs"])
-    ]
 
     mcts = MCTSParallel(
         args,
@@ -212,12 +134,25 @@ def main(cfg) -> None:
         session_info="test_selfplay",
         score_fn=score_fun,
         terminate_fns=[termination_condition],
-        client_fun=get_client_fun(
-            ptl_model, sampling_params=sampling_params, length_params=length_params, **strategy_args
-        ),
+        client_fun=get_client_fun(ptl_model, cfg.inference.top_k, args["max_depth"], **strategy_args),
     )
 
-    buffer = deep_search(ps, mcts, args["max_depth"], args["temperature"])
+    for batch_id in range(args["num_self_play_iterations"]):
+        # each dp worker should get a different batch of parallel searches
+        batch_start_offset = batch_id * args["self_play_batch_size"] * dp_size
+        ps = []
+        for i in range(args["self_play_batch_size"]):
+            data_id = i + dp_rank * args["self_play_batch_size"] + batch_start_offset
+            ps.append(
+                ParallelSearch(
+                    ptl_model.tokenizer.text_to_ids(
+                        steerlm_template.format(prompt=score_fun.gsk8k.iloc[data_id]["question"])
+                    ),
+                    data_id,
+                )
+            )
+
+        buffer = deep_search(ps, mcts, args["max_depth"], args["temperature"])
 
 
 if __name__ == "__main__":

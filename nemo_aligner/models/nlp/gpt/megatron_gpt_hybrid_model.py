@@ -291,6 +291,19 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         self._restore_sequence_parallelism_args()
         set_train(self)
 
+    def sharded_state_dict(self, prefix: str = "") -> Dict[str, Any]:
+        """
+        Creates the sharded state dict which is used by dist_checkpoint to save the sharded tensors to disk.
+        When given the sharded_stated_dict, dist_checkpoint.load will load the tensors corresponding to
+        self.state_dict().
+        The sharded tensor mapping is defined in the GPTModel class from mcore.
+        """
+
+        if self.mcore_gpt:
+            module_prefix = f"{prefix}model."
+            sharded_state_dict = self.model.sharded_state_dict(prefix=module_prefix)
+            return sharded_state_dict
+
     def get_forward_output_only_func(self):
         def fwd_output_only_func(dataloader_iter, model):
             batch = next(dataloader_iter)

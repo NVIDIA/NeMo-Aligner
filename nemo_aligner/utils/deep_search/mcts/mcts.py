@@ -197,7 +197,7 @@ class MCTSParallel:
         value = 0.0
         if terminate:
             value = self.score_fn.score(text, data_id)
-        print(text)
+        # print(text)
         # check
         return value, terminate
 
@@ -364,7 +364,6 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             action_probs /= np.sum(action_probs)
 
             # the spg.root.state is the neutral state set at the beginning of the search
-            assert spg.state == spg.root.state
             spg.memory.append((spg.state, action_probs, actions))
 
             temperature_action_probs = action_probs ** (1.0 / temperature)
@@ -380,6 +379,7 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
 
             #  get the value and termination condition from the current taken `action`
             text = mcts.decode_text(spg.state)
+            print(text)
             value, is_terminal = mcts.get_value_and_terminated(text, spg.data_id, i + 1)
 
             if is_terminal:
@@ -387,7 +387,8 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
                 # need to update the value based on the game play at the end of the games
                 for tokens, hist_action_probs, actions in spg.memory:
                     hist_outcome = value
-                    return_memory.append((tokens, hist_action_probs, actions, hist_outcome))
+                    # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                    return_memory.append((tokens, hist_action_probs, hist_outcome, actions, spg.data_id))
                 del parallel_searches[i]
 
     return return_memory

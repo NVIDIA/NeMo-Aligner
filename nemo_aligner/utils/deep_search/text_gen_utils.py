@@ -14,29 +14,14 @@
 
 """Utilities for generating text."""
 
-import os
-import pickle
-import re
-from collections.abc import Iterable
-from functools import partial
-from typing import Callable, Tuple
-
-import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 
-from nemo.collections.common.tokenizers.tabular_tokenizer import TabularTokenizer
-from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
-from nemo.collections.nlp.modules.common.text_generation_strategy import model_inference_strategy_dispatcher
-from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
+from nemo.collections.nlp.modules.common.transformer.text_generation import OutputType
 from nemo.utils import AppState
-from nemo_aligner.utils.deep_search.communication_util import (
-    get_model_parallel_src_rank,
-    receive_generate_info,
-    send_generate_info,
-)
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor
+from nemo_aligner.utils.deep_search.communication_util import receive_generate_info, send_generate_info
+from nemo_aligner.utils.distributed import gather_tensor
 
 try:
     from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
@@ -71,7 +56,6 @@ def dp_search(
     session_info=None,
     tokens_to_generate=1,  # max search depth
     top_k=0,
-    end_strings=["<|endoftext|>"],
     **strategy_args,
 ) -> OutputType:
     """
@@ -264,7 +248,7 @@ def search(
         for a, context_id in zip(action, context_ids):
             infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, a.item())
             if infer is not None:
-                print("cache hit", len(context_id), a.item())
+                # print("cache hit", len(context_id), a.item())
                 cache_hit_indicator.append(True)
                 cache_infer_results.append(infer)
             else:
