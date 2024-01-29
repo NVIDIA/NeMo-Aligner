@@ -385,7 +385,8 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
                 # need to update the value based on the game play at the end of the games
                 for tokens, hist_action_probs, actions in spg.memory:
                     hist_outcome = value
-                    return_memory.append((tokens, hist_action_probs, hist_outcome))
+                    # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                    return_memory.append((tokens, hist_action_probs, hist_outcome, actions, spg.data_id))
                 del parallel_searches[i]
 
     return return_memory

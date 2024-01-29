@@ -55,7 +55,6 @@ def dp_search(
     session_info=None,
     tokens_to_generate=1,  # max search depth
     top_k=0,
-    end_strings=["<|endoftext|>"],
     **strategy_args,
 ) -> OutputType:
     """
