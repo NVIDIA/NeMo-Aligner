@@ -196,7 +196,7 @@ class MCTSParallel:
         value = 0.0
         if terminate:
             value = self.score_fn.score(text, data_id)
-        print(text)
+        # print(text)
         # check
         return value, terminate
 
@@ -378,6 +378,7 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
 
             #  get the value and termination condition from the current taken `action`
             text = mcts.decode_text(spg.state)
+            print(text)
             value, is_terminal = mcts.get_value_and_terminated(text, spg.data_id, i + 1)
 
             if is_terminal:
