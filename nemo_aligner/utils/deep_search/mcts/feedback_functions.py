@@ -1,9 +1,9 @@
-import pandas as pd
 import re
+
+import pandas as pd
 
 
 class Feedback(object):
-
     def __init__(self):
         pass
 
@@ -15,22 +15,22 @@ class Feedback(object):
 
 
 class GSK8KFeedback(Feedback):
-
-    def __init__(self, gsk8k_path='train-00000-of-00001.parquet'):
+    def __init__(self, gsk8k_path="train-00000-of-00001.parquet"):
         super().__init__()
         self.gsk8k_path = gsk8k_path
         self.gsk8k = pd.read_parquet(self.gsk8k_path)
-#        new_row= {'question': "what is 3+2?", "answer": "3+2=5 #### 5"}
-#        self.gsk8k.loc[0] = new_row
+
+    #        new_row= {'question': "what is 3+2?", "answer": "3+2=5 #### 5"}
+    #        self.gsk8k.loc[0] = new_row
 
     def score(self, response, data_id):
         """
         score the response
         """
         response = response.lower()
-        answer = self.gsk8k.iloc[data_id]['answer'].lower().split('####')[1].strip().replace(',', '')
+        answer = self.gsk8k.iloc[data_id]["answer"].lower().split("####")[1].strip().replace(",", "")
         # predicted answer matches the answer pattern
-        numbers = re.findall(r'\{{([\d,]+)\}}', response)
+        numbers = re.findall(r"\{{([\d,]+)\}}", response)
         # Extract the last number
         last_number = numbers[-1] if numbers else None
         if last_number is None:

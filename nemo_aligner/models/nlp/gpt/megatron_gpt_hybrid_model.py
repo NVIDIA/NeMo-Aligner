@@ -34,6 +34,7 @@ from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import AppState, logging
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
+
 # from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor
@@ -481,7 +482,7 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         self._restore_sequence_parallelism_args()
         set_train(self)
 
-    def sharded_state_dict(self, prefix: str = '') -> Dict[str, Any]:
+    def sharded_state_dict(self, prefix: str = "") -> Dict[str, Any]:
         """
         Creates the sharded state dict which is used by dist_checkpoint to save the sharded tensors to disk.
         When given the sharded_stated_dict, dist_checkpoint.load will load the tensors corresponding to
@@ -490,6 +491,6 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         """
 
         if self.mcore_gpt:
-            module_prefix = f'{prefix}model.'
+            module_prefix = f"{prefix}model."
             sharded_state_dict = self.model.sharded_state_dict(prefix=module_prefix)
             return sharded_state_dict

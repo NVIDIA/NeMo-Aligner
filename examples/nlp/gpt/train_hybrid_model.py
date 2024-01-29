@@ -12,9 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
+import threading
+
+import torch
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
+from pytorch_lightning.trainer.trainer import Trainer
+from pytriton.model_config import ModelConfig
+from pytriton.model_config.common import DynamicBatcher
+from pytriton.triton import Triton, TritonConfig
 
+from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
+from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -24,8 +34,15 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_regression_rm_datasets,
     build_train_valid_test_rm_datasets,
 )
-from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
+from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
+from nemo_aligner.servers.constants import ServerSignal
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedback
+from nemo_aligner.utils.deep_search.mcts.mcts import MCTSParallel, ParallelSearch, deep_search
+from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
+from nemo_aligner.utils.deep_search.search_callables import SearchCallable, decode_context_data, encode_context_data
+from nemo_aligner.utils.deep_search.text_gen_utils import dp_search, search
+from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -37,26 +54,6 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
-from pytorch_lightning.trainer.trainer import Trainer
-from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
-import datetime
-from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
-from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
-from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.utils.deep_search.search_callables import SearchCallable
-from nemo_aligner.utils.deep_search.text_gen_utils import search, dp_search
-from nemo_aligner.utils.deep_search.mcts.mcts import ParallelSearch, MCTSParallel, deep_search
-from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedback
-from nemo_aligner.utils.deep_search.search_callables import encode_context_data, decode_context_data
-
-
-from pytriton.triton import Triton, TritonConfig
-import torch
-from pytriton.model_config import ModelConfig
-from pytriton.model_config.common import DynamicBatcher
-import threading
-
 
 try:
     from megatron.core import parallel_state
@@ -75,7 +72,7 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
-steerlm_template="""<extra_id_0>System
+steerlm_template = """<extra_id_0>System
 A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
 <extra_id_1>User
 {prompt}
@@ -84,6 +81,7 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
 #
+
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_infer")
 def main(cfg) -> None:
@@ -95,11 +93,9 @@ def main(cfg) -> None:
 
     hybrid_model_cls = MegatronGPTHybridModel
 
-
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
     cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
-
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
@@ -158,7 +154,6 @@ def main(cfg) -> None:
     strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
     strategy_args = {"strategy": strategy}
 
-
     def get_client_fun(model, sampling_params, length_params, **strategy_args):
         # one token at a time
         tokens_to_generate = length_params["max_length"]
@@ -177,36 +172,53 @@ def main(cfg) -> None:
                 end_strings=end_strings,
                 **strategy_args,
             )
+
         return native_dp_search
 
     args = {
-        'C': 2,
-        'num_searches': 500,
-        'num_selfPlay_iterations': 10,
-        'num_parallel_searchs': 1,
-        'num_epochs': 4,
-        'batch_size': 128,
-        'temperature': 0.2,  # use low temperature for more greedy search
-        'dirichlet_epsilon': 0.0, # turn off the dirichlet noise
-        'dirichlet_alpha': 0.3,
-        'max_depth': 200,
+        "C": 2,
+        "num_searches": 500,
+        "num_selfPlay_iterations": 10,
+        "num_parallel_searchs": 1,
+        "num_epochs": 4,
+        "batch_size": 128,
+        "temperature": 0.2,  # use low temperature for more greedy search
+        "dirichlet_epsilon": 0.0,  # turn off the dirichlet noise
+        "dirichlet_alpha": 0.3,
+        "max_depth": 200,
     }
 
-
-
-    termination_condition = TerminationCondition(args['max_depth'], end_strings=['<extra_id_1>'])
-    score_fun = GSK8KFeedback('train-00000-of-00001.parquet')
+    termination_condition = TerminationCondition(args["max_depth"], end_strings=["<extra_id_1>"])
+    score_fun = GSK8KFeedback("train-00000-of-00001.parquet")
 
     dp_size = parallel_state.get_data_parallel_world_size()
     dp_rank = parallel_state.get_data_parallel_rank()
- 
-    ps = [ParallelSearch(ptl_model.tokenizer.text_to_ids(steerlm_template.format(prompt=score_fun.gsk8k.iloc[i + dp_rank*args['num_parallel_searchs']]['question'])),  i+ dp_rank*args['num_parallel_searchs']) for i in range(args['num_parallel_searchs'])]
 
+    ps = [
+        ParallelSearch(
+            ptl_model.tokenizer.text_to_ids(
+                steerlm_template.format(
+                    prompt=score_fun.gsk8k.iloc[i + dp_rank * args["num_parallel_searchs"]]["question"]
+                )
+            ),
+            i + dp_rank * args["num_parallel_searchs"],
+        )
+        for i in range(args["num_parallel_searchs"])
+    ]
 
-    mcts = MCTSParallel(args, ptl_model.tokenizer.tokenizer, session_info='test_selfplay', score_fn=score_fun, terminate_fns=[termination_condition], client_fun=get_client_fun(ptl_model, sampling_params=sampling_params, length_params=length_params, **strategy_args))
+    mcts = MCTSParallel(
+        args,
+        ptl_model.tokenizer.tokenizer,
+        session_info="test_selfplay",
+        score_fn=score_fun,
+        terminate_fns=[termination_condition],
+        client_fun=get_client_fun(
+            ptl_model, sampling_params=sampling_params, length_params=length_params, **strategy_args
+        ),
+    )
 
-    buffer = deep_search(ps, mcts, args['max_depth'], args['temperature'])
-    
+    buffer = deep_search(ps, mcts, args["max_depth"], args["temperature"])
+
 
 if __name__ == "__main__":
     main()

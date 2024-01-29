@@ -37,6 +37,7 @@ except (ImportError, ModuleNotFoundError):
 
     HAVE_MEGATRON_CORE = False
 
+
 def get_model_parallel_src_rank():
     """Calculate the global rank corresponding to the first local rank
     in the model parallel group."""
@@ -59,7 +60,6 @@ def send_generate_info(
     end_strings,
     context_ids,
     session_info,
-
 ):
     """
     Needs to be synced up with receive_generate_info
@@ -70,7 +70,6 @@ def send_generate_info(
     broadcast_2d_tensor(context_length_tensor.reshape(-1, 1), src, None, dtype=torch.int64)
 
     broadcast_2d_tensor(action, src, None, dtype=torch.int32)
-
 
     # Send the sizes of the tensors
     input_info = [
@@ -102,7 +101,6 @@ def receive_generate_info():
     torch.distributed.broadcast(input_info_tensor, src, None)
     tokens_to_generate = int(input_info_tensor[0].item())
     top_k = int(input_info_tensor[1].item())
-
 
     end_strings = broadcast_python_obj(None, src, None)
     context_ids = broadcast_python_obj(None, src, None)

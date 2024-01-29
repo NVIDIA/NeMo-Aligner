@@ -12,9 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
+import threading
+
+import torch
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
+from pytorch_lightning.trainer.trainer import Trainer
+from pytriton.model_config import ModelConfig
+from pytriton.model_config.common import DynamicBatcher
+from pytriton.triton import Triton, TritonConfig
 
+from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
+from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -24,8 +34,12 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_regression_rm_datasets,
     build_train_valid_test_rm_datasets,
 )
-from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
+from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
+from nemo_aligner.servers.constants import ServerSignal
+from nemo_aligner.utils.deep_search.search_callables import SearchCallable
+from nemo_aligner.utils.deep_search.text_gen_utils import search
+from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -37,20 +51,6 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
-from pytorch_lightning.trainer.trainer import Trainer
-from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
-import datetime
-from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
-from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
-from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.utils.deep_search.search_callables import SearchCallable
-from nemo_aligner.utils.deep_search.text_gen_utils import search
-from pytriton.triton import Triton, TritonConfig
-import torch
-from pytriton.model_config import ModelConfig
-from pytriton.model_config.common import DynamicBatcher
-import threading
-
 
 try:
     from megatron.core import parallel_state
@@ -80,11 +80,9 @@ def main(cfg) -> None:
 
     hybrid_model_cls = MegatronGPTHybridModel
 
-
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
     cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
-
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
@@ -151,16 +149,17 @@ def main(cfg) -> None:
 
         def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
             return search(
-                    model,
-                    inputs,
-                    action,
-                    context_ids,
-                    session_info,
-                    tokens_to_generate=tokens_to_generate,  # max search depth
-                    top_k=top_k,
-                    end_strings=end_strings,
-                    **strategy_args,
-                )
+                model,
+                inputs,
+                action,
+                context_ids,
+                session_info,
+                tokens_to_generate=tokens_to_generate,  # max search depth
+                top_k=top_k,
+                end_strings=end_strings,
+                **strategy_args,
+            )
+
         return infer_fn
 
     infer_fn = get_infer_fn(ptl_model, sampling_params, length_params, **strategy_args)

@@ -133,7 +133,10 @@ def main(cfg) -> None:
     )
 
     assert (
-        cfg.trainer.devices * cfg.trainer.num_nodes % (cfg.tensor_model_parallel_size * cfg.pipeline_model_parallel_size) == 0
+        cfg.trainer.devices
+        * cfg.trainer.num_nodes
+        % (cfg.tensor_model_parallel_size * cfg.pipeline_model_parallel_size)
+        == 0
     ), "devices * num_nodes should equal to multiple of (tensor_model_parallel_size * pipeline_model_parallel_size)"
     print_gpu_memory_usage()
 
@@ -244,16 +247,17 @@ def main(cfg) -> None:
 
         def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
             return search(
-                    model,
-                    inputs,
-                    action,
-                    context_ids,
-                    session_info,
-                    tokens_to_generate=tokens_to_generate,  # max search depth
-                    top_k=top_k,
-                    end_strings=end_strings,
-                    **strategy_args,
-                )
+                model,
+                inputs,
+                action,
+                context_ids,
+                session_info,
+                tokens_to_generate=tokens_to_generate,  # max search depth
+                top_k=top_k,
+                end_strings=end_strings,
+                **strategy_args,
+            )
+
         return infer_fn
 
     infer_fn = get_infer_fn(model, sampling_params, length_params, **strategy_args)

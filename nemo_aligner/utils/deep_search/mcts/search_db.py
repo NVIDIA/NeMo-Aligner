@@ -24,7 +24,7 @@ class SearchDB:
         self.inference_params = {}
         self.attention_mask = {}
         self.position_ids = {}
-    
+
     def add_init_obj(self, session_id, inference_params, attention_mask, position_ids):
         self.inference_params[session_id] = inference_params
         self.attention_mask[session_id] = attention_mask
@@ -67,9 +67,9 @@ class SearchDB:
         node = db[action]
         if node.value_sum is None:
             return None
-        
+
         output = {}
-        output['value'] = node.value_sum
+        output["value"] = node.value_sum
         actions = []
         policy = []
         for child_action in node.children:
@@ -77,20 +77,20 @@ class SearchDB:
             assert child.action == child_action
             actions.append(child.action)
             policy.append(child.prior)
-        output['action'] = np.array(actions)
-        output['policy'] = np.array(policy)
-        output['value'] = np.array(node.value_sum)
+        output["action"] = np.array(actions)
+        output["policy"] = np.array(policy)
+        output["value"] = np.array(node.value_sum)
         return output
 
-    def get_attention_mask(self, session_id): 
+    def get_attention_mask(self, session_id):
         return self.attention_mask[session_id]
-    
+
     def get_position_ids(self, session_id):
         return self.position_ids[session_id]
-    
+
     def get_inference_params(self, session_id):
         return self.inference_params[session_id]
-    
+
     def add_inference_params(self, session_id, inference_params):
         self.inference_params[session_id] = inference_params
 
@@ -154,11 +154,11 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
         padding = padding.item()
         token = np.pad(token, ((0, padding),), "constant", constant_values=0)
         token_list.append(token)
-        
+
     # concat tokens, shape [batch_size, length]
     tokens = np.stack(token_list, axis=0)
-    tokens = tokens[:, -(max_depth - min_depth + 1):]
-    
+    tokens = tokens[:, -(max_depth - min_depth + 1) :]
+
     # concat kv cache
     output_kv_cache = {}
     for key in batched_kv_cache[0].keys():

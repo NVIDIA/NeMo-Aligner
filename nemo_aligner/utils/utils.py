@@ -46,7 +46,9 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
         if not self.__load_base_model_only:
             return super().restore_from(*args, **kwargs)
 
-        with patch.object(GPTRewardModel, "return_rm_head_in_state_dict", False) and patch.object(GPTHybridModel, "return_value_head_in_state_dict", False):
+        with patch.object(GPTRewardModel, "return_rm_head_in_state_dict", False) and patch.object(
+            GPTHybridModel, "return_value_head_in_state_dict", False
+        ):
             output = super().restore_from(*args, **kwargs)
 
         return output
