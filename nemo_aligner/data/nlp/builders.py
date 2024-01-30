@@ -344,9 +344,5 @@ def build_dataloader(
         raise ValueError('cfg.data.dataloader_type not found. Must be "single"')
 
     return torch.utils.data.DataLoader(
-        dataset,
-        batch_sampler=batch_sampler,
-        num_workers=0,
-        pin_memory=True,
-        collate_fn=collate_fn,
+        dataset, batch_sampler=batch_sampler, num_workers=0, pin_memory=True, collate_fn=collate_fn,
     )
