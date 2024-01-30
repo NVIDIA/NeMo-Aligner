@@ -80,13 +80,13 @@ class GSK8KFeedbackHF(Feedback):
     def __init__(self, split="train"):
         super().__init__()
         self.ds = load_dataset("gsm8k", "main")
+        self.split = split
 
     def score(self, response, data_id):
         """
         score the response
         """
         response = response.lower()
-        breakpoint()
         answer = self.ds[self.split][data_id]["answer"].lower().split("####")[1].strip().replace(",", "")
         # predicted answer matches the answer pattern
         numbers = re.findall(r"\{{([\d,]+)\}}", response)
