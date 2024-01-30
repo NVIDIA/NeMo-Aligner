@@ -45,16 +45,16 @@ def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch
         # key_value_memory_dict [length, batch_size, ...]
         kv_cache = {
             key: (
-                infer_params.key_value_memory_dict[key][0][:context_len, batch_id].detach().cpu(),
-                infer_params.key_value_memory_dict[key][1][:context_len, batch_id].detach().cpu(),
+                infer_params.key_value_memory_dict[key][0][:context_len, batch_id].detach().clone(),
+                infer_params.key_value_memory_dict[key][1][:context_len, batch_id].detach().clone(),
             )
             for key in infer_params.key_value_memory_dict
         }
     else:
         kv_cache = {
             key: (
-                infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id].detach().cpu(),
-                infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id].detach().cpu(),
+                infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id].detach().clone(),
+                infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id].detach().clone(),
             )
             for key in infer_params.key_value_memory_dict
         }
