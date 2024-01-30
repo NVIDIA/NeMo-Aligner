@@ -102,33 +102,12 @@ def main(cfg) -> None:
     dp_size = parallel_state.get_data_parallel_world_size()
     max_batch_size = cfg.inference.micro_batch_size * dp_size
 
-    length_params: LengthParam = {
-        "max_length": cfg.inference.tokens_to_generate,
-        "min_length": cfg.inference.min_tokens_to_generate,
-    }
-
-    sampling_params: SamplingParam = {
-        "use_greedy": cfg.inference.greedy,
-        "temperature": cfg.inference.temperature,
-        "top_k": cfg.inference.top_k,
-        "top_p": cfg.inference.top_p,
-        "repetition_penalty": cfg.inference.repetition_penalty,
-        "add_BOS": cfg.inference.add_BOS,
-        "all_probs": cfg.inference.all_probs,
-        "compute_logprob": cfg.inference.compute_logprob,
-        "end_strings": cfg.inference.end_strings,
-    }
-
     # strategy_args = {"strategy": strategy}
     strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
     strategy_args = {"strategy": strategy}
 
-    def get_infer_fn(model, sampling_params, length_params, **strategy_args):
+    def get_infer_fn(model, top_k, max_depth, **strategy_args):
         # one token at a time
-        tokens_to_generate = length_params["max_length"]
-        top_k = sampling_params["top_k"]
-        end_strings = sampling_params["end_strings"]
-
         def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
             return search(
                 model,
@@ -136,15 +115,14 @@ def main(cfg) -> None:
                 action,
                 context_ids,
                 session_info,
-                tokens_to_generate=tokens_to_generate,  # max search depth
+                tokens_to_generate=max_depth,  # max search depth
                 top_k=top_k,
-                end_strings=end_strings,
                 **strategy_args,
             )
 
         return infer_fn
 
-    infer_fn = get_infer_fn(ptl_model, sampling_params, length_params, **strategy_args)
+    infer_fn = get_infer_fn(ptl_model, cfg.inference.top_k, cfg.inference.tokens_to_generate, **strategy_args)
     # infer_fn = lambda : None
     # r = infer_fn(["hello", "ok"], context_ids=['context1', 'context2'], session_info='session')
     # print(r)

@@ -169,7 +169,6 @@ def search(
     session_info=None,
     tokens_to_generate=1,  # max search depth
     top_k=0,
-    end_strings=["<|endoftext|>"],
     **strategy_args,
 ) -> OutputType:
     """
@@ -206,14 +205,7 @@ def search(
             action[:] = 0
 
         send_generate_info(
-            context_tokens_tensor,
-            context_length_tensor,
-            action,
-            tokens_to_generate,
-            top_k,
-            end_strings,
-            context_ids,
-            session_info,
+            context_tokens_tensor, context_length_tensor, action, tokens_to_generate, top_k, context_ids, session_info,
         )
     else:
         (
@@ -222,7 +214,6 @@ def search(
             action,
             tokens_to_generate,
             top_k,
-            end_strings,
             context_ids,
             session_info,
         ) = receive_generate_info()
