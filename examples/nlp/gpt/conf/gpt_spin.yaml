@@ -9,7 +9,7 @@ trainer:
   
   # spin specific args
   spin:
-    max_epochs: 1
+    max_epochs: 2
     max_steps: -1
     val_check_interval: 0.1
     save_interval: 100
@@ -22,7 +22,7 @@ trainer:
   logger: False # logger provided by exp_manager
   enable_checkpointing: False
   use_distributed_sampler: False
-  max_time: null
+  max_time: '00:03:45:00'
   max_epochs: ${.spin.max_epochs}
   max_steps: ${.spin.max_steps}
 
@@ -104,17 +104,67 @@ model:
       min_lr: 9e-7
 
   data:
-    data_impl: jsonl
-    splits_string: null
-    seq_length: ${model.encoder_seq_length}
-    skip_warmup: True
-    num_workers: 2
-    dataloader_type: single # cyclic
-    reset_position_ids: False # Reset position ids after end-of-document token
-    reset_attention_mask: False # Reset attention mask after end-of-document token
-    eod_mask_loss: False # Mask loss for the end of document tokens
-    index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
-    data_prefix: null
+    chat: True # whether use chatbot data or not
+    chat_prompt_tokens:  # special tokens for the chat prompts, a dictionary of {token_type: token}. note that some tokenizer may combine the characters at the junction between {end_of_turn}{turn_start}. e.g. '<im end><im start>', the '><' sometimes is merged to be a single token. This is not supported, try to avoid
+      system_turn_start: "<extra_id_0>"
+      turn_start: "<extra_id_1>"
+      label_start: "<extra_id_2>"
+      end_of_turn: "\x0A"  # \0x0A is '\n'
+      end_of_name: "\x0A"  # \0x0A is '\n'
+
+    sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
+    num_workers: 1
+    dataloader_type: single  # only supports single
+    train_ds:
+      # Example of how to specify paths to multiple datasets
+      # file_names:
+      #   - /path/to/squad.jsonl
+      #   - /path/to/mnli.jsonl
+      #   - /path/to/boolq.jsonl
+      # Example of how each dataset is formatted
+      # {'input': 'John von Neumann\nVon Neumann made fundamental contributions .... Q: What did the math of artificial viscosity do?', 'output': 'smoothed the shock transition without sacrificing basic physics'}
+      file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
+      global_batch_size: ${model.global_batch_size}
+      micro_batch_size: ${model.micro_batch_size}
+      shuffle: True
+      memmap_workers: null
+      max_seq_length: 2048
+      min_seq_length: 1
+      drop_last: True
+      # Example of how to specify concat_sampling_probabilities
+      # concat_sampling_probabilities:
+      #   - 0.5
+      #   - 0.25
+      #   - 0.25
+      label_key: 'output'
+      add_eos: True
+      add_sep: False
+      add_bos: False
+      truncation_field: "input" # # Can be multiple keys separated with ',' Options: keys in prompt_template
+      index_mapping_dir: null # Path to a directory to write index mapping files.
+      prompt_template: null # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
+      hf_dataset: False # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
+      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
+
+    validation_ds:
+      file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
+      global_batch_size: ${model.data.train_ds.global_batch_size}
+      micro_batch_size: ${model.data.train_ds.micro_batch_size}
+      shuffle: False
+      memmap_workers: ${model.data.train_ds.memmap_workers}
+      max_seq_length: ${model.data.train_ds.max_seq_length}
+      min_seq_length: 1
+      drop_last: False
+      label_key: ${model.data.train_ds.label_key}
+      add_eos: ${model.data.train_ds.add_eos}
+      add_sep: ${model.data.train_ds.add_sep}
+      add_bos: ${model.data.train_ds.add_bos}
+      truncation_field: ${model.data.train_ds.truncation_field} # Options: keys in prompt_template
+      index_mapping_dir: null # Path to a directory to write index mapping files.
+      prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
+      hf_dataset: False # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
+      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
+      output_original_text: True  # needed for the proper metrics support
 
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:

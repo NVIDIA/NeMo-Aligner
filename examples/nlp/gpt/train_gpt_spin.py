@@ -133,11 +133,11 @@ def main(cfg) -> None:
         cfg=cfg,
         dataset=train_ds,
         consumed_samples=consumed_samples,
-        mbs=cfg.model.spin.rollout_micro_batch_size,
-        gbs=cfg.model.spin.num_rollout_samples,
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.global_batch_size,
         collate_fn=collate_fn,
         drop_last=train_data_cfg.drop_last,
-        pad_samples_to_global_batch_size=not train_data_cfg.drop_last,
+        pad_samples_to_global_batch_size=False,
         load_gbs=True,
     )
 
@@ -145,11 +145,11 @@ def main(cfg) -> None:
         cfg=cfg,
         dataset=validation_ds,
         consumed_samples=0,
-        mbs=cfg.model.spin.val_rollout_micro_batch_size,
-        gbs=cfg.model.spin.num_val_samples,
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.global_batch_size,
         collate_fn=collate_fn,
         drop_last=val_data_cfg.drop_last,
-        pad_samples_to_global_batch_size=not val_data_cfg.drop_last,
+        pad_samples_to_global_batch_size=False,
         load_gbs=True,
     )
 
