@@ -115,6 +115,9 @@ model:
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
     num_workers: 1
     dataloader_type: single  # only supports single
+    reset_position_ids: False # Reset position ids after end-of-document token
+    reset_attention_mask: False # Reset attention mask after end-of-document token
+    eod_mask_loss: False # Mask loss for the end of document tokens
     train_ds:
       # Example of how to specify paths to multiple datasets
       # file_names:
@@ -154,7 +157,7 @@ model:
       memmap_workers: ${model.data.train_ds.memmap_workers}
       max_seq_length: ${model.data.train_ds.max_seq_length}
       min_seq_length: 1
-      drop_last: False
+      drop_last: True
       label_key: ${model.data.train_ds.label_key}
       add_eos: ${model.data.train_ds.add_eos}
       add_sep: ${model.data.train_ds.add_sep}

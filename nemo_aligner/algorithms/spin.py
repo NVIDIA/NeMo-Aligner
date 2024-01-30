@@ -116,7 +116,9 @@ class SPINTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-        self.max_gen_seq_len = self.cfg.length_params.max_length
+        self.max_gen_seq_len = self.model.cfg.spin.length_params.max_length
+        self.length_params = self.model.cfg.spin.length_params
+        self.sampling_params = self.model.cfg.spin.sampling_params
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -220,7 +222,7 @@ class SPINTrainer:
         # downsamples from (GBS // DP) -> generation_batch_size
         #for idx, sub_batch in enumerate(torch.split(prompt_tokens, self.cfg.generation_batch_size)):
         strategy = TrackLengthGPTModelTextGenerationStrategy(model=self.model, context_lengths=prompt_lengths, max_length=self.max_gen_seq_len)
-        generations = self.model.generate(inputs=(prompt_tokens, prompt_lengths), length_params=self.cfg.length_params, sampling_params=self.cfg.sampling_params, strategy=strategy)
+        generations = self.model.generate(inputs=(prompt_tokens, prompt_lengths), length_params=self.length_params, sampling_params=self.sampling_params, strategy=strategy)
     
         # this is a 1D LongTensor with the length of the responses where response is prompt+response
         response_lengths = strategy.get_lengths().cpu()

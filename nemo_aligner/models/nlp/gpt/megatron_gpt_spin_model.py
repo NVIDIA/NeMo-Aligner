@@ -150,8 +150,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
             def loss_func(output_tensor):
-                if validation_step and not self.cfg.data.get("validation_drop_last", True):
-                    raise NotImplementedError("SPIN does not support validation when cfg.data.drop_last=False")
+                if validation_step and not self.cfg.data.validation_ds.get("drop_last", True):
+                    raise NotImplementedError("SPIN does not support validation when `cfg.data.validation_ds.drop_last=False`")
 
                 per_token_logps = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=output_tensor, target=tokens, higher_stability=True
