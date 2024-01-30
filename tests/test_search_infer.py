@@ -20,7 +20,6 @@ from nemo.core.config import hydra_runner
 from nemo.utils import AppState, logging
 from nemo.utils.model_utils import inject_model_parallel_rank
 from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.utils.deep_search.mcts.mcts import Node, State
 from nemo_aligner.utils.deep_search.mcts.search_db import SearchDB, get_kv_cache
 from nemo_aligner.utils.deep_search.search_callables import SearchCallable
 from nemo_aligner.utils.deep_search.text_gen_utils import search

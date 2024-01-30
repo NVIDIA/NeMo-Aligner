@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from megatron.core import InferenceParams
 
-from nemo_aligner.utils.deep_search.mcts.mcts import Node, State
+from nemo_aligner.utils.deep_search.mcts.mcts import Node, get_state
 from nemo_aligner.utils.deep_search.mcts.search_db import SearchDB, get_kv_cache
 
 
@@ -29,11 +29,11 @@ class TestHistoryTrackingNode:
     def test_root_node(self):
         search_db = SearchDB()
         context_id = tuple(range(11))
-        state = State.get_state(self.root_inference_params, True, 11, 0)
-        assert state.kv_cache[1][0].shape == (11, 10, 10)
-        assert state.kv_cache[1][1].shape == (11, 10, 10)
-        assert state.kv_cache[2][0].shape == (11, 10, 10)
-        assert state.kv_cache[2][1].shape == (11, 10, 10)
+        state = get_state(self.root_inference_params, True, 11, 0)
+        assert state[1][0].shape == (11, 10, 10)
+        assert state[1][1].shape == (11, 10, 10)
+        assert state[2][0].shape == (11, 10, 10)
+        assert state[2][1].shape == (11, 10, 10)
         root_node = Node(state=state, parent=None, action=None, prior=0.0, visit_count=0)
         search_db.add_root("session1", context_id, root_node)
 
@@ -43,8 +43,8 @@ class TestHistoryTrackingNode:
         mock_actions1 = full_actions1[: self.K]
         for k in range(self.K):
             action = mock_actions1[k]
-            child_state = State.get_state(self.child_inference_params, False, 12, 0)
-            assert child_state.kv_cache[1][0].shape == (1, 10, 10)
+            child_state = get_state(self.child_inference_params, False, 12, 0)
+            assert child_state[1][0].shape == (1, 10, 10)
             child_node = Node(state=child_state, parent=root_node, action=action, prior=0.0, visit_count=0)
             root_node.children[action] = child_node
         depth1_child = child_node
@@ -57,8 +57,8 @@ class TestHistoryTrackingNode:
         child_context_id = context_id + (depth1_child.action,)
         for k in range(self.K):
             action = mock_actions2[k]
-            child_state = State.get_state(self.child_inference_params, False, 13, 0)
-            assert child_state.kv_cache[1][0].shape == (1, 10, 10)
+            child_state = get_state(self.child_inference_params, False, 13, 0)
+            assert child_state[1][0].shape == (1, 10, 10)
             child_node = Node(state=child_state, parent=depth1_child, action=action, prior=0.0, visit_count=0)
             depth1_child.children[action] = child_node
 

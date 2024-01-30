@@ -113,12 +113,12 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
         assert node.action == action
         tokens = []
         tokens.append(action)
-        new_kv_cache = {key: [node.state.kv_cache[key]] for key in node.state.kv_cache.keys()}
+        new_kv_cache = {key: [node.state[key]] for key in node.state.keys()}
         while node.parent is not None:
             node = node.parent
             if node.parent is None:
-                tmp_key = next(iter(node.state.kv_cache.keys()))
-                context_lengths.append(node.state.kv_cache[tmp_key][0].shape[0])
+                tmp_key = next(iter(node.state.keys()))
+                context_lengths.append(node.state[tmp_key][0].shape[0])
             # if node.action is List
             if isinstance(node.action, list):
                 # make a copy
@@ -128,8 +128,8 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
                 tokens.extend(context_tokens)
             else:
                 tokens.append(node.action)
-            for key in node.state.kv_cache.keys():
-                new_kv_cache[key].append(node.state.kv_cache[key])
+            for key in node.state.keys():
+                new_kv_cache[key].append(node.state[key])
         # reverse the tokens order
         tokens.reverse()
         for key in new_kv_cache.keys():

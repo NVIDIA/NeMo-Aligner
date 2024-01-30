@@ -35,58 +35,45 @@ class ParallelSearch:
         self.node = None
 
 
-class State:
-    def __init__(self, kv_cache=None):
-        """LM search related states
-
-        Args:
-            kv_cache (dict): dictionary of KV cache
-        """
-        # kv cache is a dictionary. key is layer number, value is a k, v tuple where both k and v are torch tensors of shape (seq_len, batch_size, ...)
-        self.kv_cache = kv_cache
-
-    @staticmethod
-    def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch_id: int):
-        # only call this function after inference step is done
-        # infer_params.sequence_len_offset is the number of tokens used in the kv cache before the inference step
-        # after the inference step, there is one more token in the kv cache
-        if init:
-            # root state has all the context
-            # key_value_memory_dict [length, batch_size, ...]
-            kv_cache = {
-                key: (
-                    infer_params.key_value_memory_dict[key][0][:context_len, batch_id]
-                    .detach()
-                    .cpu()
-                    .type(torch.float32)
-                    .numpy(),
-                    infer_params.key_value_memory_dict[key][1][:context_len, batch_id]
-                    .detach()
-                    .cpu()
-                    .type(torch.float32)
-                    .numpy(),
-                )
-                for key in infer_params.key_value_memory_dict
-            }
-            state = State(kv_cache)
-        else:
-            kv_cache = {
-                key: (
-                    infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id]
-                    .detach()
-                    .cpu()
-                    .type(torch.float32)
-                    .numpy(),
-                    infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id]
-                    .detach()
-                    .cpu()
-                    .type(torch.float32)
-                    .numpy(),
-                )
-                for key in infer_params.key_value_memory_dict
-            }
-            state = State(kv_cache)
-        return state
+def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch_id: int):
+    # only call this function after inference step is done
+    # infer_params.sequence_len_offset is the number of tokens used in the kv cache before the inference step
+    # after the inference step, there is one more token in the kv cache
+    if init:
+        # root state has all the context
+        # key_value_memory_dict [length, batch_size, ...]
+        kv_cache = {
+            key: (
+                infer_params.key_value_memory_dict[key][0][:context_len, batch_id]
+                .detach()
+                .cpu()
+                .type(torch.float32)
+                .numpy(),
+                infer_params.key_value_memory_dict[key][1][:context_len, batch_id]
+                .detach()
+                .cpu()
+                .type(torch.float32)
+                .numpy(),
+            )
+            for key in infer_params.key_value_memory_dict
+        }
+    else:
+        kv_cache = {
+            key: (
+                infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id]
+                .detach()
+                .cpu()
+                .type(torch.float32)
+                .numpy(),
+                infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id]
+                .detach()
+                .cpu()
+                .type(torch.float32)
+                .numpy(),
+            )
+            for key in infer_params.key_value_memory_dict
+        }
+    return kv_cache
 
 
 class Node:

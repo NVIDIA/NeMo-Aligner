@@ -29,7 +29,7 @@ from nemo_aligner.utils.deep_search.forward_only import (
     get_forward_output_only_func,
     get_forward_output_only_func_hybrid,
 )
-from nemo_aligner.utils.deep_search.mcts.mcts import Node, State
+from nemo_aligner.utils.deep_search.mcts.mcts import Node, get_state
 from nemo_aligner.utils.deep_search.mcts.search_db import SearchDB, get_kv_cache
 
 try:
@@ -424,7 +424,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         # it can never happen that the node is root node
         if node.parent is None:
             raise ValueError("The node is root node, cannot update kv cache")
-        state = State.get_state(infer_params, False, context_length, batch_id)
+        state = get_state(infer_params, False, context_length, batch_id)
         node.state = state
         node.value_sum = value
 
@@ -448,7 +448,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             parent_node = parent_nodes[bid]
             action_taken = actions_taken[bid].item()
             prior_prob = action_policy[bid].item()
-            state = State.get_state(infer_params, action_taken == -1, context_length, bid)
+            state = get_state(infer_params, action_taken == -1, context_length, bid)
             value = None
             if action_value is not None:
                 value = action_value[bid].item()
