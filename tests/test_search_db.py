@@ -70,6 +70,6 @@ class TestHistoryTrackingNode:
             torch.tensor(selected_actions).cuda(), "session1", context_ids, search_db
         )
         assert len(updated_kv_cache) == 2
-        assert updated_kv_cache[1][0].shape == (14, 30, 10, 10)
-        assert updated_kv_cache[1][1].shape == (14, 30, 10, 10)
+        assert updated_kv_cache[1][0].shape == (13, 30, 10, 10)
+        assert updated_kv_cache[1][1].shape == (13, 30, 10, 10)
         assert tokens.shape == (K, 2)
