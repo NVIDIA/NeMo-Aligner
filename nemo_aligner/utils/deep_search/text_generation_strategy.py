@@ -494,7 +494,7 @@ class HybridGPTSearchTextGenerationStrategy(GPTSearchTextGenerationStrategy):
             forward_step_func=func,
             data_iterator=iter([batch,]),
             model=[self.forward_model],
-            num_microbatches=1,  # hang otherwise
+            num_microbatches=get_num_microbatches(),
             forward_only=True,
             seq_length=tensor_shape[0],
             micro_batch_size=tensor_shape[1],
