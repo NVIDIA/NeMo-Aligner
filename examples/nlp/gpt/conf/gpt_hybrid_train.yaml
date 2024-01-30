@@ -7,9 +7,13 @@ trainer:
   use_distributed_sampler: False
 
   deep_search:
-    max_epochs: 1
     max_steps: -1
     val_check_interval: 1
+    max_epochs: 1
+    save_interval: ${.val_check_interval}
+
+    gradient_clip_val: 1.0
+    limit_val_batches: 1
 
 pretrained_checkpoint:
   restore_from_path: null
@@ -27,12 +31,18 @@ model:
 
     top_k: 50
     end_strings: ["<extra_id_1>"]  # generation will stop when one of these tokens is generated
-    micro_batch_size: 16
+
+    train:
+      value_weight: 1 # weight of the value portion of the loss
+      policy_weight: 1 # weight of the policy portion of the loss
+
 
   inference:
 
+    micro_batch_size: 16
+
     sampling_params:
-      greedy: True # Whether or not to use sampling ; use greedy decoding otherwise
+      use_greedy: True # Whether or not to use sampling ; use greedy decoding otherwise
       top_k: ${model.mcts.top_k}  # The number of highest probability vocabulary tokens to keep for top-k-filtering.
       top_p: 0.9 # If set to float < 1, only the most probable tokens with probabilities that add up to top_p or higher are kept for generation.
       temperature: 1.0 # sampling temperature
@@ -43,12 +53,8 @@ model:
       end_strings: ${model.mcts.end_strings}
 
     length_params:
-      max_length: 100
+      max_length: 30
       min_length: 0
-
-  train:
-    value_weight: 1 # weight of the value portion of the loss
-    policy_weight: 1 # weight of the policy portion of the loss
 
   micro_batch_size: 1
   global_batch_size: 64
@@ -107,19 +113,6 @@ model:
 # constant_steps: 1000
 # min_lr: 9e-7
 
-  data:
-    data_impl: jsonl
-    splits_string: null
-    seq_length: ${model.encoder_seq_length}
-    skip_warmup: True
-    num_workers: 2
-    dataloader_type: single # cyclic
-    reset_position_ids: False # Reset position ids after end-of-document token
-    reset_attention_mask: False # Reset attention mask after end-of-document token
-    eod_mask_loss: False # Mask loss for the end of document tokens
-    index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
-    data_prefix: null
-
   precision: ${trainer.precision}
 
   # define fields from the base model's config that should be ignored when merging with this config.
@@ -140,10 +133,10 @@ exp_manager:
   resume_ignore_no_checkpoint: True
   create_checkpoint_callback: False
   checkpoint_callback_params:
-    monitor: val_global_rewards
+    monitor: val_accuracy
     save_top_k: 1
     mode: max
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt-{step}-{consumed_samples}-{ppo_optimization_step}-{epoch}-{val_global_rewards:.3f}'
+    filename: 'megatron_gpt-{step}-{consumed_samples}-{optimization_step}-{val_accuracy:.3f}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}

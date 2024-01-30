@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import warnings
-from typing import Any, Dict, List, Union
+
+# from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
+from contextlib import nullcontext
+from typing import Any, Dict
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
@@ -34,15 +37,8 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.optim.distributed_adam import _str_to_dtype
-from nemo.utils import AppState, logging
-from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
-
-# from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
+from nemo.utils import logging
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
-from nemo_aligner.utils.deep_search.text_gen_utils import search
-from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor
-from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -52,9 +48,10 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
+from nemo_aligner.utils.utils import configure_batch_sizes, masked_mean, offload_distributed_adam
 
 
-class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
+class MegatronGPTHybridModel(MegatronGPTModel):
     """
     Megatron GPT Reward Model Training.
     """
@@ -76,6 +73,16 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         if self.enable_standardization:
             self.rew_mean = cfg.reward_standardization.mean
             self.rew_std = cfg.reward_standardization.std
+
+        # TODO(geshen): change to something actual
+        self.to_offload_adam_states = False
+        self.distributed_adam_offload_manager = None
+
+        self.value_loss_weight = self.cfg.mcts.train.value_weight
+        self.policy_loss_weight = self.cfg.mcts.train.policy_weight
+
+        self.length_params = OmegaConf.to_container(self.cfg.inference.length_params, resolve=True)
+        self.sampling_params = OmegaConf.to_container(self.cfg.inference.sampling_params, resolve=True)
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
@@ -123,9 +130,6 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         )
         return model
 
-    def infer(self, *args):
-        ...
-
     def get_hybrid_forward_output_and_loss_func(self):
         def fwd_output_and_loss_func(data_iterator, model):
             batch = next(data_iterator)
@@ -142,54 +146,69 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
             batch = batch | {"position_ids": position_ids, "attention_mask": attention_mask}
 
-            # required_keys = set()
-            # if parallel_state.get_pipeline_model_parallel_world_size() == 1:
-            # required_keys.update(batch.keys())
-            # else:
-            # TODO:
-            # pass
-            batch = {key: val.cuda(non_blocking=True) for key, val in batch.items()}
+            required_keys = set()
+            if parallel_state.get_pipeline_model_parallel_world_size() == 1:
+                required_keys.update(batch.keys())
+            else:
+                required_keys.add("attention_mask")
+
+                if parallel_state.is_pipeline_first_stage():
+                    required_keys.update(("tokens", "position_ids"))
+
+                if parallel_state.is_pipeline_last_stage():
+                    required_keys.update(("tokens", "context_lengths", "actions", "action_probs", "reward"))
+
+            batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
+
             parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None,)
 
             def loss_func(parallel_logits):
+                # TODO(geshen): only support DP only, to support TP we need to be clever about slicing
+                assert parallel_state.get_tensor_model_parallel_world_size() == 1, "no TP support rn"
+
                 logits, values = parallel_logits
                 log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-
+                #
                 lengths = batch["context_lengths"]
                 actions = batch["actions"]
                 action_probs = batch["action_probs"]
                 rewards = batch["reward"]
 
-                # context length has to be subtracted by 1
-                idx = lengths - 1
+                # context length has to be subtracted by 1 which is the last state before the action
+                idx = (lengths - 1).unsqueeze(-1)
 
-                if self.cfg.mcts.train.critic_weight > 0:
-                    value_loss = (values[:, idx].flatten() - rewards.flatten()) ** 2
-                    value_loss = self.cfg.mcts.train.critic_weight * value_loss
-                else:
-                    value_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
+                value_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
+                policy_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
 
-                if self.cfg.mcts.train.policy_weight > 0:
-                    vocab_probs = log_probs[:, idx].squeeze(1)[:, actions].squeeze(1)
+                if self.value_loss_weight > 0:
+                    values = values.gather(dim=-1, index=idx).flatten()
+                    value_loss = (values - rewards.flatten()) ** 2
 
-                    policy_loss = (action_probs * vocab_probs).sum(-1).mean(0)
+                    value_loss = (self.value_loss_weight * value_loss).mean()
 
-                    policy_loss = self.cfg.mcts.train.policy_weight * policy_loss
-                else:
-                    policy_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
+                mask = rewards > 0
+
+                if self.policy_loss_weight > 0 and torch.any(mask):
+                    mbs = log_probs.size(0)
+                    # get the last prediction and actions
+                    log_probs = log_probs[torch.arange(mbs).view(mbs, 1), idx, actions]
+                    # mbs x num actions
+                    policy_loss = (action_probs * log_probs).sum(-1)
+
+                    # mask ones that didn't get the right answer
+                    policy_loss = masked_mean(self.policy_loss_weight * policy_loss, mask)
 
                 loss = value_loss - policy_loss
-
-                reduced_loss = average_losses_across_data_parallel_group([loss])
-                reduced_value_loss = average_losses_across_data_parallel_group([value_loss])
-                reduced_policy_loss = average_losses_across_data_parallel_group([policy_loss])
+                reduced_loss, reduced_value_loss, reduced_policy_loss = average_losses_across_data_parallel_group(
+                    [loss, value_loss, policy_loss]
+                )
 
                 return (
                     loss,
                     {
-                        "loss": reduced_loss.item(),
-                        "value_loss": reduced_value_loss.item(),
-                        "policy_loss": reduced_policy_loss.item(),
+                        "loss": reduced_loss.detach(),
+                        "value_loss": reduced_value_loss.detach(),
+                        "policy_loss": reduced_policy_loss.detach(),
                     },
                 )
 
@@ -198,13 +217,9 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         return fwd_output_and_loss_func
 
     def get_loss_and_metrics(self, batch, forward_only):
-        # GBS is whatever we got from batch
-        # split that into mbs, but it's hacky
+        gbs_by_dp, sequence_length = batch["tokens"].size()
 
-        # pretend B = gbs/dp
-        B, sequence_length = batch["tokens"].size()
-
-        num_micro_batches = divide(B, self.cfg.micro_batch_size)
+        num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
         data_iter = get_iterator_k_split(batch, num_micro_batches)
 
         set_sync_funcs(self, forward_only)
@@ -222,8 +237,7 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         metrics = {}
 
-        # TODO:(fix metrics here)
-        for key in ["loss", "ppo_ratio", "ppo_ratio_clamped", "scaled_entropy"]:
+        for key in ["loss", "value_loss", "policy_loss"]:
             if losses_reduced_per_micro_batch:
                 metric_mean = torch.stack(
                     [loss_reduced[key] for loss_reduced in losses_reduced_per_micro_batch]
@@ -238,68 +252,10 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         return metrics["loss"], metrics
 
     def generate(self, inputs, length_params=None, sampling_params=None):
-        length_params = OmegaConf.to_container(self.cfg.mcts.val.length_params, resolve=True)
-        sampling_params = OmegaConf.to_container(self.cfg.mcts.val.sampling_params, resolve=True)
+        length_params = length_params or self.length_params
+        sampling_params = sampling_params or self.sampling_params
 
         return super().generate(inputs, length_params, sampling_params)
-
-    def on_load_checkpoint(self, checkpoint) -> None:
-        """NOTE: Have to set strict to False because we have a rm head
-        """
-        # mcore uses distributed checkpointing
-        if "state_dict" in checkpoint and checkpoint["state_dict"]:
-            for index, module in enumerate(self.get_gpt_module_list()):
-                if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-                    checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
-                else:
-                    checkpoint_state_dict = checkpoint["state_dict"]
-                # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
-                checkpoint_state_dict = {
-                    key.replace("model.", ""): checkpoint_state_dict.pop(key)
-                    for key in list(checkpoint_state_dict.keys())
-                }
-                module.load_state_dict(checkpoint_state_dict, strict=False)
-        else:
-            # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
-            # see NLPModel.on_load_checkpoint
-            checkpoint["state_dict"] = {}
-
-    def prepare_for_training_step(self):
-        # custom trainers will always zero grad for us
-        prepare_for_training_step(self, zero_grad=False)
-
-    def finish_training_step(self):
-        grad_reductions(self)
-
-    def prepare_for_validation_step(self):
-        prepare_for_validation_step(self)
-
-    def finish_validation_step(self):
-        finish_validation_step(self)
-
-    def prepare_for_inference(self):
-        self._reset_activation_checkpointing_args()
-        self._reset_sequence_parallelism_args()
-        set_eval(self)
-
-    def finish_inference(self):
-        # training will onload the adam states, no need to onload it here
-        self._restore_activation_checkpointing_args()
-        self._restore_sequence_parallelism_args()
-        set_train(self)
-
-    def sharded_state_dict(self, prefix: str = "") -> Dict[str, Any]:
-        """
-        Creates the sharded state dict which is used by dist_checkpoint to save the sharded tensors to disk.
-        When given the sharded_stated_dict, dist_checkpoint.load will load the tensors corresponding to
-        self.state_dict().
-        The sharded tensor mapping is defined in the GPTModel class from mcore.
-        """
-
-        if self.mcore_gpt:
-            module_prefix = f"{prefix}model."
-            sharded_state_dict = self.model.sharded_state_dict(prefix=module_prefix)
-            return sharded_state_dict
 
     def get_forward_output_only_func(self):
         def fwd_output_only_func(dataloader_iter, model):
@@ -348,3 +304,95 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             return output_tensor, id_func
 
         return fwd_output_only_func
+
+    def on_load_checkpoint(self, checkpoint) -> None:
+        """NOTE: Have to set strict to False because we have a rm head
+        """
+        # mcore uses distributed checkpointing
+        if "state_dict" in checkpoint and checkpoint["state_dict"]:
+            for index, module in enumerate(self.get_gpt_module_list()):
+                if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+                    checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
+                else:
+                    checkpoint_state_dict = checkpoint["state_dict"]
+                # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
+                checkpoint_state_dict = {
+                    key.replace("model.", ""): checkpoint_state_dict.pop(key)
+                    for key in list(checkpoint_state_dict.keys())
+                }
+                module.load_state_dict(checkpoint_state_dict, strict=False)
+        else:
+            # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
+            # see NLPModel.on_load_checkpoint
+            checkpoint["state_dict"] = {}
+
+    def sharded_state_dict(self, prefix: str = "") -> Dict[str, Any]:
+        """
+        Creates the sharded state dict which is used by dist_checkpoint to save the sharded tensors to disk.
+        When given the sharded_stated_dict, dist_checkpoint.load will load the tensors corresponding to
+        self.state_dict().
+        The sharded tensor mapping is defined in the GPTModel class from mcore.
+        """
+
+        if self.mcore_gpt:
+            module_prefix = f"{prefix}model."
+            sharded_state_dict = self.model.sharded_state_dict(prefix=module_prefix)
+            return sharded_state_dict
+
+    def offload_adam_states(self):
+        if self.distributed_adam_offload_manager is None:
+
+            self.distributed_adam_offload_manager = (
+                offload_distributed_adam(self._optimizer.state_dict(state_dict_format=1, gather_on_root=False))
+                if self.to_offload_adam_states and self.with_distributed_adam
+                else nullcontext()
+            )
+
+            # offload onto cpu
+            self.distributed_adam_offload_manager.__enter__()
+
+    def onload_adam_states(self):
+        if self.distributed_adam_offload_manager is not None:
+            # load back onto GPU
+            self.distributed_adam_offload_manager.__exit__(None, None, None)
+
+        self.distributed_adam_offload_manager = None
+
+    def prepare_for_inference(self):
+        """normally we would configure the micro batch calculator here
+            but the nemo generation already does the configuration"""
+        self._reset_activation_checkpointing_args()
+        self._reset_sequence_parallelism_args()
+        set_eval(self)
+        self.offload_adam_states()
+
+    def finish_inference(self):
+        # training will onload the adam states, no need to onload it here
+        self._restore_activation_checkpointing_args()
+        self._restore_sequence_parallelism_args()
+        set_train(self)
+
+    def prepare_for_training(self):
+        configure_batch_sizes(
+            mbs=self.cfg.micro_batch_size,
+            gbs=self.cfg.global_batch_size,
+            dp=parallel_state.get_data_parallel_world_size(),
+        )
+        self.onload_adam_states()
+
+    def finish_training(self):
+        """no need to offload adam states here
+        """
+
+    def prepare_for_training_step(self):
+        # custom trainers will always zero grad for us
+        prepare_for_training_step(self, zero_grad=False)
+
+    def finish_training_step(self):
+        grad_reductions(self)
+
+    def prepare_for_validation_step(self):
+        prepare_for_validation_step(self)
+
+    def finish_validation_step(self):
+        finish_validation_step(self)

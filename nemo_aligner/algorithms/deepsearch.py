@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+from typing import Union
+
 import pandas as pd
 import torch
 from megatron.core import parallel_state
@@ -19,78 +22,109 @@ from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
+from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.utils import logging
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset
-from nemo_aligner.utils.distributed import SyncTimer, masked_global_mean_var, normalize_tensor
-from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress
-from nemo_aligner.utils.utils import clear_memory, cpu_dict
+from nemo_aligner.utils.utils import clear_memory
 
 
-def compute_num_rollout_microbatches(dataloader):
-    return divide(
-        divide(dataloader.batch_sampler.global_batch_size, dataloader.batch_sampler.micro_batch_size),
-        parallel_state.get_data_parallel_world_size(),
-    )
+def mcts_collate_fn(eos_id, batch):
+
+    hist_action_probs = torch.stack(tuple(torch.as_tensor(x["hist_action_probs"]) for x in batch))
+    hist_actions = torch.stack(tuple(torch.as_tensor(x["actions"]) for x in batch))
+    hist_outcome = torch.stack(tuple(torch.as_tensor(x["hist_outcome"]) for x in batch))
+    data_id = torch.stack(tuple(torch.as_tensor(x["data_id"]) for x in batch))
+
+    tokens, context_lengths = map(torch.as_tensor, pad_batch([x["tokens"] for x in batch], eos_id, max_len=0))
+
+    return {
+        "tokens": tokens,
+        "context_lengths": context_lengths,
+        "actions": hist_actions,
+        "action_probs": hist_action_probs,
+        "reward": hist_outcome,
+        "data_id": data_id,
+    }
 
 
-steerlm_template = """<extra_id_0>System
-A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-<extra_id_1>User
-{prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-<extra_id_1>Assistant
-<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
-"""
+def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, float, None]):
+    if limit_batches is None:
+        limit_batches = 1.0
+
+    if isinstance(limit_batches, float):
+        limit_batches = int(number_of_batches * limit_batches)
+    elif isinstance(limit_batches, int):
+        limit_batches = min(number_of_batches, limit_batches)
+    else:
+        raise TypeError(f"Invalid data type of {type(limit_batches)} cannot compute limit batches")
+
+    return limit_batches
 
 
 class DeepSearchTrainer:
-    """Trainer to coordinate PPO training
-    """
-
     def __init__(
-        self, cfg: DictConfig, model, optimizer, scheduler, train_dataloader, logger, ckpt_callback,
+        self,
+        cfg: DictConfig,
+        model,
+        optimizer,
+        scheduler,
+        train_dataloader,
+        val_dataloader,
+        feedback,
+        logger,
+        ckpt_callback,
+        run_timer,
     ):
         self.cfg = cfg
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
+        self.feedback = feedback
         self.logger = logger
         self.ckpt_callback = ckpt_callback
+        self.timer = run_timer
 
         self.step = 0
         self.epoch = 0
+        self.optimization_step = 0
 
         self._train_dataloader_len = len(train_dataloader)
         self.set_max_steps()
 
-    def run_regular_generation(self, val_ds):
-        """val_ds is a huggingface ds
-        """
-        total_num = 8
+        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
 
-        feedback = GSK8KFeedbackDataset(val_ds)
+    @torch.no_grad()
+    def run_validation(self):
         self.model.prepare_for_inference()
 
-        inputs = [steerlm_template.format(prompt=x) for x in val_ds["question"][:total_num]]
-        output = self.model.generate(inputs)
+        total = 0
+        num_correct = 0
+        logged = False
 
-        score = 0
+        for _, batch in zip(range(self.limit_val_batches), self.val_dataloader):
+            output = self.model.generate(batch["question"])
 
-        for i, item in enumerate(output["sentences"]):
-            score += feedback.score(item, i)
+            for response, answer in zip(output["sentences"], batch["answer"]):
+                score = self.feedback.score(response, answer)
+                num_correct += score
 
-        accuracy = score / total_num
+                if torch.distributed.get_rank() == 0 and not logged:
+                    logged = True
+                    logging.info("### GENERATED RESPONSE", response)
+                    logging.info("### ACTUAL ANSWER", answer)
+                    logging.info("### SCORE", score)
+
+            total += len(batch["question"])
 
         self.model.finish_inference()
 
-        return {"accuracy": accuracy, "text": output["sentences"]}
+        return {"accuracy": num_correct / total if total > 0 else 0}
 
     def run_training(self, dataloader_iter):
-        # self.model.prepare_for_training()
+        self.model.prepare_for_training()
 
         for batch in dataloader_iter:
             self.optimizer.zero_grad()
@@ -109,58 +143,122 @@ class DeepSearchTrainer:
             if grad_norm is not None:
                 metrics["grad_norm"] = grad_norm
 
-            metrics.update({"lr": lr, "loss": loss_mean, "optim_step": self.ppo_optimization_step})
+            metrics.update({"lr": lr, "loss": loss_mean, "optim_step": self.optimization_step})
 
             self.logger.log_metrics(
                 metrics, step=self.step, prefix="train_optim/",
             )
 
-            self.ppo_optimization_step += 1
+            self.optimization_step += 1
 
-        # self.model.finish_training()
+        self.model.finish_training()
 
         # zero grad again incase it frees up grad mem
         self.optimizer.zero_grad()
         return loss_mean, metrics
 
-    def run_search(self, dataloader_iter, num_rollout_micro_batches):
+    @torch.no_grad()
+    def run_search(self, dataloader_iter):
         # dataloader working but need to be able to run search properly
         # for data in dataloader_iter:
         # pretend this is the buffer
-        return torch.load("/rlhf/batch.pt"), {}
+
+        # prepare for inference
+
+        # finish inference
+
+        # batch signature type
+        # dict_keys(['tokens', 'context_lengths', 'actions', 'action_probs', 'reward'])
+
+        # TODO(geshen): pretend this is defined per DP rank
+        # compute metrics
+        mcts_output = torch.load("/rlhf/buffers/prev/train_buffer.pt")
+
+        num_to_load_per_dp = divide(self.model.cfg.global_batch_size, parallel_state.get_data_parallel_world_size())
+
+        dataloader = torch.utils.data.DataLoader(
+            mcts_output,
+            batch_size=num_to_load_per_dp,
+            shuffle=False,  # TODO(geshen): turn this on
+            num_workers=0,
+            drop_last=True,
+            collate_fn=partial(mcts_collate_fn, self.model.tokenizer.eos_id),
+        )
+
+        return dataloader, {}
 
     def fit(self):
+        val_metrics = self.run_validation()
+
+        if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
+            # because we need to figure out a nice way to reset the shuffling on our dataset
+            # otherwise epoch > 1 will loop over the dataset in the same order
+            raise ValueError("epoch > 1 is not supported")
+
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
+        if len(epoch_iter) <= 0:
+            # epoch done
+            return
 
         for _ in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
             loop_iter = range(self.step, self.max_steps)
+
+            # TODO(geshen): to change for when we support > 1 epoch
+            if len(loop_iter) <= 0:
+                return  # training ended
+
             dataloader_iter = iter(self.train_dataloader)
 
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
 
-            num_rollout_micro_batches = compute_num_rollout_microbatches(self.train_dataloader)
-
             for _ in global_pbar:
                 step_metrics = {}
+                timing_metrics = {}
 
-                rollout_data, metrics = self.run_search(dataloader_iter, num_rollout_micro_batches)
+                self.timer.start("search_time")
+                data_iter, metrics = self.run_search(dataloader_iter)
+                self.timer.stop("search_time")
+                timing_metrics["search_time"] = self.timer.get("search_time")
+
                 # clear_memory()
+                self.timer.start("train_time")
+                loss_mean, train_metrics = self.run_training(data_iter)
+                self.timer.stop("train_time")
+                timing_metrics["train_time"] = self.timer.get("train_time")
 
-                loss_mean, train_metrics = self.run_training(rollout_data)
+                run_time_exceeded = self.run_timer.is_finished()
+                run_val, save_model, is_train_end = check_progress(
+                    self.step,
+                    self.max_steps,
+                    self.cfg.val_check_interval,
+                    self.cfg.save_interval,
+                    1.0,  # TODO:(geshen): allow for limit val batches
+                    run_time_exceeded=run_time_exceeded,
+                )
 
                 self.step += 1
 
-                if self.step % self.cfg.val_check_interval == 0:
-                    val_metrics = self.run_regular_generation(self.train_dataloader.dataset)
-                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val_rollouts/")
-                    self.logger.log_table("table/val_rollouts", dataframe=self.val_df, step=self.step)
+                if run_val:
+                    self.timer.start("validation_time")
+                    val_metrics = self.run_validation()
+                    self.timer.stop("validation_time")
+                    timing_metrics["validation_time"] = self.timer.get("validation_time")
 
+                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val_rollouts/")
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update({f"train_{k}": v for k, v in train_metrics.items()})
 
                 global_pbar.set_postfix(step_metrics)
+
+                if save_model:
+                    step_metrics = {k: torch.as_tensor(v) for k, v in step_metrics.items()}
+                    self.save(step_metrics, is_train_end=is_train_end)
+
+                if run_time_exceeded:
+                    logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
+                    return
 
             self.epoch += 1
 
@@ -177,3 +275,39 @@ class DeepSearchTrainer:
             max_steps = max_steps - self.step
 
         self.max_steps = min(max_steps, self._train_dataloader_len) + self.step
+
+    def state_dict(self):
+        # TODO(geshen): add epoch logic
+        return {
+            "step": self.step,
+            "consumed_samples": self.consumed_samples,
+            "optimization_step": self.optimization_step,
+        }
+
+    def load_state_dict(self, state_dict):
+        self.step = state_dict["step"]
+        self.consumed_samples = state_dict["consumed_samples"]
+        self.optimization_step = state_dict["optimization_step"]
+
+        current_state_dict = self.state_dict()
+        state_vals = [current_state_dict[k] for k in sorted(current_state_dict)]
+
+        # make sure everyone loaded the same checkpoint as rank 0
+        to_broadcast = torch.tensor(state_vals, dtype=torch.float32, device=torch.cuda.current_device())
+        torch.distributed.broadcast(to_broadcast, 0)
+
+        assert state_vals == to_broadcast.tolist()
+        # restore max steps we need to run for
+        self.set_max_steps()
+
+    def save(self, extra_candidates=None, is_train_end=False):
+        """PTL based save"""
+        torch.distributed.barrier()
+
+        if extra_candidates is None:
+            extra_candidates = {}
+
+        monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
+        monitor_candidates.update(extra_candidates)
+
+        self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)

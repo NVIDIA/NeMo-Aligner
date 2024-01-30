@@ -145,6 +145,9 @@ def main(cfg) -> None:
 
         buffer = deep_search(ps, mcts, args["max_depth"], args["temperature"])
 
+        rank = torch.distributed.get_rank()
+        torch.save(buffer, f"buffer_{rank}_{batch_id}.pt")
+
 
 if __name__ == "__main__":
     main()

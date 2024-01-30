@@ -388,7 +388,16 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
                 for tokens, hist_action_probs, actions in spg.memory:
                     hist_outcome = value
                     # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                    return_memory.append((tokens, hist_action_probs, hist_outcome, actions, spg.data_id))
+
+                    return_memory.append(
+                        {
+                            "tokens": tokens,
+                            "hist_action_probs": hist_action_probs,
+                            "hist_outcome": hist_outcome,
+                            "actions": actions,
+                            "data_id": spg.data_id,
+                        }
+                    )
                 del parallel_searches[i]
 
     return return_memory
