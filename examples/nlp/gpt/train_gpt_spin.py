@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from functools import partial
+
 import torch
 import torch.multiprocessing as mp
 from megatron.core import parallel_state
@@ -20,7 +22,7 @@ from omegaconf.omegaconf import OmegaConf, open_dict
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.spin import SPINTrainer
+from nemo_aligner.algorithms.spin import SPINTrainer, spin_custom_collate
 from nemo_aligner.data.nlp.builders import (
     build_dataloader,
     build_sft_dataset,
@@ -121,11 +123,11 @@ def main(cfg) -> None:
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
 
-    max_seqlen = cfg.model.ppo.length_params.max_length
+    max_seqlen = cfg.model.spin.length_params.max_length
     eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    collate_fn = collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg)
+    collate_fn = partial(spin_custom_collate, eos_id=eos_id, reset_position_ids=cfg.model.data.get("reset_position_ids", False), reset_attention_mask=cfg.model.data.get("reset_attention_mask", False), eod_mask_loss=cfg.model.data.get("eod_mask_loss", False))
 
     train_dataloader = build_dataloader(
         cfg=cfg,
@@ -136,7 +138,7 @@ def main(cfg) -> None:
         collate_fn=collate_fn,
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=not train_data_cfg.drop_last,
-        load_gbs=False,
+        load_gbs=True,
     )
 
     val_dataloader = build_dataloader(
@@ -148,7 +150,7 @@ def main(cfg) -> None:
         collate_fn=collate_fn,
         drop_last=val_data_cfg.drop_last,
         pad_samples_to_global_batch_size=not val_data_cfg.drop_last,
-        load_gbs=False,
+        load_gbs=True,
     )
 
     # nemo uses the train dataloader to figure out
@@ -175,7 +177,7 @@ def main(cfg) -> None:
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
     spin_trainer = SPINTrainer(
-        cfg=cfg.trainer.ppo,
+        cfg=cfg.trainer.spin,
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
