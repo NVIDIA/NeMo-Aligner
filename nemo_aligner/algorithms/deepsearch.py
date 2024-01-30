@@ -92,6 +92,7 @@ class DeepSearchTrainer:
         self.step = 0
         self.epoch = 0
         self.optimization_step = 0
+        self.consumed_samples = 0
 
         self._train_dataloader_len = len(train_dataloader)
         self.set_max_steps()
@@ -128,10 +129,10 @@ class DeepSearchTrainer:
 
         return {"accuracy": num_correct / total if total > 0 else 0}
 
-    def run_training(self, dataloader_iter):
+    def run_training(self, dataloader_iter, num_batches_to_use):
         self.model.prepare_for_training()
 
-        for batch in dataloader_iter:
+        for _, batch in zip(range(num_batches_to_use), dataloader_iter):
             self.optimizer.zero_grad()
 
             self.model.prepare_for_training_step()
@@ -168,9 +169,24 @@ class DeepSearchTrainer:
 
         output = []
 
+        num_total = 0
+        num_correct = 0
+
         # train dataloader loads gbs
         for _, batch in zip(range(1), dataloader_iter):
             output = run_mcts(batch, self.model)
+            self.consumed_samples += len(batch["question"]) * parallel_state.get_data_parallel_world_size()
+
+            for o in output:
+                if o["hist_outcome"] > 0:
+                    num_correct += 1
+
+            num_total += len(output)
+
+        # find how many passed
+        metric_output = torch.as_tensor([num_correct, num_total], dtype=torch.long, device=torch.cuda.current_device())
+        torch.distributed.all_reduce(metric_output, group=parallel_state.get_data_parallel_group())
+        num_correct, num_total = metric_output.tolist()
 
         num_to_load_per_dp = divide(self.model.cfg.global_batch_size, parallel_state.get_data_parallel_world_size())
 
@@ -183,13 +199,19 @@ class DeepSearchTrainer:
             collate_fn=partial(mcts_collate_fn, self.model.tokenizer.eos_id),
         )
 
-        # TODO(geshen): if the dataloader returns variable sizes then we may hang on DP
-        # but maybe not because we only comm when grad accmulates
+        # mcts will return different lengths depending on the prompt
+        # so we need to make sure to use the smallest DP rank's dataloader to not hang training
+        output = torch.as_tensor([len(dataloader)], dtype=torch.long, device=torch.cuda.current_device())
+        torch.distributed.all_reduce(
+            output, op=torch.distributed.ReduceOp.MIN, group=parallel_state.get_data_parallel_group()
+        )
+        num_batches_to_use = output.item()
+
         self.model.finish_inference()
-        return dataloader, {}
+        return dataloader, num_batches_to_use, {"accuracy": num_correct / num_total if num_total > 0 else 0}
 
     def fit(self):
-        val_metrics = self.run_validation()
+        self.run_timer.start_time()
 
         if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
             # because we need to figure out a nice way to reset the shuffling on our dataset
@@ -211,7 +233,9 @@ class DeepSearchTrainer:
 
             dataloader_iter = iter(self.train_dataloader)
 
-            global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
+            global_pbar = tqdm(
+                loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="DeepSearch Global Step"
+            )
 
             dataloader_iter = iter(self.train_dataloader)
 
@@ -220,13 +244,14 @@ class DeepSearchTrainer:
                 timing_metrics = {}
 
                 self.timer.start("search_time")
-                data_iter, metrics = self.run_search(dataloader_iter)
+                data_iter, num_batches_to_use, search_metrics = self.run_search(dataloader_iter)
                 self.timer.stop("search_time")
                 timing_metrics["search_time"] = self.timer.get("search_time")
+                step_metrics.update({f"search_{k}": v for k, v in search_metrics.items()})
 
                 clear_memory()
                 self.timer.start("train_time")
-                loss_mean, train_metrics = self.run_training(data_iter)
+                loss_mean, train_metrics = self.run_training(data_iter, num_batches_to_use)
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
 

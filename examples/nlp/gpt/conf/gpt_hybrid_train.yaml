@@ -61,6 +61,8 @@ model:
     length_params:
       max_length: 30
       min_length: 0
+  
+  offload_adam_states: False
 
   micro_batch_size: 1
   global_batch_size: 64

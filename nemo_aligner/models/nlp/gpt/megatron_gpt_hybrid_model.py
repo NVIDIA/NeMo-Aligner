@@ -75,8 +75,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             self.rew_mean = cfg.reward_standardization.mean
             self.rew_std = cfg.reward_standardization.std
 
-        # TODO(geshen): change to something actual
-        self.to_offload_adam_states = False
+        self.to_offload_adam_states = self.cfg.offload_adam_states
 
         self.distributed_adam_offload_manager = None
 
@@ -166,11 +165,11 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
             def loss_func(parallel_logits):
                 logits, values = parallel_logits
-                # slow on DP
+                # slow on TP
                 logits = gather_from_tensor_model_parallel_region(logits)
-
                 log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
                 #
+
                 lengths = batch["context_lengths"]
                 actions = batch["actions"]
                 action_probs = batch["action_probs"]
