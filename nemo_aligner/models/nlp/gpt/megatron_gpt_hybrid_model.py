@@ -23,6 +23,7 @@ from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_cal
 from megatron.core import InferenceParams, parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.tensor_parallel.mappings import gather_from_tensor_model_parallel_region
 from megatron.core.utils import divide
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
@@ -76,6 +77,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
         # TODO(geshen): change to something actual
         self.to_offload_adam_states = False
+
         self.distributed_adam_offload_manager = None
 
         self.value_loss_weight = self.cfg.mcts.train.value_weight
@@ -163,10 +165,10 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None,)
 
             def loss_func(parallel_logits):
-                # TODO(geshen): only support DP only, to support TP we need to be clever about slicing
-                assert parallel_state.get_tensor_model_parallel_world_size() == 1, "no TP support rn"
-
                 logits, values = parallel_logits
+                # slow on DP
+                logits = gather_from_tensor_model_parallel_region(logits)
+
                 log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
                 #
                 lengths = batch["context_lengths"]

@@ -24,6 +24,7 @@ from tqdm import tqdm
 
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.utils import logging
+from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress
@@ -163,25 +164,18 @@ class DeepSearchTrainer:
 
     @torch.no_grad()
     def run_search(self, dataloader_iter):
-        # dataloader working but need to be able to run search properly
-        # for data in dataloader_iter:
-        # pretend this is the buffer
+        self.model.prepare_for_inference()
 
-        # prepare for inference
+        output = []
 
-        # finish inference
-
-        # batch signature type
-        # dict_keys(['tokens', 'context_lengths', 'actions', 'action_probs', 'reward'])
-
-        # TODO(geshen): pretend this is defined per DP rank
-        # compute metrics
-        mcts_output = torch.load("/rlhf/buffers/prev/train_buffer.pt")
+        # train dataloader loads gbs
+        for _, batch in zip(range(1), dataloader_iter):
+            output = run_mcts(batch, self.model)
 
         num_to_load_per_dp = divide(self.model.cfg.global_batch_size, parallel_state.get_data_parallel_world_size())
 
         dataloader = torch.utils.data.DataLoader(
-            mcts_output,
+            output,
             batch_size=num_to_load_per_dp,
             shuffle=False,  # TODO(geshen): turn this on
             num_workers=0,
@@ -189,6 +183,9 @@ class DeepSearchTrainer:
             collate_fn=partial(mcts_collate_fn, self.model.tokenizer.eos_id),
         )
 
+        # TODO(geshen): if the dataloader returns variable sizes then we may hang on DP
+        # but maybe not because we only comm when grad accmulates
+        self.model.finish_inference()
         return dataloader, {}
 
     def fit(self):
@@ -215,6 +212,8 @@ class DeepSearchTrainer:
             dataloader_iter = iter(self.train_dataloader)
 
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
+
+            dataloader_iter = iter(self.train_dataloader)
 
             for _ in global_pbar:
                 step_metrics = {}

@@ -64,17 +64,31 @@ def collate_fn(batch):
     for b in batch:
         new_dict["question"].append(steerlm_template.format(prompt=b["question"]))
         new_dict["answer"].append(b["answer"])
+        new_dict["data_id"].append(b["data_id"])
 
     return new_dict
+
+
+class DatasetWrapper:
+    def __init__(self, ds):
+        self.ds = ds
+
+    # just like a dataset but return idx
+    def __getitem__(self, idx):
+        return {**self.ds[idx], "data_id": idx}
+
+    def __len__(self):
+        return len(self.ds)
 
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
     dataset = load_dataset("gsm8k", "main")
 
-    train_ds = dataset["train"]
+    train_ds = DatasetWrapper(dataset["train"])
     # use the train dataset for now
-    val_ds = dataset["train"]
+    val_ds = DatasetWrapper(dataset["train"])
+
     feedback = GSK8KFeedbackDataset()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
