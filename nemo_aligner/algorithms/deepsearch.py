@@ -24,6 +24,7 @@ from tqdm import tqdm
 
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.utils import logging
+from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress
 from nemo_aligner.utils.utils import clear_memory
@@ -85,7 +86,7 @@ class DeepSearchTrainer:
         self.feedback = feedback
         self.logger = logger
         self.ckpt_callback = ckpt_callback
-        self.timer = run_timer
+        self.run_timer = run_timer
 
         self.step = 0
         self.epoch = 0
@@ -95,6 +96,9 @@ class DeepSearchTrainer:
         self.set_max_steps()
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
+        self.timer = SyncTimer(
+            reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
+        )
 
     @torch.no_grad()
     def run_validation(self):
