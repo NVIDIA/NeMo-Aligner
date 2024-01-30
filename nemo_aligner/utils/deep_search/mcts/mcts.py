@@ -250,7 +250,9 @@ class MCTSParallel:
 
         dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
-        for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False, position=2*dp_rank + 1):
+        for search in tqdm.tqdm(
+            range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False, position=2 * dp_rank + 1
+        ):
             for spg in ps:
                 # spg.node is to save the node that needs to be expanded
                 spg.node = None
@@ -311,7 +313,7 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
     # add a progress bar to show the progress of the self play
     total_steps = max_steps
     dp_rank = parallel_state.get_data_parallel_rank()
-    pb = tqdm.tqdm(total=total_steps, desc=f"Self Play rank {dp_rank}", position=2*dp_rank, leave=True)
+    pb = tqdm.tqdm(total=total_steps, desc=f"Self Play rank {dp_rank}", position=2 * dp_rank, leave=True)
     while len(parallel_searches) > 0:
         # TODO need to clear the session memory in the server
         count += 1
