@@ -96,7 +96,7 @@ model:
   seed: 1234
 
   optim:
-    name: sgd
+    name: distributed_fused_adam
     bucket_cap_mb: 200
     overlap_grad_sync: False
     contiguous_grad_buffer: True
