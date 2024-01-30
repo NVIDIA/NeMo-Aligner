@@ -29,7 +29,7 @@ from nemo_aligner.utils.deep_search.forward_only import (
     get_forward_output_only_func,
     get_forward_output_only_func_hybrid,
 )
-from nemo_aligner.utils.deep_search.mcts.mcts import Node, State
+from nemo_aligner.utils.deep_search.mcts.mcts import Node, get_state
 from nemo_aligner.utils.deep_search.mcts.search_db import SearchDB, get_kv_cache
 
 try:
@@ -395,7 +395,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         return self.search_db.get_inference_params(session_info)
 
     def compute_inference_params(self, session_info: str, context_ids: List[str], actions: torch.Tensor):
-        updated_kv_cache, tokens, context_lengths = get_kv_cache(actions, session_info, context_ids, self.search_db)
+        updated_kv_cache, tokens = get_kv_cache(actions, session_info, context_ids, self.search_db)
         tokens = torch.cuda.LongTensor(tokens)
         batch_size, token_len = tokens.shape
         true_context_lengths = torch.cuda.IntTensor([len(c) + 1 for c in context_ids])
@@ -424,7 +424,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         # it can never happen that the node is root node
         if node.parent is None:
             raise ValueError("The node is root node, cannot update kv cache")
-        state = State.get_state(infer_params, False, context_length, batch_id)
+        state = get_state(infer_params, False, context_length, batch_id)
         node.state = state
         node.value_sum = value
 
@@ -436,8 +436,9 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         context_lengths: torch.Tensor,
         parent_nodes: List[Node],
         actions_taken: torch.Tensor,
-        action_policy: torch.Tensor,
+        children_action_policy: torch.Tensor,
         action_value: torch.Tensor,
+        children_action: torch.Tensor,
         context_tokens: torch.Tensor = None,
     ):
         for bid in range(batch_size):
@@ -447,8 +448,9 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             # self.search_db.add_kv_cache(session_id, depth, tokens, kv_cache)
             parent_node = parent_nodes[bid]
             action_taken = actions_taken[bid].item()
-            prior_prob = action_policy[bid].item()
-            state = State.get_state(infer_params, action_taken == -1, context_length, bid)
+            children_prob_array = children_action_policy[bid].cpu().numpy()
+            children_action_array = children_action[bid].cpu().numpy()
+            state = get_state(infer_params, action_taken == -1, context_length, bid)
             value = None
             if action_value is not None:
                 value = action_value[bid].item()
@@ -456,14 +458,21 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             if action_taken == -1:
                 # root node, need to add all context tokens
                 tokens = context_tokens[bid, :context_length].cpu().numpy().tolist()
-                node = Node(state=state, parent=parent_node, action=tokens, prior=0.0, visit_count=0, value_sum=value)
+                node = Node(
+                    state=state,
+                    parent=parent_node,
+                    action=tokens,
+                    prior=(children_prob_array, children_action_array),
+                    visit_count=0,
+                    value_sum=value,
+                )
                 self.search_db.add_root(session_info, context_id, node)
             else:
                 node = Node(
                     state=state,
                     parent=parent_node,
                     action=action_taken,
-                    prior=prior_prob,
+                    prior=(children_prob_array, children_action_array),
                     visit_count=0,
                     value_sum=value,
                 )
@@ -471,8 +480,8 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             if parent_node is not None:
                 parent_node.children[action_taken] = node
 
-    def get_node(self, session_info: str, context_id: str, action: int):
-        return self.search_db.get(session_info, context_id, action)
+    def get_node(self, session_info: str, context_id: str):
+        return self.search_db.get(session_info, context_id)
 
     def post_generation_process(self, output):
         """

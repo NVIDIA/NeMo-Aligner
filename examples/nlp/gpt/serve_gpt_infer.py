@@ -76,27 +76,6 @@ def timer(name):
         print(f"{name} took {end - beg} seconds")
 
 
-def print_gpu_memory_usage():
-    # print the GPU memory ussage by all devices, print out in GB
-    #     for device in range(torch.cuda.device_count()):
-    #         print(f"GPU {device} memory allocated: {torch.cuda.memory_allocated(device) / 1024 ** 3}")
-    #         print(f"GPU {device} memory cached: {torch.cuda.memory_cached(device) / 1024 ** 3}")
-    #         print(f"GPU {device} memory reserved: {torch.cuda.memory_reserved(device) / 1024 ** 3}")
-    #         print(f"GPU {device} memory allocated max: {torch.cuda.max_memory_allocated(device) / 1024 ** 3}")
-    if torch.cuda.is_available():
-        # Get the number of available GPUs
-        num_gpus = torch.cuda.device_count()
-
-        for i in range(num_gpus):
-            # Set the device to the GPU
-            torch.cuda.device(i)
-            # Get the memory allocated for the current GPU
-            allocated_memory = torch.cuda.memory_allocated(i)
-            print(f"GPU {i}: Allocated memory: {allocated_memory / 1024**3} GB")
-    else:
-        print("CUDA is not available. You might be running on a CPU.")
-
-
 def init_distributed_parameters(trainer, cfg):
     app_state = AppState()
     if cfg.tensor_model_parallel_size > 1 or cfg.pipeline_model_parallel_size > 1:
@@ -138,7 +117,6 @@ def main(cfg) -> None:
         % (cfg.tensor_model_parallel_size * cfg.pipeline_model_parallel_size)
         == 0
     ), "devices * num_nodes should equal to multiple of (tensor_model_parallel_size * pipeline_model_parallel_size)"
-    print_gpu_memory_usage()
 
     if cfg.gpt_model_file:
         save_restore_connector = NLPSaveRestoreConnector()
@@ -210,40 +188,17 @@ def main(cfg) -> None:
     except AttributeError:
         pass
 
-    print_gpu_memory_usage()
-
     init_distributed(trainer, model, False)
-    print_gpu_memory_usage()
 
     dp_size = parallel_state.get_data_parallel_world_size()
     max_batch_size = cfg.inference.micro_batch_size * dp_size
-
-    length_params: LengthParam = {
-        "max_length": cfg.inference.tokens_to_generate,
-        "min_length": cfg.inference.min_tokens_to_generate,
-    }
-
-    sampling_params: SamplingParam = {
-        "use_greedy": cfg.inference.greedy,
-        "temperature": cfg.inference.temperature,
-        "top_k": cfg.inference.top_k,
-        "top_p": cfg.inference.top_p,
-        "repetition_penalty": cfg.inference.repetition_penalty,
-        "add_BOS": cfg.inference.add_BOS,
-        "all_probs": cfg.inference.all_probs,
-        "compute_logprob": cfg.inference.compute_logprob,
-        "end_strings": cfg.inference.end_strings,
-    }
 
     # strategy_args = {"strategy": strategy}
     strategy = GPTSearchTextGenerationStrategy(model)
     strategy_args = {"strategy": strategy}
 
-    def get_infer_fn(model, sampling_params, length_params, **strategy_args):
+    def get_infer_fn(model, top_k, max_depth, **strategy_args):
         # one token at a time
-        tokens_to_generate = length_params["max_length"]
-        top_k = sampling_params["top_k"]
-        end_strings = sampling_params["end_strings"]
 
         def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
             return search(
@@ -252,22 +207,15 @@ def main(cfg) -> None:
                 action,
                 context_ids,
                 session_info,
-                tokens_to_generate=tokens_to_generate,  # max search depth
+                tokens_to_generate=max_depth,  # max search depth
                 top_k=top_k,
-                end_strings=end_strings,
                 **strategy_args,
             )
 
         return infer_fn
 
-    infer_fn = get_infer_fn(model, sampling_params, length_params, **strategy_args)
-    # infer_fn = lambda : None
-    # r = infer_fn(["hello", "ok"])
-    # print(r)
+    infer_fn = get_infer_fn(model, cfg.inference.top_k, cfg.inference.tokens_to_generate, **strategy_args)
 
-    # import sys
-
-    # sys.exit(0)
     if torch.distributed.get_rank() == 0:
         infer_callable = SearchCallable(model_name="search", infer_fn=infer_fn, lock=threading.Lock())
         triton_config = TritonConfig(

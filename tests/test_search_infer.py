@@ -20,8 +20,6 @@ from nemo.core.config import hydra_runner
 from nemo.utils import AppState, logging
 from nemo.utils.model_utils import inject_model_parallel_rank
 from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.utils.deep_search.mcts.mcts import Node, State
-from nemo_aligner.utils.deep_search.mcts.search_db import SearchDB, get_kv_cache
 from nemo_aligner.utils.deep_search.search_callables import SearchCallable
 from nemo_aligner.utils.deep_search.text_gen_utils import search
 from nemo_aligner.utils.deep_search.text_generation_strategy import GPTSearchTextGenerationStrategy
@@ -80,7 +78,6 @@ class TestSearch:
         strategy_args = {"strategy": strategy}
         tokens_to_generate = 10
         top_k = 50
-        end_strings = [""]
 
         def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
             return search(
@@ -91,7 +88,6 @@ class TestSearch:
                 session_info,
                 tokens_to_generate=tokens_to_generate,  # max search depth
                 top_k=top_k,
-                end_strings=end_strings,
                 **strategy_args,
             )
 
@@ -102,16 +98,7 @@ class TestSearch:
         output = infer_fn(inputs=batched_inputs, action=None, context_ids=context_ids, session_info="session1")
         assert strategy.search_db.get_inference_params("session1").sequence_len_offset == max(token_lengths) - 1
         assert "session1" in strategy.search_db.db
-        root = strategy.search_db.get("session1", context_ids[0], -1)
-        for action in output["action"][0]:
-            node = strategy.search_db.get("session1", context_ids[0], action)
-            assert node.parent == root
-            assert node.action == action
-        root = strategy.search_db.get("session1", context_ids[1], -1)
-        for action in output["action"][1]:
-            node = strategy.search_db.get("session1", context_ids[1], action)
-            assert node.parent == root
-            assert node.action == action
+        root = strategy.search_db.get("session1", context_ids[0])
 
         old_k_caches = []
         batch_size = len(batched_inputs)
@@ -129,14 +116,14 @@ class TestSearch:
             output = infer_fn(inputs=None, action=actions, context_ids=context_ids, session_info="session1")
             assert strategy.search_db.get_inference_params("session1").sequence_len_offset == max(token_lengths) + step
             context_ids = [parent_ids + (child.item(),) for parent_ids, child in zip(context_ids, actions)]
-            root = strategy.search_db.get("session1", context_ids[0][:-1], actions[0].item())
-            for action in output["action"][0]:
-                node = strategy.search_db.get("session1", context_ids[0], action)
+            root = strategy.search_db.get("session1", context_ids[0][:-1])
+            for action in actions[0]:
+                node = strategy.search_db.get("session1", context_ids[0])
                 assert node.action == action
                 assert node.parent == root
-            root = strategy.search_db.get("session1", context_ids[1][:-1], actions[1].item())
-            for action in output["action"][1]:
-                node = strategy.search_db.get("session1", context_ids[1], action)
+            root = strategy.search_db.get("session1", context_ids[1][:-1])
+            for action in actions[1]:
+                node = strategy.search_db.get("session1", context_ids[1])
                 assert node.action == action
             new_k_caches = []
             for i in range(batch_size):

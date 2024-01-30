@@ -19,7 +19,7 @@ from typing import Callable, List
 import numpy as np
 import torch
 import tqdm
-from megatron.core import InferenceParams
+from megatron.core import InferenceParams, parallel_state
 
 
 class ParallelSearch:
@@ -36,58 +36,45 @@ class ParallelSearch:
         self.node = None
 
 
-class State:
-    def __init__(self, kv_cache=None):
-        """LM search related states
-
-        Args:
-            kv_cache (dict): dictionary of KV cache
-        """
-        # kv cache is a dictionary. key is layer number, value is a k, v tuple where both k and v are torch tensors of shape (seq_len, batch_size, ...)
-        self.kv_cache = kv_cache
-
-    @staticmethod
-    def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch_id: int):
-        # only call this function after inference step is done
-        # infer_params.sequence_len_offset is the number of tokens used in the kv cache before the inference step
-        # after the inference step, there is one more token in the kv cache
-        if init:
-            # root state has all the context
-            # key_value_memory_dict [length, batch_size, ...]
-            kv_cache = {
-                key: (
-                    infer_params.key_value_memory_dict[key][0][:context_len, batch_id]
-                    .detach()
-                    .cpu()
-                    .type(torch.float32)
-                    .numpy(),
-                    infer_params.key_value_memory_dict[key][1][:context_len, batch_id]
-                    .detach()
-                    .cpu()
-                    .type(torch.float32)
-                    .numpy(),
-                )
-                for key in infer_params.key_value_memory_dict
-            }
-            state = State(kv_cache)
-        else:
-            kv_cache = {
-                key: (
-                    infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id]
-                    .detach()
-                    .cpu()
-                    .type(torch.float32)
-                    .numpy(),
-                    infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id]
-                    .detach()
-                    .cpu()
-                    .type(torch.float32)
-                    .numpy(),
-                )
-                for key in infer_params.key_value_memory_dict
-            }
-            state = State(kv_cache)
-        return state
+def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch_id: int):
+    # only call this function after inference step is done
+    # infer_params.sequence_len_offset is the number of tokens used in the kv cache before the inference step
+    # after the inference step, there is one more token in the kv cache
+    if init:
+        # root state has all the context
+        # key_value_memory_dict [length, batch_size, ...]
+        kv_cache = {
+            key: (
+                infer_params.key_value_memory_dict[key][0][:context_len, batch_id]
+                .detach()
+                .cpu()
+                .type(torch.float32)
+                .numpy(),
+                infer_params.key_value_memory_dict[key][1][:context_len, batch_id]
+                .detach()
+                .cpu()
+                .type(torch.float32)
+                .numpy(),
+            )
+            for key in infer_params.key_value_memory_dict
+        }
+    else:
+        kv_cache = {
+            key: (
+                infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id]
+                .detach()
+                .cpu()
+                .type(torch.float32)
+                .numpy(),
+                infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id]
+                .detach()
+                .cpu()
+                .type(torch.float32)
+                .numpy(),
+            )
+            for key in infer_params.key_value_memory_dict
+        }
+    return kv_cache
 
 
 class Node:
@@ -278,8 +265,9 @@ class MCTSParallel:
             spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
             spg.root.expand(spg_policy, spg_action)
 
-        for search in range(self.args["num_searches"]):
-
+        dp_rank = parallel_state.get_data_parallel_rank()
+        # use tqdm to show the progresso of the self play
+        for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", position=dp_rank * 2):
             for spg in ps:
                 # spg.node is to save the node that needs to be expanded
                 spg.node = None
@@ -339,7 +327,8 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
     count = 0
     # add a progress bar to show the progress of the self play
     total_steps = max_steps
-    pb = tqdm.tqdm(total=total_steps, desc=f"Self Play")
+    dp_rank = parallel_state.get_data_parallel_rank()
+    pb = tqdm.tqdm(total=total_steps, desc=f"Self Play", position=2 * dp_rank + 1)
     while len(parallel_searches) > 0:
         # TODO need to clear the session memory in the server
         count += 1

@@ -169,7 +169,6 @@ def search(
     session_info=None,
     tokens_to_generate=1,  # max search depth
     top_k=0,
-    end_strings=["<|endoftext|>"],
     **strategy_args,
 ) -> OutputType:
     """
@@ -206,14 +205,7 @@ def search(
             action[:] = 0
 
         send_generate_info(
-            context_tokens_tensor,
-            context_length_tensor,
-            action,
-            tokens_to_generate,
-            top_k,
-            end_strings,
-            context_ids,
-            session_info,
+            context_tokens_tensor, context_length_tensor, action, tokens_to_generate, top_k, context_ids, session_info,
         )
     else:
         (
@@ -222,7 +214,6 @@ def search(
             action,
             tokens_to_generate,
             top_k,
-            end_strings,
             context_ids,
             session_info,
         ) = receive_generate_info()
@@ -451,9 +442,8 @@ def sample_sequence_batch(
         if init:
             parent_nodes = [None] * batch_size
             actions_taken = torch.cuda.IntTensor([-1] * batch_size)
-            actions_policy = torch.cuda.FloatTensor([0.0] * batch_size)
-
             # construct and save the root node
+            # root node kv cache is all we need
             inference_strategy.save_kv_cache(
                 session_info,
                 context_ids,
@@ -461,64 +451,30 @@ def sample_sequence_batch(
                 context_lengths,
                 parent_nodes,
                 actions_taken,
-                actions_policy,
+                output_policy,
                 output_values,
+                output_actions,
                 context_tokens,
             )
-
-            # construct and save the first level nodes
-            for i in range(batch_size):
-                context_id = context_ids[i]
-                parent_nodes[i] = inference_strategy.get_node(session_info, context_id, -1)
-                assert parent_nodes[i].parent is None
-
-            for j in range(top_k):
-                # actions taken is a tensor of shape [batch_size, top_k]
-                # actions policy is a tensor of shape [batch_size, top_k]
-                actions_taken = output_actions[:, j]
-                actions_policy = output_policy[:, j]
-                children_context_ids = context_ids
-                inference_strategy.save_kv_cache(
-                    session_info,
-                    children_context_ids,
-                    batch_size,
-                    context_lengths,
-                    parent_nodes,
-                    actions_taken,
-                    actions_policy,
-                    None,
-                    None,
-                )
         else:
             # construct and save the next level nodes
-            parent_nodes = [None] * batch_size
-
+            parent_nodes = []
             for i in range(batch_size):
                 context_id = context_ids[i]
-                context = context_lengths[i].item()
-                action = context_tokens[i, context].item()
-                parent_nodes[i] = inference_strategy.get_node(session_info, context_id, action)
-                parent_context_length = true_context_length[i].item() - 1
-                # need to correct the parent_nodes's k-v cache
-                inference_strategy.update_kv_cache(
-                    session_info, parent_nodes[i], parent_context_length, i, output_values[i].item()
-                )
+                parent_node = inference_strategy.get_node(session_info, context_id)
+                parent_nodes.append(parent_node)
+            action_taken = torch.gather(context_tokens, 1, context_lengths.unsqueeze(-1).type(torch.int64))
 
-            for j in range(top_k):
-                actions_taken = output_actions[:, j]
-                actions_policy = output_policy[:, j]
-                children_context_ids = [
-                    context_id + (parent_node.action,) for context_id, parent_node in zip(context_ids, parent_nodes)
-                ]
-                inference_strategy.save_kv_cache(
-                    session_info,
-                    children_context_ids,
-                    batch_size,
-                    true_context_length,
-                    parent_nodes,
-                    actions_taken,
-                    actions_policy,
-                    None,
-                    None,
-                )
+            inference_strategy.save_kv_cache(
+                session_info,
+                context_ids,
+                batch_size,
+                true_context_length - 1,
+                parent_nodes,
+                action_taken,
+                output_policy,
+                output_values,
+                output_actions,
+                context_tokens,
+            )
         return output_actions, output_policy, output_values

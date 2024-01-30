@@ -52,14 +52,7 @@ def get_model_parallel_src_rank():
 
 
 def send_generate_info(
-    context_tokens_tensor,
-    context_length_tensor,
-    action,
-    tokens_to_generate,
-    top_k,
-    end_strings,
-    context_ids,
-    session_info,
+    context_tokens_tensor, context_length_tensor, action, tokens_to_generate, top_k, context_ids, session_info,
 ):
     """
     Needs to be synced up with receive_generate_info
@@ -79,7 +72,6 @@ def send_generate_info(
     input_info_tensor = torch.cuda.IntTensor(input_info)
     torch.distributed.broadcast(input_info_tensor, src, None)
 
-    broadcast_python_obj(end_strings, src, None)
     broadcast_python_obj(context_ids, src, None)
     broadcast_python_obj(session_info, src, None)
 
@@ -102,7 +94,6 @@ def receive_generate_info():
     tokens_to_generate = int(input_info_tensor[0].item())
     top_k = int(input_info_tensor[1].item())
 
-    end_strings = broadcast_python_obj(None, src, None)
     context_ids = broadcast_python_obj(None, src, None)
     session_info = broadcast_python_obj(None, src, None)
 
@@ -112,7 +103,6 @@ def receive_generate_info():
         action,
         tokens_to_generate,
         top_k,
-        end_strings,
         context_ids,
         session_info,
     )
