@@ -1,9 +1,11 @@
 from megatron.core import InferenceParams, parallel_state
-from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
-from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
-from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
+
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
 from nemo_aligner.utils.deep_search.mcts.mcts import MCTSParallel, ParallelSearch, deep_search
+from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
+from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
+from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
+
 
 def run_mcts(batch, ptl_model):
     mcts_cfg = ptl_model.cfg.mcts
@@ -44,13 +46,6 @@ def run_mcts(batch, ptl_model):
 
     for question, answer, data_id in zip(batch["question"], batch["answer"], batch["data_id"]):
 
-        ps.append(
-            ParallelSearch(
-                ptl_model.tokenizer.text_to_ids(
-                    question,
-                ),
-                data_id,
-            )
-        )
+        ps.append(ParallelSearch(ptl_model.tokenizer.text_to_ids(question,), data_id,))
 
     return deep_search(ps, mcts, mcts_cfg.max_depth, mcts_cfg.temperature)
