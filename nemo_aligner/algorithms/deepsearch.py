@@ -221,7 +221,7 @@ class DeepSearchTrainer:
                 self.timer.stop("search_time")
                 timing_metrics["search_time"] = self.timer.get("search_time")
 
-                # clear_memory()
+                clear_memory()
                 self.timer.start("train_time")
                 loss_mean, train_metrics = self.run_training(data_iter)
                 self.timer.stop("train_time")

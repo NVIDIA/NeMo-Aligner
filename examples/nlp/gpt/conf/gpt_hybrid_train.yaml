@@ -15,6 +15,14 @@ trainer:
     gradient_clip_val: 1.0
     limit_val_batches: 1
 
+  # no need to change these
+  logger: False # logger provided by exp_manager
+  enable_checkpointing: False
+  use_distributed_sampler: False
+  max_time: null
+  max_epochs: ${.deep_search.max_epochs}
+  max_steps: ${.deep_search.max_steps}
+
 pretrained_checkpoint:
   restore_from_path: null
  
