@@ -13,8 +13,9 @@
 # limitations under the License.
 import numpy as np
 import torch
-from nemo_aligner.utils.deep_search.mcts.mcts import Node
 import torch.nn.functional as F
+
+from nemo_aligner.utils.deep_search.mcts.mcts import Node
 
 
 class SearchDB:
@@ -165,7 +166,7 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
         for item, padding in zip(batched_kv_cache, paddings):
             padding = padding.item()
             key_item = item[key][0][:, None, ...]
-            key_item = F.pad(key_item, (0, 0, 0, 0, 0, 0, 0, padding + 1), 'constant', 0)
+            key_item = F.pad(key_item, (0, 0, 0, 0, 0, 0, 0, padding + 1), "constant", 0)
             keys.append(key_item)
             value_item = item[key][1][:, None, ...]
             value_item = F.pad(value_item, (0, 0, 0, 0, 0, 0, 0, padding + 1), "constant", 0)
