@@ -52,14 +52,17 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
+        self.automatic_optimization = False
 
         if self.cfg.pipeline_model_parallel_size > 1 and not self.cfg.megatron_amp_O2:
             warnings.warn(
                 "when using pipeline parallelism, it is recommended to set megatron_amp_O2 to be True to "
                 "avoid explicit casting for pipeline communication"
             )
-        self.automatic_optimization = False
+        
         self.ref_policy_state_dict = None
+        self.distributed_adam_offload_manager = None
+        self.to_offload_adam_states = self.cfg.spin.offload_adam_states
 
         self.ref_policy_kl_penalty = self.cfg.spin.get("ref_policy_kl_penalty", 0.0)
 

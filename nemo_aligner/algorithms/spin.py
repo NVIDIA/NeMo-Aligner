@@ -16,6 +16,7 @@ from collections import defaultdict
 from statistics import mean
 
 import torch
+from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
@@ -116,9 +117,10 @@ class SPINTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-        self.max_gen_seq_len = self.model.cfg.spin.length_params.max_length
-        self.length_params = self.model.cfg.spin.length_params
-        self.sampling_params = self.model.cfg.spin.sampling_params
+        
+        self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
+        self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
+        self.max_gen_seq_len = self.sampling_params['max_length']
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
