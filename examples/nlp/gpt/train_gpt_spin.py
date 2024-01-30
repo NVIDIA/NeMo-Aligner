@@ -183,6 +183,7 @@ def main(cfg) -> None:
         scheduler=scheduler,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
+        test_dataloader=None,
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
