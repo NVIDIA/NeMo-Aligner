@@ -45,15 +45,9 @@ def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch
         kv_cache = {
             key: (
                 infer_params.key_value_memory_dict[key][0][:context_len, batch_id]
-                .detach()
-                .cpu()
-                .type(torch.float32)
-                .numpy(),
+                .detach().cpu(),
                 infer_params.key_value_memory_dict[key][1][:context_len, batch_id]
-                .detach()
-                .cpu()
-                .type(torch.float32)
-                .numpy(),
+                .detach().cpu(),
             )
             for key in infer_params.key_value_memory_dict
         }
@@ -61,15 +55,9 @@ def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch
         kv_cache = {
             key: (
                 infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id]
-                .detach()
-                .cpu()
-                .type(torch.float32)
-                .numpy(),
+                .detach().cpu(),
                 infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id]
-                .detach()
-                .cpu()
-                .type(torch.float32)
-                .numpy(),
+                .detach().cpu(),
             )
             for key in infer_params.key_value_memory_dict
         }
