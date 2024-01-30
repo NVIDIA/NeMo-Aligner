@@ -407,15 +407,19 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         # make kv cache into tensors
         for key in inference.key_value_memory_dict.keys():
             keys, vals = inference.key_value_memory_dict[key]
-            if self.model.cfg.precision == "fp16":
-                inference.key_value_memory_dict[key] = (torch.cuda.HalfTensor(keys), torch.cuda.HalfTensor(vals))
-            elif self.model.cfg.precision == "bf16-mixed" or self.model.cfg.precision == "bf16":
-                inference.key_value_memory_dict[key] = (
-                    torch.cuda.BFloat16Tensor(keys),
-                    torch.cuda.BFloat16Tensor(vals),
-                )
-            else:
-                inference.key_value_memory_dict[key] = (torch.cuda.FloatTensor(keys), torch.cuda.FloatTensor(vals))
+            inference.key_value_memory_dict[key] = (keys.cuda(), vals.cuda())
+        # make kv cache into tensors
+        # for key in inference.key_value_memory_dict.keys():
+        #     keys, vals = inference.key_value_memory_dict[key]
+        #     if self.model.cfg.precision == "fp16":
+        #         inference.key_value_memory_dict[key] = (torch.cuda.HalfTensor(keys), torch.cuda.HalfTensor(vals))
+        #     elif self.model.cfg.precision == "bf16-mixed" or self.model.cfg.precision == "bf16":
+        #         inference.key_value_memory_dict[key] = (
+        #             torch.cuda.BFloat16Tensor(keys),
+        #             torch.cuda.BFloat16Tensor(vals),
+        #         )
+        #     else:
+        #         inference.key_value_memory_dict[key] = (torch.cuda.FloatTensor(keys), torch.cuda.FloatTensor(vals))
         self.search_db.add_inference_params(session_info, inference)
         return tokens, new_context_lengths, true_context_lengths
 

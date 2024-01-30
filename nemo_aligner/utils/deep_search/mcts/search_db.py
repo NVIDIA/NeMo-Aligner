@@ -14,6 +14,7 @@
 import numpy as np
 import torch
 from nemo_aligner.utils.deep_search.mcts.mcts import Node
+import torch.nn.functional as F
 
 
 class SearchDB:
@@ -135,8 +136,8 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
             # reverse the order
             keys.reverse()
             vals.reverse()
-            keys = np.concatenate(keys, axis=0)
-            vals = np.concatenate(vals, axis=0)
+            keys = torch.concatenate(keys, axis=0)
+            vals = torch.concatenate(vals, axis=0)
             new_kv_cache[key] = (keys, vals)
         batched_kv_cache.append(new_kv_cache)
         batched_tokens.append(np.array(tokens))
@@ -164,12 +165,12 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
         for item, padding in zip(batched_kv_cache, paddings):
             padding = padding.item()
             key_item = item[key][0][:, None, ...]
-            key_item = np.pad(key_item, ((0, padding + 1), (0, 0), (0, 0), (0, 0)), "constant", constant_values=0)
+            key_item = F.pad(key_item, (0, 0, 0, 0, 0, 0, 0, padding + 1), 'constant', 0)
             keys.append(key_item)
             value_item = item[key][1][:, None, ...]
-            value_item = np.pad(value_item, ((0, padding + 1), (0, 0), (0, 0), (0, 0)), "constant", constant_values=0)
+            value_item = F.pad(value_item, (0, 0, 0, 0, 0, 0, 0, padding + 1), "constant", 0)
             vals.append(value_item)
-        keys = np.concatenate(keys, axis=1)
-        vals = np.concatenate(vals, axis=1)
+        keys = torch.concatenate(keys, axis=1)
+        vals = torch.concatenate(vals, axis=1)
         output_kv_cache[key] = (keys, vals)
     return output_kv_cache, tokens
