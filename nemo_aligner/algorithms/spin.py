@@ -395,8 +395,9 @@ class SPINTrainer:
                 #logprobs = self.model.get_ref_policy_logprobs(buffer).cpu()
                 #start = 0
                 for batch in buffer:
-                    # on CPU
+                    # generations need to come from the reference model
                     with cpu_weight_swap(self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2):
+                        # on CPU
                         gen_tokens, gen_lengths = self.get_generations(batch)
                     act_tokens = batch['prompts_and_answers']
                     act_lengths = batch['combined_lengths']
