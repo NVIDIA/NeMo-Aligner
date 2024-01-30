@@ -66,11 +66,10 @@ class TestHistoryTrackingNode:
         K = 30
         selected_actions = np.concatenate([mock_actions1[: K // 2], mock_actions2[: K // 2]], axis=0)
         context_ids = [context_id] * (K // 2) + [child_context_id] * (K // 2)
-        updated_kv_cache, tokens, lengths = get_kv_cache(
+        updated_kv_cache, tokens = get_kv_cache(
             torch.tensor(selected_actions).cuda(), "session1", context_ids, search_db
         )
         assert len(updated_kv_cache) == 2
         assert updated_kv_cache[1][0].shape == (14, 30, 10, 10)
         assert updated_kv_cache[1][1].shape == (14, 30, 10, 10)
         assert tokens.shape == (K, 2)
-        assert sum(lengths) == 11 * K

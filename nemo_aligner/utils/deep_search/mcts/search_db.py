@@ -46,14 +46,17 @@ class SearchDB:
         if session_info not in self.db:
             raise ValueError(f"{session_info} not in db")
         db = self.db[session_info]
-        if action == -1:
-            for token in context_id[:-1]:
-                db = db[token].children
-            return db[context_id[-1]]
-        else:
-            for token in context_id:
-                db = db[token].children
-            return db[action]
+        for token in context_id[:-1]:
+            db = db[token].children
+        return db[context_id[-1]]
+        # if action == -1:
+        #     for token in context_id[:-1]:
+        #         db = db[token].children
+        #     return db[context_id[-1]]
+        # else:
+        #     for token in context_id:
+        #         db = db[token].children
+        #     return db[action]
 
     def get_infer_cache(self, session_info, context_id, action):
         if session_info not in self.db:
@@ -71,15 +74,17 @@ class SearchDB:
 
         output = {}
         output["value"] = node.value_sum
-        actions = []
-        policy = []
-        for child_action in node.children:
-            child = node.children[child_action]
-            assert child.action == child_action
-            actions.append(child.action)
-            policy.append(child.prior)
-        output["action"] = np.array(actions)
-        output["policy"] = np.array(policy)
+        policy = node.prior[0]
+        actions = node.prior[1]
+        # actions = []
+        # policy = []
+        # for child_action in node.children:
+        #     child = node.children[child_action]
+        #     assert child.action == child_action
+        #     actions.append(child.action)
+        #     policy.append(child.prior)
+        output["action"] = actions
+        output["policy"] = policy
         output["value"] = np.array(node.value_sum)
         return output
 
@@ -106,19 +111,15 @@ class SearchDB:
 def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchDB):
     batched_kv_cache = []
     batched_tokens = []
-    context_lengths = []
     for action, context_id in zip(selected_actions, context_ids):
         action = action.item()
         node = search_db.get(session_info, context_id, action)
-        assert node.action == action
+        # assert node.action == action
         tokens = []
         tokens.append(action)
-        new_kv_cache = {key: [node.state[key]] for key in node.state.keys()}
-        while node.parent is not None:
-            node = node.parent
-            if node.parent is None:
-                tmp_key = next(iter(node.state.keys()))
-                context_lengths.append(node.state[tmp_key][0].shape[0])
+        new_kv_cache = {key: [] for key in node.state.keys()}
+#         while node.parent is not None:
+        while True:
             # if node.action is List
             if isinstance(node.action, list):
                 # make a copy
@@ -130,6 +131,9 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
                 tokens.append(node.action)
             for key in node.state.keys():
                 new_kv_cache[key].append(node.state[key])
+            if node.parent is None:
+                break
+            node = node.parent
         # reverse the tokens order
         tokens.reverse()
         for key in new_kv_cache.keys():
@@ -176,4 +180,4 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
         keys = np.concatenate(keys, axis=1)
         vals = np.concatenate(vals, axis=1)
         output_kv_cache[key] = (keys, vals)
-    return output_kv_cache, tokens, context_lengths
+    return output_kv_cache, tokens
