@@ -42,21 +42,13 @@ class SearchDB:
             session = session[token].children
         session[context_id[-1]] = node
 
-    def get(self, session_info, context_id, action):
+    def get(self, session_info, context_id):
         if session_info not in self.db:
             raise ValueError(f"{session_info} not in db")
         db = self.db[session_info]
         for token in context_id[:-1]:
             db = db[token].children
         return db[context_id[-1]]
-        # if action == -1:
-        #     for token in context_id[:-1]:
-        #         db = db[token].children
-        #     return db[context_id[-1]]
-        # else:
-        #     for token in context_id:
-        #         db = db[token].children
-        #     return db[action]
 
     def get_infer_cache(self, session_info, context_id, action):
         if session_info not in self.db:
@@ -113,7 +105,7 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
     batched_tokens = []
     for action, context_id in zip(selected_actions, context_ids):
         action = action.item()
-        node = search_db.get(session_info, context_id, action)
+        node = search_db.get(session_info, context_id)
         # assert node.action == action
         tokens = []
         tokens.append(action)
