@@ -379,63 +379,54 @@ class SPINTrainer:
         self.set_max_steps()
 
     def augment_dataloader(self, dataloader):
-        """Augment dataloader with ref policy log prob"""
+        """Augment dataloader with generations and ref policy log probs"""
         iter_dataloader = iter(dataloader)
-        buffer = []
         done = False
         while not done:
             try:
                 batch = next(iter_dataloader)
+                
+                with cpu_weight_swap(self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2):
+                    # on CPU
+                    gen_tokens, gen_lengths = self.get_generations(batch)
+                act_tokens = batch['prompts_and_answers']
+                act_lengths = batch['combined_lengths']
+                max_batch_len = max(act_tokens.shape[1], gen_tokens.shape[1])
+                
+                act_tokens_pad = torch.stack([torch.cat([seq, torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in act_tokens])
+                gen_tokens_pad = torch.stack([torch.cat([seq, torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in gen_tokens])
+                
+                act_mask = create_mask(act_tokens_pad, batch['prompt_lengths'], act_lengths)
+                gen_mask = create_mask(gen_tokens_pad, batch['prompt_lengths'], gen_lengths)
+                
+                attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+                    act_tokens_pad, self.model.tokenizer.eos_id, self.model.cfg.data.reset_position_ids, self.model.cfg.data.reset_attention_mask, self.model.cfg.data.eod_mask_loss,
+                )
+                assert attention_mask.ndim == 4, "attention_mask is incorrect shape"
+                if attention_mask.shape[0] == 1:
+                    # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+                    # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
+                    attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+                
+                new_batch = {}
+                new_batch["actual"] = act_tokens_pad
+                new_batch["generated"] = gen_tokens_pad
+                new_batch["attention_mask"] = attention_mask
+                new_batch["position_ids"] = position_ids
+                new_batch["actual_mask"] = act_mask
+                new_batch["generated_mask"] = gen_mask
+                
+                logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
+                act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
+                
+                new_batch["ref_policy_log_probs_actual"] = act_logps
+                new_batch["ref_policy_log_probs_generated"] = gen_logps
+                
+                yield new_batch
+                
+                del logprobs, act_logps, gen_logps
             except StopIteration:
                 done = True
-            else:
-                buffer.append(batch)
-            if (done and buffer) or len(buffer) == 1:
-                #response_tokens, response_lengths = self.inject_generations(buffer)
-                #logprobs = self.model.get_ref_policy_logprobs(buffer).cpu()
-                #start = 0
-                for batch in buffer:
-                    # generations need to come from the reference model
-                    with cpu_weight_swap(self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2):
-                        # on CPU
-                        gen_tokens, gen_lengths = self.get_generations(batch)
-                    act_tokens = batch['prompts_and_answers']
-                    act_lengths = batch['combined_lengths']
-                    max_batch_len = max(act_tokens.shape[1], gen_tokens.shape[1])
-                    
-                    act_tokens_pad = torch.stack([torch.cat([seq, torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in act_tokens])
-                    gen_tokens_pad = torch.stack([torch.cat([seq, torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in gen_tokens])
-                    
-                    act_mask = create_mask(act_tokens_pad, batch['prompt_lengths'], act_lengths)
-                    gen_mask = create_mask(gen_tokens_pad, batch['prompt_lengths'], gen_lengths)
-                    
-                    attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-                        act_tokens_pad, self.model.tokenizer.eos_id, self.model.cfg.data.reset_position_ids, self.model.cfg.data.reset_attention_mask, self.model.cfg.data.eod_mask_loss,
-                    )
-                    assert attention_mask.ndim == 4, "attention_mask is incorrect shape"
-                    if attention_mask.shape[0] == 1:
-                        # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
-                        # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
-                        attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
-                    
-                    new_batch = {}
-                    new_batch["actual"] = act_tokens_pad
-                    new_batch["generated"] = gen_tokens_pad
-                    new_batch["attention_mask"] = attention_mask
-                    new_batch["position_ids"] = position_ids
-                    new_batch["actual_mask"] = act_mask
-                    new_batch["generated_mask"] = gen_mask
-                    
-                    logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
-                    act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
-                    
-                    new_batch["ref_policy_log_probs_actual"] = act_logps
-                    new_batch["ref_policy_log_probs_generated"] = gen_logps
-                    
-                    yield new_batch
-                    
-                buffer.clear()
-                del logprobs
 
     @property
     def epoch(self):
