@@ -113,9 +113,9 @@ class DeepSearchTrainer:
 
                 if torch.distributed.get_rank() == 0 and not logged:
                     logged = True
-                    logging.info("### GENERATED RESPONSE", response)
-                    logging.info("### ACTUAL ANSWER", answer)
-                    logging.info("### SCORE", score)
+                    print("### GENERATED RESPONSE", response)
+                    print("### ACTUAL ANSWER", answer)
+                    print("### SCORE", score)
 
             total += len(batch["question"])
 

@@ -63,7 +63,7 @@ def collate_fn(batch):
 
     for b in batch:
         new_dict["question"].append(steerlm_template.format(prompt=b["question"]))
-        new_dict["answer"].append(steerlm_template.format(prompt=b["answer"]))
+        new_dict["answer"].append(b["answer"])
 
     return new_dict
 

@@ -15,7 +15,6 @@
 """Utilities for generating text."""
 
 import torch
-import torch.distributed as dist
 import torch.nn.functional as F
 
 from nemo.collections.nlp.modules.common.transformer.text_generation import OutputType
