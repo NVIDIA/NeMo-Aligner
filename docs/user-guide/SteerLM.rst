@@ -92,9 +92,7 @@ Download the Llama 2 70B LLM model from HF <https://huggingface.co/meta-llama/Ll
 
          .. code-block:: bash
 
-            ```
             python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[conversion_hf2nemo]
-            ```
   
 Step 2: Download and Preprocess data for Attribute Prediction Modelling
 #######################################################################
@@ -116,18 +114,16 @@ Step 2: Download and Preprocess data for Attribute Prediction Modelling
     .. tab-item:: NeMo-Megatron-Launcher
         :sync: key4
 
-         Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep1 <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L5>`_ to activate steerLM data preparation.
+         Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep1 <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/config.yaml#L5>`_ to activate steerLM data preparation.
    
          There are currently 2 datasets supported : openassistant or helpsteer
 
-         If you wish to prepare both dataset, then run the below twice but change `steerlm_data_prep1.yaml line 10 and fill in either openassistant or helpsteer <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep1.yaml#L10>`_ to prepare the dataset of your choice.
+         If you wish to prepare both dataset, then run the below twice but change `steerlm_data_prep1.yaml line 10 and fill in either openassistant or helpsteer <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep1.yaml#L10>`_ to prepare the dataset of your choice.
    
 
          .. code-block:: bash
 
-            ```
             python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR/data/ stages=[data_preparation]
-            ```
 
 Then, merge the two datasets for the train and val subset respectively.
 
@@ -136,6 +132,7 @@ Then, merge the two datasets for the train and val subset respectively.
    cat data/oasst/train.jsonl data/helpsteer/train.jsonl | awk '{for(i=1;i<=4;i++) print}' > data/merge_train.jsonl
 
    cat data/oasst/val.jsonl data/helpsteer/val.jsonl > data/merge_val.jsonl
+
 
 .. tab-set::
 
@@ -158,18 +155,16 @@ Then, merge the two datasets for the train and val subset respectively.
     .. tab-item:: NeMo-Megatron-Launcher
         :sync: key6
 
-         Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep2_reg <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L5>`_ to process steerLM data to regression format.
+         Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep2_reg <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/config.yaml#L5>`_ to process steerLM data to regression format.
    
          There are currently 2 datasets supported : openassistant or helpsteer
 
-         Prepare train and val dataset via running the below twice but change `steerlm_data_prep2_reg.yaml line 10-11 and change the dataset name to train/val accordingly <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep2_reg.yaml#L10-11>`_ to prepare the dataset of your choice.
+         Prepare train and val dataset via running the below twice but change `steerlm_data_prep2_reg.yaml line 10-11 and change the dataset name to train/val accordingly <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep2_reg.yaml#L10-11>`_ to prepare the dataset of your choice.
    
 
          .. code-block:: bash
 
-            ```
             python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR/data/ stages=[data_preparation]
-            ```
 
 
 Step 3: Train the regression reward model on OASST+HelpSteer data
@@ -177,48 +172,48 @@ Step 3: Train the regression reward model on OASST+HelpSteer data
 
 For this tutorial, train the regression reward model for 800 steps. 
 
-    .. tab-item:: NeMo-Aligner
-        :sync: key7
+.. tab-set::
+
+   .. tab-item:: NeMo-Aligner
+        :sync: key9
 
          Note that you would need to set up multi-node training in your cluster env, depending on the type of cluster you use. For details, please refer to https://lightning.ai/docs/pytorch/stable/clouds/cluster.html
 
-      .. code-block:: bash
-      
-         python /opt/NeMo-Aligner/examples/nlp/gpt/train_reward_model.py \
-               trainer.num_nodes=32 \
-               trainer.devices=8 \
-               ++model.micro_batch_size=2 \
-               ++model.global_batch_size=512 \
-               ++model.data.data_impl=jsonl \
-               pretrained_checkpoint.restore_from_path=/models/llama13b/llama13b.nemo \
-               "model.data.data_prefix={train: ["data/merge_train_reg.jsonl"], validation: ["data/merge_val_reg.jsonl"], test: ["data/merge_val_reg.jsonl"]}" \
-               exp_manager.explicit_log_dir=/results/reward_model_13b \
-               trainer.rm.val_check_interval=10 \
-               exp_manager.create_wandb_logger=True \
-               exp_manager.wandb_logger_kwargs.project=steerlm \
-               exp_manager.wandb_logger_kwargs.name=rm_training \
-               trainer.rm.save_interval=10 \
-               trainer.rm.max_steps=800 \
-               ++model.tensor_model_parallel_size=4 \
-               ++model.pipeline_model_parallel_size=1 \
-               ++model.activations_checkpoint_granularity="selective" \
-               ++model.activations_checkpoint_method="uniform" \
-               model.global_batch_size=512 \
-               model.optim.sched.constant_steps=0 \
-               model.reward_model_type="regression" \
-               model.regression.num_attributes=9
+         .. code-block:: bash
+         
+            python /opt/NeMo-Aligner/examples/nlp/gpt/train_reward_model.py \
+                  trainer.num_nodes=32 \
+                  trainer.devices=8 \
+                  ++model.micro_batch_size=2 \
+                  ++model.global_batch_size=512 \
+                  ++model.data.data_impl=jsonl \
+                  pretrained_checkpoint.restore_from_path=/models/llama13b/llama13b.nemo \
+                  "model.data.data_prefix={train: ["data/merge_train_reg.jsonl"], validation: ["data/merge_val_reg.jsonl"], test: ["data/merge_val_reg.jsonl"]}" \
+                  exp_manager.explicit_log_dir=/results/reward_model_13b \
+                  trainer.rm.val_check_interval=10 \
+                  exp_manager.create_wandb_logger=True \
+                  exp_manager.wandb_logger_kwargs.project=steerlm \
+                  exp_manager.wandb_logger_kwargs.name=rm_training \
+                  trainer.rm.save_interval=10 \
+                  trainer.rm.max_steps=800 \
+                  ++model.tensor_model_parallel_size=4 \
+                  ++model.pipeline_model_parallel_size=1 \
+                  ++model.activations_checkpoint_granularity="selective" \
+                  ++model.activations_checkpoint_method="uniform" \
+                  model.global_batch_size=512 \
+                  model.optim.sched.constant_steps=0 \
+                  model.reward_model_type="regression" \
+                  model.regression.num_attributes=9
 
-    .. tab-item:: NeMo-Megatron-Launcher
-        :sync: key8
 
-         Ensure modifying `config.yaml line 18 to rw_sft/training_rm <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L18>`_ to activate reward model training procedure.
+   .. tab-item:: NeMo-Megatron-Launcher
+      :sync: key10
+ 
+         Ensure modifying `config.yaml line 18 to rw_sft/training_rm <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/config.yaml#L18>`_ to activate reward model training procedure.
 
          .. code-block:: bash
 
-            ```
             python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[steerlm_reg]
-            ```
-
    
 Step 4: Generate annotations
 ############################
@@ -255,6 +250,8 @@ Now execute:
 
 Step 5: Train the Attribute-Conditioned SFT model
 #################################################
+
+.. tab-set::
 
    .. tab-item:: NeMo-Aligner
         :sync: key9
@@ -311,16 +308,14 @@ Step 5: Train the Attribute-Conditioned SFT model
                exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True 
 
 
-    .. tab-item:: NeMo-Megatron-Launcher
-        :sync: key10
+   .. tab-item:: NeMo-Megatron-Launcher
+      :sync: key10
  
-         Ensure modifying `config.yaml line 18 to ac_sft/gpt_sft <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/master/launcher_scripts/conf/config.yaml#L18>`_ to activate Attribute-Conditioned SFT model training procedure.
+         Ensure modifying `config.yaml line 18 to ac_sft/gpt_sft <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/config.yaml#L18>`_ to activate Attribute-Conditioned SFT model training procedure.
 
          .. code-block:: bash
 
-            ```
             python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[steerlm_reg]
-            ```
 
 Step 6: Inference
 ##################
