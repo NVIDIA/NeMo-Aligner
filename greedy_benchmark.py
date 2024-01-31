@@ -63,16 +63,16 @@ for data_id in range(0, total_data, batch_size):
             print(depth, 'out of', max_depth)
 
         actions = actions[:, 0:1]
-        for j in range(len(actions)):
+        for j, is_done in zip(range(len(actions)), done):
+            if is_done:
+                continue
             tokens[j].append(actions[j].item())
         # 
         with ModelClient("localhost:2323", "search") as client:
             result_dict = client.infer_batch(action=actions, context_ids=encoded_context_data, parameters={"session": "test"})
 
         # append actions to context_ids
-        for b, is_done in zip(range(len(actions)), done):
-            if is_done:
-                continue
+        for b in range(len(actions)):
             context_data[b].append(actions[b][0].item())
 
         encoded_context_data = encode_context_data(context_data)
