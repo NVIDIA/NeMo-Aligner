@@ -338,7 +338,7 @@ def build_dataloader(
                 drop_last=drop_last,
                 global_batch_size=gbs,
                 pad_samples_to_global_batch_size=pad_samples_to_global_batch_size,
-                seed=cfg.model.seed,
+                seed=9999,
             )
         else:
             raise ValueError('cfg.data.dataloader_type must be "single"')
