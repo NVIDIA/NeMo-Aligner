@@ -216,8 +216,7 @@ class SPINTrainer:
         prompt_lengths = batch['prompt_lengths']
         batch_max_length = prompt_lengths.max().item()
         
-        #prompt_tokens = torch.stack([torch.cat([seq, torch.full((batch_max_length + self.max_gen_seq_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in prompt_tokens_list])
-        prompt_tokens = torch.cat([batch['prompts_only'], torch.full((batch_max_length + self.max_gen_seq_len - len(batch['prompts_only']),), self.model.tokenizer.eos_id, dtype=batch['prompts_only'].dtype)])
+        prompt_tokens = torch.stack([torch.cat([seq, torch.full((batch_max_length + self.max_gen_seq_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in batch['prompts_only']])
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
         
