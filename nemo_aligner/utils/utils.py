@@ -97,10 +97,7 @@ def load_from_nemo(
         save_restore_connector=connector,
         strict=strict,
     )
-    if return_updated_cfg:
-        return model, model_cfg
-    else:
-        return model
+    return model, model_cfg if return_updated_cfg else model
 
 
 def load_checkpoint_model_config(restore_path):
