@@ -215,8 +215,9 @@ class SPINTrainer:
         #prompt_lengths = torch.cat([b['prompt_lengths'] for b in list_of_batches], dim=0)
         prompt_lengths = batch['prompt_lengths']
         batch_max_length = prompt_lengths.max().item()
+        max_possible_length = min(self.model.cfg.encoder_seq_length, batch_max_length + self.max_gen_seq_len)
         
-        prompt_tokens = torch.stack([torch.cat([seq, torch.full((batch_max_length + self.max_gen_seq_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in batch['prompts_only']])
+        prompt_tokens = torch.stack([torch.cat([seq, torch.full((max_possible_length - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in batch['prompts_only']])
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
         
@@ -397,6 +398,7 @@ class SPINTrainer:
                 batch = next(iter_dataloader)
                 print(f"*** orig batch shape: {batch['prompts_only'].shape}", flush=True)
                 
+                # generations use the reference model weights, as per the paper
                 with cpu_weight_swap(self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2):
                     # on CPU
                     gen_tokens, gen_lengths = self.get_generations(batch)

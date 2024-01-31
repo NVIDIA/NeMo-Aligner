@@ -132,7 +132,7 @@ model:
       micro_batch_size: ${model.micro_batch_size}
       shuffle: True
       memmap_workers: null
-      max_seq_length: 2048
+      max_seq_length: 4096
       min_seq_length: 1
       drop_last: True
       # Example of how to specify concat_sampling_probabilities
