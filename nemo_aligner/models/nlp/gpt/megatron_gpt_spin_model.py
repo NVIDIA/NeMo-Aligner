@@ -161,6 +161,11 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 )
 
                 loss, acc_chosen = self.loss_func(per_token_logps, ref_logprobs, masks[:, 1:])
+                print(f"*** output_tensor shape: {output_tensor.shape}", flush=True)
+                print(f"*** per_token_logps shape: {per_token_logps.shape}", flush=True)
+                print(f"*** ref_logprobs shape: {ref_logprobs.shape}", flush=True)
+                print(f"*** masks shape: {masks.shape}", flush=True)
+                print(f"*** loss shape: {loss.shape}", flush=True)
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
                 reduced_acc = average_losses_across_data_parallel_group([acc_chosen])
