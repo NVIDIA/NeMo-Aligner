@@ -330,10 +330,14 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             action_size = len(spg.root.children)
             action_probs = np.zeros(action_size, dtype=np.float32)
             actions = np.zeros(action_size, dtype=np.int32)
+            use_value_sum = sum([spg.root.children[c].value_sum for c in spg.root.children.keys()]) != 0
             for child_id, child_action in enumerate(spg.root.children.keys()):
                 child = spg.root.children[child_action]
                 assert child_action == child.action
-                action_probs[child_id] = child.visit_count
+                if use_value_sum:
+                    action_probs[child_id] = child.value_sum
+                else:
+                    action_probs[child_id] = child.visit_count
                 actions[child_id] = child.action
             action_probs /= np.sum(action_probs)
 
