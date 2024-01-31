@@ -111,7 +111,6 @@ class DeepSearchTrainer:
         num_correct = 0
         logged = False
 
-        val_metics = {}
         table = {}
 
         for _, batch in zip(range(self.limit_val_batches), self.val_dataloader):
@@ -121,7 +120,7 @@ class DeepSearchTrainer:
                 score = self.feedback.score(response, answer)
                 num_correct += score
 
-                if torch.distributed.get_rank() == 0 and not logged:
+                if not logged:
                     table["reward"] = score
                     table["response"] = response
                     table["ground_truth_answer"] = response
@@ -130,9 +129,11 @@ class DeepSearchTrainer:
             total += len(batch["question"])
 
         self.model.finish_inference()
-        val_metics["accuracy"] = num_correct / total if total > 0 else 0
 
-        return val_metics
+        return {
+            "accuracy": num_correct / total if total > 0 else 0,
+            "table": table,
+        }
 
     def run_training(self, dataloader_iter, num_batches_to_use):
         self.model.prepare_for_training()
@@ -216,7 +217,12 @@ class DeepSearchTrainer:
         return (
             dataloader,
             num_batches_to_use,
-            {"accuracy": num_correct / num_total if num_total > 0 else 0, "batches_used": num_batches_to_use},
+            {
+                "accuracy": num_correct / num_total if num_total > 0 else 0,
+                "batches_used": num_batches_to_use,
+                "num_correct": num_correct,
+                "num_total": num_total,
+            },
         )
 
     def fit(self):
@@ -264,6 +270,7 @@ class DeepSearchTrainer:
                 loss_mean, train_metrics = self.run_training(data_iter, num_batches_to_use)
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
+                step_metrics.update({f"train_{k}": v for k, v in train_metrics.items()})
 
                 run_time_exceeded = self.run_timer.is_finished()
                 run_val, save_model, is_train_end = check_progress(
@@ -296,7 +303,6 @@ class DeepSearchTrainer:
                     self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
-                step_metrics.update({f"train_{k}": v for k, v in train_metrics.items()})
                 step_metrics.update(timing_metrics)
                 self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
 

@@ -156,6 +156,8 @@ def main(cfg) -> None:
     # to get the proper max *optimization* steps
     # nemo treats batch size of normal dataloader as GBS/DP
     # so we need to offset it by DP
+
+    # TODO(geshen): change this, we don't know how many optim steps but should take a better guess
     dummy_train_dataloader = torch.utils.data.DataLoader(
         dataset=train_ds, batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size())
     )
