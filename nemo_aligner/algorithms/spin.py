@@ -409,8 +409,8 @@ class SPINTrainer:
                 assert attention_mask.ndim == 4, "attention_mask is incorrect shape"
                 if attention_mask.shape[0] == 1:
                     # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
-                    # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
-                    attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+                    # attention_mask = attention_mask.expand(len(act_tokens_pad), *((-1,) * (len(attention_mask.shape) - 1)))
+                    attention_mask = attention_mask.repeat(len(act_tokens_pad), *((1,) * (len(attention_mask.shape) - 1)))
                 
                 new_batch = {}
                 new_batch["actual"] = act_tokens_pad
