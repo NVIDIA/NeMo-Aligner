@@ -66,7 +66,7 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
 
 
 def load_from_nemo(
-    cls, model_cfg, trainer, strict=True, modify_config_fn=None, restore_path=None, load_base_model_only=False
+    cls, model_cfg, trainer, strict=True, modify_config_fn=None, restore_path=None, load_base_model_only=False, return_updated_cfg=False,
 ):
     """load a model using nemo checkpoint
     """
@@ -90,7 +90,7 @@ def load_from_nemo(
         save_restore_connector=connector,
         strict=strict,
     )
-    return model
+    return model, model_cfg if return_updated_cfg else model
 
 
 def load_checkpoint_model_config(restore_path):
@@ -354,7 +354,8 @@ def convert_to_amp_o2_format(state_dict):
     new_state_dict = {}
 
     for key in state_dict.keys():
-        new_key = key.replace("model.", "model.module.", 1)
-        new_state_dict[new_key] = state_dict[key]
+        if "model.module." not in key:
+            new_key = key.replace("model.", "model.module.", 1)
+            new_state_dict[new_key] = state_dict[key]
 
     return new_state_dict

@@ -29,6 +29,8 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
     get_ltor_masks_and_position_ids,
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
+from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, from_parallel_logits_to_logprobs
 from nemo_aligner.utils.train_utils import (
@@ -41,7 +43,7 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import cpu_weight_swap
 
 
-class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
+class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
     """
     Megatron GPT DPO Model Training.
     """
@@ -365,8 +367,23 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
             [torch.cat((b["chosen_labels"], b["rejected_labels"]), dim=0) for b in list_of_batches], dim=0
         )
         global_batch = [tokens, masks, pos_ids, labels]
-        with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
+
+        if self.use_peft and self.ref_policy_state_dict is None:
+            # disable adapters -> reference model
+            for _, module in self.named_modules():
+                if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
+                    module.set_enabled_adapters(enabled=False)
+            
             ref_log_probs = self.get_logprob_batch(global_batch)
+            
+            # enable adapters after calculating ref_log_probs
+            for _, module in self.named_modules():
+                if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
+                    module.set_enabled_adapters(enabled=True)
+
+        else:
+            with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
+                ref_log_probs = self.get_logprob_batch(global_batch)
 
         # return in GPU, trainer needs to move to cpu
         return ref_log_probs
