@@ -123,7 +123,7 @@ class DeepSearchTrainer:
                 if not logged:
                     table["reward"] = score
                     table["response"] = response
-                    table["ground_truth_answer"] = response
+                    table["ground_truth_answer"] = answer
                     logged = True
 
             total += len(batch["question"])
