@@ -101,6 +101,7 @@ class DeepSearchTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
+        self.val_df = pd.DataFrame(columns=["step", "ground_truth_answer", "response", "reward"])
 
     @torch.no_grad()
     def run_validation(self):
@@ -110,6 +111,9 @@ class DeepSearchTrainer:
         num_correct = 0
         logged = False
 
+        val_metics = {}
+        table = {}
+
         for _, batch in zip(range(self.limit_val_batches), self.val_dataloader):
             output = self.model.generate(batch["question"])
 
@@ -118,16 +122,17 @@ class DeepSearchTrainer:
                 num_correct += score
 
                 if torch.distributed.get_rank() == 0 and not logged:
+                    table["reward"] = score
+                    table["response"] = response
+                    table["ground_truth_answer"] = response
                     logged = True
-                    print("### GENERATED RESPONSE", response)
-                    print("### ACTUAL ANSWER", answer)
-                    print("### SCORE", score)
 
             total += len(batch["question"])
 
         self.model.finish_inference()
+        val_metics["accuracy"] = num_correct / total if total > 0 else 0
 
-        return {"accuracy": num_correct / total if total > 0 else 0}
+        return val_metics
 
     def run_training(self, dataloader_iter, num_batches_to_use):
         self.model.prepare_for_training()
@@ -208,7 +213,11 @@ class DeepSearchTrainer:
         num_batches_to_use = output.item()
 
         self.model.finish_inference()
-        return dataloader, num_batches_to_use, {"accuracy": num_correct / num_total if num_total > 0 else 0}
+        return (
+            dataloader,
+            num_batches_to_use,
+            {"accuracy": num_correct / num_total if num_total > 0 else 0, "batches_used": num_batches_to_use},
+        )
 
     def fit(self):
         self.run_timer.start_time()
@@ -248,6 +257,7 @@ class DeepSearchTrainer:
                 self.timer.stop("search_time")
                 timing_metrics["search_time"] = self.timer.get("search_time")
                 step_metrics.update({f"search_{k}": v for k, v in search_metrics.items()})
+                self.logger.log_metrics(search_metrics, step=self.step, prefix="mcts/")
 
                 clear_memory()
                 self.timer.start("train_time")
@@ -273,10 +283,22 @@ class DeepSearchTrainer:
                     self.timer.stop("validation_time")
                     timing_metrics["validation_time"] = self.timer.get("validation_time")
 
-                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val_rollouts/")
+                    val_table_metrics = val_metrics.pop("table")
+
+                    self.val_df.loc[len(self.val_df)] = [
+                        self.step,
+                        val_table_metrics["reward"],
+                        val_table_metrics["response"],
+                        val_table_metrics["ground_truth_answer"],
+                    ]
+
+                    self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
+                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update({f"train_{k}": v for k, v in train_metrics.items()})
+                step_metrics.update(timing_metrics)
+                self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
 
                 global_pbar.set_postfix(step_metrics)
 
