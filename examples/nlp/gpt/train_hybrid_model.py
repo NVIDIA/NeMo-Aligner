@@ -146,11 +146,6 @@ def main(cfg) -> None:
             )
 
         buffer = deep_search(ps, mcts, args["max_depth"], args["temperature"])
-        # serialize buffer to disk
-        import pickle
-        filename = f"buffer_{batch_id}_{dp_rank}.pkl"
-        with open(filename, "wb") as f:
-            pickle.dump(buffer, f)
 
 
 if __name__ == "__main__":
