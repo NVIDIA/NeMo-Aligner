@@ -42,7 +42,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.utils import cpu_weight_swap, offload_distributed_adam
+from nemo_aligner.utils.utils import configure_batch_sizes, cpu_weight_swap, offload_distributed_adam
 
 
 class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
@@ -290,9 +290,21 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
         prepare_for_training_step(self, zero_grad=False)
+    
+    def prepare_for_training(self):
+        configure_batch_sizes(
+            mbs=self.cfg.micro_batch_size,
+            gbs=self.cfg.global_batch_size,
+            dp=parallel_state.get_data_parallel_world_size(),
+        )
+        self.onload_adam_states()
 
     def finish_training_step(self):
         grad_reductions(self)
+    
+    def finish_training(self):
+        """no need to offload adam states here
+        """
 
     def prepare_for_validation_step(self):
         prepare_for_validation_step(self)

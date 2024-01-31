@@ -286,6 +286,8 @@ class SPINTrainer:
             )
 
             for _, global_batch in zip(loop_iter, global_pbar):
+                self.model.prepare_for_training()
+                
                 self.timer.start("train_step_time")
                 loss, metrics = self.train_single_step(global_batch)
                 self.timer.stop("train_step_time")
@@ -336,6 +338,7 @@ class SPINTrainer:
                     return
 
                 metrics.clear()
+                self.model.finish_training()
             
             # update the reference policy weights 
             self.model.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model, megatron_amp_O2=self.model.cfg.get("megatron_amp_O2", False))
@@ -343,7 +346,9 @@ class SPINTrainer:
         self.logger.finalize()
 
     def save(self, extra_candidates=None, is_train_end=False):
-        """PTL based save"""
+        self.model.prepare_for_training()
+        # load back in the adam states if needed
+        torch.cuda.synchronize()
         torch.distributed.barrier()
 
         if extra_candidates is None:
@@ -353,6 +358,8 @@ class SPINTrainer:
         monitor_candidates.update(extra_candidates)
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
+        
+        self.model.finish_training()
 
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
