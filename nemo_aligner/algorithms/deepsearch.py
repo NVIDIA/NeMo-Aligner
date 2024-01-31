@@ -219,7 +219,7 @@ class DeepSearchTrainer:
             num_batches_to_use,
             {
                 "accuracy": num_correct / num_total if num_total > 0 else 0,
-                "batches_used": num_batches_to_use,
+                "batches_for_training": num_batches_to_use,
                 "num_correct": num_correct,
                 "num_total": num_total,
             },
