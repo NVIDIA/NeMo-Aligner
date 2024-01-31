@@ -120,7 +120,7 @@ class SPINTrainer:
         
         self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
         self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
-        self.max_gen_seq_len = self.sampling_params['max_length']
+        self.max_gen_seq_len = self.length_params['max_length']
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
