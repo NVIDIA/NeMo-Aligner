@@ -144,6 +144,8 @@ class SPINTrainer:
         )
 
         for _, batch in val_pbar:
+            self.model.prepare_for_validation()
+            
             self.timer.start("validation_step_time")
             loss_mean, metrics = self.validation_step(batch)
             self.timer.stop("validation_step_time")
@@ -156,6 +158,8 @@ class SPINTrainer:
                 val_metrics[k].append(v)
             log_val_metrics = {f"val_{k}": v for k, v in metrics.items()}
             val_pbar.set_postfix(log_val_metrics)
+            
+            self.model.finish_validation()
 
         val_metrics = {k: mean(v) for k, v in val_metrics.items()}
         return mean(loss_means), val_metrics

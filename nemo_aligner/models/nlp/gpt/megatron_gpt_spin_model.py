@@ -306,12 +306,23 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         """no need to offload adam states here
         """
 
+    def prepare_for_validation(self):
+        configure_batch_sizes(
+            mbs=self.cfg.micro_batch_size,
+            gbs=self.cfg.global_batch_size,
+            dp=parallel_state.get_data_parallel_world_size(),
+        )
+
     def prepare_for_validation_step(self):
         prepare_for_validation_step(self)
 
     def finish_validation_step(self):
         finish_validation_step(self)
     
+    def finish_validation(self):
+        """no need to offload adam states here
+        """
+
     def prepare_for_inference(self):
         """normally we would configure the micro batch calculator here
             but the nemo generation already does the configuration"""
