@@ -400,7 +400,6 @@ class SPINTrainer:
         while not done:
             try:
                 batch = next(iter_dataloader)
-                print(f"*** orig batch shape: {batch['prompts_only'].shape}", flush=True)
                 
                 # generations use the reference model weights, as per the paper
                 with cpu_weight_swap(self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2):
@@ -439,8 +438,8 @@ class SPINTrainer:
                 new_batch["ref_policy_log_probs_actual"] = act_logps
                 new_batch["ref_policy_log_probs_generated"] = gen_logps
                 
-                print("*** new batch shapes ***", flush=True)
-                [print(f"{k} : {v.shape}") for k,v in new_batch.items()];
+                #print("*** new batch shapes ***", flush=True)
+                #[print(f"{k} : {v.shape}") for k,v in new_batch.items()];
                 
                 yield new_batch
                 
