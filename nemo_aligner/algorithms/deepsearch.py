@@ -101,7 +101,7 @@ class DeepSearchTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-        self.val_df = pd.DataFrame(columns=["step", "ground_truth_answer", "response", "reward"])
+        self.val_df = pd.DataFrame(columns=["step", "response", "reward", "ground_truth_answer"])
 
     @torch.no_grad()
     def run_validation(self):
@@ -294,8 +294,8 @@ class DeepSearchTrainer:
 
                     self.val_df.loc[len(self.val_df)] = [
                         self.step,
-                        val_table_metrics["reward"],
                         val_table_metrics["response"],
+                        val_table_metrics["reward"],
                         val_table_metrics["ground_truth_answer"],
                     ]
 
