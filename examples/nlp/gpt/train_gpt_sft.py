@@ -20,9 +20,9 @@ from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset i
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
 )
-from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
+from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -126,14 +126,14 @@ def main(cfg) -> None:
     with open_dict(cfg):
         cfg.model.precision = cfg.trainer.precision
 
-    ptl_model, updated_cfg= load_from_nemo(
+    ptl_model, updated_cfg = load_from_nemo(
         GPTSFTModel,
         cfg,
         trainer,
         strict=True,
         modify_config_fn=_modify_config,
         restore_path=cfg.model.restore_from_path,
-        return_updated_cfg=True
+        return_updated_cfg=True,
     )
 
     peft_cfg_cls = PEFT_CONFIG_MAP[cfg.model.peft.peft_scheme]
