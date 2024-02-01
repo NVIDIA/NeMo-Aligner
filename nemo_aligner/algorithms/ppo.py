@@ -434,7 +434,7 @@ class PPOTrainer:
                     timing_metrics["validation_time"] = self.timer.get("validation_time")
 
                     val_table_metrics = val_metrics.pop("table")
-                    for i in range(self.cfg.val_num_logged_table_prompts):
+                    for i in range(len(val_table_metrics)):
                         self.val_df.loc[len(self.val_df)] = [
                             self.step,
                             val_table_metrics[i]["idx_in_batch"],
