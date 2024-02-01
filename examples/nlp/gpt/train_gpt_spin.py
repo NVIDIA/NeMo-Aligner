@@ -123,7 +123,6 @@ def main(cfg) -> None:
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
 
-    max_seqlen = cfg.model.spin.length_params.max_length
     eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
@@ -147,7 +146,7 @@ def main(cfg) -> None:
         consumed_samples=0,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
-        collate_fn=collate_fn,
+        collate_fn=validation_ds.collate_fn,
         drop_last=val_data_cfg.drop_last,
         pad_samples_to_global_batch_size=False,
         load_gbs=True,

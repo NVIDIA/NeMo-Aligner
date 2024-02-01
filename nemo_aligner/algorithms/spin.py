@@ -126,7 +126,7 @@ class SPINTrainer:
         # these things should go into a GPTModel wrapper
         self.model.prepare_for_validation_step()
 
-        loss_mean, metrics = self.model.get_loss_and_metrics(batch=global_batch, forward_only=True)
+        loss_mean, metrics = self.model.get_loss_and_metrics_vanilla_sft(batch=global_batch, forward_only=True)
 
         self.model.finish_validation_step()
         return loss_mean, metrics
@@ -137,14 +137,14 @@ class SPINTrainer:
         val_metrics = defaultdict(list)
 
         val_pbar = tqdm(
-            zip(range(self.limit_val_batches), self.augment_dataloader(self.val_dataloader)),
+            zip(range(self.limit_val_batches), self.val_dataloader),
             total=self.limit_val_batches,
             leave=True,
             desc="Validation steps",
         )
 
         for _, batch in val_pbar:
-            self.model.prepare_for_validation()
+            #self.model.prepare_for_validation()
             
             self.timer.start("validation_step_time")
             loss_mean, metrics = self.validation_step(batch)
@@ -159,7 +159,7 @@ class SPINTrainer:
             log_val_metrics = {f"val_{k}": v for k, v in metrics.items()}
             val_pbar.set_postfix(log_val_metrics)
             
-            self.model.finish_validation()
+            #self.model.finish_validation()
 
         val_metrics = {k: mean(v) for k, v in val_metrics.items()}
         return mean(loss_means), val_metrics
