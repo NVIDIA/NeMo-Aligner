@@ -323,7 +323,7 @@ class SPINTrainer:
                     run_time_exceeded=run_time_exceeded,
                 )
 
-                if run_val:
+                if run_val and (not run_time_exceeded):
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
                     # so we use the incremented self.step
