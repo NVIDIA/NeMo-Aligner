@@ -311,6 +311,12 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         #     print("---------------------------------------------------------------")
 
         response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
+
+        group = parallel_state.get_pipeline_model_parallel_group()
+        output_tensor = torch.empty(prompt_lengths.size(0) * parallel_state.get_pipeline_model_parallel_world_size(), dtype=prompt_lengths.dtype, device=torch.cuda.current_device())
+        torch.distributed.all_gather_into_tensor(output_tensor, prompt_lengths.cuda(), group=group)
+        prompt_lengths = output_tensor
+
         response_lengths = calculate_dialogue_response_lengths(
             tokens=response_tokens,
             prompt_lengths=prompt_lengths,
