@@ -347,9 +347,9 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         # move model back to GPU if it's on the CPU
         log_probs = []
         for rollout_batch in rollout_batches:
-                init_log_prob = self.get_inference_log_probs(
-                    rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
-                )
+            log_prob = self.get_inference_log_probs(
+                rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
+            )
                 init_log_probs.append(init_log_prob)
 
     def get_init_policy_logprobs(self, rollout_batches):
