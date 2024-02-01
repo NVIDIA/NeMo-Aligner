@@ -291,6 +291,9 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         set_sync_funcs(self, forward_only)
 
+        orig_loss_func = self.loss_func
+        self.loss_func = super().loss_func
+
         fwd_bwd_function = get_forward_backward_func()
         fwd_loss_fn = super().get_forward_output_and_loss_func(forward_only)
 
@@ -305,6 +308,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         )
 
         torch.cuda.synchronize()
+        
+        self.loss_func = orig_loss_func
 
         # only the last stages of the pipeline return losses
         if parallel_state.is_pipeline_last_stage():
@@ -316,6 +321,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         torch.distributed.broadcast(loss_mean, get_last_rank())
         loss_value = loss_mean.detach().item()
         metrics = {"loss": loss_value}
+        
         return loss_value, metrics
 
     def prepare_for_training_step(self):
