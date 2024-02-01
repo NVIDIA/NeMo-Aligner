@@ -342,18 +342,19 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         print(f"  flag1")
 
         return rollout_batch
-
-    def get_init_policy_logprobs(self, rollout_batches):
-        init_log_probs = []
-        with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
-            for rollout_batch in rollout_batches:
+    
+    def get_logprobs(self, rollout_batches):
+        # move model back to GPU if it's on the CPU
+        log_probs = []
+        for rollout_batch in rollout_batches:
                 init_log_prob = self.get_inference_log_probs(
                     rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
                 )
                 init_log_probs.append(init_log_prob)
 
-        # return in GPU, trainer needs to move to cpu
-        return init_log_probs
+    def get_init_policy_logprobs(self, rollout_batches):
+        with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
+            return self.get_logprobs(rollout_batches)
 
     def finish_inference(self):
         # training will onload the adam states, no need to onload it here
