@@ -54,6 +54,12 @@ def compute_num_rollout_microbatches(dataloader, use_trtllm=False):
     )
 
 
+def print_mem(prefix):
+    pyt = torch.cuda.memory_allocated() / (1024 ** 3)
+    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
+    print(f"Mem Usage | {prefix} | {pyt} {el} | {el-pyt}")
+
+
 class PPOTrainer:
     """Trainer to coordinate PPO training
     """
@@ -121,6 +127,13 @@ class PPOTrainer:
             # NOTE: all items in rollout batch or out of this computation
             # must have a leading B dimension
             prompt_lengths = rollout_batch["prompt_lengths"]
+
+            group = parallel_state.get_pipeline_model_parallel_group()
+            output_tensor = torch.empty(prompt_lengths.size(0) * parallel_state.get_pipeline_model_parallel_world_size(), dtype=prompt_lengths.dtype, device=torch.cuda.current_device())
+            torch.distributed.all_gather_into_tensor(output_tensor, prompt_lengths.cuda(), group=group)
+
+            prompt_lengths = output_tensor
+
             response_lengths = rollout_batch["response_lengths"]
             response_tokens = rollout_batch["response_tokens"]
             values = rollout_batch["values"]
@@ -221,6 +234,10 @@ class PPOTrainer:
             futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
         print(f"  flag2")
 
+        logprobs = self.model.get_logprobs(rollout_batches)
+
+        for logprob, rollout_batch in zip(logprobs, rollout_batches):
+            rollout_batch["logprobs"] = logprob
         if not is_validation and self.compute_init_policy_kl:
             init_policy_logprobs = self.model.get_init_policy_logprobs(rollout_batches)
 
@@ -306,10 +323,12 @@ class PPOTrainer:
     @torch.no_grad()
     def generate_rollouts(self, dataloader_iter, num_microbatches):
         self.model.prepare_for_inference()
+        print_mem(f"mem before generate step {self.step}")
 
         rollout_batches, rollout_metrics = self._run_inference(dataloader_iter, num_microbatches, is_validation=False)
         ppo_rollout_data, ppo_rollout_metrics = map(cpu_dict, self.generate_ppo_data(rollout_batches))
 
+        print_mem(f"mem after generate step {self.step}")
         self.model.finish_inference()
 
         self.consumed_samples += (
@@ -318,11 +337,15 @@ class PPOTrainer:
         return ppo_rollout_data, rollout_metrics | ppo_rollout_metrics | {"consumed_samples": self.consumed_samples}
 
     def run_training(self, dataloader_iter):
+
+        print_mem(f"mem before train step {self.step}")
         self.model.prepare_for_training()
 
         for batch in dataloader_iter:
             self.timer.start("train_step_time")
+            print_mem(f"mem before optim zero grad train step {self.step}")
             self.optimizer.zero_grad()
+            print_mem(f"mem after optim zero grad train step {self.step}")
 
             self.model.prepare_for_training_step()
             loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
@@ -332,7 +355,9 @@ class PPOTrainer:
             grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
             lr = self.optimizer.param_groups[0]["lr"]
 
+            print_mem(f"mem before optim step train step {self.step}")
             self.optimizer.step()
+            print_mem(f"mem after optim step train step {self.step}")
             self.scheduler.step()
 
             if grad_norm is not None:
@@ -388,6 +413,7 @@ class PPOTrainer:
                 step_metrics = {}
                 timing_metrics = {}
 
+                clear_memory()
                 self.timer.start("rollout_time")
                 ppo_rollout_data, metrics = self.generate_rollouts(dataloader_iter, num_rollout_micro_batches)
                 self.timer.stop("rollout_time")

@@ -47,6 +47,10 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
+def print_mem(prefix):
+    pyt = torch.cuda.memory_allocated() / (1024 ** 3)
+    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
+    print(f"Mem Usage | {prefix} | {pyt} {el} | {el-pyt}")
 
 @hydra_runner(config_path="conf", config_name="gpt_ppo_actor")
 def main(cfg) -> None:
@@ -60,6 +64,8 @@ def main(cfg) -> None:
     exp_manager(trainer, cfg.exp_manager)
 
     logger = CustomLoggerWrapper(trainer.loggers)
+
+    print_mem("before load from nemo")
 
     ptl_model = load_from_nemo(
         MegatronGPTActorModel,

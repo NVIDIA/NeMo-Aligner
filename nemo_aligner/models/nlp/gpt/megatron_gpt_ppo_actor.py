@@ -37,6 +37,7 @@ from nemo_aligner.utils.distributed import (
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
 )
+from nemo_aligner.utils.utils import clear_memory
 from nemo_aligner.utils.train_utils import (
     grad_reductions,
     prepare_for_training_step,
@@ -44,6 +45,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import (
     calculate_dialogue_response_lengths,
     configure_batch_sizes,
@@ -73,7 +75,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         # sampling parameters for generation
         self._sampling_params = OmegaConf.to_container(self.cfg.ppo.sampling_params, resolve=True)
 
-        self.to_offload_adam_states = self.cfg.ppo.offload_adam_states
+        self.to_offload_adam_states = self.cfg.ppo.offload_adam_states and self.with_distributed_adam
         self.entropy_bonus = self.cfg.ppo.entropy_bonus
         self.ratio_eps = self.cfg.ppo.ratio_eps
         self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
@@ -357,7 +359,12 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             self.trtllm_generate.free()
         print_mem("post free")
 
+    def finish_inference(self):
+        # training will onload the adam states, no need to onload it here
+        self._restore_activation_checkpointing_args()
+        self._restore_sequence_parallelism_args()
         set_train(self)
+        self.trtllm_generate.free()
 
     def offload_adam_states(self):
         if self.distributed_adam_offload_manager is None:
