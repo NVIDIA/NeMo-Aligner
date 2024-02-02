@@ -37,6 +37,7 @@ from nemo_aligner.utils.ppo_utils import (
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
+import time
 
 
 def get_custom_data_parallel_world_size(use_trtllm=False):
@@ -268,9 +269,16 @@ class PPOTrainer:
 
         print(f"num_microbatches {num_microbatches}")
 
+        import time
+
+        tic = time.time()
         for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
             rollout_batch = self.model.infer(inference_batch)
             rollout_batches.append(rollout_batch)
+
+        toc = time.time()
+        print("## ALL OF GENERATE TOOK", toc - tic)
+
         print(f"  flag2")
         response_tokens, rollout_batches = shard_rollout_batch_from_dp_to_pp(
             rollout_batches, pad_id=self.model.tokenizer.eos_id
@@ -302,6 +310,8 @@ class PPOTrainer:
             rollout_batch["values"] = values
 
         print(f"  flag3")
+
+        print("### ALL OF RUN INFERENCE", time.time() - toc)
 
         return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
 
@@ -374,7 +384,11 @@ class PPOTrainer:
         print_mem(f"mem before generate step {self.step}")
 
         rollout_batches, rollout_metrics = self._run_inference(dataloader_iter, num_microbatches, is_validation=False)
+
+        tic = time.time()
         ppo_rollout_data, ppo_rollout_metrics = map(cpu_dict, self.generate_ppo_data(rollout_batches))
+        toc = time.time()
+        print("### GENERATE PPO DATA TOOK", toc - tic)
 
         print_mem(f"mem after generate step {self.step}")
         self.model.finish_inference()
