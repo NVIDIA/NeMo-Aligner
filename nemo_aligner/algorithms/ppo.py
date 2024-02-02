@@ -284,7 +284,7 @@ class PPOTrainer:
 
         # size
         # TODO(geshen): hard coded for resharding case
-        for logprob, rollout_batch in zip(logprobs.split(len(rollout_batches)), rollout_batches):
+        for logprob, rollout_batch in zip(logprobs.tensor_split(len(rollout_batches)), rollout_batches):
             rollout_batch["logprobs"] = logprob
 
         if not is_validation and self.compute_init_policy_kl:
@@ -292,7 +292,7 @@ class PPOTrainer:
 
             if init_policy_logprobs is not None:
                 for init_logprobs, rollout_batch in zip(
-                    init_policy_logprobs.split(len(rollout_batches)), rollout_batches
+                    init_policy_logprobs.tensor_split(len(rollout_batches)), rollout_batches
                 ):
                     rollout_batch["init_logprobs"] = init_logprobs
 
@@ -300,6 +300,7 @@ class PPOTrainer:
             rewards, values = future.result() if isinstance(future, FutureResult) else future
             rollout_batch["rewards"] = rewards
             rollout_batch["values"] = values
+
         print(f"  flag3")
 
         return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
