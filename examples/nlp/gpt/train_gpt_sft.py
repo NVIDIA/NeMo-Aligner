@@ -126,6 +126,13 @@ def main(cfg) -> None:
     with open_dict(cfg):
         cfg.model.precision = cfg.trainer.precision
 
+    assert cfg.model.peft.peft_scheme in ["lora", "none"], "Only support LoRA or Full finetuning"
+    if cfg.model.peft.peft_scheme == "lora":
+        assert cfg.model.megatron_amp_O2 == "False", "LoRA doesn't support O2"
+        assert (
+            cfg.optim.name != "distributed_fused_adam"
+        ), "LoRA doesn't support distributed_fused_adam, please use fused_adam"
+
     ptl_model, updated_cfg = load_from_nemo(
         GPTSFTModel,
         cfg,
