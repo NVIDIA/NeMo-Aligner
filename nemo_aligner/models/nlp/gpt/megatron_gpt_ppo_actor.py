@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from contextlib import nullcontext
 
 import torch
-import time
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
@@ -37,7 +37,6 @@ from nemo_aligner.utils.distributed import (
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
 )
-from nemo_aligner.utils.utils import clear_memory
 from nemo_aligner.utils.train_utils import (
     grad_reductions,
     prepare_for_training_step,
@@ -48,17 +47,17 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import (
     calculate_dialogue_response_lengths,
+    clear_memory,
     configure_batch_sizes,
     cpu_weight_swap,
     masked_mean,
     offload_distributed_adam,
 )
 
-from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 
 def print_mem(prefix):
-    pyt = torch.cuda.memory_allocated() / (1024**3)
-    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024**3)
+    pyt = torch.cuda.memory_allocated() / (1024 ** 3)
+    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
     print(f"Mem Usage | {prefix} | {pyt} {el} | {el-pyt}")
 
 
@@ -79,13 +78,12 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self.entropy_bonus = self.cfg.ppo.entropy_bonus
         self.ratio_eps = self.cfg.ppo.ratio_eps
         self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
-        
+
         self.use_trtllm_generation = self.cfg.ppo.use_trtllm
         self.orig_dp_rank = parallel_state.get_data_parallel_rank()
 
         if self.use_trtllm_generation:
             self.trtllm_generate = GPTGenerateTRTLLM(self.cfg, self.tokenizer)
-
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
@@ -283,8 +281,10 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self.offload_adam_states()
 
         if self.use_trtllm_generation:
+            tic = time.time()
             self.trtllm_generate.refit(self.model)
-
+            toc = time.time()
+            print(f"### REFIT took {toc-tic}")
 
     @torch.no_grad()
     def infer(self, inference_batch):
@@ -300,22 +300,10 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
                 inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params
             )
         toc = time.time()
-        # print(f"Generate took {toc-tic}")
+        print(f"Generate took {toc-tic}")
 
         print(f"PROMPT LENS {prompt_tokens.shape} {prompt_lengths}")
-        # for i,j in zip(actor_output['sentences'],actor_output1['sentences']):
-        #     print("---------------------------------------------------------------")
-        #     print(i)
-        #     print(j)
-        #     print(i == j, len(i), len(j))
-        #     print("---------------------------------------------------------------")
-
         response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
-
-        group = parallel_state.get_pipeline_model_parallel_group()
-        output_tensor = torch.empty(prompt_lengths.size(0) * parallel_state.get_pipeline_model_parallel_world_size(), dtype=prompt_lengths.dtype, device=torch.cuda.current_device())
-        torch.distributed.all_gather_into_tensor(output_tensor, prompt_lengths.cuda(), group=group)
-        prompt_lengths = output_tensor
 
         response_lengths = calculate_dialogue_response_lengths(
             tokens=response_tokens,
@@ -326,35 +314,23 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             max_sequence_length=self.cfg.encoder_seq_length,
         )
 
-        # TODO(geshen): get nemo generate to return the unaltered log probs
-        log_probs = self.get_inference_log_probs(
-            response_tokens, forward_micro_batch_size=self.forward_micro_batch_size
-        )
-
         rollout_batch = {
             "response_tokens": response_tokens,
             "response_lengths": response_lengths,
             "prompt_lengths": prompt_lengths,
-            "logprobs": log_probs,
         }
 
         # return in GPU, trainer needs to move to cpu
         print(f"  flag1")
 
         return rollout_batch
-    
-    def get_logprobs(self, rollout_batches):
-        # move model back to GPU if it's on the CPU
-        log_probs = []
-        for rollout_batch in rollout_batches:
-            log_prob = self.get_inference_log_probs(
-                rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
-            )
-                init_log_probs.append(init_log_prob)
 
-    def get_init_policy_logprobs(self, rollout_batches):
+    def get_logprobs(self, response_tokens):
+        return self.get_inference_log_probs(response_tokens, forward_micro_batch_size=self.forward_micro_batch_size)
+
+    def get_init_policy_logprobs(self, response_tokens):
         with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
-            return self.get_logprobs(rollout_batches)
+            return self.get_logprobs(response_tokens)
 
     def finish_inference(self):
         # training will onload the adam states, no need to onload it here

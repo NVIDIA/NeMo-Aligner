@@ -177,7 +177,6 @@ def calculate_dialogue_response_lengths(
             length_with_extra_id_1 >= prompt_lengths, length_with_extra_id_1, torch.iinfo(torch.int32).max
         )
 
-
         # either terminated using eos id or extra id 1
         lengths = torch.minimum(eos_length, length_with_extra_id_1)
     else:

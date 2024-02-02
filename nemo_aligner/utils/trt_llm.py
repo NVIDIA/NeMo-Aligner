@@ -83,22 +83,8 @@ class GPTGenerateTRTLLM:
                 output_ids = output_ids.squeeze()
             output_ids = output_ids.to(torch.int64)
 
-        group = parallel_state.get_pipeline_model_parallel_group()
-        seq_length = torch.tensor([output_ids.size(-1)], dtype=torch.float32, device=torch.cuda.current_device())
-        torch.distributed.all_reduce(seq_length, op=torch.distributed.ReduceOp.MAX, group=group)
-
-        seq_length = seq_length.long().item()
-
-        print("### PRE PAD SHAPE", output_ids.shape, output_ids.device)
-        output_ids = torch.nn.functional.pad(output_ids, (0, seq_length - output_ids.size(-1)), value=self.tokenizer.eos_id)
-        print("### POST PAD SHAPE", output_ids.shape, output_ids.device)
-
-        # assume the MBS are the same
-        output_tensor = torch.empty(output_ids.size(0) * parallel_state.get_pipeline_model_parallel_world_size(), seq_length, dtype=output_ids.dtype, device=torch.cuda.current_device())
-        torch.distributed.all_gather_into_tensor(output_tensor, output_ids.cuda(), group=group)
-            
-        sentences = [self.tokenizer.ids_to_text(output.tolist()) for output in output_tensor]
-        output_ids = torch.Tensor.tolist(output_tensor)
+        sentences = [self.tokenizer.ids_to_text(output.tolist()) for output in output_ids]
+        output_ids = output_ids.tolist()
 
         output = {
             "token_ids": output_ids,
