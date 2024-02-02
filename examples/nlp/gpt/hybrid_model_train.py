@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from collections import defaultdict
+from copy import deepcopy
+
 import torch
 import torch.multiprocessing as mp
 from datasets import load_dataset
@@ -37,7 +39,6 @@ from nemo_aligner.utils.train_script_utils import (
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
 )
-from copy import deepcopy
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
 """Script to start Reward Model training"""
