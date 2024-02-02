@@ -110,7 +110,7 @@ model:
 
 
   peft:
-    peft_scheme: "lora"  # ["lora", "none"]
+    peft_scheme: "none"  # ["lora", "none"]
     restore_from_path: null
 
     lora_tuning:
