@@ -22,7 +22,6 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 )
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
-from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -35,6 +34,7 @@ from nemo_aligner.utils.train_script_utils import (
     add_custom_checkpoint_callback,
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
+    init_peft,
     init_using_ptl,
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
@@ -126,12 +126,6 @@ def main(cfg) -> None:
     with open_dict(cfg):
         cfg.model.precision = cfg.trainer.precision
 
-    assert cfg.model.peft.peft_scheme in ["lora", "none"], "Only support LoRA or Full finetuning"
-    if cfg.model.peft.peft_scheme == "lora":
-        assert (
-            cfg.model.optim.name != "distributed_fused_adam"
-        ), "LoRA doesn't support distributed_fused_adam, please use fused_adam"
-
     ptl_model, updated_cfg = load_from_nemo(
         GPTSFTModel,
         cfg,
@@ -142,17 +136,7 @@ def main(cfg) -> None:
         return_updated_cfg=True,
     )
 
-    peft_cfg_cls = PEFT_CONFIG_MAP[cfg.model.peft.peft_scheme]
-    if cfg.model.peft.restore_from_path is not None:
-        # initialize peft weights from a checkpoint instead of randomly
-        # This is not the same as resume training because optimizer states are not restored.
-        logging.info("PEFT Weights will be loaded from", cfg.model.peft.restore_from_path)
-        ptl_model.load_adapters(cfg.model.peft.restore_from_path, peft_cfg_cls(updated_cfg))
-    elif peft_cfg_cls is not None:
-        logging.info("Adding adapter weights to the model for PEFT")
-        ptl_model.add_adapter(peft_cfg_cls(updated_cfg))
-    else:
-        logging.info(f"Running full finetuning since no peft scheme is given.\n{ptl_model.summarize()}")
+    init_peft(ptl_model, updated_cfg)
 
     with open_dict(cfg):
         # overwrite the model config with the config from the checkpoint
