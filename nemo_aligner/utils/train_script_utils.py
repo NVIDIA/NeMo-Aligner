@@ -97,7 +97,6 @@ def disable_data_callbacks(ptl_model, train_dataloader, train_ds):
 def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
     """initializes the model using PTL
     """
-    ptl_model.setup_complete = True
     disable_data_callbacks(ptl_model, train_dataloader, train_ds)
 
     call._call_setup_hook(ptl_trainer)
@@ -142,10 +141,6 @@ def init_peft(ptl_model, updated_cfg):
     """initialize peft weights"""
 
     assert updated_cfg.peft.peft_scheme in ["lora", "none"], "Only support LoRA or Full finetuning"
-    if updated_cfg.peft.peft_scheme == "lora":
-        assert (
-            updated_cfg.optim.name != "distributed_fused_adam"
-        ), "LoRA doesn't support distributed_fused_adam, please use fused_adam"
 
     peft_cfg_cls = PEFT_CONFIG_MAP[updated_cfg.peft.peft_scheme]
     if updated_cfg.peft.restore_from_path is not None:
@@ -158,6 +153,10 @@ def init_peft(ptl_model, updated_cfg):
         ptl_model.add_adapter(peft_cfg_cls(updated_cfg))
     else:
         logging.info(f"Running full finetuning since no peft scheme is given.\n{ptl_model.summarize()}")
+
+    ptl_model.setup_complete = (
+        True  # used for PEFT, track only PEFT state dicts if ptl_model.setup_complete=True and ptl_model.use_peft=True
+    )
 
 
 @dataclass
