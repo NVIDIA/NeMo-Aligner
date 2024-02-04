@@ -182,13 +182,14 @@ class GPTHybridModel(GPTModel):
 
         # if last stage or no PP
         if post_process:
-            self.value_head = ValueHead(
-                config=head_config,
-                spec=transformer_layer_spec,
-                pre_process=True,
-                post_process=True,
-                layer_number_offset=len(self.decoder.submodules.layer_specs),
-            )
+# self.value_head = ValueHead(
+# config=head_config,
+# spec=transformer_layer_spec,
+# pre_process=True,
+# post_process=True,
+# layer_number_offset=len(self.decoder.submodules.layer_specs),
+# )
+
             assert output_sequence is True, "output_sequence must be True for hybrid model"
             assert num_attributes == 1, "num_attributes must be 1 for hybrid model"
 
@@ -236,18 +237,19 @@ class GPTHybridModel(GPTModel):
 
             # Rotary positional embeddings (embedding is None for PP intermediate devices)
             rotary_pos_emb = None
-            if self.position_embedding_type == "rope":
-                rotary_seq_len = self.rotary_pos_emb.get_rotary_seq_len(
-                    inference_params, self.value_head, hidden_states_raw.detach(), self.head_config
-                )
-                rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
+# if self.position_embedding_type == "rope":
+# rotary_seq_len = self.rotary_pos_emb.get_rotary_seq_len(
+# inference_params, self.value_head, hidden_states_raw.detach(), self.head_config
+# )
+# rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
 
-            hidden_states_raw = self.value_head(
-                hidden_states_raw.detach(),
-                attention_mask=attention_mask,
-                inference_params=inference_params,
-                rotary_pos_emb=rotary_pos_emb,
-            )
+# hidden_states_raw = self.value_head(
+# hidden_states_raw.detach(),
+# attention_mask=attention_mask,
+# inference_params=inference_params,
+# rotary_pos_emb=rotary_pos_emb,
+# )
+
             value = self.rm_head(hidden_states_raw, None)
             if labels is None:
                 output = logits.transpose(0, 1).contiguous()
