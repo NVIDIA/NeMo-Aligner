@@ -65,7 +65,7 @@ model:
   offload_adam_states: False
 
   micro_batch_size: 1
-  global_batch_size: 64
+  global_batch_size: 8
 
   mcore_gpt: True
   share_embeddings_and_output_weights: False

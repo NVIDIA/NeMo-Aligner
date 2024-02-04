@@ -136,7 +136,7 @@ def main(cfg) -> None:
         dataset=train_ds,
         consumed_samples=consumed_samples,
         mbs=cfg.model.mcts.self_play_batch_size,
-        gbs=cfg.model.mcts.self_play_batch_size * dp_size,
+        gbs=cfg.model.global_batch_size,
         load_gbs=True,
         collate_fn=collate_fn,
     )

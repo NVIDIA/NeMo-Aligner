@@ -245,6 +245,7 @@ class DeepSearchTrainer:
         num_correct = 0
         num_questions = 0
 
+        output_list = []
         # train dataloader loads gbs
         for _, batch in zip(range(1), dataloader_iter):
             output = run_mcts(batch, self.model)
@@ -256,9 +257,10 @@ class DeepSearchTrainer:
                     num_correct += 1
 
             num_total += len(output)
+            output_list.extend(output)
 
-        output = filter_output(output)
-        num_questions_correct = sum(all(x == 1 for x in v["reward"]) for v in output)
+        output_list = filter_output(output_list)
+        num_questions_correct = sum(all(x == 1 for x in v["reward"]) for v in output_list)
 
         # find how many passed
         metric_output = torch.as_tensor(
@@ -266,11 +268,10 @@ class DeepSearchTrainer:
         )
         torch.distributed.all_reduce(metric_output, group=parallel_state.get_data_parallel_group())
         num_correct, num_total, num_questions_correct = metric_output.tolist()
-        num_to_load_per_dp = divide(self.model.cfg.global_batch_size, parallel_state.get_data_parallel_world_size())
 
         dataloader = torch.utils.data.DataLoader(
-            output,
-            batch_size=num_to_load_per_dp,
+            output_list,
+            batch_size=len(output_list),
             shuffle=False,  # TODO(geshen): turn this on
             num_workers=0,
             drop_last=True,
