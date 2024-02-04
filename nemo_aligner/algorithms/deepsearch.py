@@ -183,7 +183,12 @@ class DeepSearchTrainer:
 
         table = {}
 
-        for _, batch in zip(range(self.limit_val_batches), self.val_dataloader):
+        loop_iter = zip(range(self.limit_val_batches), self.val_dataloader)
+        val_pbar = tqdm(
+            loop_iter, total=min(len(self.val_dataloader), self.limit_val_batches), leave=True, desc="Validation"
+        )
+
+        for (_, batch) in val_pbar:
             output = self.model.generate(batch["question"])
 
             for response, answer in zip(output["sentences"], batch["answer"]):

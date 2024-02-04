@@ -142,17 +142,15 @@ def main(cfg) -> None:
     )
 
     # hack to allow using all of the validation dataset
-    div, _ = divmod(len(val_ds), cfg.model.inference.micro_batch_size * dp_size)
-    val_gbs = div * cfg.model.inference.micro_batch_size * dp_size
-
     val_dataloader = build_dataloader(
         cfg=cfg,
         dataset=val_ds,
         consumed_samples=0,
         mbs=cfg.model.inference.micro_batch_size,
-        gbs=val_gbs,
+        gbs=cfg.model.inference.micro_batch_size * dp_size,
         load_gbs=False,
         collate_fn=collate_fn,
+        drop_last=True,
     )
 
     # nemo uses the train dataloader to figure out
