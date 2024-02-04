@@ -157,7 +157,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     required_keys.update(("tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("tokens", "context_lengths", "actions", "action_probs", "reward"))
+                    required_keys.update(("tokens", "actions", "action_probs", "reward", "mcts_mask"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
@@ -169,35 +169,25 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 logits = gather_from_tensor_model_parallel_region(logits)
                 log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
                 #
-
-                lengths = batch["context_lengths"]
                 actions = batch["actions"]
                 action_probs = batch["action_probs"]
                 rewards = batch["reward"]
-
-                # context length has to be subtracted by 1 which is the last state before the action
-                idx = (lengths - 1).unsqueeze(-1)
+                mask = batch["mcts_mask"]
 
                 value_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
                 policy_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
 
                 if self.value_loss_weight > 0:
-                    values = values.gather(dim=-1, index=idx).flatten()
-                    value_loss = (values - rewards.flatten()) ** 2
+                    value_loss = (values - rewards) ** 2
+                    value_loss = masked_mean(self.value_loss_weight * value_loss, mask)
 
-                    value_loss = (self.value_loss_weight * value_loss).mean()
+                policy_mask = (rewards > 0) & mask
 
-                mask = rewards > 0
-
-                if self.policy_loss_weight > 0 and torch.any(mask):
-                    mbs = log_probs.size(0)
-                    # get the last prediction and actions
-                    log_probs = log_probs[torch.arange(mbs).view(mbs, 1), idx, actions]
-                    # mbs x num actions
-                    policy_loss = (action_probs * log_probs).sum(-1)
+                if self.policy_loss_weight > 0 and torch.any(policy_mask):
+                    policy_loss = log_probs.gather(dim=-1, index=actions.long()) * action_probs
 
                     # mask ones that didn't get the right answer
-                    policy_loss = masked_mean(self.policy_loss_weight * policy_loss, mask)
+                    policy_loss = masked_mean(self.policy_loss_weight * policy_loss, policy_mask)
 
                 loss = value_loss - policy_loss
                 reduced_loss, reduced_value_loss, reduced_policy_loss = average_losses_across_data_parallel_group(

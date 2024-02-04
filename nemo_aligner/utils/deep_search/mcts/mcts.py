@@ -251,9 +251,7 @@ class MCTSParallel:
 
         dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
-        for search in tqdm.tqdm(
-            range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False, position=2 * dp_rank + 1
-        ):
+        for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False):
             for spg in ps:
                 # spg.node is to save the node that needs to be expanded
                 spg.node = None
@@ -313,8 +311,7 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
     count = 0
     # add a progress bar to show the progress of the self play
     total_steps = max_steps
-    dp_rank = parallel_state.get_data_parallel_rank()
-    pb = tqdm.tqdm(total=total_steps, desc=f"Self Play rank {dp_rank}", position=2 * dp_rank, leave=True)
+    pb = tqdm.tqdm(total=total_steps, desc=f"Self Play", leave=True)
     while len(parallel_searches) > 0:
         # TODO need to clear the session memory in the server
         count += 1
@@ -363,12 +360,11 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
                 for tokens, hist_action_probs, actions in spg.memory:
                     hist_outcome = value
                     # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-
                     return_memory.append(
                         {
                             "tokens": tokens,
-                            "hist_action_probs": hist_action_probs,
-                            "hist_outcome": hist_outcome,
+                            "action_probs": hist_action_probs,
+                            "reward": hist_outcome,
                             "actions": actions,
                             "data_id": spg.data_id,
                         }

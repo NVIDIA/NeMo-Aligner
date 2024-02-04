@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import defaultdict
 from functools import partial
 from typing import Union
 
@@ -31,23 +32,89 @@ from nemo_aligner.utils.trainer_utils import check_progress
 from nemo_aligner.utils.utils import clear_memory
 
 
+def filter_output(output):
+    output_list = []
+
+    batched_dict = defaultdict(list)
+
+    for output_sample in output:
+        batched_dict[output_sample["data_id"]].append(output_sample)
+
+    for _, values in batched_dict.items():
+        sample_dict = defaultdict(list)
+
+        for dictionary in values:
+            for k, v in dictionary.items():
+                sample_dict[k].append(v)
+
+        # -1 will just be the prompt
+        min_length = min(len(v) for v in sample_dict["tokens"])
+
+        sample_dict["context_lengths"] = min_length
+        sample_dict["num_actions"] = len(sample_dict["actions"])
+
+        # assume last element is the biggest
+        sample_dict["tokens"] = sample_dict["tokens"][0][:min_length]
+        output_list.append(sample_dict)
+
+    return output_list
+
+
+def fill_padded_tensor_with_data(batches, max_seqlen, lengths, pad_value):
+    """unpadded x * -> B x max seq len x *"""
+    assert len(batches) == len(lengths)
+
+    output = batches[0].new_empty((len(batches), max_seqlen, *batches[0].shape[1:])).fill_(pad_value)
+
+    for i, (length, batch) in enumerate(zip(lengths, batches, strict=True)):
+        idx = length - 1
+        output[i, idx : idx + batch.size(0), ...] = batch
+
+    return output
+
+
+def create_mask(tokens, lengths, num_actions):
+    idx = lengths - 1
+
+    end = (idx + num_actions).view(-1, 1)
+    start = idx.view(-1, 1)
+
+    seq_range = torch.arange(tokens.size(-1), device=lengths.device).view(1, -1)
+    sequence_mask = (start <= seq_range) & (end > seq_range)
+    return sequence_mask
+
+
 def mcts_collate_fn(eos_id, batch):
+    keys = batch[0].keys()
+    new_dict = {}
 
-    hist_action_probs = torch.stack(tuple(torch.as_tensor(x["hist_action_probs"]) for x in batch))
-    hist_actions = torch.stack(tuple(torch.as_tensor(x["actions"]) for x in batch))
-    hist_outcome = torch.stack(tuple(torch.as_tensor(x["hist_outcome"]) for x in batch))
-    data_id = torch.stack(tuple(torch.as_tensor(x["data_id"]) for x in batch))
+    context_keys = {"context_lengths", "num_actions"}
+    token_keys = {"tokens"}
 
-    tokens, context_lengths = map(torch.as_tensor, pad_batch([x["tokens"] for x in batch], eos_id, max_len=0))
+    for k in keys:
 
-    return {
-        "tokens": tokens,
-        "context_lengths": context_lengths,
-        "actions": hist_actions,
-        "action_probs": hist_action_probs,
-        "reward": hist_outcome,
-        "data_id": data_id,
-    }
+        if k in {"context_lengths", "num_actions"}:
+            batches = tuple(torch.as_tensor(x[k]) for x in batch)
+            output = torch.stack(batches)
+        elif k in token_keys:
+            batches = tuple(torch.as_tensor(x[k]) for x in batch)
+            output = torch.nn.utils.rnn.pad_sequence(batches, batch_first=True, padding_value=eos_id,)
+        else:
+            continue
+
+        new_dict[k] = output
+
+    max_seqlen = new_dict["tokens"].size(-1)
+    lengths = new_dict["context_lengths"]
+
+    for k in keys:
+        if k not in context_keys.union(token_keys):
+            output = fill_padded_tensor_with_data(tuple(torch.as_tensor(x[k]) for x in batch), max_seqlen, lengths, 0)
+            new_dict[k] = output
+
+    mask = create_mask(new_dict["tokens"], lengths, new_dict["num_actions"])
+
+    return new_dict | {"mcts_mask": mask}
 
 
 def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, float, None]):
@@ -135,10 +202,11 @@ class DeepSearchTrainer:
             "table": table,
         }
 
-    def run_training(self, dataloader_iter, num_batches_to_use):
+    def run_training(self, dataloader):
         self.model.prepare_for_training()
 
-        for _, batch in zip(range(num_batches_to_use), dataloader_iter):
+        for batch in dataloader:
+            # TODO: pad to global after dataloader collate if it hangs too much
             self.optimizer.zero_grad()
 
             self.model.prepare_for_training_step()
@@ -173,27 +241,31 @@ class DeepSearchTrainer:
     def run_search(self, dataloader_iter):
         self.model.prepare_for_inference()
 
-        output = []
-
         num_total = 0
         num_correct = 0
+        num_questions = 0
 
         # train dataloader loads gbs
         for _, batch in zip(range(1), dataloader_iter):
             output = run_mcts(batch, self.model)
-            self.consumed_samples += len(batch["question"]) * parallel_state.get_data_parallel_world_size()
+            num_questions = len(batch["question"]) * parallel_state.get_data_parallel_world_size()
+            self.consumed_samples += num_questions
 
             for o in output:
-                if o["hist_outcome"] > 0:
+                if o["reward"] > 0:
                     num_correct += 1
 
             num_total += len(output)
 
-        # find how many passed
-        metric_output = torch.as_tensor([num_correct, num_total], dtype=torch.long, device=torch.cuda.current_device())
-        torch.distributed.all_reduce(metric_output, group=parallel_state.get_data_parallel_group())
-        num_correct, num_total = metric_output.tolist()
+        output = filter_output(output)
+        num_questions_correct = sum(all(x == 1 for x in v["reward"]) for v in output)
 
+        # find how many passed
+        metric_output = torch.as_tensor(
+            [num_correct, num_total, num_questions_correct], dtype=torch.long, device=torch.cuda.current_device()
+        )
+        torch.distributed.all_reduce(metric_output, group=parallel_state.get_data_parallel_group())
+        num_correct, num_total, num_questions_correct = metric_output.tolist()
         num_to_load_per_dp = divide(self.model.cfg.global_batch_size, parallel_state.get_data_parallel_world_size())
 
         dataloader = torch.utils.data.DataLoader(
@@ -205,23 +277,17 @@ class DeepSearchTrainer:
             collate_fn=partial(mcts_collate_fn, self.model.tokenizer.eos_id),
         )
 
-        # mcts will return different lengths depending on the prompt
-        # so we need to make sure to use the smallest DP rank's dataloader to not hang training
-        output = torch.as_tensor([len(dataloader)], dtype=torch.long, device=torch.cuda.current_device())
-        torch.distributed.all_reduce(
-            output, op=torch.distributed.ReduceOp.MIN, group=parallel_state.get_data_parallel_group()
-        )
-        num_batches_to_use = output.item()
-
         self.model.finish_inference()
+
         return (
             dataloader,
-            num_batches_to_use,
             {
-                "accuracy": num_correct / num_total if num_total > 0 else 0,
-                "batches_for_training": num_batches_to_use,
+                "accuracy": num_correct / num_total,
                 "num_correct": num_correct,
                 "num_total": num_total,
+                "num_questions_correct": num_questions_correct,
+                "num_questions": num_questions,
+                "question_accuracy": num_questions_correct / num_questions,
             },
         )
 
@@ -259,7 +325,7 @@ class DeepSearchTrainer:
                 timing_metrics = {}
 
                 self.timer.start("search_time")
-                data_iter, num_batches_to_use, search_metrics = self.run_search(dataloader_iter)
+                dataloader, search_metrics = self.run_search(dataloader_iter)
                 self.timer.stop("search_time")
                 timing_metrics["search_time"] = self.timer.get("search_time")
                 step_metrics.update({f"search_{k}": v for k, v in search_metrics.items()})
@@ -267,7 +333,7 @@ class DeepSearchTrainer:
 
                 clear_memory()
                 self.timer.start("train_time")
-                loss_mean, train_metrics = self.run_training(data_iter, num_batches_to_use)
+                loss_mean, train_metrics = self.run_training(dataloader)
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
                 step_metrics.update({f"train_{k}": v for k, v in train_metrics.items()})
