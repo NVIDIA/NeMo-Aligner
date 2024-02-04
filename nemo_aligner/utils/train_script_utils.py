@@ -121,9 +121,11 @@ class FakeScheduler:
     def step(self):
         ...
 
+
 class FakeCheckpointCallback:
     def custom_save(self, *args, **kwargs):
         ...
+
 
 def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
     """get a function we can conveniently call within the trainer that saves the checkpoint  
