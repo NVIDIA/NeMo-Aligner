@@ -90,7 +90,7 @@ def main(cfg) -> None:
 
     train_ds = DatasetWrapper(dataset["train"])
     # use the train dataset for now
-    val_ds = DatasetWrapper(dataset["train"])
+    val_ds = DatasetWrapper(dataset["test"])
 
     feedback = GSK8KFeedbackDataset()
 
@@ -153,24 +153,8 @@ def main(cfg) -> None:
         drop_last=True,
     )
 
-    # nemo uses the train dataloader to figure out
-    # max steps to take when max_steps = -1
-    # but our train dataloader is for the prompts
-    # so we instaniate a dummy dataloader
-    # to get the proper max *optimization* steps
-    # nemo treats batch size of normal dataloader as GBS/DP
-    # so we need to offset it by DP
-
-    # TODO(geshen): change this, we don't know how many optim steps but should take a better guess
-    dummy_train_dataloader = torch.utils.data.DataLoader(
-        dataset=train_ds, batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size())
-    )
-
     # TODO(geshen): set the optimizer steps properly, just like in PPO
-    init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_ds)
-    # make sure the dummy train dataloader is never used
-    del ptl_model._train_dl
-    del dummy_train_dataloader
+    init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
 
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)

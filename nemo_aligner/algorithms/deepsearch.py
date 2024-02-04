@@ -171,6 +171,7 @@ class DeepSearchTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
+        self.num_to_log_to_table = 3
         self.val_df = pd.DataFrame(columns=["step", "response", "reward", "ground_truth_answer"])
 
     @torch.no_grad()
@@ -179,9 +180,9 @@ class DeepSearchTrainer:
 
         total = 0
         num_correct = 0
-        logged = False
+        logged = 0
 
-        table = {}
+        tables = []
 
         loop_iter = zip(range(self.limit_val_batches), self.val_dataloader)
         val_pbar = tqdm(
@@ -195,11 +196,14 @@ class DeepSearchTrainer:
                 score = self.feedback.score(response, answer)
                 num_correct += score
 
-                if not logged:
+                if logged < self.num_to_log_to_table:
+                    table = {}
                     table["reward"] = score
                     table["response"] = response
                     table["ground_truth_answer"] = answer
-                    logged = True
+
+                    tables.append(table)
+                    logged += 1
 
             total += len(batch["question"])
 
@@ -213,7 +217,7 @@ class DeepSearchTrainer:
             "global_total": total,
             "global_correct": num_correct,
             "global_accuracy": num_correct / total if total > 0 else 0,
-            "table": table,
+            "table": tables,
         }
 
     def run_training(self, dataloader):
@@ -372,14 +376,15 @@ class DeepSearchTrainer:
                     self.timer.stop("validation_time")
                     timing_metrics["validation_time"] = self.timer.get("validation_time")
 
-                    val_table_metrics = val_metrics.pop("table")
+                    val_tables = val_metrics.pop("table")
 
-                    self.val_df.loc[len(self.val_df)] = [
-                        self.step,
-                        val_table_metrics["response"],
-                        val_table_metrics["reward"],
-                        val_table_metrics["ground_truth_answer"],
-                    ]
+                    for table in val_tables:
+                        self.val_df.loc[len(self.val_df)] = [
+                            self.step,
+                            table["response"],
+                            table["reward"],
+                            table["ground_truth_answer"],
+                        ]
 
                     self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
                     self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
