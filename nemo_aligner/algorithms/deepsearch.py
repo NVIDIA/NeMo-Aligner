@@ -54,7 +54,10 @@ def filter_output(output):
         sample_dict["num_actions"] = len(sample_dict["actions"])
 
         # assume last element is the biggest
-        sample_dict["tokens"] = sample_dict["tokens"][0][:min_length]
+        sample_dict["tokens"] = [
+            x for x in sample_dict["tokens"] if len(x) == min_length - 1 + len(sample_dict["actions"])
+        ][0]
+
         output_list.append(sample_dict)
 
     return output_list
@@ -197,8 +200,14 @@ class DeepSearchTrainer:
 
         self.model.finish_inference()
 
+        metric_output = torch.as_tensor([num_correct, total], dtype=torch.long, device=torch.cuda.current_device())
+        torch.distributed.all_reduce(metric_output, group=parallel_state.get_data_parallel_group())
+        num_correct, num_total = metric_output.tolist()
+
         return {
-            "accuracy": num_correct / total if total > 0 else 0,
+            "global_total": total,
+            "global_correct": num_correct,
+            "global_accuracy": num_correct / total if total > 0 else 0,
             "table": table,
         }
 
@@ -260,6 +269,7 @@ class DeepSearchTrainer:
             output_list.extend(output)
 
         output_list = filter_output(output_list)
+
         num_questions_correct = sum(all(x == 1 for x in v["reward"]) for v in output_list)
 
         # find how many passed

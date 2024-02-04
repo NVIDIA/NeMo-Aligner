@@ -11,7 +11,7 @@ trainer:
     save_interval: ${.val_check_interval}
 
     gradient_clip_val: 1.0
-    limit_val_batches: 1
+    limit_val_batches: 1.0
 
   # no need to change these
   logger: False # logger provided by exp_manager

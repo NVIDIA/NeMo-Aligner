@@ -184,8 +184,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 policy_mask = (rewards > 0) & mask
 
                 if self.policy_loss_weight > 0 and torch.any(policy_mask):
-                    policy_loss = log_probs.gather(dim=-1, index=actions.long()) * action_probs
-
+                    policy_loss = (log_probs.gather(dim=-1, index=actions.long()) * action_probs).sum(-1)
                     # mask ones that didn't get the right answer
                     policy_loss = masked_mean(self.policy_loss_weight * policy_loss, policy_mask)
 
