@@ -121,6 +121,9 @@ class FakeScheduler:
     def step(self):
         ...
 
+class FakeCheckpointCallback:
+    def custom_save(self, *args, **kwargs):
+        ...
 
 def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
     """get a function we can conveniently call within the trainer that saves the checkpoint  
@@ -130,10 +133,6 @@ def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
             NeMoModelCheckpoint.custom_save_ckpt_func = custom_save_ckpt_func
             callback.custom_save = partial(callback.custom_save_ckpt_func, ptl_trainer, ptl_model)
             return callback
-
-    class FakeCheckpointCallback:
-        def custom_save(self, *args, **kwargs):
-            ...
 
     return FakeCheckpointCallback()
 
