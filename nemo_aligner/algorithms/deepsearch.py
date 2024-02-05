@@ -171,7 +171,7 @@ class DeepSearchTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-        self.num_to_log_to_table = 3
+        self.num_to_log_to_table = 16
         self.val_df = pd.DataFrame(columns=["step", "response", "reward", "ground_truth_answer"])
 
     @torch.no_grad()
@@ -325,6 +325,27 @@ class DeepSearchTrainer:
         if len(epoch_iter) <= 0:
             # epoch done
             return
+
+        if self.step == 0:
+            first_val_metrics = {}
+            self.timer.start("validation_time")
+            val_metrics = self.run_validation()
+            self.timer.stop("validation_time")
+            first_val_metrics["validation_time"] = self.timer.get("validation_time")
+
+            val_tables = val_metrics.pop("table")
+
+            for table in val_tables:
+                self.val_df.loc[len(self.val_df)] = [
+                    self.step,
+                    table["response"],
+                    table["reward"],
+                    table["ground_truth_answer"],
+                ]
+
+            self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
+            self.logger.log_metrics(first_val_metrics, step=self.step, prefix="val/")
+            first_val_metrics.clear()
 
         for _ in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
