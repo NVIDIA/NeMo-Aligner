@@ -194,7 +194,9 @@ class DeepSearchTrainer:
 
             for response, answer in zip(output["sentences"], batch["answer"]):
                 score = self.feedback.score(response, answer)
-                num_correct += score
+
+                if score > 0:
+                    num_correct += 1
 
                 if logged < self.num_to_log_to_table:
                     table = {}
