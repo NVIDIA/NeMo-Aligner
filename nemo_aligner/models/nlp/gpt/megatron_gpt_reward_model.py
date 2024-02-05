@@ -35,7 +35,7 @@ from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import AppState, logging
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor
+from nemo_aligner.utils.distributed import broadcast_2d_tensor, broadcast_2d_tensor_within_pp, gather_tensor
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
@@ -415,12 +415,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             if self.enable_standardization:
                 rewards = (rewards - self.rew_mean) / self.rew_std
 
-        if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-            rewards = broadcast_2d_tensor(
-                rewards,
-                parallel_state.get_pipeline_model_parallel_last_rank(),
-                parallel_state.get_pipeline_model_parallel_group(),
-            )
+        rewards = broadcast_2d_tensor_within_pp(rewards)
 
         rewards_list = gather_tensor(
             rewards, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()

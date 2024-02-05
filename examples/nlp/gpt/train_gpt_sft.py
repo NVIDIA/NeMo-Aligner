@@ -12,20 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 
-import numpy as np
-import torch
 import torch.multiprocessing as mp
-from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
-from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
-    MegatronPretrainingBatchSampler,
-)
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
-from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -94,7 +85,6 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
             prompt_template = get_prompt_template_example(cfg.model.data.chat_prompt_tokens)
             gpt_cfg.data.train_ds.prompt_template = prompt_template
             gpt_cfg.data.validation_ds.prompt_template = prompt_template
-            gpt_cfg.data.test_ds.prompt_template = prompt_template
 
         sft_cls = GPTSFTModel
         gpt_cfg.target = f"{sft_cls.__module__}.{sft_cls.__name__}"
@@ -104,6 +94,8 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
 
         if cfg.model.get("seq_len_interpolation_factor", None) is not None:
             gpt_cfg.seq_len_interpolation_factor = cfg.model.seq_len_interpolation_factor
+
+        gpt_cfg.inference = cfg.model.get("inference", {})
 
         # This is needed when modifying a hparam file directly to load `.ckpt` files.
         # This is not needed to modify the cfg in `.nemo` files.

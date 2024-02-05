@@ -26,7 +26,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_an
 from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
-from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
+from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory
 
 
@@ -95,13 +95,13 @@ class DPOTrainer:
         self.run_timer = run_timer
 
         self.step = 0
-        self.epoch = 0
         self.consumed_samples = 0
 
         self.ckpt_callback = ckpt_callback
 
-        # used to compute the max step
-        self._train_dataloader_len = len(train_dataloader)
+        # compute `max_steps`
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
+
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
             int(self.cfg.val_check_interval * self._train_dataloader_len)
@@ -196,10 +196,12 @@ class DPOTrainer:
         self.run_timer.start_time()
 
         for _ in epoch_iter:
-            loop_iter = range(self.step, self.max_steps)
+            num_steps_in_epoch = min(
+                self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
+            )
+            loop_iter = range(num_steps_in_epoch)
 
-            # TODO(geshen): to change for when we support > 1 epoch
-            if len(loop_iter) <= 0:
+            if not loop_iter:
                 return  # training ended
 
             global_pbar = tqdm(
@@ -223,6 +225,7 @@ class DPOTrainer:
                 self.consumed_samples += self.model.cfg.global_batch_size
                 metrics["consumed_samples"] = self.consumed_samples
                 metrics["step_time"] = train_step_time
+                metrics["epoch"] = self.epoch + 1
                 self.logger.log_metrics(
                     metrics, step=self.step, prefix="train/",
                 )
@@ -261,8 +264,6 @@ class DPOTrainer:
 
                 metrics.clear()
 
-            self.epoch += 1
-
         self.logger.finalize()
 
     def save(self, extra_candidates=None, is_train_end=False):
@@ -278,7 +279,7 @@ class DPOTrainer:
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
     def set_max_steps(self):
-        self.max_steps = self._train_dataloader_len + self.step
+        self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
 
         if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
@@ -293,9 +294,8 @@ class DPOTrainer:
     def load_state_dict(self, state_dict):
         self.step = state_dict["step"]
         self.consumed_samples = state_dict["consumed_samples"]
-        self.epoch = state_dict["epoch"]
 
-        loaded_values = [self.step, self.consumed_samples, self.epoch]
+        loaded_values = [self.step, self.consumed_samples]
 
         # make sure everyone loaded the same checkpoint as rank 0
         to_broadcast = torch.tensor(loaded_values, dtype=torch.float32, device=torch.cuda.current_device())
@@ -329,3 +329,7 @@ class DPOTrainer:
                     yield batch
                 buffer.clear()
                 del logprobs
+
+    @property
+    def epoch(self):
+        return self.step // self.num_steps_per_epoch
