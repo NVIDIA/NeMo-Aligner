@@ -223,31 +223,33 @@ class DeepSearchTrainer:
     def run_training(self, dataloader):
         self.model.prepare_for_training()
 
-        for batch in dataloader:
-            # TODO: pad to global after dataloader collate if it hangs too much
-            self.optimizer.zero_grad()
+        for i in range(self.cfg.num_optim_steps_per_search):
 
-            self.model.prepare_for_training_step()
-            loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
-            self.model.finish_training_step()
+            for batch in dataloader:
+                # TODO: pad to global after dataloader collate if it hangs too much
+                self.optimizer.zero_grad()
 
-            grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
-            grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
-            lr = self.optimizer.param_groups[0]["lr"]
+                self.model.prepare_for_training_step()
+                loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
+                self.model.finish_training_step()
 
-            self.optimizer.step()
-            self.scheduler.step()
+                grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
+                grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
+                lr = self.optimizer.param_groups[0]["lr"]
 
-            if grad_norm is not None:
-                metrics["grad_norm"] = grad_norm
+                self.optimizer.step()
+                self.scheduler.step()
 
-            metrics.update({"lr": lr, "loss": loss_mean, "optim_step": self.optimization_step})
+                if grad_norm is not None:
+                    metrics["grad_norm"] = grad_norm
 
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="train_optim/",
-            )
+                metrics.update({"lr": lr, "loss": loss_mean, "optim_step": self.optimization_step})
 
-            self.optimization_step += 1
+                self.logger.log_metrics(
+                    metrics, step=self.step, prefix="train_optim/",
+                )
+
+                self.optimization_step += 1
 
         self.model.finish_training()
 
