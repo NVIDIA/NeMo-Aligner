@@ -342,7 +342,7 @@ class DeepSearchTrainer:
                     table["reward"],
                     table["ground_truth_answer"],
                 ]
-
+            first_val_metrics.update(val_metrics)
             self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
             self.logger.log_metrics(first_val_metrics, step=self.step, prefix="val/")
             first_val_metrics.clear()
