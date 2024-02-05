@@ -171,7 +171,7 @@ class DeepSearchTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-        self.num_to_log_to_table = 16
+        self.num_to_log_to_table = 5
         self.val_df = pd.DataFrame(columns=["step", "response", "reward", "ground_truth_answer"])
 
     @torch.no_grad()
