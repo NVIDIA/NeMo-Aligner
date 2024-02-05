@@ -94,7 +94,8 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
 
         if cfg.model.get("seq_len_interpolation_factor", None) is not None:
             gpt_cfg.seq_len_interpolation_factor = cfg.model.seq_len_interpolation_factor
-
+        if cfg.model.get("steerable_attributes", None) is not None:
+            gpt_cfg.steerable_attributes = cfg.model.steerable_attributes
         gpt_cfg.inference = cfg.model.get("inference", {})
 
         # This is needed when modifying a hparam file directly to load `.ckpt` files.
