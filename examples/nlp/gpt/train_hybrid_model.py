@@ -135,6 +135,7 @@ def main(cfg) -> None:
         # each dp worker should get a different batch of parallel searches
         # check if the filename exists
         filename = f"buffer_{batch_id}_{dp_rank}.pkl"
+        filename_value = f"buffer_value_{batch_id}_{dp_rank}.pkl"
         if os.path.exists(filename):
             continue
         batch_start_offset = batch_id * args["self_play_batch_size"] * dp_size
@@ -150,12 +151,14 @@ def main(cfg) -> None:
                 )
             )
 
-        buffer = deep_search(ps, mcts, args["max_depth"], args["temperature"])
+        buffer, buffer_value = deep_search(ps, mcts, args["max_depth"], args["temperature"])
         # serialize buffer to disk
         import pickle
         
         with open(filename, "wb") as f:
             pickle.dump(buffer, f)
+        with open(filename_value, "wb") as f:
+            pickle.dump(buffer_value, f)
 
 
 if __name__ == "__main__":
