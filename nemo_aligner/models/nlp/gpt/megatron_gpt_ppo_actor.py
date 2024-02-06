@@ -93,7 +93,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             advantages = batch["advantages"]
             mask = batch["mask"]
             prev_logprobs = batch["prev_logprobs"]
-
+            toss_out = batch["toss_out"]
             attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
                 data=response_tokens,
                 eod_token=self.tokenizer.eos_id,
@@ -109,6 +109,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
                 "advantages": advantages,
                 "prev_log_probs": prev_logprobs,
                 "mask": mask,
+                "toss_out": toss_out
             }
 
             required_keys = set()
@@ -132,7 +133,12 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
                 advantages = batch["advantages"]
                 prev_log_probs = batch["prev_log_probs"]
                 tokens = batch["tokens"]
-
+                toss_out = batch["toss_out"]
+                print('*********check masks********')
+                print(f'mask = {mask}, {mask.shape}')
+                print(f'toss_out = {toss_out}, {toss_out.shape}')
+                mask = mask * toss_out
+                print("****************************")
                 curr_log_probs = from_parallel_logits_to_logprobs(vocab_parallel_logits=parallel_logits, target=tokens)
 
                 scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
@@ -291,12 +297,16 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         inputs = (prompt_tokens, prompt_lengths)
 
         tic = time.time()
-        if self.use_trtllm_generation:
-            actor_output = self.trtllm_generate.generate(inputs, self._length_params, self._sampling_params)
-        else:
-            actor_output = self.generate(
-                inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params
-            )
+
+        # if self.use_trtllm_generation:
+
+        actor_output, toss_out = self.trtllm_generate.generate(inputs, self._length_params, self._sampling_params)
+        print(f"sentence = {actor_output['sentences']}")
+        print(f"toss_out = {toss_out}")
+        # else:
+        #     actor_output = self.generate(
+        #         inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params
+        #     )
         toc = time.time()
         # print(f"Generate took {toc-tic}")
 
@@ -328,6 +338,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             "response_lengths": response_lengths,
             "prompt_lengths": prompt_lengths,
             "logprobs": log_probs,
+            "toss_out": toss_out
         }
 
         # return in GPU, trainer needs to move to cpu

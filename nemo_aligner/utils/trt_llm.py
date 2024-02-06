@@ -86,6 +86,16 @@ class GPTGenerateTRTLLM():
             output_ids = broadcast_2d_tensor(
                 output_ids, parallel_state.get_tensor_model_parallel_src_rank(), group, dtype=output_ids.dtype)
 
+        toss_out = torch.tensor([1], dtype=output_ids.dtype, device=output_ids.device)
+        ii = len(output_ids[0]) - 1
+        while ii >= 0 and output_ids[0, ii] == self.tokenizer.eos_id:
+            ii -= 1
+        trimmed_output_ids = output_ids[:, :ii + 1]
+
+        if inputs[1] + self.max_generation_length == trimmed_output_ids.shape[-1]: 
+            print("&&&&&& NOT FINISHED &&&&&&")
+            toss_out = torch.tensor([0], dtype=output_ids.dtype, device=output_ids.device)
+            print("&&&&&&&&&&&&&&&&&&&&&&&&&&")
 
         sentences = [self.tokenizer.ids_to_text(output.tolist()) for output in output_ids]
         output_ids = torch.Tensor.tolist(output_ids)
@@ -95,7 +105,7 @@ class GPTGenerateTRTLLM():
             "sentences" : sentences,
         }
         
-        return output
+        return output, toss_out
 
     def forward(self, inputs, stop_ids):
         from nemo.export.trt_llm.tensorrt_llm_run import tensorrt_llm_worker_context

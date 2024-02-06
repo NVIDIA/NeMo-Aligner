@@ -126,7 +126,8 @@ class PPOTrainer:
             values = rollout_batch["values"]
             rewards = rollout_batch["rewards"]
             logprobs = rollout_batch["logprobs"]
-
+            toss_out = rollout_batch["toss_out"]
+            
             num_samples += prompt_lengths.size(0)
 
             if self.compute_init_policy_kl:
@@ -142,7 +143,9 @@ class PPOTrainer:
                 values, rewards, response_lengths, init_policy_kl, self.cfg.initial_policy_kl_penalty
             )
             mask = create_mask(values=values, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
-
+            print("In buffer 1 toss_out = ", toss_out)
+            print("In buffer 1 mask = ", mask)
+            print("&&&&&&&&&&&&")
             # TODO(geshen): we may not need this mask
             advantages, returns = calculate_advantages_and_returns(
                 values=values,
@@ -160,7 +163,10 @@ class PPOTrainer:
             # for the critic
             ppo_rollout_data["values"].extend(post_process_tensor(values))
             ppo_rollout_data["returns"].extend(post_process_tensor(returns))
-
+            ppo_rollout_data["toss_out"].extend(post_process_tensor(toss_out*mask))
+            print("In buffer 2 toss_out = ", ppo_rollout_data["toss_out"][-1], ppo_rollout_data["toss_out"][-1].shape)
+            print("In buffer 2 mask = ", ppo_rollout_data["mask"][-1], ppo_rollout_data["mask"][-1].shape)
+            print("&&&&&&&&&&&&")
             # compute metrics
             # NOTE: this metric is not accumulated globally so it will differ between DP ranks
             ppo_rollout_metrics["init_policy_kl"] += (
@@ -411,6 +417,8 @@ class PPOTrainer:
                 )
 
                 rollout_size = ppo_rollout_data["response_tokens"].size(0)
+                print("ppo_rollout_data = ", ppo_rollout_data["toss_out"])
+                print("shape = ", ppo_rollout_data["toss_out"].shape)
                 rollout_dataloader_iter = get_iterator_k_split(
                     ppo_rollout_data, divide(rollout_size, num_to_load_on_each_dp)
                 )
