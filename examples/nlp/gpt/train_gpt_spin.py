@@ -72,10 +72,10 @@ def main(cfg) -> None:
         # overwrite the model config with the config from the checkpoint
         cfg.model.encoder_seq_length = ptl_model.cfg.encoder_seq_length
 
-    ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-        ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
-    )
-    ptl_model.ref_policy_state_dict = ref_policy_state_dict
+    #ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+    #    ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
+    #)
+    #ptl_model.ref_policy_state_dict = ref_policy_state_dict
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
@@ -159,20 +159,26 @@ def main(cfg) -> None:
     # to get the proper max *optimization* steps
     # nemo treats batch size of normal dataloader as GBS/DP
     # so we need to offset it by DP
-    dummy_train_dataloader = torch.utils.data.DataLoader(
-        dataset=train_ds, batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size())
-    )
+    #dummy_train_dataloader = torch.utils.data.DataLoader(
+    #    dataset=train_ds, batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size())
+    #)
 
-    init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_ds)
+    #init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_ds)
     # make sure the dummy train dataloader is never used
-    del ptl_model._train_dl
-    del dummy_train_dataloader
-
+    #del ptl_model._train_dl
+    #del dummy_train_dataloader
+    
+    init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
+    
+    ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+        ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
+    )
+    ptl_model.ref_policy_state_dict = ref_policy_state_dict
+    
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
-
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
     spin_trainer = SPINTrainer(
