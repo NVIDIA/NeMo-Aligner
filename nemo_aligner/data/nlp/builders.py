@@ -325,23 +325,17 @@ def build_dataloader(
 
     logging.info(f"Building dataloader with consumed samples: {consumed_samples}")
     # Megatron sampler
-    if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type is not None:
-        if cfg.model.data.dataloader_type == "single":
-            cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
-            batch_sampler = cls(
-                total_samples=len(dataset),
-                consumed_samples=consumed_samples,
-                micro_batch_size=mbs,
-                data_parallel_rank=parallel_state.get_data_parallel_rank(),
-                data_parallel_size=parallel_state.get_data_parallel_world_size(),
-                drop_last=drop_last,
-                global_batch_size=gbs,
-                pad_samples_to_global_batch_size=pad_samples_to_global_batch_size,
-            )
-        else:
-            raise ValueError('cfg.data.dataloader_type must be "single"')
-    else:
-        raise ValueError('cfg.data.dataloader_type not found. Must be "single"')
+    cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+    batch_sampler = cls(
+        total_samples=len(dataset),
+        consumed_samples=consumed_samples,
+        micro_batch_size=mbs,
+        data_parallel_rank=parallel_state.get_data_parallel_rank(),
+        data_parallel_size=parallel_state.get_data_parallel_world_size(),
+        drop_last=drop_last,
+        global_batch_size=gbs,
+        pad_samples_to_global_batch_size=pad_samples_to_global_batch_size,
+    )
 
     return torch.utils.data.DataLoader(
         dataset, batch_sampler=batch_sampler, num_workers=0, pin_memory=True, collate_fn=collate_fn,
