@@ -31,6 +31,7 @@ from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
 from nemo_aligner.utils.train_script_utils import init_distributed, resolve_and_create_trainer
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
+import os
 
 try:
     from megatron.core import parallel_state
@@ -130,6 +131,11 @@ def main(cfg) -> None:
 
     for batch_id in range(args["num_self_play_iterations"]):
         # each dp worker should get a different batch of parallel searches
+        # check if the filename exists
+        filename = f"buffer_{batch_id}_{dp_rank}.pkl"
+        filename_value = f"buffer_value_{batch_id}_{dp_rank}.pkl"
+        if os.path.exists(filename):
+            continue
         batch_start_offset = batch_id * args["self_play_batch_size"] * dp_size
         ps = []
         for i in range(args["self_play_batch_size"]):
@@ -143,10 +149,14 @@ def main(cfg) -> None:
                 )
             )
 
-        buffer = deep_search(ps, mcts, args["max_depth"], args["temperature"])
-
-        rank = torch.distributed.get_rank()
-        torch.save(buffer, f"buffer_{rank}_{batch_id}.pt")
+        buffer, buffer_value = deep_search(ps, mcts, args["max_depth"], args["temperature"])
+        # serialize buffer to disk
+        import pickle
+        
+        with open(filename, "wb") as f:
+            pickle.dump(buffer, f)
+        with open(filename_value, "wb") as f:
+            pickle.dump(buffer_value, f)
 
 
 if __name__ == "__main__":

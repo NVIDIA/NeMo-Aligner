@@ -32,6 +32,7 @@ class ParallelSearch:
         # memory is a list of (state, improved policy, player) tuples
         # from the root state to the end of the game
         self.memory = []
+        self.value_memory = set()
         self.root = None
         self.node = None
 
@@ -168,9 +169,13 @@ class MCTSParallel:
         value = 0.0
         if terminate:
             value = self.score_fn.score(text, data_id)
-        # print(text)
-        # check
-        return value, terminate
+        # check if the text ends properly
+        end_properly = False
+        for fun in self.terminate_fns:
+            if fun.ends_by_end_strings(text):
+                end_properly = True
+                break 
+        return value, terminate, end_properly
 
     def get_input_action_depth(self, ps, expandable_search):
         # get the action to execute and depths in the search tree
@@ -266,11 +271,16 @@ class MCTSParallel:
 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
                 text = self.get_text(node)
-                value, is_terminal = self.get_value_and_terminated(text, spg.data_id, depth)
+                value, is_terminal, ends_properly = self.get_value_and_terminated(text, spg.data_id, depth)
 
                 if is_terminal:
                     # if terminal, then backpropagate the value, and skip the expansion of the node because spg.node is None
                     node.backpropagate(value)
+                    # collect the memory from the root to the terminal node
+                    if ends_properly:
+                            # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                        spg.value_memory.add((tuple(node.get_all_tokens()), value))
+                    
                 else:
                     # if not terminal, then expand the node in the later part of the code
                     spg.node = node
@@ -307,6 +317,9 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
     # collect the memory from all the improved response during the self play
     return_memory = []
 
+    backup_root_states = [spg.state.copy() for spg in parallel_searches]
+    return_value_memory = []
+
     # play each of the spg to the end
     count = 0
     # add a progress bar to show the progress of the self play
@@ -328,10 +341,14 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             action_size = len(spg.root.children)
             action_probs = np.zeros(action_size, dtype=np.float32)
             actions = np.zeros(action_size, dtype=np.int32)
+            use_value_sum = False
             for child_id, child_action in enumerate(spg.root.children.keys()):
                 child = spg.root.children[child_action]
                 assert child_action == child.action
-                action_probs[child_id] = child.visit_count
+                if use_value_sum:
+                    action_probs[child_id] = child.value_sum
+                else:
+                    action_probs[child_id] = child.visit_count
                 actions[child_id] = child.action
             action_probs /= np.sum(action_probs)
 
@@ -352,23 +369,19 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
             #  get the value and termination condition from the current taken `action`
             text = mcts.decode_text(spg.state)
             pb.write(text)
-            value, is_terminal = mcts.get_value_and_terminated(text, spg.data_id, i + 1)
+            value, is_terminal, ends_properly = mcts.get_value_and_terminated(text, spg.data_id, i + 1)
 
             if is_terminal:
                 # loop through all the steps and add to the memory
                 # need to update the value based on the game play at the end of the games
-                for tokens, hist_action_probs, actions in spg.memory:
-                    hist_outcome = value
-                    # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                    return_memory.append(
-                        {
-                            "tokens": tokens,
-                            "action_probs": hist_action_probs,
-                            "reward": hist_outcome,
-                            "actions": actions,
-                            "data_id": spg.data_id,
-                        }
-                    )
+                if ends_properly:
+                    # only collect the memory if it ends properly
+                    for tokens, hist_action_probs, actions in spg.memory:
+                        hist_outcome = value
+                        # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                        return_memory.append((tokens, hist_action_probs, hist_outcome, actions, spg.data_id))
+                return_value_memory.append((list(spg.value_memory), spg.data_id, backup_root_states[i]))
                 del parallel_searches[i]
+                del backup_root_states[i]
 
-    return return_memory
+    return return_memory, return_value_memory
