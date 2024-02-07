@@ -153,6 +153,9 @@ class MCTSSearch:
             if self.run_timer.is_within_dp_finished() or i % self.save_interval == 0:
                 self.save()
 
+        # this will timeout in 30mins, but at least it gives other DP ranks a chance to finish on time
+        torch.distributed.barrier()
+
     def save(self):
         group = parallel_state.get_model_parallel_group()
         rank = torch.distributed.get_rank(group=group)
