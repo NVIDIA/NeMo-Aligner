@@ -174,7 +174,7 @@ class MCTSParallel:
         for fun in self.terminate_fns:
             if fun.ends_by_end_strings(text):
                 end_properly = True
-                break 
+                break
         return value, terminate, end_properly
 
     def get_input_action_depth(self, ps, expandable_search):
@@ -278,9 +278,9 @@ class MCTSParallel:
                     node.backpropagate(value)
                     # collect the memory from the root to the terminal node
                     if ends_properly:
-                            # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                        # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
                         spg.value_memory.add((tuple(node.get_all_tokens()), value))
-                    
+
                 else:
                     # if not terminal, then expand the node in the later part of the code
                     spg.node = node

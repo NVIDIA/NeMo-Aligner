@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import datetime
+import os
 import threading
 
 import torch
@@ -31,7 +32,6 @@ from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
 from nemo_aligner.utils.train_script_utils import init_distributed, resolve_and_create_trainer
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
-import os
 
 try:
     from megatron.core import parallel_state
@@ -152,7 +152,7 @@ def main(cfg) -> None:
         buffer, buffer_value = deep_search(ps, mcts, args["max_depth"], args["temperature"])
         # serialize buffer to disk
         import pickle
-        
+
         with open(filename, "wb") as f:
             pickle.dump(buffer, f)
         with open(filename_value, "wb") as f:
