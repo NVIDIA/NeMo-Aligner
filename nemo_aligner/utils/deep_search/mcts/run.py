@@ -7,7 +7,7 @@ from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
 
 
-def run_mcts(batch, ptl_model):
+def run_mcts(batch, ptl_model, score_fn):
     mcts_cfg = ptl_model.cfg.mcts
 
     strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
@@ -31,13 +31,11 @@ def run_mcts(batch, ptl_model):
 
     termination_condition = TerminationCondition(mcts_cfg.max_depth, end_strings=mcts_cfg.end_strings)
 
-    score_fun = GSK8KFeedbackHF(split="train")
-
     mcts = MCTSParallel(
         mcts_cfg,
         ptl_model.tokenizer.tokenizer,
         session_info="test_selfplay",
-        score_fn=score_fun,
+        score_fn=score_fn,
         terminate_fns=[termination_condition],
         client_fun=get_client_fun(ptl_model, mcts_cfg.top_k, mcts_cfg.max_depth, **strategy_args),
     )

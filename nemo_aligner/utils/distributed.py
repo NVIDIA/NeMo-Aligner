@@ -372,6 +372,16 @@ class Timer:
     def get_time_remaining(self):
         return self._duration - self.get_time_elapsed()
 
+    def is_within_dp_finished(self):
+        group = parallel_state.get_model_parallel_group()
+
+        time_left = self.get_time_remaining()
+        is_finished = time_left <= 0
+        is_finished_tensor = torch.tensor([is_finished], dtype=torch.float32, device="cuda")
+        torch.distributed.all_reduce(is_finished_tensor, group=group)
+
+        return (is_finished > 0).item()
+
     def is_finished(self):
         time_left = self.get_time_remaining()
 
