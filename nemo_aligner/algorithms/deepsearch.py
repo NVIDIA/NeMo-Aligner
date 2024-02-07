@@ -171,7 +171,7 @@ class DeepSearchTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-        self.num_to_log_to_table = 3
+        self.num_to_log_to_table = 5
         self.val_df = pd.DataFrame(columns=["step", "response", "reward", "ground_truth_answer"])
 
     @torch.no_grad()
@@ -194,7 +194,9 @@ class DeepSearchTrainer:
 
             for response, answer in zip(output["sentences"], batch["answer"]):
                 score = self.feedback.score(response, answer)
-                num_correct += score
+
+                if score > 0:
+                    num_correct += 1
 
                 if logged < self.num_to_log_to_table:
                     table = {}
@@ -223,31 +225,33 @@ class DeepSearchTrainer:
     def run_training(self, dataloader):
         self.model.prepare_for_training()
 
-        for batch in dataloader:
-            # TODO: pad to global after dataloader collate if it hangs too much
-            self.optimizer.zero_grad()
+        for i in range(self.cfg.num_optim_steps_per_search):
 
-            self.model.prepare_for_training_step()
-            loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
-            self.model.finish_training_step()
+            for batch in dataloader:
+                # TODO: pad to global after dataloader collate if it hangs too much
+                self.optimizer.zero_grad()
 
-            grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
-            grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
-            lr = self.optimizer.param_groups[0]["lr"]
+                self.model.prepare_for_training_step()
+                loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
+                self.model.finish_training_step()
 
-            self.optimizer.step()
-            self.scheduler.step()
+                grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
+                grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
+                lr = self.optimizer.param_groups[0]["lr"]
 
-            if grad_norm is not None:
-                metrics["grad_norm"] = grad_norm
+                self.optimizer.step()
+                self.scheduler.step()
 
-            metrics.update({"lr": lr, "loss": loss_mean, "optim_step": self.optimization_step})
+                if grad_norm is not None:
+                    metrics["grad_norm"] = grad_norm
 
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="train_optim/",
-            )
+                metrics.update({"lr": lr, "loss": loss_mean, "optim_step": self.optimization_step})
 
-            self.optimization_step += 1
+                self.logger.log_metrics(
+                    metrics, step=self.step, prefix="train_optim/",
+                )
+
+                self.optimization_step += 1
 
         self.model.finish_training()
 
@@ -323,6 +327,27 @@ class DeepSearchTrainer:
         if len(epoch_iter) <= 0:
             # epoch done
             return
+
+        if self.step == 0:
+            first_val_metrics = {}
+            self.timer.start("validation_time")
+            val_metrics = self.run_validation()
+            self.timer.stop("validation_time")
+            first_val_metrics["validation_time"] = self.timer.get("validation_time")
+
+            val_tables = val_metrics.pop("table")
+
+            for table in val_tables:
+                self.val_df.loc[len(self.val_df)] = [
+                    self.step,
+                    table["response"],
+                    table["reward"],
+                    table["ground_truth_answer"],
+                ]
+            first_val_metrics.update(val_metrics)
+            self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
+            self.logger.log_metrics(first_val_metrics, step=self.step, prefix="val/")
+            first_val_metrics.clear()
 
         for _ in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
