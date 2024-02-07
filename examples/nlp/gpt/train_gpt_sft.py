@@ -170,7 +170,8 @@ def main(cfg) -> None:
         num_samples,
         answer_only_loss=True,
         is_chat=cfg.model.data.chat,
-        special_tokens=cfg.model.data.chat_prompt_tokens,)
+        special_tokens=cfg.model.data.chat_prompt_tokens,
+    )
     if cfg.model.data.get("sample", False):
         num_samples = cfg.sft_trainer.limit_val_batches * val_data_cfg.global_batch_size
     else:
@@ -181,7 +182,8 @@ def main(cfg) -> None:
         num_samples,
         answer_only_loss=True,
         is_chat=cfg.model.data.chat,
-        special_tokens=cfg.model.data.chat_prompt_tokens,)
+        special_tokens=cfg.model.data.chat_prompt_tokens,
+    )
 
     train_dataloader = build_dataloader(
         cfg=cfg,
@@ -192,7 +194,8 @@ def main(cfg) -> None:
         collate_fn=train_ds.collate_fn,
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=not train_data_cfg.drop_last,
-        load_gbs=True,)
+        load_gbs=True,
+    )
 
     val_dataloader = build_dataloader(
         cfg=cfg,
@@ -203,7 +206,8 @@ def main(cfg) -> None:
         collate_fn=validation_ds.collate_fn,
         drop_last=val_data_cfg.drop_last,
         pad_samples_to_global_batch_size=not val_data_cfg.drop_last,
-        load_gbs=True,)
+        load_gbs=True,
+    )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
@@ -221,7 +225,8 @@ def main(cfg) -> None:
         val_dataloader=val_dataloader,
         test_dataloader=None,
         logger=logger,
-        ckpt_callback=ckpt_callback,)
+        ckpt_callback=ckpt_callback,
+    )
 
     if custom_trainer_state_dict is not None:
         sft_trainer.load_state_dict(custom_trainer_state_dict)
