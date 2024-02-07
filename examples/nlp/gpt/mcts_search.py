@@ -69,12 +69,12 @@ from pathlib import Path
 
 
 def preemptable_save(obj, save_path: Path):
-    with tempfile.NamedTemporaryFile(dir=save_path.parent) as temp_file:
+    with tempfile.NamedTemporaryFile(dir=save_path.parent, delete=False) as temp_file:
         # do the expensive op before replace
-        torch.save(temp_file)
+        torch.save(obj, temp_file.name)
 
         # this should be atomic
-        Path(temp_file).replace(save_path)
+        Path(temp_file.name).replace(save_path)
 
 
 def collate_func(batch):
@@ -114,6 +114,7 @@ class MCTSSearch:
         self.save_interval = save_interval
 
     def search(self):
+        self.run_timer.start_time()
 
         loop_iter = range(self.idx, len(self.batch_chunks))
 

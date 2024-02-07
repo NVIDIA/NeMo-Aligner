@@ -380,7 +380,7 @@ class Timer:
         is_finished_tensor = torch.tensor([is_finished], dtype=torch.float32, device="cuda")
         torch.distributed.all_reduce(is_finished_tensor, group=group)
 
-        return (is_finished > 0).item()
+        return (is_finished_tensor > 0).item()
 
     def is_finished(self):
         time_left = self.get_time_remaining()
