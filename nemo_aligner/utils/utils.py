@@ -66,7 +66,14 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
 
 
 def load_from_nemo(
-    cls, model_cfg, trainer, strict=True, modify_config_fn=None, restore_path=None, load_base_model_only=False, return_updated_cfg=False,
+    cls,
+    model_cfg,
+    trainer,
+    strict=True,
+    modify_config_fn=None,
+    restore_path=None,
+    load_base_model_only=False,
+    return_updated_cfg=False,
 ):
     """load a model using nemo checkpoint
     """

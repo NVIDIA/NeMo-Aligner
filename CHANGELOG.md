@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - PPO: it is now possible to use a custom end string in `sampling_params.end_strings` that is different from `<extra_id_1>`.
 - SFT: added support for custom validation metrics based on model generations.
 - Added the ability to do multi-epoch (cfg.max_epochs > 1) training for reward models, DPO, PPO, and SFT
+- SFT/SteerLM: added LoRA tuning as an option besides full fine-tuning, only attention_qkv layer is supported
 
 ### Breaking changes
 - We have changed the shuffle logic in the data sampler to support multi-epoch training, so training runs using identical parameters

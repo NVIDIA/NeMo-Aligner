@@ -56,6 +56,8 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     git cherry-pick --no-commit -X theirs \
         fa8d416793d850f4ce56bea65e1fe28cc0d092c0 \
         a7f0bc1903493888c31436efc2452ff721fa5a67 \
+        52d50e9e09a3e636d60535fd9882f3b3f32f92ad \
+        9940ec60058f644662809a6787ba1b7c464567ad \
         7d3d9ac3b1aecf5786b5978a0c1e574701473c62 && \
     sed -i 's/shutil.rmtree(ckpt_to_dir(filepath))/shutil.rmtree(ckpt_to_dir(filepath), ignore_errors=True)/g' nemo/collections/nlp/parts/nlp_overrides.py && \
     rm -rf .git && pip install -e ".[nlp]" && \
