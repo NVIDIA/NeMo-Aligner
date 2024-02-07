@@ -233,8 +233,6 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    breakpoint()
-
     ptl_model.prepare_for_inference()
     ptl_model.freeze()
 
