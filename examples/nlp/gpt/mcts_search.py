@@ -13,17 +13,16 @@
 # limitations under the License.
 
 import os
+import tempfile
 from collections import defaultdict
-from copy import deepcopy
 from functools import partial
+from pathlib import Path
 from typing import Union
 
 import torch
 import torch.multiprocessing as mp
 from datasets import load_dataset
 from megatron.core import parallel_state
-from megatron.core.parallel_state import get_pipeline_model_parallel_last_rank
-from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf
 from tqdm import tqdm
 
@@ -31,21 +30,11 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
-from nemo_aligner.algorithms.deepsearch import DeepSearchTrainer
-from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, GSK8KFeedbackHF
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
-from nemo_aligner.utils.train_script_utils import (
-    CustomLoggerWrapper,
-    add_custom_checkpoint_callback,
-    extract_optimizer_scheduler_from_ptl_model,
-    init_distributed,
-    init_using_ptl,
-    resolve_and_create_trainer,
-    retrieve_custom_trainer_state_dict,
-)
+from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
 """Script to start Reward Model training"""
@@ -64,9 +53,6 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
 
-import tempfile
-from pathlib import Path
-
 
 def preemptable_save(obj, save_path: Path):
     with tempfile.NamedTemporaryFile(dir=save_path.parent, delete=False) as temp_file:
@@ -75,6 +61,22 @@ def preemptable_save(obj, save_path: Path):
 
         # this should be atomic
         Path(temp_file.name).replace(save_path)
+
+
+def compute_metric_from_output(output):
+    return_memory, _ = output
+    num_correct = 0
+    num_total = 0
+
+    for item in return_memory:
+        reward = item["reward"]
+
+        if reward > 0:
+            num_correct += 1
+
+        num_total += 1
+
+    return {"num_correct": num_correct, "num_total": num_total, "accuracy": num_correct / num_total}
 
 
 def collate_func(batch):
@@ -130,12 +132,20 @@ class MCTSSearch:
             metrics = {}
             self.timer.start("mcts_search_time")
             output = self.search_func(batch=batch)
-
             # TODO(geshen): compute metrics
             self.timer.stop("mcts_search_time")
+
+            search_metrics = compute_metric_from_output(output)
+
+            metrics.update(search_metrics)
             metrics["search_time"] = self.timer.get("mcts_search_time")
+            metrics["step"] = self.idx
 
             global_pbar.set_postfix(metrics)
+
+            self.logger.log_metrics(
+                metrics, step=self.idx, prefix="search/",
+            )
 
             self.outputs.extend(output)
             self.idx = i
@@ -222,6 +232,8 @@ def main(cfg) -> None:
     )
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
+
+    breakpoint()
 
     ptl_model.prepare_for_inference()
     ptl_model.freeze()
