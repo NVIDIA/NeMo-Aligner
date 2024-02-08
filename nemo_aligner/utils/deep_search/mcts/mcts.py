@@ -13,12 +13,18 @@
 # limitations under the License.
 
 import math
+import os
+import pickle
+import sys
+import threading
 from typing import Callable, List
 
 import numpy as np
 import torch
 import tqdm
 from megatron.core import InferenceParams, parallel_state
+
+sys.setrecursionlimit(10000)  # Increase the recursion limit to 10000
 
 
 class ParallelSearch:
@@ -173,7 +179,7 @@ class MCTSParallel:
         for fun in self.terminate_fns:
             if fun.ends_by_end_strings(text):
                 end_properly = True
-                break 
+                break
         return value, terminate, end_properly
 
     def get_input_action_depth(self, ps, expandable_search):
@@ -279,9 +285,9 @@ class MCTSParallel:
                     node.backpropagate(value)
                     # collect the memory from the root to the terminal node
                     if ends_properly:
-                            # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                        # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
                         spg.value_memory.add((tuple(node.get_all_tokens()), value))
-                    
+
                 else:
                     # if not terminal, then expand the node in the later part of the code
                     spg.node = node
@@ -310,80 +316,139 @@ class MCTSParallel:
                 node.backpropagate(spg_value.item())
 
 
-def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max_steps: int, temperature: float):
-    # equavalent to the alpha zero self play
-    # for a list of parallel_searche instances
-    # do the mcts search to find the best action and improved policy
-    # move on to next next state until either the end of chat is reached or the max_steps is reached
-    # collect the memory from all the improved response during the self play
-    return_memory = []
+class DeepSearch:
+    def __init__(
+        self,
+        mcts: MCTSParallel,
+        max_steps: int,
+        temperature: float,
+        strategy=None,
+        timer_seconds: int = 10.0,
+        cache_dir: str = None,
+    ):
+        self.mcts = mcts
+        self.max_steps = max_steps
+        self.temperature = temperature
+        self.strategy = strategy
+        self.save_flag = False
+        self.cache_dir = cache_dir
+        # Start the timer
+        self.timer = threading.Timer(timer_seconds, self.save_data)
+        self.timer.start()
 
-    backup_root_states = [spg.state.copy() for spg in parallel_searches]
-    return_value_memory = []
+    def save_data(self):
+        self.save_flag = True
 
-    # play each of the spg to the end
-    count = 0
-    # add a progress bar to show the progress of the self play
-    total_steps = max_steps
-    dp_rank = parallel_state.get_data_parallel_rank()
-    pb = tqdm.tqdm(total=total_steps, desc=f"Self Play rank {dp_rank}", position=2 * dp_rank, leave=True)
-    while len(parallel_searches) > 0:
-        # TODO need to clear the session memory in the server
-        count += 1
-        pb.update(1)
-        # show number os paralell searches left in the progress bar
-        pb.set_postfix({"searches": len(parallel_searches)})
+    def search(self, parallel_searches: List[ParallelSearch], batch_id):
+        # serialize the partial result to disk
+        dp_rank = parallel_state.get_data_parallel_rank()
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+        if self.cache_dir is not None:
+            # create the cache dir if it does not exist
+            if not os.path.exists(self.cache_dir):
+                os.makedirs(self.cache_dir, exist_ok=True)
+            filename = os.path.join(self.cache_dir, f"current_search_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pkl")
+            filename2 = os.path.join(self.cache_dir, f"current_kv_cache_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pkl")
+        else:
+            filename = f"current_search_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pkl"
+            filename2 = f"current_kv_cache_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pkl"
 
-        # start to do the mcts search
-        mcts.search(parallel_searches)
+        # equavalent to the alpha zero self play
+        # for a list of parallel_searche instances
+        # do the mcts search to find the best action and improved policy
+        # move on to next next state until either the end of chat is reached or the max_steps is reached
+        # collect the memory from all the improved response during the self play
+        return_memory = []
 
-        # loop from large to small so that we can remove search instances as we go
-        for i in range(len(parallel_searches))[::-1]:
-            spg = parallel_searches[i]
-            action_size = len(spg.root.children)
-            action_probs = np.zeros(action_size, dtype=np.float32)
-            actions = np.zeros(action_size, dtype=np.int32)
-            use_value_sum = False
-            for child_id, child_action in enumerate(spg.root.children.keys()):
-                child = spg.root.children[child_action]
-                assert child_action == child.action
-                if use_value_sum:
-                    action_probs[child_id] = child.value_sum
-                else:
-                    action_probs[child_id] = child.visit_count
-                actions[child_id] = child.action
-            action_probs /= np.sum(action_probs)
+        backup_root_states = [spg.state.copy() for spg in parallel_searches]
+        return_value_memory = []
 
-            # the spg.root.state is the neutral state set at the beginning of the search
-            spg.memory.append((spg.state, action_probs, actions))
+        count = 0
+        # load the partial result from disk
+        if os.path.exists(filename) and self.strategy is not None and os.path.exists(filename2):
+            with open(filename, "rb") as f:
+                parallel_searches = pickle.load(f)
+                count = pickle.load(f)
+                backup_root_states = pickle.load(f)
+                return_memory = pickle.load(f)
+                return_value_memory = pickle.load(f)
+            self.strategy.deserialize_cache(filename2)
+        # add a progress bar to show the progress of the self play
+        total_steps = self.max_steps
+        pb = tqdm.tqdm(
+            total=total_steps, initial=count, desc=f"Self Play rank {dp_rank}", position=2 * dp_rank, leave=True
+        )
+        while len(parallel_searches) > 0:
+            # TODO need to clear the session memory in the server
+            count += 1
+            pb.update(1)
+            # show number os paralell searches left in the progress bar
+            pb.set_postfix({"searches": len(parallel_searches)})
 
-            temperature_action_probs = action_probs ** (1.0 / temperature)
-            temperature_action_probs /= np.sum(temperature_action_probs)
-            action_index = np.random.choice(
-                action_size, p=temperature_action_probs
-            )  # Divide temperature_action_probs with its sum in case of an error
-            action = actions[action_index].item()
+            # start to do the mcts search
+            self.mcts.search(parallel_searches)
 
-            spg.state = spg.state + [action]
-            fake_node = Node(spg.state, parent=None, action=action, prior=0.0, visit_count=0)
-            spg.node = fake_node
+            # loop from large to small so that we can remove search instances as we go
+            for i in range(len(parallel_searches))[::-1]:
+                spg = parallel_searches[i]
+                action_size = len(spg.root.children)
+                action_probs = np.zeros(action_size, dtype=np.float32)
+                actions = np.zeros(action_size, dtype=np.int32)
+                use_value_sum = False
+                for child_id, child_action in enumerate(spg.root.children.keys()):
+                    child = spg.root.children[child_action]
+                    assert child_action == child.action
+                    if use_value_sum:
+                        action_probs[child_id] = child.value_sum
+                    else:
+                        action_probs[child_id] = child.visit_count
+                    actions[child_id] = child.action
+                action_probs /= np.sum(action_probs)
 
-            #  get the value and termination condition from the current taken `action`
-            text = mcts.decode_text(spg.state)
-            pb.write(text)
-            value, is_terminal, ends_properly = mcts.get_value_and_terminated(text, spg.data_id, i + 1)
+                # the spg.root.state is the neutral state set at the beginning of the search
+                spg.memory.append((spg.state, action_probs, actions))
 
-            if is_terminal:
-                # loop through all the steps and add to the memory
-                # need to update the value based on the game play at the end of the games
-                if ends_properly:
-                    # only collect the memory if it ends properly
-                    for tokens, hist_action_probs, actions in spg.memory:
-                        hist_outcome = value
-                        # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                        return_memory.append((tokens, hist_action_probs, hist_outcome, actions, spg.data_id))
-                return_value_memory.append((list(spg.value_memory), spg.data_id, backup_root_states[i]))
-                del parallel_searches[i]
-                del backup_root_states[i]
+                temperature_action_probs = action_probs ** (1.0 / self.temperature)
+                temperature_action_probs /= np.sum(temperature_action_probs)
+                action_index = np.random.choice(
+                    action_size, p=temperature_action_probs
+                )  # Divide temperature_action_probs with its sum in case of an error
+                action = actions[action_index].item()
 
-    return return_memory, return_value_memory
+                spg.state = spg.state + [action]
+                fake_node = Node(spg.state, parent=None, action=action, prior=0.0, visit_count=0)
+                spg.node = fake_node
+
+                #  get the value and termination condition from the current taken `action`
+                text = self.mcts.decode_text(spg.state)
+                pb.write(text)
+                value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, i + 1)
+
+                if is_terminal:
+                    # loop through all the steps and add to the memory
+                    # need to update the value based on the game play at the end of the games
+                    if ends_properly:
+                        # only collect the memory if it ends properly
+                        for tokens, hist_action_probs, actions in spg.memory:
+                            hist_outcome = value
+                            # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                            return_memory.append((tokens, hist_action_probs, hist_outcome, actions, spg.data_id))
+                    return_value_memory.append((list(spg.value_memory), spg.data_id, backup_root_states[i]))
+                    del parallel_searches[i]
+                    del backup_root_states[i]
+
+                if self.save_flag:
+                    if self.strategy is not None:
+                        pb.write(f"saving the search to disk {filename} and {filename2}")
+                        with open(filename, "wb") as f:
+                            pickle.dump(parallel_searches, f)
+                            pickle.dump(count, f)
+                            pickle.dump(backup_root_states, f)
+                            pickle.dump(return_memory, f)
+                            pickle.dump(return_value_memory, f)
+                        self.strategy.seraialize_cache(filename2)
+                        # only save one
+                    self.save_flag = False
+
+        return return_memory, return_value_memory

@@ -15,6 +15,7 @@
 import abc
 import copy
 import os
+import pickle
 import re
 import warnings
 from typing import List, Set, Tuple
@@ -358,33 +359,6 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                 assert step > 0
                 inference_params.sequence_len_offset += 1
 
-        # # types2use = None
-        # if step == 0:
-        #     # Allocate memory for the entire context.
-        #     tokens2use = tokens[:, :context_length]
-        #     positions2use = self.position_ids[:, :context_length]
-        #     # init inference params
-        #     # self.inference_params = InferenceParams(max_batch_size=micro_batch_size, max_sequence_length=maxlen)
-        #     # not using type2use. uncomment it if it is used
-        #     # if type_ids is not None:
-        #     #     types2use = type_ids[:, :context_length]
-        # else:
-        #     if step == 1:
-        #         self.inference_params.sequence_len_offset = context_length - 1
-        #     else:
-        #         self.inference_params.sequence_len_offset += 1
-        #     # Set this to false so the memory is not reallocated.
-        #     tokens2use = tokens[:, context_length - 1].view(micro_batch_size, -1)
-        #     positions2use = self.position_ids[:, context_length - 1].view(micro_batch_size, -1)
-        #     # not using type2use. uncomment it if it is used
-        #     # if type_ids is not None:
-        #     #     types2use = type_ids[:, context_length - 1].view(batch_size, -1)
-
-        # """Prepare batch for each of the inference steps"""
-        # attention_mask_repeat = None
-        # if compute_attention_mask:
-        #     attention_mask_repeat = torch.concat([self.attention_mask for _ in range(micro_batch_size)])
-
         batch = [tokens2use, attention_mask_3d, positions2use]
         tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
         return batch, tensor_shape
@@ -408,18 +382,6 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         for key in inference.key_value_memory_dict.keys():
             keys, vals = inference.key_value_memory_dict[key]
             inference.key_value_memory_dict[key] = (keys.cuda(), vals.cuda())
-        # make kv cache into tensors
-        # for key in inference.key_value_memory_dict.keys():
-        #     keys, vals = inference.key_value_memory_dict[key]
-        #     if self.model.cfg.precision == "fp16":
-        #         inference.key_value_memory_dict[key] = (torch.cuda.HalfTensor(keys), torch.cuda.HalfTensor(vals))
-        #     elif self.model.cfg.precision == "bf16-mixed" or self.model.cfg.precision == "bf16":
-        #         inference.key_value_memory_dict[key] = (
-        #             torch.cuda.BFloat16Tensor(keys),
-        #             torch.cuda.BFloat16Tensor(vals),
-        #         )
-        #     else:
-        #         inference.key_value_memory_dict[key] = (torch.cuda.FloatTensor(keys), torch.cuda.FloatTensor(vals))
         self.search_db.add_inference_params(session_info, inference)
         return tokens, new_context_lengths, true_context_lengths
 
@@ -431,6 +393,14 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         state = get_state(infer_params, False, context_length, batch_id)
         node.state = state
         node.value_sum = value
+
+    def seraialize_cache(self, filename: str):
+        with open(filename, "wb") as f:
+            pickle.dump(self.search_db, f)
+
+    def deserialize_cache(self, filename: str):
+        with open(filename, "rb") as f:
+            self.search_db = pickle.load(f)
 
     def save_kv_cache(
         self,

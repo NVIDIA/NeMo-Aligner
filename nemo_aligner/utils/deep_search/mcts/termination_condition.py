@@ -17,13 +17,13 @@ class TerminationCondition:
     def __init__(self, max_depth, end_strings):
         self.end_strings = end_strings
         self.max_depth = max_depth
-    
+
     def ends_by_end_strings(self, text):
         for end_string in self.end_strings:
             if text.endswith(end_string):
                 return True
         return False
-    
+
     def ends_by_depth(self, depth):
         return depth >= self.max_depth
 
