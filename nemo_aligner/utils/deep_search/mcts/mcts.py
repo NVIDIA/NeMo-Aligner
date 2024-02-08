@@ -438,17 +438,17 @@ class DeepSearch:
                     del parallel_searches[i]
                     del backup_root_states[i]
 
-                if self.save_flag:
-                    if self.strategy is not None:
-                        pb.write(f"saving the search to disk {filename} and {filename2}")
-                        with open(filename, "wb") as f:
-                            pickle.dump(parallel_searches, f)
-                            pickle.dump(count, f)
-                            pickle.dump(backup_root_states, f)
-                            pickle.dump(return_memory, f)
-                            pickle.dump(return_value_memory, f)
-                        self.strategy.seraialize_cache(filename2)
-                        # only save one
-                    self.save_flag = False
+            if self.save_flag:
+                if self.strategy is not None:
+                    pb.write(f"saving the search to disk {filename} and {filename2}")
+                    with open(filename, "wb") as f:
+                        pickle.dump(parallel_searches, f)
+                        pickle.dump(count, f)
+                        pickle.dump(backup_root_states, f)
+                        pickle.dump(return_memory, f)
+                        pickle.dump(return_value_memory, f)
+                    self.strategy.seraialize_cache(filename2)
+                    # only save one
+                self.save_flag = False
 
         return return_memory, return_value_memory
