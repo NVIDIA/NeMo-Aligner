@@ -22,6 +22,7 @@ import torch
 from omegaconf import OmegaConf, open_dict
 from pytorch_lightning.trainer.trainer import Trainer
 from torch.utils.data import DataLoader, Dataset
+from pytorch_lightning.plugins.environments import TorchElasticEnvironment
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.megatron_init import fake_initialize_model_parallel
@@ -170,7 +171,7 @@ def main(cfg) -> None:
     trainer = Trainer(
         strategy=NLPDDPStrategy(timeout=datetime.timedelta(seconds=18000)),
         **cfg.trainer,
-        callbacks=[CustomProgressBar()],
+        callbacks=[CustomProgressBar()], plugins=[TorchElasticEnvironment()]
     )
 
     if cfg.gpt_model_file is not None:
