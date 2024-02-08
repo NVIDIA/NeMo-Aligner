@@ -21,6 +21,7 @@ import torch
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -65,6 +66,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         self.to_offload_adam_states = self.cfg.spin.offload_adam_states
 
         self.ref_policy_kl_penalty = self.cfg.spin.get("ref_policy_kl_penalty", 0.0)
+        
+        #self.register_load_state_dict_post_hook(self.post_load_state_dict_hook)
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, masks):
@@ -392,6 +395,50 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             self.distributed_adam_offload_manager.__exit__(None, None, None)
 
         self.distributed_adam_offload_manager = None
+    
+    def post_load_state_dict_hook(self, incompatible_keys) -> None:
+        return None
+    
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        [print("*** STATE DICT HAS: ", x, flush=True) for x in state_dict.keys() if "reference_policy" in x];
+        a = state_dict.pop(f'{prefix}reference_policy', None)
+        b = state_dict.pop('reference_policy', None)
+        if a is not None:
+            self.ref_policy_state_dict = a
+        if b is not None:
+            self.ref_policy_state_dict = b
+        
+        return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+    
+    def sharded_state_dict(self, prefix: str = ''):
+        """
+        Creates the sharded state dict which is used by dist_checkpoint to save the sharded tensors to disk.
+        When given the sharded_stated_dict, dist_checkpoint.load will load the tensors corresponding to
+        self.state_dict().
+        The sharded tensor mapping is defined in the GPTModel class from mcore.
+        """
+
+        if self.mcore_gpt:
+            module_prefix = f'{prefix}model.'
+            sharded_state_dict = {}
+            for index, module in enumerate(self.get_model_module_list()):
+                if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+                    # virtual pipline rank must be set so that GPTModel returns the correct sharded state dict
+                    parallel_state.set_virtual_pipeline_model_parallel_rank(index)
+                    module_sharded_state_dict = module.sharded_state_dict(prefix=module_prefix)
+                    sharded_state_dict[f'model_{index}'] = module_sharded_state_dict
+                else:
+                    module_sharded_state_dict = module.sharded_state_dict(prefix=module_prefix)
+                    sharded_state_dict.update(module_sharded_state_dict)
+
+            # reset vp rank
+            if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+                parallel_state.set_virtual_pipeline_model_parallel_rank(0)
+            
+            # add in the reference policy weights
+            sharded_state_dict['reference_policy'] = make_sharded_tensors_for_checkpoint(self.ref_policy_state_dict, prefix)
+
+            return sharded_state_dict
 
     def get_logprob_output_only_func(self, inference_only=True):
         fwd_output_only_func = self.get_forward_output_only_func()
