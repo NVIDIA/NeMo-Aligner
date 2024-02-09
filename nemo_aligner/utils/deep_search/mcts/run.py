@@ -1,11 +1,14 @@
 from megatron.core import InferenceParams, parallel_state
 
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
-from nemo_aligner.utils.deep_search.mcts.mcts import MCTSParallel, ParallelSearch, deep_search
+from nemo_aligner.utils.deep_search.mcts.mcts import MCTSParallel, ParallelSearch
 from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
 from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
+from nemo_aligner.utils.deep_search.mcts.mcts import DeepSearch
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
 
+
+BATCH_ID = 0
 
 def run_mcts(batch, ptl_model, score_fn):
     mcts_cfg = ptl_model.cfg.mcts
@@ -40,10 +43,17 @@ def run_mcts(batch, ptl_model, score_fn):
         client_fun=get_client_fun(ptl_model, mcts_cfg.top_k, mcts_cfg.max_depth, **strategy_args),
     )
 
+    ds = DeepSearch(mcts, mcts_cfg.max_depth, mcts_cfg.temperature, strategy, mcts_cfg.save_timer, mcts_cfg.cache_dir)
+
     ps = []
 
     for question, answer, data_id in zip(batch["question"], batch["answer"], batch["data_id"]):
 
         ps.append(ParallelSearch(ptl_model.tokenizer.text_to_ids(question,), data_id,))
 
-    return deep_search(ps, mcts, mcts_cfg.max_depth, mcts_cfg.temperature)
+    global BATCH_ID
+
+    output = ds.search(ps, BATCH_ID)
+    BATCH_ID = BATCH_ID + 1
+
+    return output
