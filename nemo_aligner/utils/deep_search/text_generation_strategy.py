@@ -422,8 +422,10 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             # self.search_db.add_kv_cache(session_id, depth, tokens, kv_cache)
             parent_node = parent_nodes[bid]
             action_taken = actions_taken[bid].item()
-            children_prob_array = children_action_policy[bid].cpu().numpy()
-            children_action_array = children_action[bid].cpu().numpy()
+            # children_prob_array = children_action_policy[bid].cpu().numpy()
+            # children_action_array = children_action[bid].cpu().numpy()
+            # prior_data = (children_prob_array, children_action_array)
+            prior_data = None
             state = get_state(infer_params, action_taken == -1, context_length, bid)
             value = None
             if action_value is not None:
@@ -436,7 +438,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                     state=state,
                     parent=parent_node,
                     action=tokens,
-                    prior=(children_prob_array, children_action_array),
+                    prior=prior_data,
                     visit_count=0,
                     value_sum=value,
                 )
@@ -446,7 +448,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                     state=state,
                     parent=parent_node,
                     action=action_taken,
-                    prior=(children_prob_array, children_action_array),
+                    prior=prior_data,
                     visit_count=0,
                     value_sum=value,
                 )

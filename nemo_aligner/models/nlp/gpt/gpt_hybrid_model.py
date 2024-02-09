@@ -203,6 +203,8 @@ class GPTHybridModel(GPTModel):
                 merge_attributes=merge_attributes,
                 attributes_weights=attribute_weights,
             )
+            # make sigmoid output 0
+            torch.nn.init.constant_(self.rm_head.bias.data, -10.0)
 
     def forward(
         self,
@@ -248,7 +250,7 @@ class GPTHybridModel(GPTModel):
                 inference_params=inference_params,
                 rotary_pos_emb=rotary_pos_emb,
             )
-            value = self.rm_head(hidden_states_raw, None)
+            value = torch.nn.functional.sigmoid(self.rm_head(hidden_states_raw, None))
             if labels is None:
                 output = logits.transpose(0, 1).contiguous()
                 return output, value
