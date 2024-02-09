@@ -236,8 +236,8 @@ class DeepSearchTrainer:
                     table["ground_truth_answer"],
                 ]
 
-            self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
-            self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+            self.logger.log_table("table/train", dataframe=self.val_df, step=self.step)
+            self.logger.log_metrics(val_metrics, step=self.step, prefix="train/")
             val_metrics.clear()
 
         for _ in epoch_iter:
@@ -296,9 +296,9 @@ class DeepSearchTrainer:
                             table["ground_truth_answer"],
                         ]
 
-                    self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
-                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
-                    step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
+                    self.logger.log_table("table/train", dataframe=self.val_df, step=self.step)
+                    self.logger.log_metrics(val_metrics, step=self.step, prefix="train/")
+                    step_metrics.update({f"train_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch

@@ -170,7 +170,7 @@ def mcts_value_collate_fn(eos_id, batches):
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
     optim = deepcopy(cfg.model.optim)
-    val_ds = DatasetWrapper(load_dataset("gsm8k", "main")["test"])
+    val_ds = DatasetWrapper(load_dataset("gsm8k", "main")["train"])
     feedback = GSK8KFeedbackDataset()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
