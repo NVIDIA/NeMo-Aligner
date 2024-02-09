@@ -452,13 +452,13 @@ class DeepSearch:
                                     "context_length": len(backup_root_states[i]),
                                 }
                             )
-                        return_value_memory.append(
-                            {
-                                "value_memory": list(spg.value_memory),
-                                "data_id": spg.data_id,
-                                "backup_root_states": backup_root_states[i],
-                            }
-                        )
+                    return_value_memory.append(
+                        {
+                            "value_memory": list(spg.value_memory),
+                            "data_id": spg.data_id,
+                            "backup_root_states": backup_root_states[i],
+                        }
+                    )
 
                     del parallel_searches[i]
                     del backup_root_states[i]
