@@ -434,34 +434,34 @@ class DeepSearch:
                 pb.write(text)
                 value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, i + 1)
 
-            if is_terminal:
-                # loop through all the steps and add to the memory
-                # need to update the value based on the game play at the end of the games
-                if ends_properly:
-                    # only collect the memory if it ends properly
-                    for tokens, hist_action_probs, actions in spg.memory:
-                        hist_outcome = value
-                        # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                        return_memory.append(
-                            {
-                                "tokens": tokens,
-                                "action_probs": hist_action_probs,
-                                "reward": hist_outcome,
-                                "actions": actions,
-                                "data_id": spg.data_id,
-                                "context_length": len(backup_root_states[i]),
-                            }
-                        )
-                return_value_memory.append(
-                    {
-                        "value_memory": list(spg.value_memory),
-                        "data_id": spg.data_id,
-                        "backup_root_states": backup_root_states[i],
-                    }
-                )
+                if is_terminal:
+                    # loop through all the steps and add to the memory
+                    # need to update the value based on the game play at the end of the games
+                    if ends_properly:
+                        # only collect the memory if it ends properly
+                        for tokens, hist_action_probs, actions in spg.memory:
+                            hist_outcome = value
+                            # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                            return_memory.append(
+                                {
+                                    "tokens": tokens,
+                                    "action_probs": hist_action_probs,
+                                    "reward": hist_outcome,
+                                    "actions": actions,
+                                    "data_id": spg.data_id,
+                                    "context_length": len(backup_root_states[i]),
+                                }
+                            )
+                    return_value_memory.append(
+                        {
+                            "value_memory": list(spg.value_memory),
+                            "data_id": spg.data_id,
+                            "backup_root_states": backup_root_states[i],
+                        }
+                    )
 
-                del parallel_searches[i]
-                del backup_root_states[i]
+                    del parallel_searches[i]
+                    del backup_root_states[i]
 
             if self.save_flag:
                 if self.strategy is not None:
