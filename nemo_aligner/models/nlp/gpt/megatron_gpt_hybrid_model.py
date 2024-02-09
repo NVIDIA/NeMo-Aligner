@@ -237,7 +237,8 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             # maybe we can get away with not having to do this?...
 # num_micro_batches = 1
             # TODO(geshen): if this hangs, fix it...
-            num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
+# num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
+            num_micro_batches = 1
         else:
             num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
 

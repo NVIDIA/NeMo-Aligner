@@ -210,11 +210,7 @@ class DeepSearchTrainer:
             return
 
         if self.step == 0:
-            first_val_metrics = {}
-            self.timer.start("validation_time")
             val_metrics = self.run_validation()
-            self.timer.stop("validation_time")
-            first_val_metrics["validation_time"] = self.timer.get("validation_time")
 
             val_tables = val_metrics.pop("table")
 
@@ -225,10 +221,9 @@ class DeepSearchTrainer:
                     table["reward"],
                     table["ground_truth_answer"],
                 ]
-            first_val_metrics.update(val_metrics)
             self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
-            self.logger.log_metrics(first_val_metrics, step=self.step, prefix="val/")
-            first_val_metrics.clear()
+            self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+            val_metrics.clear()
 
         for _ in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
