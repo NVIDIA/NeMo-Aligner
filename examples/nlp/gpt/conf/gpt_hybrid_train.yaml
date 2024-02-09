@@ -15,6 +15,10 @@ trainer:
 
     num_optim_steps_per_search: 20
 
+    # how many batches per training step
+    num_value_batches: 2
+    num_policy_batches: 1
+
   # no need to change these
   logger: False # logger provided by exp_manager
   enable_checkpointing: False
@@ -25,6 +29,8 @@ trainer:
 
 pretrained_checkpoint:
   restore_from_path: null
+
+mcts_data_file: null
  
 model:
   mcts:
@@ -46,7 +52,6 @@ model:
     train:
       value_weight: 1 # weight of the value portion of the loss
       policy_weight: 1 # weight of the policy portion of the loss
-
 
   inference:
 

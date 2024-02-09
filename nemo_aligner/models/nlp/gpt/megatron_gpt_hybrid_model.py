@@ -39,6 +39,7 @@ from nemo.collections.nlp.modules.common.text_generation_strategy import GPTMode
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import logging
+from nemo_aligner.algorithms.deepsearch import TrainMode
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
@@ -131,6 +132,45 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         )
         return model
 
+    def compute_value_loss(self, batch, values):
+        value_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
+
+        if batch["train_mode"][0] == TrainMode.VALUE_ONLY and (self.value_loss_weight > 0):
+            rewards = batch["reward"].view(-1, 1)
+            # TODO(geshen); the mask contains the last <extra_id_1> token as well
+            # we may not want to include this, but it doesn't really matter
+            # because the model is forced to stop by nemo generate anyway
+            mask = batch["mcts_mask"]
+
+            # TODO(geshen): change to cross entropy
+            value_loss = (values - rewards) ** 2
+            value_loss = masked_mean(self.value_loss_weight * value_loss, mask)
+
+        return value_loss
+
+    def compute_policy_loss(self, batch, logits):
+        policy_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
+        if batch["train_mode"][0] == TrainMode.POLICY_ONLY and (self.policy_loss_weight > 0):
+            # slow on TP
+            logits = gather_from_tensor_model_parallel_region(logits)
+            log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+
+            actions = batch["actions"]
+            action_probs = batch["action_probs"]
+            rewards = batch["reward"]
+            mask = batch["mcts_mask"]
+
+            policy_mask = (rewards > 0) & mask
+            policy_loss = (log_probs.gather(dim=-1, index=actions.long()) * action_probs).sum(-1)
+            policy_loss = self.policy_loss_weight * policy_loss
+
+            if torch.any(policy_mask):
+                policy_loss = masked_mean(policy_loss, policy_mask)
+            else:
+                policy_loss = policy_loss.sum()
+
+        return policy_loss
+
     def get_hybrid_forward_output_and_loss_func(self):
         def fwd_output_and_loss_func(data_iterator, model):
             batch = next(data_iterator)
@@ -154,39 +194,20 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 required_keys.add("attention_mask")
 
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("tokens", "position_ids"))
+                    required_keys.update(("tokens", "position_ids", "train_mode"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("tokens", "actions", "action_probs", "reward", "mcts_mask"))
+                    required_keys.update(("tokens", "actions", "action_probs", "reward", "mcts_mask", "train_mode"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None,)
+            parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None)
 
             def loss_func(parallel_logits):
                 logits, values = parallel_logits
-                # slow on TP
-                logits = gather_from_tensor_model_parallel_region(logits)
-                log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
-                #
-                actions = batch["actions"]
-                action_probs = batch["action_probs"]
-                rewards = batch["reward"]
-                mask = batch["mcts_mask"]
 
-                value_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
-                policy_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
-
-                if self.value_loss_weight > 0:
-                    value_loss = (values - rewards) ** 2
-                    value_loss = masked_mean(self.value_loss_weight * value_loss, mask)
-
-                policy_mask = (rewards > 0) & mask
-
-                if self.policy_loss_weight > 0 and torch.any(policy_mask):
-                    policy_loss = (log_probs.gather(dim=-1, index=actions.long()) * action_probs).sum(-1)
-                    # mask ones that didn't get the right answer
-                    policy_loss = masked_mean(self.policy_loss_weight * policy_loss, policy_mask)
+                policy_loss = self.compute_policy_loss(batch, logits)
+                value_loss = self.compute_value_loss(batch, values)
 
                 loss = value_loss - policy_loss
                 reduced_loss, reduced_value_loss, reduced_policy_loss = average_losses_across_data_parallel_group(
@@ -207,9 +228,21 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         return fwd_output_and_loss_func
 
     def get_loss_and_metrics(self, batch, forward_only):
+        # TODO(geshen): on the value because the batches are differently
+        # amount of num micro batches, we may hang
         gbs_by_dp, sequence_length = batch["tokens"].size()
 
-        num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
+        if batch["train_mode"] == TrainMode.VALUE_ONLY:
+            # hack because critic might load differently sized data
+            # maybe we can get away with not having to do this?...
+# num_micro_batches = 1
+            # TODO(geshen): if this hangs, fix it...
+            num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
+        else:
+            num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
+
+        batch["train_mode"] = torch.as_tensor([batch["train_mode"]] * gbs_by_dp)
+
         data_iter = get_iterator_k_split(batch, num_micro_batches)
 
         set_sync_funcs(self, forward_only)

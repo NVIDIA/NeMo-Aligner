@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from collections import defaultdict
 from copy import deepcopy
+from functools import partial
 
 import torch
 import torch.multiprocessing as mp
@@ -83,15 +85,92 @@ class DatasetWrapper:
         return len(self.ds)
 
 
+def fill_padded_tensor_with_data(batches, max_seqlen, lengths, response_lengths, pad_value):
+    """unpadded x * -> B x max seq len x *"""
+    assert len(batches) == len(lengths)
+
+    output = batches[0].new_empty((len(batches), max_seqlen, *batches[0].shape[1:])).fill_(pad_value)
+
+    for i, (batch, length, response_length) in enumerate(zip(batches, lengths, response_lengths, strict=True)):
+        idx = length - 1
+        output[i, idx:response_length, ...] = batch
+
+    return output
+
+
+def create_mask(tokens, lengths, response_length):
+    idx = lengths - 1
+
+    end = (response_length).view(-1, 1)
+    start = idx.view(-1, 1)
+
+    seq_range = torch.arange(tokens.size(-1), device=lengths.device).view(1, -1)
+    sequence_mask = (start <= seq_range) & (end > seq_range)
+    return sequence_mask
+
+
+def mcts_collate_fn(eos_id, batch):
+    new_dict = {}
+    context_keys = {"context_length", "response_length"}
+    token_keys = {"tokens"}
+    fill_keys = {"action_probs", "reward", "actions"}
+
+    max_seqlen = max(len(x["tokens"]) for x in batch)
+    lengths = [x["context_length"] for x in batch]
+
+    for k in context_keys | token_keys:
+        batches = tuple(torch.as_tensor(x[k]) for x in batch)
+
+        if k in context_keys:
+            output = torch.stack(batches)
+        elif k in token_keys:
+            output = torch.nn.utils.rnn.pad_sequence(batches, batch_first=True, padding_value=eos_id,)
+
+        new_dict[k] = output
+
+    max_seqlen = new_dict["tokens"].size(-1)
+    lengths = new_dict["context_length"]
+    response_length = new_dict["response_length"]
+
+    for k in fill_keys:
+        output = fill_padded_tensor_with_data(
+            tuple(torch.as_tensor(x[k]) for x in batch), max_seqlen, lengths, response_length, 0
+        )
+        new_dict[k] = output
+
+    mask = create_mask(new_dict["tokens"], lengths, new_dict["response_length"])
+
+    return new_dict | {"mcts_mask": mask}
+
+
+def mcts_value_collate_fn(eos_id, batches):
+    new_dict = defaultdict(list)
+
+    for batch in batches:
+        new_dict["tokens"].extend(batch["tokens"])
+        new_dict["reward"].extend(batch["reward"])
+        new_dict["response_length"].extend(list(len(x) for x in batch["tokens"]))
+        new_dict["context_length"].extend([batch["context_length"]] * len(batch["tokens"]))
+
+    final_dict = {}
+    for k, v in new_dict.items():
+        if k == "tokens":
+            inputs = tuple(torch.as_tensor(x) for x in v)
+            output = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=eos_id,)
+        else:
+            output = torch.as_tensor(v)
+
+        final_dict[k] = output
+
+    mask = create_mask(final_dict["tokens"], final_dict["context_length"], final_dict["response_length"])
+
+    return final_dict | {"mcts_mask": mask}
+
+
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
     optim = deepcopy(cfg.model.optim)
-    dataset = load_dataset("gsm8k", "main")
-
-    train_ds = DatasetWrapper(dataset["train"])
-    # use the train dataset for now
-    val_ds = DatasetWrapper(dataset["test"])
-
+    val_ds = DatasetWrapper(load_dataset("gsm8k", "main")["test"])
     feedback = GSK8KFeedbackDataset()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
@@ -123,29 +202,66 @@ def main(cfg) -> None:
     if trainer_restore_path is not None:
         custom_trainer_state_dict = retrieve_custom_trainer_state_dict(trainer)
         consumed_samples = custom_trainer_state_dict["consumed_samples"]
+        consumed_samples_values = custom_trainer_state_dict["consumed_samples_values"]
     else:
         custom_trainer_state_dict = None
         consumed_samples = 0
+        consumed_samples_values = 0
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
     dp_size = parallel_state.get_data_parallel_world_size()
 
-    train_dataloader = build_dataloader(
+    assert os.path.exists(cfg.mcts_data_file)
+    train_data = torch.load(cfg.mcts_data_file)
+
+    # TODO(geshen): should we shuffle the data?
+    policy_data, value_data = train_data["policies"], train_data["values"]
+
+    num_questions_correct = 0
+
+    for p in policy_data:
+        if all(x > 0 for x in p["reward"]):
+            num_questions_correct += 1
+
+    data_metrics = {
+        "num_questions_correct": num_questions_correct,
+        "num_questions": len(policy_data),
+        "accuracy": num_questions_correct / len(policy_data),
+    }
+
+    logging.info("Loaded search cached data at {} with metric {}".format(cfg.mcts_data_file, data_metrics))
+
+    eos_id = ptl_model.tokenizer.eos_id
+
+    # TODO(geshen): consumed samples need to be different for each of these 2 dataloaders
+    # TODO(geshen): support multiple epochs
+    train_policy_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=train_ds,
+        dataset=policy_data,
         consumed_samples=consumed_samples,
-        mbs=cfg.model.mcts.self_play_batch_size,
+        mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
-        collate_fn=collate_fn,
+        collate_fn=partial(mcts_collate_fn, eos_id),
+    )
+
+    # TODO(geshen): can have different mbs
+    train_value_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset=value_data,
+        consumed_samples=consumed_samples,
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.global_batch_size,
+        load_gbs=True,
+        collate_fn=partial(mcts_value_collate_fn, eos_id),
     )
 
     # hack to allow using all of the validation dataset
     val_dataloader = build_dataloader(
         cfg=cfg,
         dataset=val_ds,
-        consumed_samples=0,
+        consumed_samples=consumed_samples_values,
         mbs=cfg.model.inference.micro_batch_size,
         gbs=cfg.model.inference.micro_batch_size * dp_size,
         load_gbs=False,
@@ -154,7 +270,8 @@ def main(cfg) -> None:
     )
 
     # TODO(geshen): set the optimizer steps properly, just like in PPO
-    init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
+    # TODO(geshen): better use constant LR here
+    init_using_ptl(trainer, ptl_model, train_policy_dataloader, None)
 
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
@@ -167,7 +284,8 @@ def main(cfg) -> None:
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
-        train_dataloader=train_dataloader,
+        train_policy_dataloader=train_policy_dataloader,
+        train_value_dataloader=train_value_dataloader,
         val_dataloader=val_dataloader,
         feedback=feedback,
         logger=logger,
@@ -177,6 +295,8 @@ def main(cfg) -> None:
 
     if custom_trainer_state_dict is not None:
         deep_search_trainer.load_state_dict(custom_trainer_state_dict)
+
+    logger.log_metrics(data_metrics, step=deep_search_trainer.step, prefix="data/")
 
     deep_search_trainer.fit()
 

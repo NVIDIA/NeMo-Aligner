@@ -386,6 +386,7 @@ def deep_search(parallel_searches: List[ParallelSearch], mcts: MCTSParallel, max
                                 "reward": hist_outcome,
                                 "actions": actions,
                                 "data_id": spg.data_id,
+                                "context_length": len(backup_root_states[i]),
                             }
                         )
                 return_value_memory.append(
