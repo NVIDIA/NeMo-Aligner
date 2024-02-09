@@ -411,34 +411,12 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
     
     def sharded_state_dict(self, prefix: str = ''):
-        """
-        Creates the sharded state dict which is used by dist_checkpoint to save the sharded tensors to disk.
-        When given the sharded_stated_dict, dist_checkpoint.load will load the tensors corresponding to
-        self.state_dict().
-        The sharded tensor mapping is defined in the GPTModel class from mcore.
-        """
-
-        if self.mcore_gpt:
-            module_prefix = f'{prefix}model.'
-            sharded_state_dict = {}
-            for index, module in enumerate(self.get_model_module_list()):
-                if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-                    # virtual pipline rank must be set so that GPTModel returns the correct sharded state dict
-                    parallel_state.set_virtual_pipeline_model_parallel_rank(index)
-                    module_sharded_state_dict = module.sharded_state_dict(prefix=module_prefix)
-                    sharded_state_dict[f'model_{index}'] = module_sharded_state_dict
-                else:
-                    module_sharded_state_dict = module.sharded_state_dict(prefix=module_prefix)
-                    sharded_state_dict.update(module_sharded_state_dict)
-
-            # reset vp rank
-            if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-                parallel_state.set_virtual_pipeline_model_parallel_rank(0)
+        sharded_state_dict = super().sharded_state_dict(prefix=prefix)
             
-            # add in the reference policy weights
-            sharded_state_dict['reference_policy'] = make_sharded_tensors_for_checkpoint(self.ref_policy_state_dict, prefix)
+        # add in the reference policy weights
+        sharded_state_dict['reference_policy'] = make_sharded_tensors_for_checkpoint(self.ref_policy_state_dict, prefix)
 
-            return sharded_state_dict
+        return sharded_state_dict
 
     def get_logprob_output_only_func(self, inference_only=True):
         fwd_output_only_func = self.get_forward_output_only_func()
