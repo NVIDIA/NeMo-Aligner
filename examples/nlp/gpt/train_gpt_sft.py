@@ -37,6 +37,7 @@ from nemo_aligner.utils.train_script_utils import (
     add_custom_checkpoint_callback,
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
+    init_peft,
     init_using_ptl,
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
@@ -69,6 +70,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         gpt_cfg.activations_checkpoint_layers_per_pipeline = cfg.model.get(
             "activations_checkpoint_layers_per_pipeline", None
         )
+        gpt_cfg.peft = cfg.model.peft
         gpt_cfg.data = cfg.model.data
         gpt_cfg.optim = cfg.model.optim
         gpt_cfg.precision = cfg.trainer.precision
@@ -127,14 +129,17 @@ def main(cfg) -> None:
     with open_dict(cfg):
         cfg.model.precision = cfg.trainer.precision
 
-    ptl_model = load_from_nemo(
+    ptl_model, updated_cfg = load_from_nemo(
         GPTSFTModel,
         cfg,
         trainer,
         strict=True,
         modify_config_fn=_modify_config,
         restore_path=cfg.model.restore_from_path,
+        return_updated_cfg=True,
     )
+
+    init_peft(ptl_model, updated_cfg)
 
     with open_dict(cfg):
         # overwrite the model config with the config from the checkpoint

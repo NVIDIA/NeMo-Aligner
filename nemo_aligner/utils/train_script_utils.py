@@ -22,6 +22,8 @@ from pytorch_lightning.trainer import call
 from pytorch_lightning.trainer.states import TrainerFn
 
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
+from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
+from nemo.utils import logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.utils.utils import custom_save_ckpt_func, extract_value_from_ckpt
 
@@ -133,6 +135,28 @@ def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
 
 def extract_optimizer_scheduler_from_ptl_model(ptl_model):
     return ptl_model.optimizers().optimizer, ptl_model.lr_schedulers()
+
+
+def init_peft(ptl_model, updated_cfg):
+    """initialize peft weights"""
+
+    assert updated_cfg.peft.peft_scheme in ["lora", "none"], "Only support LoRA or Full finetuning"
+
+    peft_cfg_cls = PEFT_CONFIG_MAP[updated_cfg.peft.peft_scheme]
+    if updated_cfg.peft.restore_from_path is not None:
+        # initialize peft weights from a checkpoint instead of randomly
+        # This is not the same as resume training because optimizer states are not restored.
+        logging.info("PEFT Weights will be loaded from", updated_cfg.peft.restore_from_path)
+        ptl_model.load_adapters(updated_cfg.peft.restore_from_path, peft_cfg_cls(updated_cfg))
+    elif peft_cfg_cls is not None:
+        logging.info("Adding adapter weights to the model for PEFT")
+        ptl_model.add_adapter(peft_cfg_cls(updated_cfg))
+    else:
+        logging.info(f"Running full finetuning since no peft scheme is given.\n{ptl_model.summarize()}")
+
+    ptl_model.setup_complete = (
+        True  # used for PEFT, track only PEFT state dicts if ptl_model.setup_complete=True and ptl_model.use_peft=True
+    )
 
 
 @dataclass

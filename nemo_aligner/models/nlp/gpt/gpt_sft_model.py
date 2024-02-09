@@ -19,6 +19,8 @@ import torch
 from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from omegaconf.dictconfig import DictConfig
+from pytorch_lightning.trainer.trainer import Trainer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
@@ -28,6 +30,7 @@ from nemo.collections.nlp.modules.common.text_generation_utils import (
     get_default_sampling_params,
 )
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
+from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import (
@@ -42,9 +45,10 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import configure_batch_sizes
 
 
-class GPTSFTModel(MegatronGPTModel, SupervisedInterface):
-    def __init__(self, cfg, trainer):
-        super().__init__(cfg, trainer)
+class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
+    def __init__(self, cfg: DictConfig, trainer: Trainer):
+        super().__init__(cfg, trainer=trainer)
+
         inference_params = dict(cfg.get("inference", {}))
         # note that this will fail if import path is not available when the model is restored
         # this is by design as it might not be possible to use model correctly without a matching
