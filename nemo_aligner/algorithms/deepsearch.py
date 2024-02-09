@@ -140,7 +140,7 @@ class DeepSearchTrainer:
 
         metric_output = torch.as_tensor([num_correct, total], dtype=torch.long, device=torch.cuda.current_device())
         torch.distributed.all_reduce(metric_output, group=parallel_state.get_data_parallel_group())
-        num_correct, num_total = metric_output.tolist()
+        num_correct, total = metric_output.tolist()
 
         return {
             "global_total": total,
@@ -264,9 +264,6 @@ class DeepSearchTrainer:
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
                 # step_metrics.update({f"train_{k}": v for k, v in train_metrics.items()})
-
-                if torch.distributed.get_rank() == 0:
-                    print("### STEP", self.step, train_metrics)
 
                 self.step += 1
                 run_time_exceeded = self.run_timer.is_finished()
