@@ -203,6 +203,8 @@ class GPTHybridModel(GPTModel):
                 merge_attributes=merge_attributes,
                 attributes_weights=attribute_weights,
             )
+            # make sigmoid output 0
+            torch.nn.init.constant_(self.rm_head.bias.data, -10.0)
 
     def forward(
         self,

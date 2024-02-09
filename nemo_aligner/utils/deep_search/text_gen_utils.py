@@ -91,22 +91,22 @@ def dp_search(
         action = torch.cuda.IntTensor(batch_size, 1)
         action[:] = 0
 
-    cache_hit_indicator = []
-    if not init:
-        # check if the data hits the cache
-        cache_infer_results = []
-        for a, context_id in zip(action, context_ids):
-            infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, a.item())
-            if infer is not None:
-                cache_hit_indicator.append(True)
-                cache_infer_results.append(infer)
-            else:
-                cache_hit_indicator.append(False)
-        cache_hit_indicator = torch.cuda.BoolTensor(cache_hit_indicator)
-        context_tokens_tensor = context_tokens_tensor[~cache_hit_indicator]
-        context_length_tensor = context_length_tensor[~cache_hit_indicator]
-        action = action[~cache_hit_indicator]
-        context_ids = [context_ids[i] for i in range(len(context_ids)) if not cache_hit_indicator[i]]
+    # cache_hit_indicator = []
+    # if not init:
+    #     # check if the data hits the cache
+    #     cache_infer_results = []
+    #     for a, context_id in zip(action, context_ids):
+    #         infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, a.item())
+    #         if infer is not None:
+    #             cache_hit_indicator.append(True)
+    #             cache_infer_results.append(infer)
+    #         else:
+    #             cache_hit_indicator.append(False)
+    #     cache_hit_indicator = torch.cuda.BoolTensor(cache_hit_indicator)
+    #     context_tokens_tensor = context_tokens_tensor[~cache_hit_indicator]
+    #     context_length_tensor = context_length_tensor[~cache_hit_indicator]
+    #     action = action[~cache_hit_indicator]
+    #     context_ids = [context_ids[i] for i in range(len(context_ids)) if not cache_hit_indicator[i]]
 
     if len(context_tokens_tensor) > 0:
         true_context_length = None
@@ -131,27 +131,27 @@ def dp_search(
             true_context_length=true_context_length,
         )
 
-    if not init:
-        if sum(cache_hit_indicator) > 0:
-            actions = []
-            policys = []
-            values = []
-            count = 0
-            for cache_hit in cache_hit_indicator:
-                if cache_hit:
-                    infer = cache_infer_results.pop(0)
-                    actions.append(torch.cuda.IntTensor(infer["action"]))
-                    policys.append(torch.cuda.FloatTensor(infer["policy"]))
-                    values.append(torch.cuda.FloatTensor(infer["value"]))
-                else:
-                    # output_actions are tensors of shape [batch_size, top_k]
-                    actions.append(output_actions[count])
-                    policys.append(output_policys[count])
-                    values.append(output_values[count])
-                    count += 1
-            output_actions = torch.vstack(actions)
-            output_policys = torch.vstack(policys)
-            output_values = torch.hstack(values)
+    # if not init:
+    #     if sum(cache_hit_indicator) > 0:
+    #         actions = []
+    #         policys = []
+    #         values = []
+    #         count = 0
+    #         for cache_hit in cache_hit_indicator:
+    #             if cache_hit:
+    #                 infer = cache_infer_results.pop(0)
+    #                 actions.append(torch.cuda.IntTensor(infer["action"]))
+    #                 policys.append(torch.cuda.FloatTensor(infer["policy"]))
+    #                 values.append(torch.cuda.FloatTensor(infer["value"]))
+    #             else:
+    #                 # output_actions are tensors of shape [batch_size, top_k]
+    #                 actions.append(output_actions[count])
+    #                 policys.append(output_policys[count])
+    #                 values.append(output_values[count])
+    #                 count += 1
+    #         output_actions = torch.vstack(actions)
+    #         output_policys = torch.vstack(policys)
+    #         output_values = torch.hstack(values)
 
     output = {}
     output["action"] = output_actions
@@ -231,23 +231,23 @@ def search(
     chuck_size = batch_size // dp_size
     context_ids = context_ids[dp_rank * chuck_size : (dp_rank + 1) * chuck_size]
 
-    cache_hit_indicator = []
-    if not init:
-        # check if the data hits the cache
-        cache_infer_results = []
-        for a, context_id in zip(action, context_ids):
-            infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, a.item())
-            if infer is not None:
-                # print("cache hit", len(context_id), a.item())
-                cache_hit_indicator.append(True)
-                cache_infer_results.append(infer)
-            else:
-                cache_hit_indicator.append(False)
-        cache_hit_indicator = torch.cuda.BoolTensor(cache_hit_indicator)
-        context_tokens_tensor = context_tokens_tensor[~cache_hit_indicator]
-        context_length_tensor = context_length_tensor[~cache_hit_indicator]
-        action = action[~cache_hit_indicator]
-        context_ids = [context_ids[i] for i in range(len(context_ids)) if not cache_hit_indicator[i]]
+    # cache_hit_indicator = []
+    # if not init:
+    #     # check if the data hits the cache
+    #     cache_infer_results = []
+    #     for a, context_id in zip(action, context_ids):
+    #         infer = inference_strategy.search_db.get_infer_cache(session_info, context_id, a.item())
+    #         if infer is not None:
+    #             # print("cache hit", len(context_id), a.item())
+    #             cache_hit_indicator.append(True)
+    #             cache_infer_results.append(infer)
+    #         else:
+    #             cache_hit_indicator.append(False)
+    #     cache_hit_indicator = torch.cuda.BoolTensor(cache_hit_indicator)
+    #     context_tokens_tensor = context_tokens_tensor[~cache_hit_indicator]
+    #     context_length_tensor = context_length_tensor[~cache_hit_indicator]
+    #     action = action[~cache_hit_indicator]
+    #     context_ids = [context_ids[i] for i in range(len(context_ids)) if not cache_hit_indicator[i]]
 
     if len(context_tokens_tensor) > 0:
         true_context_length = None
@@ -272,28 +272,28 @@ def search(
             true_context_length=true_context_length,
         )
 
-    if not init:
-        if sum(cache_hit_indicator) > 0:
-            actions = []
-            policys = []
-            values = []
-            count = 0
-            for cache_hit in cache_hit_indicator:
-                if cache_hit:
-                    infer = cache_infer_results.pop(0)
-                    actions.append(torch.cuda.IntTensor(infer["action"]))
-                    policys.append(torch.cuda.FloatTensor(infer["policy"]))
-                    values.append(torch.cuda.FloatTensor(infer["value"]))
-                else:
-                    # output_actions are tensors of shape [batch_size, top_k]
-                    actions.append(output_actions[count])
-                    policys.append(output_policys[count])
-                    values.append(output_values[count])
-                    count += 1
-            output_actions = torch.vstack(actions)
-            output_policys = torch.vstack(policys)
-            output_values = torch.hstack(values)
-        # combine cache and non-cache results
+    # if not init:
+    #     if sum(cache_hit_indicator) > 0:
+    #         actions = []
+    #         policys = []
+    #         values = []
+    #         count = 0
+    #         for cache_hit in cache_hit_indicator:
+    #             if cache_hit:
+    #                 infer = cache_infer_results.pop(0)
+    #                 actions.append(torch.cuda.IntTensor(infer["action"]))
+    #                 policys.append(torch.cuda.FloatTensor(infer["policy"]))
+    #                 values.append(torch.cuda.FloatTensor(infer["value"]))
+    #             else:
+    #                 # output_actions are tensors of shape [batch_size, top_k]
+    #                 actions.append(output_actions[count])
+    #                 policys.append(output_policys[count])
+    #                 values.append(output_values[count])
+    #                 count += 1
+    #         output_actions = torch.vstack(actions)
+    #         output_policys = torch.vstack(policys)
+    #         output_values = torch.hstack(values)
+    #     # combine cache and non-cache results
 
     result_output_actions_list = gather_tensor(
         output_actions,

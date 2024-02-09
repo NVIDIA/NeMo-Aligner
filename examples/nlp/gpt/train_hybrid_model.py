@@ -14,7 +14,6 @@
 
 import datetime
 import os
-import threading
 
 import torch
 import torch.multiprocessing as mp
@@ -26,7 +25,7 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedback
-from nemo_aligner.utils.deep_search.mcts.mcts import MCTSParallel, ParallelSearch, deep_search
+from nemo_aligner.utils.deep_search.mcts.mcts import DeepSearch, MCTSParallel, ParallelSearch
 from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
 from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
@@ -129,6 +128,8 @@ def main(cfg) -> None:
         client_fun=get_client_fun(ptl_model, cfg.model.mcts.top_k, args["max_depth"], **strategy_args),
     )
 
+    ds = DeepSearch(mcts, args["max_depth"], args["temperature"], strategy, cfg.mcts.save_timer, cfg.mcts.cache_dir)
+
     for batch_id in range(args["num_self_play_iterations"]):
         # each dp worker should get a different batch of parallel searches
         # check if the filename exists
@@ -149,7 +150,7 @@ def main(cfg) -> None:
                 )
             )
 
-        buffer, buffer_value = deep_search(ps, mcts, args["max_depth"], args["temperature"])
+        buffer, buffer_value = ds.search(ps, batch_id)
         # serialize buffer to disk
         import pickle
 

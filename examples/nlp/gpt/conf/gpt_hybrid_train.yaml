@@ -45,6 +45,9 @@ model:
     dirichlet_alpha: 0.3 # parameter for dirichlet noise, the piror probability of the action happens 
     max_depth: 250  # maxium depth of the search tree
 
+    save_timer: 13800 # save the intermediate search results at 3 hours and 50 minutes
+    cache_dir: null  # cache dir for the search results
+
     top_k: 50
     end_strings: ["<extra_id_1>"]  # generation will stop when one of these tokens is generated
 
