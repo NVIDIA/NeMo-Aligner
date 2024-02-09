@@ -201,15 +201,21 @@ class MCTSParallel:
 
         if ps[0].node is not None:
             # the context is already infered
-            expandable_search = list(range(len(ps)))
-            actions, context_ids = self.get_input_action_depth(ps, expandable_search)
-            # result_dict = self.client.infer_batch(action=actions, depth=depths, context_ids=context_data, parameters={"session": self.session})
-            # need to remove the last token from the context id
-            infer_context_ids = [context_id[:-1] for context_id in context_ids]
-            result_dict = self.client_fun(action=actions, context_ids=infer_context_ids, session_info=self.session)
-            spg_policys = result_dict["policy"]
-            spg_actions = result_dict["action"]
-            c_ids = context_ids  # [old_context + (new.item(),)  for old_context, new in zip(context_ids, actions)]
+            # expandable_search = list(range(len(ps)))
+            # actions, context_ids = self.get_input_action_depth(ps, expandable_search)
+            for p in ps:
+                p.root = p.node
+                assert p.root.parent is None
+                p.root.action = -1
+            # spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
+
+            # # result_dict = self.client.infer_batch(action=actions, depth=depths, context_ids=context_data, parameters={"session": self.session})
+            # # need to remove the last token from the context id
+            # infer_context_ids = [context_id[:-1] for context_id in context_ids]
+            # result_dict = self.client_fun(action=actions, context_ids=infer_context_ids, session_info=self.session)
+            # spg_policys = result_dict["policy"]
+            # spg_actions = result_dict["action"]
+            # c_ids = context_ids  # [old_context + (new.item(),)  for old_context, new in zip(context_ids, actions)]
             # need to add the action to the context
         else:
             # we need to run inferecce for all context ids
@@ -248,16 +254,16 @@ class MCTSParallel:
                 context_id = tuple(spg.state)
                 c_ids.append(context_id)
 
-        for spg, spg_policy, spg_action, context_id in zip(ps, spg_policys, spg_actions, c_ids):
-            action_size = spg_action.shape[0]
+            for spg, spg_policy, spg_action, context_id in zip(ps, spg_policys, spg_actions, c_ids):
+                action_size = spg_action.shape[0]
 
-            spg_policy = (1 - self.args["dirichlet_epsilon"]) * spg_policy + self.args[
-                "dirichlet_epsilon"
-            ] * np.random.dirichlet([self.args["dirichlet_alpha"]] * action_size, size=1)[0]
-            # no need to handle the case that no valid moves
-            # because the we search the states[i] which has at least one valid move
-            spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
-            spg.root.expand(spg_policy, spg_action)
+                spg_policy = (1 - self.args["dirichlet_epsilon"]) * spg_policy + self.args[
+                    "dirichlet_epsilon"
+                ] * np.random.dirichlet([self.args["dirichlet_alpha"]] * action_size, size=1)[0]
+                # no need to handle the case that no valid moves
+                # because the we search the states[i] which has at least one valid move
+                spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
+                spg.root.expand(spg_policy, spg_action)
 
         dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
@@ -418,6 +424,10 @@ class DeepSearch:
 
                 spg.state = spg.state + [action]
                 fake_node = Node(spg.state, parent=None, action=action, prior=0.0, visit_count=0)
+                # pass in the states from selected child node to the fake node
+                child_node = spg.root.children[action]
+                assert child_node.action == fake_node.action
+                fake_node.children = child_node.children
                 spg.node = fake_node
 
                 #  get the value and termination condition from the current taken `action`
