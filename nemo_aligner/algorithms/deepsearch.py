@@ -175,22 +175,6 @@ class DeepSearchTrainer:
         dp_size = parallel_state.get_data_parallel_world_size()
         # TODO: add consumed samples logic
         # TODO: add optimizer step bump
-        for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
-            # at least if we do this the lr are not synced between the 2 stages of training
-            self.scheduler.step(self.value_optimization_step)
-
-            metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
-            metrics.update({"value_optimization_step": self.value_optimization_step})
-
-            self.consumed_samples_values += self.model.cfg.global_batch_size // dp_size
-            metrics.update({"consumed_samples_values": self.consumed_samples_values})
-
-            self.value_optimization_step += 1
-
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="train_optim_value/",
-            )
-
         for _, batch in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter):
             # at least if we do this the lr are not synced between the 2 stages of training
             self.scheduler.step(self.policy_optimization_step)
@@ -205,6 +189,22 @@ class DeepSearchTrainer:
 
             self.logger.log_metrics(
                 metrics, step=self.step, prefix="train_optim_policy/",
+            )
+
+        for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
+            # at least if we do this the lr are not synced between the 2 stages of training
+            self.scheduler.step(self.value_optimization_step)
+
+            metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
+            metrics.update({"value_optimization_step": self.value_optimization_step})
+
+            self.consumed_samples_values += self.model.cfg.global_batch_size // dp_size
+            metrics.update({"consumed_samples_values": self.consumed_samples_values})
+
+            self.value_optimization_step += 1
+
+            self.logger.log_metrics(
+                metrics, step=self.step, prefix="train_optim_value/",
             )
 
         self.model.finish_training()
