@@ -13,8 +13,6 @@ trainer:
     gradient_clip_val: 1.0
     limit_val_batches: 0.1
 
-    num_optim_steps_per_search: 20
-
     # how many batches per training step
     num_value_batches: 2
     num_policy_batches: 1
