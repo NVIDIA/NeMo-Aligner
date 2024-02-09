@@ -128,7 +128,7 @@ def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
 
 
 class FakeScheduler:
-    def step(self):
+    def step(self, *args, **kwargs):
         ...
 
 

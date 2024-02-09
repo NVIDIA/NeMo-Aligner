@@ -233,16 +233,22 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         gbs_by_dp, sequence_length = batch["tokens"].size()
 
         if batch["train_mode"] == TrainMode.VALUE_ONLY:
-            # hack because critic might load differently sized data
-            # maybe we can get away with not having to do this?...
-# num_micro_batches = 1
             # TODO(geshen): if this hangs, fix it...
-# num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
-            num_micro_batches = 1
+            # hack... this actually tosses out data :(
+            # TODO: remove  below
+            num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
+            output = torch.tensor([num_micro_batches], dtype=torch.long, device=torch.cuda.current_device())
+            torch.distributed.all_reduce(
+                output, op=torch.distributed.ReduceOp.MIN, group=parallel_state.get_data_parallel_group()
+            )
+            num_micro_batches = output.item()
+            # TODO: remove above
         else:
             num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
 
         batch["train_mode"] = torch.as_tensor([batch["train_mode"]] * gbs_by_dp)
+
+        batch = {k: v[:num_micro_batches] for k, v in batch.items()}
 
         data_iter = get_iterator_k_split(batch, num_micro_batches)
 

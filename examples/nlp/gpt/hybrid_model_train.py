@@ -250,7 +250,7 @@ def main(cfg) -> None:
     train_value_dataloader = build_dataloader(
         cfg=cfg,
         dataset=value_data,
-        consumed_samples=consumed_samples,
+        consumed_samples=consumed_samples_values,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
@@ -261,7 +261,7 @@ def main(cfg) -> None:
     val_dataloader = build_dataloader(
         cfg=cfg,
         dataset=val_ds,
-        consumed_samples=consumed_samples_values,
+        consumed_samples=0,
         mbs=cfg.model.inference.micro_batch_size,
         gbs=cfg.model.inference.micro_batch_size * dp_size,
         load_gbs=False,

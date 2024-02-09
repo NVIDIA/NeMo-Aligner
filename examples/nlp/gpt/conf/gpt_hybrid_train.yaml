@@ -11,6 +11,7 @@ trainer:
     save_interval: ${.val_check_interval}
 
     gradient_clip_val: 1.0
+    # TODO(geshen): note that the val size changes because of DP size..
     limit_val_batches: 0.1
 
     # how many batches per training step
@@ -141,10 +142,10 @@ exp_manager:
   resume_ignore_no_checkpoint: True
   create_checkpoint_callback: False
   checkpoint_callback_params:
-    monitor: val_accuracy
-    save_top_k: 1
+    monitor: val_global_accuracy
+    save_top_k: 3
     mode: max
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt-{step}-{consumed_samples}-{optimization_step}-{val_accuracy:.3f}'
+    filename: 'megatron_gpt-{step}-{consumed_samples}-{consumed_samples_values}-{policy_optimization_step}-{value_optimization_step}-{value_optimization_step}-{val_global_accuracy:.3f}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}

@@ -172,12 +172,19 @@ class DeepSearchTrainer:
 
     def run_training(self, policy_dataloader_iter, value_dataloader_iter):
         self.model.prepare_for_training()
+        dp_size = parallel_state.get_data_parallel_world_size()
         # TODO: add consumed samples logic
         # TODO: add optimizer step bump
-
         for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
+            # at least if we do this the lr are not synced between the 2 stages of training
+            self.scheduler.step(self.value_optimization_step)
+
             metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
             metrics.update({"value_optimization_step": self.value_optimization_step})
+
+            self.consumed_samples_values += self.model.cfg.global_batch_size // dp_size
+            metrics.update({"consumed_samples_values": self.consumed_samples_values})
+
             self.value_optimization_step += 1
 
             self.logger.log_metrics(
@@ -185,9 +192,16 @@ class DeepSearchTrainer:
             )
 
         for _, batch in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter):
+            # at least if we do this the lr are not synced between the 2 stages of training
+            self.scheduler.step(self.policy_optimization_step)
+
             metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
             metrics.update({"policy_optimization_step": self.policy_optimization_step})
+
+            self.consumed_samples += batch["tokens"].size(0) * dp_size
             self.policy_optimization_step += 1
+
+            metrics.update({"consumed_samples": self.consumed_samples})
 
             self.logger.log_metrics(
                 metrics, step=self.step, prefix="train_optim_policy/",
@@ -221,6 +235,7 @@ class DeepSearchTrainer:
                     table["reward"],
                     table["ground_truth_answer"],
                 ]
+
             self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
             self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
             val_metrics.clear()
@@ -248,9 +263,14 @@ class DeepSearchTrainer:
                 train_metrics = self.run_training(policy_dataloader_iter, value_dataloader_iter)
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
-# step_metrics.update({f"train_{k}": v for k, v in train_metrics.items()})
+                # step_metrics.update({f"train_{k}": v for k, v in train_metrics.items()})
 
+                if torch.distributed.get_rank() == 0:
+                    print("### STEP", self.step, train_metrics)
+
+                self.step += 1
                 run_time_exceeded = self.run_timer.is_finished()
+
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
@@ -259,8 +279,6 @@ class DeepSearchTrainer:
                     1.0,  # TODO:(geshen): allow for limit val batches
                     run_time_exceeded=run_time_exceeded,
                 )
-
-                self.step += 1
 
                 if run_val:
                     self.timer.start("validation_time")
@@ -283,6 +301,7 @@ class DeepSearchTrainer:
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update(timing_metrics)
+                step_metrics["epoch"] = self.epoch
                 self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
 
                 global_pbar.set_postfix(step_metrics)
@@ -325,8 +344,8 @@ class DeepSearchTrainer:
         self.step = state_dict["step"]
         self.consumed_samples = state_dict["consumed_samples"]
         self.consumed_samples_values = state_dict["consumed_samples_values"]
-        self.policy_optimization_step = state_dict["self.policy_optimization_step"]
-        self.value_optimization_step = state_dict["self.value_optimization_step"]
+        self.policy_optimization_step = state_dict["policy_optimization_step"]
+        self.value_optimization_step = state_dict["value_optimization_step"]
 
         current_state_dict = self.state_dict()
         state_vals = [current_state_dict[k] for k in sorted(current_state_dict)]
