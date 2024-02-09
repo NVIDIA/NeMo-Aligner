@@ -67,7 +67,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         self.ref_policy_kl_penalty = self.cfg.spin.get("ref_policy_kl_penalty", 0.0)
         
-        #self.register_load_state_dict_post_hook(self.post_load_state_dict_hook)
+        self._register_load_state_dict_pre_hook(self.pre_load_state_dict_hook, with_module=False)
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, masks):
@@ -396,9 +396,15 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         self.distributed_adam_offload_manager = None
     
-    def post_load_state_dict_hook(self, incompatible_keys) -> None:
-        return None
-    
+    def pre_load_state_dict_hook(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        [print("*** STATE DICT HAS: ", x, flush=True) for x in state_dict.keys() if "reference_policy" in x];
+        a = state_dict.pop(f'{prefix}reference_policy', None)
+        b = state_dict.pop('reference_policy', None)
+        if a is not None:
+            self.ref_policy_state_dict = a
+        if b is not None:
+            self.ref_policy_state_dict = b
+    '''
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
         [print("*** STATE DICT HAS: ", x, flush=True) for x in state_dict.keys() if "reference_policy" in x];
         a = state_dict.pop(f'{prefix}reference_policy', None)
@@ -409,12 +415,13 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             self.ref_policy_state_dict = b
         
         return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
-    
+    '''
     def sharded_state_dict(self, prefix: str = ''):
         sharded_state_dict = super().sharded_state_dict(prefix=prefix)
             
         # add in the reference policy weights
-        sharded_state_dict['reference_policy'] = make_sharded_tensors_for_checkpoint(self.ref_policy_state_dict, prefix)
+        if self.ref_policy_state_dict is not None:
+            sharded_state_dict['reference_policy'] = make_sharded_tensors_for_checkpoint(self.ref_policy_state_dict, prefix)
 
         return sharded_state_dict
 
