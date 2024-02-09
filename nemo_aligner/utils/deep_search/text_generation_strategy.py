@@ -435,12 +435,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                 # root node, need to add all context tokens
                 tokens = context_tokens[bid, :context_length].cpu().numpy().tolist()
                 node = Node(
-                    state=state,
-                    parent=parent_node,
-                    action=tokens,
-                    prior=prior_data,
-                    visit_count=0,
-                    value_sum=value,
+                    state=state, parent=parent_node, action=tokens, prior=prior_data, visit_count=0, value_sum=value,
                 )
                 self.search_db.add_root(session_info, context_id, node)
             else:
