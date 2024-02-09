@@ -19,7 +19,6 @@ from omegaconf.omegaconf import OmegaConf
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo_aligner.algorithms.dpo import DPOTrainer, dpo_custom_collate
 from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_dpo_datasets
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
@@ -29,6 +28,7 @@ from nemo_aligner.utils.train_script_utils import (
     add_custom_checkpoint_callback,
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
+    init_peft,
     init_using_ptl,
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
@@ -52,31 +52,18 @@ def main(cfg) -> None:
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
-    ptl_model, updated_cfg = load_from_nemo(
+    ptl_model = load_from_nemo(
         MegatronGPTDPOModel,
         cfg.model,
         trainer,
         strict=True,
         load_base_model_only=False,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
-        return_updated_cfg=True
     )
-    ptl_model.setup_complete = (
-        True  # used for PEFT, track only PEFT state dicts if ptl_model.setup_complete=True and ptl_model.use_peft=True
-    )
-    peft_cfg_cls = PEFT_CONFIG_MAP[cfg.model.peft.peft_scheme]
-    if cfg.model.peft.restore_from_path is not None:
-        # initialize peft weights from a checkpoint instead of randomly
-        # This is not the same as resume training because optimizer states are not restored.
-        logging.info("PEFT Weights will be loaded from", cfg.model.peft.restore_from_path)
-        ptl_model.load_adapters(cfg.model.peft.restore_from_path, peft_cfg_cls(updated_cfg))
-    elif peft_cfg_cls is not None:
-        logging.info("Adding adapter weights to the model for PEFT")
-        ptl_model.add_adapter(peft_cfg_cls(updated_cfg))
-    else:
-        logging.info(f"Running full finetuning since no peft scheme is given.\n{ptl_model.summarize()}")
 
-    if updated_cfg.peft.peft_scheme == "lora":
+    init_peft(ptl_model, cfg.model)
+
+    if cfg.model.peft.peft_scheme == "lora":
         ptl_model.ref_policy_state_dict = None
     else:
         ref_policy_state_dict = retrieve_model_state_dict_in_cpu(

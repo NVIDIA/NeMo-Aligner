@@ -28,8 +28,8 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
     get_iterator_k_split,
     get_ltor_masks_and_position_ids,
 )
-from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
+from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, from_parallel_logits_to_logprobs
@@ -373,9 +373,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             for _, module in self.named_modules():
                 if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
                     module.set_enabled_adapters(enabled=False)
-            
+
             ref_log_probs = self.get_logprob_batch(global_batch)
-            
+
             # enable adapters after calculating ref_log_probs
             for _, module in self.named_modules():
                 if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
