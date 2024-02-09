@@ -67,8 +67,8 @@ model:
       end_strings: ${model.mcts.end_strings}
 
     length_params:
-      max_length: 1024
-      min_length: 0
+      max_length: ${int_div:${model.encoder_seq_length}, 2}
+      min_length: 1
   
   offload_adam_states: False
 
