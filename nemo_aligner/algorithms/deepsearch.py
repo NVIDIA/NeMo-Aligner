@@ -116,7 +116,7 @@ class DeepSearchTrainer:
 
         loop_iter = zip(range(self.limit_val_batches), dataloader)
         inference_pbar = tqdm(
-            loop_iter, total=min(len(dataloader), self.limit_val_batches), leave=True, desc="Validation"
+            loop_iter, total=min(len(dataloader), self.limit_val_batches), leave=True, desc="Inference"
         )
 
         for (_, batch) in inference_pbar:
