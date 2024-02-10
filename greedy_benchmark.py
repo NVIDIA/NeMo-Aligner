@@ -28,7 +28,7 @@ def encode_context_data(context_data):
 
 
 tokenizer = sentencepiece.SentencePieceProcessor(
-    "/dataset/models/unpack_10b_solar_steerlm/0c96894aab214922922f717b00c1a8e4_solar_tokenizer.model"
+    "/datasets/models/unpack_10b_solar_steerlm/0c96894aab214922922f717b00c1a8e4_solar_tokenizer.model"
 )
 ### first evaluation to construct the root node and its children nodes
 input_text = ["how are you?", "how large is the universe?"]
