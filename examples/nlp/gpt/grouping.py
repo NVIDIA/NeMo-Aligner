@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-CACHE_DIR = ""
+CACHE_DIR = "/home/geshen/mcts/NeMo-Aligner/examples/nlp/gpt/cache_dir"
 
 GLOBAL_CONTEXT_LENGTH_DICT = {}
 
