@@ -193,6 +193,7 @@ class DeepSearchTrainer:
             self.logger.log_metrics(
                 metrics, step=self.step, prefix="train_optim_policy/",
             )
+            print("policy metrics", self.step, metrics)
 
         for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
             # at least if we do this the lr are not synced between the 2 stages of training
@@ -209,6 +210,8 @@ class DeepSearchTrainer:
             self.logger.log_metrics(
                 metrics, step=self.step, prefix="train_optim_value/",
             )
+
+            print("value metrics", self.step, metrics)
 
         self.model.finish_training()
         return metrics
@@ -258,18 +261,13 @@ class DeepSearchTrainer:
     def fit(self):
         self.run_timer.start_time()
 
-        if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
-            # because we need to figure out a nice way to reset the shuffling on our dataset
-            # otherwise epoch > 1 will loop over the dataset in the same order
-            raise ValueError("epoch > 1 is not supported")
-
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
-        if len(epoch_iter) <= 0:
-            # epoch done
-            return
+
+        if self.cfg.max_epochs > 1:
+            print("### MAKE SURE YOU ARE RESETTING THE SAMPLER FOR THE LOADERS OTHERWISE DATALOADING ORDER THE SAME")
 
         if self.step == 0:
-            self.run_validation()
+# self.run_validation()
             self.run_train_evaluation()
 
         for _ in epoch_iter:
@@ -310,10 +308,10 @@ class DeepSearchTrainer:
                 )
 
                 if run_val:
-                    val_metrics = self.run_validation()
+# val_metrics = self.run_validation()
                     train_eval_metrics = self.run_train_evaluation()
                     step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
-                    step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
+# step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch
