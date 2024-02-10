@@ -211,7 +211,6 @@ class DeepSearchTrainer:
             self.logger.log_metrics(
                 metrics, step=self.step, prefix="train_optim_policy/",
             )
-            print("policy metrics", self.step, metrics)
 
         for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
             # at least if we do this the lr are not synced between the 2 stages of training
@@ -227,7 +226,6 @@ class DeepSearchTrainer:
                 metrics, step=self.step, prefix="train_optim_value/",
             )
 
-            print("value metrics", self.step, metrics)
 
         self.model.finish_training()
         return metrics
@@ -288,17 +286,13 @@ class DeepSearchTrainer:
 
         for _ in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
-            loop_iter = range(self.step, self.max_steps)
-
-            # TODO(geshen): to change for when we support > 1 epoch
-            if len(loop_iter) <= 0:
-                return  # training ended
+            loop_iter = range(self.step, self.max_steps * (self.epoch + 1))
 
             policy_dataloader_iter = iter(self.train_policy_dataloader)
             value_dataloader_iter = iter(self.train_value_dataloader)
 
             global_pbar = tqdm(
-                loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="DeepSearch Global Step"
+                loop_iter, initial=self.step, total=self.max_steps * (self.epoch+1), leave=True, desc="DeepSearch Global Step"
             )
 
             for _ in global_pbar:
@@ -316,7 +310,7 @@ class DeepSearchTrainer:
 
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
-                    self.max_steps,
+                    self.max_steps * (self.epoch + 1),
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
                     self.limit_val_batches,
@@ -342,7 +336,7 @@ class DeepSearchTrainer:
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
-
+                
             self.epoch += 1
 
     def set_max_steps(self):
