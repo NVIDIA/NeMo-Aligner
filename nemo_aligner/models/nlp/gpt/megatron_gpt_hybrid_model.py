@@ -167,7 +167,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             if torch.any(policy_mask):
                 policy_loss = masked_mean(policy_loss, policy_mask)
             else:
-                policy_loss = policy_loss.sum()
+                policy_loss = (policy_loss * policy_mask).sum()
 
         return policy_loss
 
@@ -219,7 +219,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     {
                         "loss": reduced_loss.detach(),
                         "value_loss": reduced_value_loss.detach(),
-                        "policy_loss": reduced_policy_loss.detach(),
+                        "policy_loss": -reduced_policy_loss.detach(),
                     },
                 )
 

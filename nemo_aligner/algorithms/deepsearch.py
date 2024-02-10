@@ -305,7 +305,7 @@ class DeepSearchTrainer:
                     self.max_steps,
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
-                    1.0,  # TODO:(geshen): allow for limit val batches
+                    self.limit_val_batches,
                     run_time_exceeded=run_time_exceeded,
                 )
 
