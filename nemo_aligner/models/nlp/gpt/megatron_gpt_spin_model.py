@@ -66,8 +66,6 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         self.to_offload_adam_states = self.cfg.spin.offload_adam_states
 
         self.ref_policy_kl_penalty = self.cfg.spin.get("ref_policy_kl_penalty", 0.0)
-        
-        self._register_load_state_dict_pre_hook(self.pre_load_state_dict_hook, with_module=False)
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, masks):
@@ -395,8 +393,9 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             self.distributed_adam_offload_manager.__exit__(None, None, None)
 
         self.distributed_adam_offload_manager = None
-    
+    '''
     def pre_load_state_dict_hook(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
+        print("**************** pre_load_state_dict_hook called **************** ", flush=True)
         [print("*** STATE DICT HAS: ", x, flush=True) for x in state_dict.keys() if "reference_policy" in x];
         a = state_dict.pop(f'{prefix}reference_policy', None)
         b = state_dict.pop('reference_policy', None)
@@ -404,7 +403,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             self.ref_policy_state_dict = a
         if b is not None:
             self.ref_policy_state_dict = b
-    '''
+    
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
         [print("*** STATE DICT HAS: ", x, flush=True) for x in state_dict.keys() if "reference_policy" in x];
         a = state_dict.pop(f'{prefix}reference_policy', None)
@@ -424,7 +423,43 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             sharded_state_dict['reference_policy'] = make_sharded_tensors_for_checkpoint(self.ref_policy_state_dict, prefix)
 
         return sharded_state_dict
+    
+    def on_load_checkpoint(self, checkpoint) -> None:
+        """LightningModule hook:
+        https://pytorch-lightning.readthedocs.io/en/stable/common/lightning_module.html#on-load-checkpoint
+        """
 
+        # mcore uses distributed checkpointing
+        if self.mcore_gpt:
+            # checkpoint keys: ['epoch', 'global_step', 'pytorch-lightning_version', 'state_dict', 'loops', 'callbacks', 'optimizer_states', 'lr_schedulers', 'hparams_name', 'hyper_parameters']
+            if 'state_dict' in checkpoint and checkpoint['state_dict']:
+                for index, module in enumerate(self.get_gpt_module_list()):
+                    if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+                        checkpoint_state_dict = checkpoint['state_dict'][f'model_{index}']
+                    else:
+                        checkpoint_state_dict = checkpoint['state_dict']
+                    # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
+                    checkpoint_state_dict = {
+                        key.replace('model.', ''): checkpoint_state_dict.pop(key)
+                        for key in list(checkpoint_state_dict.keys())
+                    }
+                    ref_policy = checkpoint_state_dict.pop('reference_policy', None)
+                    if ref_policy is not None:
+                        self.ref_policy_state_dict = ref_policy
+                    module.load_state_dict(checkpoint_state_dict, strict=True)
+            else:
+                # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
+                # see NLPModel.on_load_checkpoint
+                checkpoint['state_dict'] = {}
+
+        # legacy checkpointing for interleaved
+        else:
+            if isinstance(self.model, list):
+                for i in range(len(self.model)):
+                    parallel_state.set_virtual_pipeline_model_parallel_rank(i)
+                    self.model[i].module.load_state_dict(checkpoint[f'model{i}'], strict=True)
+                parallel_state.set_virtual_pipeline_model_parallel_rank(0)
+    
     def get_logprob_output_only_func(self, inference_only=True):
         fwd_output_only_func = self.get_forward_output_only_func()
 
