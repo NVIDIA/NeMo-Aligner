@@ -240,12 +240,12 @@ class GPTHybridModel(GPTModel):
             rotary_pos_emb = None
             if self.position_embedding_type == "rope":
                 rotary_seq_len = self.rotary_pos_emb.get_rotary_seq_len(
-                    inference_params, self.value_head, decoder_input, self.head_config
+                    inference_params, self.value_head, hidden_states_raw.detach(), self.head_config
                 )
                 rotary_pos_emb = self.rotary_pos_emb(rotary_seq_len)
 
             hidden_states_raw = self.value_head(
-                hidden_states_raw,
+                hidden_states_raw.detach(),
                 attention_mask=attention_mask,
                 inference_params=inference_params,
                 rotary_pos_emb=rotary_pos_emb,

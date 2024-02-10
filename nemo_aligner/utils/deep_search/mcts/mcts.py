@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
 import math
 import os
 import pickle
@@ -267,9 +268,7 @@ class MCTSParallel:
 
         dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
-        for search in tqdm.tqdm(
-            range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False, position=2 * dp_rank + 1
-        ):
+        for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False):
             for spg in ps:
                 # spg.node is to save the node that needs to be expanded
                 spg.node = None
@@ -443,8 +442,24 @@ class DeepSearch:
                         for tokens, hist_action_probs, actions in spg.memory:
                             hist_outcome = value
                             # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                            return_memory.append((tokens, hist_action_probs, hist_outcome, actions, spg.data_id))
-                    return_value_memory.append((list(spg.value_memory), spg.data_id, backup_root_states[i]))
+                            return_memory.append(
+                                {
+                                    "tokens": tokens,
+                                    "action_probs": hist_action_probs,
+                                    "reward": hist_outcome,
+                                    "actions": actions,
+                                    "data_id": spg.data_id,
+                                    "context_length": len(backup_root_states[i]),
+                                }
+                            )
+                    return_value_memory.append(
+                        {
+                            "value_memory": list(spg.value_memory),
+                            "data_id": spg.data_id,
+                            "backup_root_states": backup_root_states[i],
+                        }
+                    )
+
                     del parallel_searches[i]
                     del backup_root_states[i]
 

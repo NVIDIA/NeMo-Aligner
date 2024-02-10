@@ -12,15 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import warnings
-from typing import Any, Dict, List, Union
+
+# from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
+from contextlib import nullcontext
+from typing import Any, Dict
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
-from megatron.core import parallel_state
+from megatron.core import InferenceParams, parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.tensor_parallel.mappings import gather_from_tensor_model_parallel_region
+from megatron.core.utils import divide
+from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -30,15 +35,12 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
     get_iterator_k_split,
     get_ltor_masks_and_position_ids,
 )
+from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.optim.distributed_adam import _str_to_dtype
-from nemo.utils import AppState, logging
-from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
-
-# from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
+from nemo.utils import logging
+from nemo_aligner.algorithms.deepsearch import TrainMode
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor
-from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -48,9 +50,10 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
+from nemo_aligner.utils.utils import configure_batch_sizes, masked_mean, offload_distributed_adam
 
 
-class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
+class MegatronGPTHybridModel(MegatronGPTModel):
     """
     Megatron GPT Reward Model Training.
     """
@@ -72,6 +75,16 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         if self.enable_standardization:
             self.rew_mean = cfg.reward_standardization.mean
             self.rew_std = cfg.reward_standardization.std
+
+        self.to_offload_adam_states = self.cfg.offload_adam_states
+
+        self.distributed_adam_offload_manager = None
+
+        self.value_loss_weight = self.cfg.mcts.train.value_weight
+        self.policy_loss_weight = self.cfg.mcts.train.policy_weight
+
+        self.length_params = OmegaConf.to_container(self.cfg.inference.length_params, resolve=True)
+        self.sampling_params = OmegaConf.to_container(self.cfg.inference.sampling_params, resolve=True)
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
@@ -119,209 +132,208 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         )
         return model
 
-    def get_forward_output_and_loss_func(self, validation_step=False):
-        def fwd_output_and_loss_func(dataloader_iter, model):
-            batch = next(dataloader_iter)
+    def compute_value_loss(self, batch, values):
+        value_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
+
+        if batch["train_mode"][0] == TrainMode.VALUE_ONLY and (self.value_loss_weight > 0):
+            rewards = batch["reward"].view(-1, 1)
+            # TODO(geshen); the mask contains the last <extra_id_1> token as well
+            # we may not want to include this, but it doesn't really matter
+            # because the model is forced to stop by nemo generate anyway
+            mask = batch["mcts_mask"]
+
+            # TODO(geshen): change to cross entropy
+            value_loss = (values - rewards) ** 2
+            value_loss = masked_mean(self.value_loss_weight * value_loss, mask)
+
+        return value_loss
+
+    def compute_policy_loss(self, batch, logits):
+        policy_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
+        if batch["train_mode"][0] == TrainMode.POLICY_ONLY and (self.policy_loss_weight > 0):
+            # slow on TP
+            logits = gather_from_tensor_model_parallel_region(logits)
+            log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+
+            actions = batch["actions"]
+            action_probs = batch["action_probs"]
+            rewards = batch["reward"]
+            mask = batch["mcts_mask"]
+
+            policy_mask = (rewards > 0) & mask
+            policy_loss = (log_probs.gather(dim=-1, index=actions.long()) * action_probs).sum(-1)
+            policy_loss = self.policy_loss_weight * policy_loss
+
+            if torch.any(policy_mask):
+                policy_loss = masked_mean(policy_loss, policy_mask)
+            else:
+                policy_loss = (policy_loss * policy_mask).sum()
+
+        return policy_loss
+
+    def get_hybrid_forward_output_and_loss_func(self):
+        def fwd_output_and_loss_func(data_iterator, model):
+            batch = next(data_iterator)
+
+            tokens = batch["tokens"]
+
+            attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+                data=tokens,
+                eod_token=self.tokenizer.eos_id,
+                reset_position_ids=False,
+                reset_attention_mask=False,
+                eod_mask_loss=False,
+            )
+
+            batch = batch | {"position_ids": position_ids, "attention_mask": attention_mask}
 
             required_keys = set()
             if parallel_state.get_pipeline_model_parallel_world_size() == 1:
                 required_keys.update(batch.keys())
             else:
-                # there is a problem with apex ignoring the mask on the older models
-                # so we will always give the attention mask
                 required_keys.add("attention_mask")
 
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("chosen", "rejected", "position_ids"))
+                    required_keys.update(("tokens", "position_ids", "train_mode"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("chosen_length", "rejected_length", "loss_mask"))
+                    required_keys.update(("tokens", "actions", "action_probs", "reward", "mcts_mask", "train_mode"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            # only do the torch.cat if it's available
-            lengths, tokens = None, None
-            position_ids = (
-                torch.cat((batch["position_ids"], batch["position_ids"]), dim=0)
-                if batch["position_ids"] is not None
-                else None
-            )
+            parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None)
 
-            if batch["chosen_length"] is not None and batch["rejected_length"] is not None:
-                # Combine chosen and rejected lengths and then tokens.
-                lengths = torch.cat((batch["chosen_length"], batch["rejected_length"]), dim=0)
+            def loss_func(parallel_logits):
+                logits, values = parallel_logits
 
-            if batch["chosen"] is not None and batch["rejected"] is not None:
-                tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
+                policy_loss = self.compute_policy_loss(batch, logits)
+                value_loss = self.compute_value_loss(batch, values)
 
-            forward_args = {
-                "input_ids": tokens,
-                "lengths": lengths,
-                "position_ids": position_ids,
-                "attention_mask": batch["attention_mask"],
-                "labels": None,
-            }
+                loss = value_loss - policy_loss
+                reduced_loss, reduced_value_loss, reduced_policy_loss = average_losses_across_data_parallel_group(
+                    [loss, value_loss, policy_loss]
+                )
 
-            output_tensor = model(**forward_args)
+                return (
+                    loss,
+                    {
+                        "loss": reduced_loss.detach(),
+                        "value_loss": reduced_value_loss.detach(),
+                        "policy_loss": -reduced_policy_loss.detach(),
+                    },
+                )
 
-            # in this nemo version the model and autocast dtypes are not synced
-            # so we need to explicitly cast it
-            if not parallel_state.is_pipeline_last_stage():
-                output_tensor = output_tensor.to(dtype=self.autocast_dtype)
-
-            @torch.no_grad()
-            def gather_and_split_rewards(rewards_out):
-                rewards_out = rewards_out.detach()
-
-                dp_group = parallel_state.get_data_parallel_group()
-                output_list = [torch.zeros_like(rewards_out) for _ in range(dp_group.size())]
-
-                # gather it to compute the std later on
-                torch.distributed.all_gather(output_list, output_tensor, group=dp_group)
-
-                # output_list is a list of tensors with len == number of DP workers
-                # we need to split each of these tensors and concat them back into a single tensor for chosen and rejected rewards
-                split_iter = map(self.split_output_tensor, output_list)
-
-                # go from [(out_chosen_dp0, out_rejected_dp0), (out_chosen_dp1, out_rejected_dp1)] ->
-                # [out_chosen_dp0, out_chosen_dp1], [out_rejected_dp0, out_rejected_dp1]
-                out_chosen, out_rejected = map(torch.cat, zip(*split_iter))
-
-                return out_chosen.flatten(), out_rejected.flatten()
-
-            def loss_func(output_tensor):
-                # Loss per micro batch (ub).
-                loss_for_ub, acc_chosen = self.loss_func(output_tensor)
-                if validation_step and not self.cfg.data.get("validation_drop_last", True):
-                    num_valid_tokens_in_ub = batch["loss_mask"].sum()
-                    if loss_for_ub.isnan():
-                        assert batch["loss_mask"].count_nonzero() == 0, "Got NaN loss with non-empty input"
-                        loss_sum_for_ub = torch.zeros_like(num_valid_tokens_in_ub)
-                    else:
-                        loss_sum_for_ub = num_valid_tokens_in_ub * loss_for_ub
-
-                    loss_sum_and_ub_size_all_gpu = torch.cat(
-                        [
-                            loss_sum_for_ub.clone().detach().view(1),
-                            torch.tensor([num_valid_tokens_in_ub]).cuda().clone().detach(),
-                        ]
-                    )
-                    torch.distributed.all_reduce(
-                        loss_sum_and_ub_size_all_gpu, group=parallel_state.get_data_parallel_group()
-                    )
-                    out_chosen, out_rejected = gather_and_split_rewards(output_tensor)
-
-                    return (
-                        loss_for_ub,
-                        {
-                            "loss_sum_and_ub_size": loss_sum_and_ub_size_all_gpu,
-                            "out_chosen": out_chosen,
-                            "out_rejected": out_rejected,
-                        },
-                    )
-                else:
-                    reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
-                    reduced_acc = average_losses_across_data_parallel_group([acc_chosen])
-
-                    out_chosen, out_rejected = gather_and_split_rewards(output_tensor)
-
-                    return (
-                        loss_for_ub,
-                        {
-                            "avg": reduced_loss,
-                            "acc": reduced_acc,
-                            "out_chosen": out_chosen,
-                            "out_rejected": out_rejected,
-                        },
-                    )
-
-            return output_tensor, loss_func
+            return parallel_logits, loss_func
 
         return fwd_output_and_loss_func
 
-    def split_output_tensor(self, output_tensor):
-        out_chosen, out_rejected = torch.split(output_tensor.float(), output_tensor.shape[0] // 2, dim=0)
-        return out_chosen, out_rejected
-
-    def loss_func(self, output_tensor):
-        out_chosen, out_rejected = self.split_output_tensor(output_tensor)
-        comp = out_chosen > out_rejected
-        acc_chosen = torch.sum(comp) / comp.shape[0]
-        loss = -torch.nn.functional.logsigmoid(out_chosen - out_rejected).mean()
-        return loss, acc_chosen
-
     def get_loss_and_metrics(self, batch, forward_only):
-        data_iter = get_iterator_k_split(batch, get_num_microbatches())
-        set_sync_funcs(self, forward_only)
+        # TODO(geshen): on the value because the batches are differently
+        # amount of num micro batches, we may hang
+        gbs_by_dp, sequence_length = batch["tokens"].size()
 
+        if batch["train_mode"] == TrainMode.VALUE_ONLY:
+            # TODO(geshen): if this hangs, fix it...
+            # hack... this actually tosses out data :(
+            # TODO: remove  below
+            num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
+            output = torch.tensor([num_micro_batches], dtype=torch.long, device=torch.cuda.current_device())
+            torch.distributed.all_reduce(
+                output, op=torch.distributed.ReduceOp.MIN, group=parallel_state.get_data_parallel_group()
+            )
+            num_micro_batches = output.item()
+            # TODO: remove above
+        else:
+            num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
+
+        batch["train_mode"] = torch.as_tensor([batch["train_mode"]] * gbs_by_dp)
+
+        batch = {k: v[:num_micro_batches] for k, v in batch.items()}
+
+        data_iter = get_iterator_k_split(batch, num_micro_batches)
+
+        set_sync_funcs(self, forward_only)
         fwd_bwd_function = get_forward_backward_func()
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
-            forward_step_func=self.get_forward_output_and_loss_func(forward_only),
+            forward_step_func=self.get_hybrid_forward_output_and_loss_func(),
             data_iterator=data_iter,
             model=self.model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=num_micro_batches,
             forward_only=forward_only,
-            seq_length=self.cfg.encoder_seq_length,
-            micro_batch_size=self.cfg.micro_batch_size
-            * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
+            seq_length=sequence_length,
+            micro_batch_size=self.cfg.micro_batch_size,
         )
 
-        # only the last stages of the pipeline return losses
-        if losses_reduced_per_micro_batch:
-            # NOTE: assume that the returned values are already gathered across the DP workers
-            rewards_chosen = torch.cat([item["out_chosen"] for item in losses_reduced_per_micro_batch])
-            rewards_rejected = torch.cat([item["out_rejected"] for item in losses_reduced_per_micro_batch])
+        metrics = {}
 
-            rewards_all = torch.cat((rewards_chosen, rewards_rejected))
-            rewards_chosen_mean = rewards_chosen.mean()
-            rewards_rejected_mean = rewards_rejected.mean()
-            rewards_all_mean = rewards_all.mean()
-            rewards_all_std = rewards_all.std()
+        for key in ["loss", "value_loss", "policy_loss"]:
+            if losses_reduced_per_micro_batch:
+                metric_mean = torch.stack(
+                    [loss_reduced[key] for loss_reduced in losses_reduced_per_micro_batch]
+                ).mean()
+            else:
+                metric_mean = torch.tensor(0.0, device=torch.cuda.current_device())
 
-            # average loss across micro batches
-            loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
-            loss_tensor = torch.concat(loss_tensors_list)
-            loss_mean = loss_tensor.mean()
-            acc_tensors_list = [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch]
+            torch.distributed.broadcast(metric_mean, get_last_rank())
 
-            if len(acc_tensors_list) == 1:
-                acc_tensor = acc_tensors_list[0]
-            elif len(acc_tensors_list) > 1:
-                acc_tensor = torch.concat(acc_tensors_list)
-            acc_mean = acc_tensor.mean()
-        else:
+            metrics[key] = metric_mean.cpu().item()
 
-            loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            acc_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+        return metrics["loss"], metrics
 
-            rewards_chosen_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            rewards_rejected_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            rewards_all_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            rewards_all_std = torch.tensor(0.0, device=torch.cuda.current_device())
+    def generate(self, inputs, length_params=None, sampling_params=None):
+        length_params = length_params or self.length_params
+        sampling_params = sampling_params or self.sampling_params
 
-        # we can only log on one rank if it is rank zero so we broadcast from last rank
-        torch.distributed.broadcast(loss_mean, get_last_rank())
-        torch.distributed.broadcast(acc_mean, get_last_rank())
+        return super().generate(inputs, length_params, sampling_params)
 
-        torch.distributed.broadcast(rewards_chosen_mean, get_last_rank())
-        torch.distributed.broadcast(rewards_rejected_mean, get_last_rank())
-        torch.distributed.broadcast(rewards_all_mean, get_last_rank())
-        torch.distributed.broadcast(rewards_all_std, get_last_rank())
+    def get_forward_output_only_func(self):
+        def fwd_output_only_func(dataloader_iter, model):
+            batch = next(dataloader_iter)
+            extra_arg = {}
+            if len(batch) == 3:
+                batch = [x.cuda() for x in batch]
+                tokens, attention_mask, position_ids = batch
+                attention_mask = attention_mask[0:1]
+            else:
+                (
+                    tokens,
+                    attention_mask,
+                    position_ids,
+                    set_inference_key_value_memory,
+                    inference_max_sequence_len,
+                ) = batch
+                tokens = tokens.cuda()
+                position_ids = position_ids.cuda()
+                if attention_mask is not None:
+                    attention_mask = attention_mask.cuda()
+                    attention_mask = attention_mask[0:1]
+                if self.mcore_gpt:
+                    # if first step, then clear KV cache, otherwise reuse inference_paarms
+                    if set_inference_key_value_memory[0].item():
+                        self.inference_params = InferenceParams(
+                            max_batch_size=tokens.size(0), max_sequence_length=inference_max_sequence_len[0].item()
+                        )
+                    extra_arg["inference_params"] = self.inference_params
+                else:
+                    extra_arg["set_inference_key_value_memory"] = set_inference_key_value_memory[0].item()
+                    extra_arg["inference_max_sequence_len"] = inference_max_sequence_len[0].item()
+            output_tensor, value = model(tokens, position_ids, attention_mask, **extra_arg)
 
-        metrics = {
-            "loss": loss_mean,
-            "acc": acc_mean,
-            "rewards_chosen_mean": rewards_chosen_mean,
-            "rewards_rejected_mean": rewards_rejected_mean,
-            "rewards_all_mean": rewards_all_mean,
-            "rewards_all_std": rewards_all_std,
-        }
+            # Advance inference sequence offset.
+            if self.inference_params:
+                # if last stage, then (final) output is [b, s, h], otherwise it's [s, b, h]
+                if parallel_state.is_pipeline_last_stage():
+                    self.inference_params.sequence_len_offset += output_tensor.size(1)
+                else:
+                    self.inference_params.sequence_len_offset += output_tensor.size(0)
 
-        # move to CPU
-        metrics = {k: v.item() for k, v in metrics.items()}
+            def id_func(output_tensor):
+                return output_tensor, {"logits": output_tensor}
 
-        return loss_mean.item(), metrics
+            return output_tensor, id_func
+
+        return fwd_output_only_func
 
     def on_load_checkpoint(self, checkpoint) -> None:
         """NOTE: Have to set strict to False because we have a rm head
@@ -344,144 +356,6 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             # see NLPModel.on_load_checkpoint
             checkpoint["state_dict"] = {}
 
-    def prepare_for_training_step(self):
-        # custom trainers will always zero grad for us
-        prepare_for_training_step(self, zero_grad=False)
-
-    def finish_training_step(self):
-        grad_reductions(self)
-
-    def prepare_for_validation_step(self):
-        prepare_for_validation_step(self)
-
-    def finish_validation_step(self):
-        finish_validation_step(self)
-
-    def infer(
-        self,
-        inputs: Union[List[str], List[List[int]]] = None,
-        sequence_length: List[int] = None,
-        add_EOS: bool = False,
-    ):
-        tokenizer = self.tokenizer
-        max_seq_length = self.cfg.encoder_seq_length
-
-        exceeded = None
-        context_tokens_tensor = None
-        context_length_tensor = None
-        if torch.distributed.get_rank() == 0:
-            if sequence_length is not None:
-                exceeded = [False for _ in range(len(inputs))]
-                context_tokens_tensor = torch.tensor(inputs).cuda()
-                context_length_tensor = torch.tensor(sequence_length).cuda()
-            else:
-                context_tokens_tensor, context_length_tensor, exceeded = tokenize_batch(
-                    tokenizer, inputs, max_seq_length, False, add_EOS=add_EOS
-                )
-            if context_length_tensor.dim() == 1:
-                context_length_tensor = context_length_tensor.unsqueeze(-1)
-
-        context_length_tensor = broadcast_2d_tensor(context_length_tensor, src=0, group=None, dtype=torch.int64)
-        if context_length_tensor.dim() == 2:
-            context_length_tensor = context_length_tensor.squeeze(-1)
-
-        context_tokens_tensor = broadcast_2d_tensor(context_tokens_tensor, src=0, group=None, dtype=torch.int64)
-
-        # Select subset of data needed for this rank.
-        dp_size = parallel_state.get_data_parallel_world_size()
-        dp_rank = parallel_state.get_data_parallel_rank()
-        context_length_tensor = context_length_tensor.chunk(dp_size)[dp_rank]
-        context_tokens_tensor = context_tokens_tensor.chunk(dp_size)[dp_rank]
-
-        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-            context_tokens_tensor,
-            tokenizer.eos_id,
-            self.cfg.get("reset_position_ids", False),
-            self.cfg.get("reset_attention_mask", False),
-            self.cfg.get("eod_mask_loss", False),
-        )
-        micro_batch_size = context_tokens_tensor.shape[0]
-        sequence_length = context_tokens_tensor.shape[1]
-
-        app_state = AppState()
-        _reconfigure_microbatch_calculator(
-            rank=app_state.global_rank,
-            rampup_batch_size=None,
-            global_batch_size=micro_batch_size,
-            micro_batch_size=micro_batch_size,
-            data_parallel_size=1,
-        )
-        attention_mask_repeat = torch.concat([attention_mask for _ in range(micro_batch_size)])
-        rewards = self.forward_step(
-            [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat],
-            micro_batch_size,
-            sequence_length,
-        )
-
-        if parallel_state.is_pipeline_last_stage():
-            rewards = rewards[0]["reward"]
-
-            # Standardize values to subtract a bias.
-            if self.enable_standardization:
-                rewards = (rewards - self.rew_mean) / self.rew_std
-
-        if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-            rewards = broadcast_2d_tensor(
-                rewards,
-                parallel_state.get_pipeline_model_parallel_last_rank(),
-                parallel_state.get_pipeline_model_parallel_group(),
-            )
-
-        rewards_list = gather_tensor(
-            rewards, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()
-        )
-
-        return rewards_list, exceeded
-
-    def forward_step(self, batch, micro_batch_size, sequence_length):
-        set_sync_funcs(self, forward_only=True)
-
-        fwd_bwd_function = get_forward_backward_func()
-        output_tensor = fwd_bwd_function(
-            forward_step_func=self.get_forward_output_only_func(),
-            data_iterator=iter([batch]),
-            model=self.model,
-            num_microbatches=get_num_microbatches(),
-            forward_only=True,
-            seq_length=sequence_length,
-            micro_batch_size=micro_batch_size,
-        )
-        return output_tensor
-
-    def get_forward_output_only_func(self):
-        def fwd_output_only_func(batch, model):
-            (tokens, length, position_ids, attention_mask,) = next(batch)
-            tokens = tokens.cuda()
-            position_ids = position_ids.cuda()
-            attention_mask = attention_mask.cuda()
-            output_tensor = model(tokens, length, position_ids, attention_mask)
-
-            if not parallel_state.is_pipeline_last_stage():
-                output_tensor = output_tensor.to(dtype=self.autocast_dtype)
-
-            def id_func(output_tensor):
-                return output_tensor, {"reward": output_tensor}
-
-            return output_tensor, id_func
-
-        return fwd_output_only_func
-
-    def prepare_for_inference(self):
-        self._reset_activation_checkpointing_args()
-        self._reset_sequence_parallelism_args()
-        set_eval(self)
-
-    def finish_inference(self):
-        # training will onload the adam states, no need to onload it here
-        self._restore_activation_checkpointing_args()
-        self._restore_sequence_parallelism_args()
-        set_train(self)
-
     def sharded_state_dict(self, prefix: str = "") -> Dict[str, Any]:
         """
         Creates the sharded state dict which is used by dist_checkpoint to save the sharded tensors to disk.
@@ -494,3 +368,61 @@ class MegatronGPTHybridModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             module_prefix = f"{prefix}model."
             sharded_state_dict = self.model.sharded_state_dict(prefix=module_prefix)
             return sharded_state_dict
+
+    def offload_adam_states(self):
+        if self.distributed_adam_offload_manager is None:
+
+            self.distributed_adam_offload_manager = (
+                offload_distributed_adam(self._optimizer.state_dict(state_dict_format=1, gather_on_root=False))
+                if self.to_offload_adam_states and self.with_distributed_adam
+                else nullcontext()
+            )
+
+            # offload onto cpu
+            self.distributed_adam_offload_manager.__enter__()
+
+    def onload_adam_states(self):
+        if self.distributed_adam_offload_manager is not None:
+            # load back onto GPU
+            self.distributed_adam_offload_manager.__exit__(None, None, None)
+
+        self.distributed_adam_offload_manager = None
+
+    def prepare_for_inference(self):
+        """normally we would configure the micro batch calculator here
+            but the nemo generation already does the configuration"""
+        self._reset_activation_checkpointing_args()
+        self._reset_sequence_parallelism_args()
+        set_eval(self)
+        self.offload_adam_states()
+
+    def finish_inference(self):
+        # training will onload the adam states, no need to onload it here
+        self._restore_activation_checkpointing_args()
+        self._restore_sequence_parallelism_args()
+        set_train(self)
+
+    def prepare_for_training(self):
+        configure_batch_sizes(
+            mbs=self.cfg.micro_batch_size,
+            gbs=self.cfg.global_batch_size,
+            dp=parallel_state.get_data_parallel_world_size(),
+        )
+        self.onload_adam_states()
+
+    def finish_training(self):
+        """no need to offload adam states here
+        """
+
+    def prepare_for_training_step(self):
+        # custom trainers will always zero grad for us
+        prepare_for_training_step(self, zero_grad=False)
+
+    def finish_training_step(self):
+        grad_reductions(self)
+
+    def prepare_for_validation_step(self):
+        prepare_for_validation_step(self)
+
+    def finish_validation_step(self):
+        finish_validation_step(self)

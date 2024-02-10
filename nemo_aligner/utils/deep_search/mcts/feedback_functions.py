@@ -1,6 +1,7 @@
 import re
 
 import pandas as pd
+from datasets import load_dataset
 
 
 class Feedback(object):
@@ -14,21 +15,79 @@ class Feedback(object):
         raise NotImplementedError
 
 
-class GSK8KFeedback(Feedback):
-    def __init__(self, gsk8k_path="train-00000-of-00001.parquet"):
-        super().__init__()
-        self.gsk8k_path = gsk8k_path
-        self.gsk8k = pd.read_parquet(self.gsk8k_path)
+class GSK8KFeedbackDataset(Feedback):
+    def score(self, response, answer):
+        """
+        score the response
+        """
+        response = response.lower()
+        answer = answer.lower().split("####")[1].strip().replace(",", "")
 
-    #        new_row= {'question': "what is 3+2?", "answer": "3+2=5 #### 5"}
-    #        self.gsk8k.loc[0] = new_row
+        # predicted answer matches the answer pattern
+        numbers = re.findall(r"\{{([\d,]+)\}}", response)
+        # Extract the last number
+        last_number = numbers[-1] if numbers else None
+        if last_number is None:
+            return 0.0
+        if last_number == answer:
+            return 1.0
+        else:
+            return 0.0
+
+
+class GSK8KFeedback(Feedback):
+    def score(self, response, answer):
+        """
+        score the response
+        """
+        response = response.lower()
+        answer = answer.lower().split("####")[1].strip().replace(",", "")
+        # predicted answer matches the answer pattern
+        numbers = re.findall(r"\{{([\d,]+)\}}", response)
+        # Extract the last number
+        last_number = numbers[-1] if numbers else None
+        if last_number is None:
+            return 0.0
+        if last_number == answer:
+            return 1.0
+        else:
+            return 0.0
+
+
+class GSK8KFeedback(Feedback):
+    def __init__(self):
+        ...
+
+    def score(self, response, answer):
+        """
+        score the response
+        """
+        response = response.lower()
+        answer = answer.lower().split("####")[1].strip().replace(",", "")
+        # predicted answer matches the answer pattern
+        numbers = re.findall(r"\{{([\d,]+)\}}", response)
+        # Extract the last number
+        last_number = numbers[-1] if numbers else None
+        if last_number is None:
+            return 0.0
+        if last_number == answer:
+            return 1.0
+        else:
+            return 0.0
+
+
+class GSK8KFeedbackHF(Feedback):
+    def __init__(self, split="train"):
+        super().__init__()
+        self.ds = load_dataset("gsm8k", "main")
+        self.split = split
 
     def score(self, response, data_id):
         """
         score the response
         """
         response = response.lower()
-        answer = self.gsk8k.iloc[data_id]["answer"].lower().split("####")[1].strip().replace(",", "")
+        answer = self.ds[self.split][data_id]["answer"].lower().split("####")[1].strip().replace(",", "")
         # predicted answer matches the answer pattern
         numbers = re.findall(r"\{{([\d,]+)\}}", response)
         # Extract the last number
