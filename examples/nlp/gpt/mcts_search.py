@@ -148,7 +148,7 @@ class MCTSSearch:
             )
 
             self.outputs.extend(output)
-            self.idx = i
+            self.idx += 1
 
             if self.run_timer.is_within_dp_finished() or i % self.save_interval == 0:
                 self.save()
