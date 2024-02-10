@@ -5,6 +5,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+CACHE_DIR = ""
+
 GLOBAL_CONTEXT_LENGTH_DICT = {}
 
 grouper = defaultdict(list)
@@ -95,7 +97,7 @@ def batch_value_memory(output_value):
     return batches
 
 
-for p in tqdm(sorted(Path("mcts_cache").glob("*.pt"))):
+for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
     print(p)
     x = torch.load(p)["mcts_outputs"]
 
