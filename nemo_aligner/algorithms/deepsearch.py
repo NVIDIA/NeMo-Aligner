@@ -238,7 +238,7 @@ class DeepSearchTrainer:
         self.timer.start("train_eval")
         train_metrics = self.run_inference(self.train_dataloader)
         self.timer.stop("train_eval")
-        train_metrics["train_eval"] = self.timer.get("train_eval")
+        train_metrics["train_eval_timing"] = self.timer.get("train_eval")
 
         train_tables = train_metrics.pop("table")
 
