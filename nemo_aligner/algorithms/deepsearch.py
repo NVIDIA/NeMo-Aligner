@@ -65,6 +65,7 @@ class DeepSearchTrainer:
         train_policy_dataloader,
         train_value_dataloader,
         val_dataloader,
+        train_dataloader,
         feedback,
         logger,
         ckpt_callback,
@@ -77,6 +78,7 @@ class DeepSearchTrainer:
         self.train_policy_dataloader = train_policy_dataloader
         self.train_value_dataloader = train_value_dataloader
         self.val_dataloader = val_dataloader
+        self.train_dataloader = train_dataloader
         self.feedback = feedback
         self.logger = logger
         self.ckpt_callback = ckpt_callback
@@ -99,9 +101,10 @@ class DeepSearchTrainer:
         )
         self.num_to_log_to_table = 5
         self.val_df = pd.DataFrame(columns=["step", "response", "reward", "ground_truth_answer"])
+        self.train_df = pd.DataFrame(columns=["step", "response", "reward", "ground_truth_answer"])
 
     @torch.no_grad()
-    def run_validation(self):
+    def run_inference(self, dataloader):
         self.model.prepare_for_inference()
         # acc is not not computed properly, idk why...
 
@@ -111,12 +114,12 @@ class DeepSearchTrainer:
 
         tables = []
 
-        loop_iter = zip(range(self.limit_val_batches), self.val_dataloader)
-        val_pbar = tqdm(
-            loop_iter, total=min(len(self.val_dataloader), self.limit_val_batches), leave=True, desc="Validation"
+        loop_iter = zip(range(self.limit_val_batches), dataloader)
+        inference_pbar = tqdm(
+            loop_iter, total=min(len(dataloader), self.limit_val_batches), leave=True, desc="Validation"
         )
 
-        for (_, batch) in val_pbar:
+        for (_, batch) in inference_pbar:
             output = self.model.generate(batch["question"])
 
             for response, answer in zip(output["sentences"], batch["answer"], strict=True):
@@ -210,6 +213,48 @@ class DeepSearchTrainer:
         self.model.finish_training()
         return metrics
 
+    def run_validation(self):
+        self.timer.start("validation_time")
+        val_metrics = self.run_inference(self.val_dataloader)
+        self.timer.stop("validation_time")
+        val_metrics["validation_time"] = self.timer.get("validation_time")
+
+        val_tables = val_metrics.pop("table")
+
+        for table in val_tables:
+            self.val_df.loc[len(self.val_df)] = [
+                self.step,
+                table["response"],
+                table["reward"],
+                table["ground_truth_answer"],
+            ]
+
+        self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
+        self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+
+        return val_metrics
+
+    def run_train_evaluation(self):
+        self.timer.start("train_eval")
+        train_metrics = self.run_inference(self.train_dataloader)
+        self.timer.stop("train_eval")
+        train_metrics["train_eval"] = self.timer.get("train_eval")
+
+        train_tables = train_metrics.pop("table")
+
+        for table in train_tables:
+            self.train_df.loc[len(self.train_df)] = [
+                self.step,
+                table["response"],
+                table["reward"],
+                table["ground_truth_answer"],
+            ]
+
+        self.logger.log_table("table/train_eval", dataframe=self.train_df, step=self.step)
+        self.logger.log_metrics(train_metrics, step=self.step, prefix="train_eval/")
+
+        return train_metrics
+
     def fit(self):
         self.run_timer.start_time()
 
@@ -224,21 +269,8 @@ class DeepSearchTrainer:
             return
 
         if self.step == 0:
-            val_metrics = self.run_validation()
-
-            val_tables = val_metrics.pop("table")
-
-            for table in val_tables:
-                self.val_df.loc[len(self.val_df)] = [
-                    self.step,
-                    table["response"],
-                    table["reward"],
-                    table["ground_truth_answer"],
-                ]
-
-            self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
-            self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
-            val_metrics.clear()
+            self.run_validation()
+            self.run_train_evaluation()
 
         for _ in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
@@ -278,23 +310,9 @@ class DeepSearchTrainer:
                 )
 
                 if run_val:
-                    self.timer.start("validation_time")
                     val_metrics = self.run_validation()
-                    self.timer.stop("validation_time")
-                    timing_metrics["validation_time"] = self.timer.get("validation_time")
-
-                    val_tables = val_metrics.pop("table")
-
-                    for table in val_tables:
-                        self.val_df.loc[len(self.val_df)] = [
-                            self.step,
-                            table["response"],
-                            table["reward"],
-                            table["ground_truth_answer"],
-                        ]
-
-                    self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
-                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+                    train_eval_metrics = self.run_train_evaluation()
+                    train_eval_metrics.update({f"train_eval_{k}": v for k, v in val_metrics.items()})
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update(timing_metrics)

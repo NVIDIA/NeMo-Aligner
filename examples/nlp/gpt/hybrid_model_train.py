@@ -171,6 +171,8 @@ def mcts_value_collate_fn(eos_id, batches):
 def main(cfg) -> None:
     optim = deepcopy(cfg.model.optim)
     val_ds = DatasetWrapper(load_dataset("gsm8k", "main")["test"])
+
+    train_ds = DatasetWrapper(load_dataset("gsm8k", "main")["train"])
     feedback = GSK8KFeedbackDataset()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
@@ -269,6 +271,17 @@ def main(cfg) -> None:
         drop_last=True,
     )
 
+    train_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset=train_ds,
+        consumed_samples=0,
+        mbs=cfg.model.inference.micro_batch_size,
+        gbs=cfg.model.inference.micro_batch_size * dp_size,
+        load_gbs=False,
+        collate_fn=collate_fn,
+        drop_last=True,
+    )
+
     # TODO(geshen): set the optimizer steps properly, just like in PPO
     # TODO(geshen): better use constant LR here
     init_using_ptl(trainer, ptl_model, train_policy_dataloader, None)
@@ -287,6 +300,7 @@ def main(cfg) -> None:
         train_policy_dataloader=train_policy_dataloader,
         train_value_dataloader=train_value_dataloader,
         val_dataloader=val_dataloader,
+        train_dataloader=train_dataloader,
         feedback=feedback,
         logger=logger,
         ckpt_callback=ckpt_callback,
