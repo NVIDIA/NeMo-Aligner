@@ -312,7 +312,7 @@ class DeepSearchTrainer:
                 if run_val:
                     val_metrics = self.run_validation()
                     train_eval_metrics = self.run_train_evaluation()
-                    train_eval_metrics.update({f"train_eval_{k}": v for k, v in val_metrics.items()})
+                    step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update(timing_metrics)
