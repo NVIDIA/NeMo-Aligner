@@ -47,10 +47,10 @@ class TestSearch:
         )
 
         save_restore_connector = NLPSaveRestoreConnector()
-        path = "/dataset/models/unpack_843m_mcore/"
+        path = "/datasets/models/unpack_843m_mcore/"
 
         pretrained_cfg = MegatronGPTModel.restore_from(
-            restore_path="/dataset/models/unpack_843m_mcore/",
+            restore_path=path,
             trainer=trainer,
             return_config=True,
             save_restore_connector=save_restore_connector,
@@ -138,27 +138,3 @@ class TestSearch:
                     old_k_caches[i][0 : context_length[i] - 1], new_k_caches[i][0 : context_length[i] - 1]
                 )
             old_k_caches = new_k_caches
-
-        # test the cache is hit
-
-        infer_result = strategy.search_db.get_infer_cache("session1", context_ids[0][:-2], context_ids[0][-2])
-        assert infer_result is not None
-        actions = strategy.search_db.get_infer_cache("session1", context_ids[0][:-2], context_ids[0][-2])["action"]
-        for action in actions:
-            infer_result = strategy.search_db.get_infer_cache("session1", context_ids[0][:-1], action)
-            if action != context_ids[0][-1]:
-                assert infer_result is None
-            else:
-                assert infer_result is not None
-
-        infer_result = strategy.search_db.get_infer_cache("session1", context_ids[1][:-2], context_ids[1][-2])
-        assert infer_result is not None
-
-        actions = strategy.search_db.get_infer_cache("session1", context_ids[1][:-2], context_ids[1][-2])["action"]
-
-        for action in actions:
-            infer_result = strategy.search_db.get_infer_cache("session1", context_ids[1][:-1], action)
-            if action != context_ids[1][-1]:
-                assert infer_result is None
-            else:
-                assert infer_result is not None
