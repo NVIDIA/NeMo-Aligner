@@ -5,7 +5,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-CACHE_DIR = "/home/geshen/mcts/NeMo-Aligner/examples/nlp/gpt/cache_dir"
+CACHE_DIR = ""
+DATA_FILE = "data.pt"
 
 GLOBAL_CONTEXT_LENGTH_DICT = {}
 
@@ -107,4 +108,22 @@ for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
         values.extend(batch_value_memory(output_value))
         policies.extend(batch_policy_memory(output_policy))
 
-torch.save({"policies": policies, "values": values}, "data.pt")
+# TODO(geshen): should we shuffle the data?
+policy_data, value_data = policies, values
+
+num_questions_correct = 0
+
+for p in policy_data:
+    if all(x > 0 for x in p["reward"]):
+        num_questions_correct += 1
+
+data_metrics = {
+    "num_questions_correct": num_questions_correct,
+    "num_questions": len(policy_data),
+    "accuracy": num_questions_correct / len(policy_data),
+}
+
+
+print(data_metrics)
+
+torch.save({"policies": policies, "values": values}, DATA_FILE)
