@@ -72,10 +72,11 @@ def main(cfg) -> None:
         # overwrite the model config with the config from the checkpoint
         cfg.model.encoder_seq_length = ptl_model.cfg.encoder_seq_length
 
-    ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-        ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
-    )
-    ptl_model.ref_policy_state_dict = ref_policy_state_dict
+    if ptl_model.ref_policy_state_dict is None:
+        ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
+        )
+        ptl_model.ref_policy_state_dict = ref_policy_state_dict
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
