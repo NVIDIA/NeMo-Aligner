@@ -180,8 +180,8 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             mask = batch["mcts_mask"]
 
             # TODO(geshen): change to cross entropy
-            value_loss = (values - rewards).pow(2).mul(self.value_loss_weight)
-            value_loss = compute_masked_per_sample_average(value_loss, mask, dim=-1)
+            value_loss = torch.nn.functional.binary_cross_entropy_with_logits(values, rewards.broadcast_to(values.shape), reduction='none')
+            value_loss = masked_mean(self.value_loss_weight * value_loss, mask, dim=-1)
 
         return value_loss
 
