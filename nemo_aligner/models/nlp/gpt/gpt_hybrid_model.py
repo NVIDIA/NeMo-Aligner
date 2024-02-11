@@ -196,15 +196,13 @@ class GPTHybridModel(GPTModel):
                 self.config.hidden_size,
                 num_attributes,
                 config=config,
-                init_method=init_method_constant(0.0),
+                init_method=self.config.init_method,
                 output_sequence=output_sequence,
                 use_avg_pool=use_avg_pool,
                 dtype=self.dtype if head_dtype is None else head_dtype,
                 merge_attributes=merge_attributes,
                 attributes_weights=attribute_weights,
             )
-            # make sigmoid output 0
-            torch.nn.init.constant_(self.rm_head.bias.data, -10.0)
 
     def forward(
         self,
