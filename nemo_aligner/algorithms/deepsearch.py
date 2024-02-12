@@ -194,8 +194,6 @@ class DeepSearchTrainer:
         # TODO: add optimizer step bump
         for _, batch in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter):
             # at least if we do this the lr are not synced between the 2 stages of training
-            self.policy_scheduler.step(self.policy_optimization_step)
-
             metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
             metrics.update({"policy_optimization_step": self.policy_optimization_step})
 
@@ -210,8 +208,6 @@ class DeepSearchTrainer:
 
         for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
             # at least if we do this the lr are not synced between the 2 stages of training
-            self.value_scheduler.step(self.value_optimization_step)
-
             metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
             metrics.update({"value_optimization_step": self.value_optimization_step})
 
