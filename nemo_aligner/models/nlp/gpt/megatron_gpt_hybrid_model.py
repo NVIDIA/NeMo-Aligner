@@ -16,20 +16,30 @@ import warnings
 
 # from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from contextlib import nullcontext
-from typing import Any, Dict
+from typing import Any, Dict, List, Union
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
+from apex.normalization import MixedFusedRMSNorm
+from apex.normalization.fused_layer_norm import FusedLayerNorm  # NOQA
+from apex.transformer.layers.layer_norm import FastLayerNorm
+from apex.transformer.pipeline_parallel.utils import (
+    _reconfigure_microbatch_calculator,
+    get_num_microbatches,
+    listify_model,
+)
 from megatron.core import InferenceParams, parallel_state
+from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.mappings import gather_from_tensor_model_parallel_region
+from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
 from megatron.core.utils import divide
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.collections.nlp.modules.common.megatron.module import Float16Module
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
@@ -37,6 +47,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo.core.classes.modelPT import ModelPT
 from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import logging
 from nemo_aligner.algorithms.deepsearch import TrainMode
@@ -426,3 +437,264 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
     def finish_validation_step(self):
         finish_validation_step(self)
+
+    def get_params_for_weight_decay_optimization(
+        self, model: Union[torch.nn.Module, List[torch.nn.Module]], include_value_head=True
+    ) -> Dict[str, torch.nn.Parameter]:
+        """Divide params into with-weight-decay and without-weight-decay groups.
+
+        Layernorms and biases will have no weight decay but the rest will.
+        """
+        modules = listify_model(model)
+        weight_decay_params = {"params": []}
+        no_weight_decay_params = {"params": [], "weight_decay": 0.0}
+        weight_decay_params_names = []
+        no_weight_decay_params_names = []
+        for module in modules:
+            for n, p in module.named_parameters():
+                if not include_value_head:
+                    if "value_head" in n or "rm_head" in n:
+                        continue
+                else:
+                    if "value_head" not in n and "rm_head" not in n:
+                        continue
+                if "layer_norm" in n or "bias" in n or "layernorm" in n:
+                    no_weight_decay_params["params"].append(p)
+                    no_weight_decay_params_names.append(n)
+                else:
+                    weight_decay_params["params"].append(p)
+                    weight_decay_params_names.append(n)
+        return weight_decay_params, no_weight_decay_params
+
+    def setup_optimizer_param_groups(self):
+        if self.setup_policy_optimizer:
+            self._optimizer_param_groups = self.get_params_for_weight_decay_optimization(
+                self.model, include_value_head=False
+            )
+        else:
+            self._optimizer_param_groups = self.get_params_for_weight_decay_optimization(
+                self.model, include_value_head=True
+            )
+
+    def configure_optimizers(self):
+        # the pytorch lightning hook will call this function to setup the optimizer
+        # returns a list of optimizers and a list of lr schedulers
+
+        if self.with_distributed_adam:
+
+            # Disable overlapped grad sync for embedding grad when
+            # pipeline parallelism is enabled
+            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+                modules = self.get_gpt_module_list()
+                if parallel_state.is_pipeline_first_stage(ignore_virtual=True):
+                    if len(modules) > 1:
+                        module = modules[0]  # only the first virtual rank has the embeddings
+                    else:
+                        module = modules[0]
+                    if self.cfg.get("share_embeddings_and_output_weights", True):
+                        param = (
+                            module.shared_embedding_or_output_weight()
+                            if self.mcore_gpt
+                            else module.word_embeddings_weight()
+                        )
+                        param._disable_greedy_grad_copy = not self.megatron_amp_O2
+                        param._disable_overlap_grad_sync = True
+                if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
+                    if len(modules) > 1:
+                        module = modules[-1]  # only the last virtual rank has the embeddings
+                    else:
+                        module = modules[0]
+                    if self.cfg.get("share_embeddings_and_output_weights", True):
+                        param = (
+                            module.shared_embedding_or_output_weight()
+                            if self.mcore_gpt
+                            else module.word_embeddings_weight()
+                        )
+                        param._disable_greedy_grad_copy = not self.megatron_amp_O2
+                        param._disable_overlap_grad_sync = True
+
+            # Disable overlapped grad sync for layer norm grads when
+            # sequence parallelism is enabled
+            for param in self.parameters():
+                if getattr(param, "sequence_parallel", False):
+                    param._disable_greedy_grad_copy = not self.megatron_amp_O2
+                    param._disable_overlap_grad_sync = True
+
+            # Initialize parameter buckets for overlapped grad and param syncs
+            # Note: Params with disabled overlapping are put in the
+            # last param bucket
+            buckets_policy = []
+            buckets_value = []
+            if self.cfg.get("virtual_pipeline_model_parallel_size", None) is not None:
+                # Initialize a bucket for each virtual pipeline stage
+                for module in self.model:
+                    if isinstance(module, (Float16Module, MCoreFloat16Module)):
+                        module = module.module
+                    stage_bucket = []
+                    layers = module.decoder.layers if self.mcore_gpt else module.language_model.encoder.layers
+                    for layer in layers:
+                        stage_bucket.extend(
+                            p for p in layer.parameters() if not getattr(p, "_disable_overlap_grad_sync", False)
+                        )
+                    buckets_policy.append(stage_bucket)
+                    stage_bucket = []
+                    if hasattr(module, "value_head"):
+                        layers = module.value_head.layers if self.mcore_gpt else None
+                        for layer in layers:
+                            stage_bucket.extend(
+                                p for p in layer.parameters() if not getattr(p, "_disable_overlap_grad_sync", False)
+                            )
+            else:
+                # Initialize a bucket for each Transformer layer
+                modules = self.model if isinstance(self.model, list) else [self.model]
+                for module in modules:
+                    if isinstance(module, (Float16Module, MCoreFloat16Module)):
+                        module = module.module
+                    layers = module.decoder.layers if self.mcore_gpt else module.language_model.encoder.layers
+                    for layer in layers:
+                        buckets_policy.append(
+                            [p for p in layer.parameters() if not getattr(p, "_disable_overlap_grad_sync", False)]
+                        )
+                    if hasattr(module, "value_head"):
+                        layers = module.value_head.layers if self.mcore_gpt else None
+                        for layer in layers:
+                            buckets_value.append(
+                                [p for p in layer.parameters() if not getattr(p, "_disable_overlap_grad_sync", False)]
+                            )
+            buckets_policy.reverse()
+            buckets_value.reverse()
+            used_params = set()
+            for bucket in buckets_value:
+                used_params.update(bucket)
+
+            buckets_value_remaining_params = []
+            if self.cfg.get("virtual_pipeline_model_parallel_size", None) is not None:
+                # Initialize a bucket for each virtual pipeline stage
+                for module in self.model:
+                    if isinstance(module, (Float16Module, MCoreFloat16Module)):
+                        module = module.module
+                    if hasattr(module, "value_head"):
+                        buckets_value_remaining_params.extend(
+                            p for p in module.value_head.parameters() if p not in used_params
+                        )
+                    if hasattr(module, "rm_head"):
+                        buckets_value_remaining_params.extend(
+                            p for p in module.rm_head.parameters() if p not in used_params
+                        )
+            else:
+                # Initialize a bucket for each Transformer layer
+                modules = self.model if isinstance(self.model, list) else [self.model]
+                for module in modules:
+                    if isinstance(module, (Float16Module, MCoreFloat16Module)):
+                        module = module.module
+                    if hasattr(module, "value_head"):
+                        buckets_value_remaining_params.extend(
+                            [p for p in module.value_head.parameters() if p not in used_params]
+                        )
+                    if hasattr(module, "rm_head"):
+                        buckets_value_remaining_params.extend(
+                            [p for p in module.rm_head.parameters() if p not in used_params]
+                        )
+
+            used_params = set()
+            # load all the policy bucket parameters
+            for bucket in buckets_policy:
+                used_params.update(bucket)
+            # load all the value bucket parameters
+            for bucket in buckets_value:
+                used_params.update(bucket)
+            # load all the value parameters that are not in the buckets
+            used_params.update(buckets_value_remaining_params)
+            buckets_policy_remaining_params = [p for p in self.parameters() if p not in used_params]
+            if buckets_policy_remaining_params:
+                buckets_policy.append(buckets_policy_remaining_params)
+            if buckets_value_remaining_params:
+                buckets_value.append(buckets_value_remaining_params)
+
+        optim_kwargs = {}
+        if self.with_distributed_adam:
+
+            # Allocate contiguous buffer to avoid extra copies
+            optim_kwargs["contiguous_grad_buffer"] = True
+
+            # Make sure optimizer state is in FP32
+            optim_dtype = torch.float32
+            optim_kwargs["dtype"] = optim_dtype
+
+            # Make sure embedding grad reductions are in FP32
+            for name, param in self.named_parameters():
+                if "word_embedding" in name or "position_embedding" in name or "output_layer" in name:
+                    param._with_fp32_optimizer = True
+
+            # Match param allgather with model dtype
+            model_dtype = torch.float32
+            if self.megatron_amp_O2 and hasattr(self, "autocast_dtype"):
+                model_dtype = self.autocast_dtype
+            optim_kwargs["param_sync_dtype"] = model_dtype
+
+            # Determine whether to store master params in optimizer
+            if optim_dtype == model_dtype:
+                optim_kwargs["store_params"] = False
+            elif optim_dtype == torch.float32 and model_dtype == torch.bfloat16:
+                optim_kwargs["store_params"] = False
+                optim_kwargs["store_param_remainders"] = True
+            else:
+                optim_kwargs["store_params"] = True
+
+        self.setup_policy_optimizer = True
+        self.policy_optimizer, self.policy_scheduler = ModelPT.setup_optimization(
+            self, optim_config=self.cfg.optim, optim_kwargs=optim_kwargs
+        )
+        self.setup_policy_optimizer = False
+        self.value_optimizer, self.value_scheduler = ModelPT.setup_optimization(
+            self, optim_config=self.cfg.value.optim, optim_kwargs=optim_kwargs
+        )
+
+        # Configure distributed optimizer
+        if self.with_distributed_adam:
+
+            for bucket in buckets_policy:
+                self.policy_optimizer.init_params_bucket(bucket)
+            for bucket in buckets_value:
+                self.value_optimizer.init_params_bucket(bucket)
+
+            # Make sure all params are initialized so main grads are
+            # available
+            # Note: Consolidate grads without overlap
+            policy_overlap_params = []
+            policy_no_overlap_params = []
+            value_overlap_params = []
+            value_no_overlap_params = []
+            for n, p in self.named_parameters():
+                if "value_head" in n or "rm_head" in n:
+                    if getattr(p, "_disable_overlap_grad_sync", False):
+                        value_no_overlap_params.append(p)
+                    else:
+                        value_overlap_params.append(p)
+                else:
+                    if getattr(p, "_disable_overlap_grad_sync", False):
+                        policy_no_overlap_params.append(p)
+                    else:
+                        policy_overlap_params.append(p)
+            self.policy_optimizer.init_params(reversed(policy_overlap_params))
+            self.policy_optimizer.init_params(reversed(policy_no_overlap_params))
+            self.value_optimizer.init_params(reversed(value_overlap_params))
+            self.value_optimizer.init_params(reversed(value_no_overlap_params))
+            if self.policy_optimizer.contiguous_param_buffer:
+                self.policy_optimizer.init_param_buffer()
+            if self.value_optimizer.contiguous_param_buffer:
+                self.value_optimizer.init_param_buffer()
+
+            # overlap_params = []
+            # no_overlap_params = []
+            # for p in self.parameters():
+            #     if getattr(p, '_disable_overlap_grad_sync', False):
+            #         no_overlap_params.append(p)
+            #     else:
+            #         overlap_params.append(p)
+            # self._optimizer.init_params(reversed(overlap_params))
+            # self._optimizer.init_params(reversed(no_overlap_params))
+
+            # # Initialize contiguous parameter buffer
+            # if self._optimizer.contiguous_param_buffer:
+            #     self._optimizer.init_param_buffer()
