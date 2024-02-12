@@ -140,7 +140,6 @@ class SupervisedTrainer:
 
         model_ref = self.model.model.module if self.model.megatron_amp_O2 else self.model.model
 
-        # Now, you can directly access the noise_scheduler without repeated if-else checks
         noise_scheduler = model_ref.embedding.noise_scheduler
         if noise_scheduler is not None:
             noise_scheduler.step()
