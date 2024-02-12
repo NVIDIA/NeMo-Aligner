@@ -29,7 +29,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_sp
 from nemo.utils import logging
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import run_rm_or_critic_inference
-from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, print_timer
 from nemo_aligner.utils.server_utils import lock_method, pad_input
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import apply_func_to_dict
@@ -94,7 +94,7 @@ class CriticServerTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-    @batch
+    # @batch
     @lock_method("self.lock")
     def server_infer(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
         # tell other ranks to start inference
@@ -154,46 +154,57 @@ class CriticServerTrainer:
         return {"loss_mean": np.array((loss_mean,))}
 
     def run_server(self):
+        print("## BEFORE BARRIER")
+        torch.distributed.barrier()
+
         if torch.distributed.get_rank() == 0:
-            triton_config = TritonConfig(
-                allow_http=True,
-                allow_grpc=False,
-                allow_metrics=False,
-                http_address=ENDPOINT_BIND_ADDRESS,
-                http_port=self.port,
-            )
-            dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
-            infer_model_config = ModelConfig(
-                batching=True, max_batch_size=self.max_inference_batch_size, batcher=dynamic_batcher
-            )
-            # the model will split the train batch by itself
-            train_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
-            save_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
+            for i in range(100):
+                with print_timer("outer loop iteration {}".format(i)):
+                    inputs = {
+                        "tokens": np.random.randint(low=0, high=1000, size=(16, 2048)),
+                        "sequence_lengths": np.random.randint(low=0, high=1000, size=(16, 1)),
+                    }
+                    output = self.server_infer(**inputs)
+        # print(output)
+        # print(output)
+        # triton_config = TritonConfig(
+        # allow_http=True,
+        # allow_grpc=False,
+        # allow_metrics=False,
+        # http_address=ENDPOINT_BIND_ADDRESS,
+        # http_port=self.port,
+        # )
+        # dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
+        # infer_model_config = ModelConfig(
+        # batching=True, max_batch_size=self.max_inference_batch_size, batcher=dynamic_batcher
+        # )
+        # the model will split the train batch by itself
+        # train_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
+        # save_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
 
-            with Triton(config=triton_config) as triton:
-                triton.bind(
-                    model_name="critic_infer",
-                    infer_func=self.server_infer,
-                    inputs=self.infer_inputs,
-                    outputs=self.infer_outputs,
-                    config=infer_model_config,
-                )
-                triton.bind(
-                    model_name="critic_train",
-                    infer_func=self.server_train,
-                    inputs=self.train_inputs,
-                    outputs=self.train_outputs,
-                    config=train_model_config,
-                )
-                triton.bind(
-                    model_name="critic_save",
-                    infer_func=self.server_save,
-                    inputs=self.save_inputs,
-                    outputs=self.save_outputs,
-                    config=save_model_config,
-                )
-                triton.serve()
-
+        # with Triton(config=triton_config) as triton:
+        # triton.bind(
+        # model_name="critic_infer",
+        # infer_func=self.server_infer,
+        # inputs=self.infer_inputs,
+        # outputs=self.infer_outputs,
+        # config=infer_model_config,
+        # )
+        # triton.bind(
+        # model_name="critic_train",
+        # infer_func=self.server_train,
+        # inputs=self.train_inputs,
+        # outputs=self.train_outputs,
+        # config=train_model_config,
+        # )
+        # triton.bind(
+        # model_name="critic_save",
+        # infer_func=self.server_save,
+        # inputs=self.save_inputs,
+        # outputs=self.save_outputs,
+        # config=save_model_config,
+        # )
+        # triton.serve()
         else:
             self.run_subscriber_loop()
 

@@ -35,7 +35,12 @@ from nemo.utils import AppState, logging
 from nemo.utils.dtype import str_to_dtype
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, broadcast_2d_tensor_within_pp, gather_tensor
+from nemo_aligner.utils.distributed import (
+    broadcast_2d_tensor,
+    broadcast_2d_tensor_within_pp,
+    gather_tensor,
+    print_timer,
+)
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
@@ -360,22 +365,24 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         context_tokens_tensor = None
         context_length_tensor = None
         if torch.distributed.get_rank() == 0:
-            if sequence_length is not None:
-                exceeded = [False for _ in range(len(inputs))]
-                context_tokens_tensor = torch.tensor(inputs).cuda()
-                context_length_tensor = torch.tensor(sequence_length).cuda()
-            else:
-                context_tokens_tensor, context_length_tensor, exceeded = tokenize_batch(
-                    tokenizer, inputs, max_seq_length, False, add_EOS=add_EOS
-                )
-            if context_length_tensor.dim() == 1:
-                context_length_tensor = context_length_tensor.unsqueeze(-1)
+            with print_timer("tokenize batch"):
+                if sequence_length is not None:
+                    exceeded = [False for _ in range(len(inputs))]
+                    context_tokens_tensor = torch.tensor(inputs).cuda()
+                    context_length_tensor = torch.tensor(sequence_length).cuda()
+                else:
+                    context_tokens_tensor, context_length_tensor, exceeded = tokenize_batch(
+                        tokenizer, inputs, max_seq_length, False, add_EOS=add_EOS
+                    )
+                if context_length_tensor.dim() == 1:
+                    context_length_tensor = context_length_tensor.unsqueeze(-1)
 
-        context_length_tensor = broadcast_2d_tensor(context_length_tensor, src=0, group=None, dtype=torch.int64)
-        if context_length_tensor.dim() == 2:
-            context_length_tensor = context_length_tensor.squeeze(-1)
+        with print_timer("broadcast batch"):
+            context_length_tensor = broadcast_2d_tensor(context_length_tensor, src=0, group=None, dtype=torch.int64)
+            if context_length_tensor.dim() == 2:
+                context_length_tensor = context_length_tensor.squeeze(-1)
 
-        context_tokens_tensor = broadcast_2d_tensor(context_tokens_tensor, src=0, group=None, dtype=torch.int64)
+            context_tokens_tensor = broadcast_2d_tensor(context_tokens_tensor, src=0, group=None, dtype=torch.int64)
 
         # Select subset of data needed for this rank.
         dp_size = parallel_state.get_data_parallel_world_size()
@@ -390,6 +397,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             self.cfg.get("reset_attention_mask", False),
             self.cfg.get("eod_mask_loss", False),
         )
+
+        # TODO: maybe cut this?
         micro_batch_size = context_tokens_tensor.shape[0]
         sequence_length = context_tokens_tensor.shape[1]
 
@@ -402,11 +411,12 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             data_parallel_size=1,
         )
         attention_mask_repeat = torch.concat([attention_mask for _ in range(micro_batch_size)])
-        rewards = self.forward_step(
-            [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat],
-            micro_batch_size,
-            sequence_length,
-        )
+        with print_timer("forward step"):
+            rewards = self.forward_step(
+                [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat],
+                micro_batch_size,
+                sequence_length,
+            )
 
         if parallel_state.is_pipeline_last_stage():
             rewards = rewards[0]["reward"]
@@ -415,11 +425,15 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             if self.enable_standardization:
                 rewards = (rewards - self.rew_mean) / self.rew_std
 
-        rewards = broadcast_2d_tensor_within_pp(rewards)
+        with print_timer("broadcast within pp"):
+            rewards = broadcast_2d_tensor_within_pp(rewards)
 
-        rewards_list = gather_tensor(
-            rewards, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()
-        )
+        with print_timer("gather within PP"):
+            rewards_list = gather_tensor(
+                rewards,
+                dst=parallel_state.get_data_parallel_src_rank(),
+                group=parallel_state.get_data_parallel_group(),
+            )
 
         return rewards_list, exceeded
 
@@ -444,10 +458,12 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             tokens = tokens.cuda()
             position_ids = position_ids.cuda()
             attention_mask = attention_mask.cuda()
-            output_tensor = model(tokens, length, position_ids, attention_mask)
+            with print_timer("model took"):
+                output_tensor = model(tokens, length, position_ids, attention_mask)
 
             if not parallel_state.is_pipeline_last_stage():
-                output_tensor = output_tensor.to(dtype=self.autocast_dtype)
+                with print_timer("cast tensor took"):
+                    output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
             def id_func(output_tensor):
                 return output_tensor, {"reward": output_tensor}

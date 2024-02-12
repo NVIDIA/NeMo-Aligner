@@ -32,6 +32,7 @@ from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.utils import AppState
 from nemo_aligner.models.alignable_interface import CriticModelInterface
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, print_timer
 from nemo_aligner.utils.train_utils import set_sync_funcs
 from nemo_aligner.utils.utils import masked_mean, offload_distributed_adam, swap_dict
 
@@ -209,7 +210,10 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
         outputs = []
         for fn in call_order:
-            output, exceeded = fn(*args, **kwargs)
+
+            with print_timer(f"{fn.__name__} call"):
+                output, exceeded = fn(*args, **kwargs)
+
             outputs.append(output)
 
         if original_state == StateDictState.CRITIC:
@@ -230,19 +234,21 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def _load_critic(self):
         if self.loaded_state_dict == StateDictState.REWARD:
-            # no need to put the RM back to cpu, we already have it
-            swap_dict(self, self.cpu_state_dict, offload_onto_cpu=False, megatron_amp_O2=self.megatron_amp_O2)
+            with print_timer("critic load"):
+                # no need to put the RM back to cpu, we already have it
+                swap_dict(self, self.cpu_state_dict, offload_onto_cpu=False, megatron_amp_O2=self.megatron_amp_O2)
 
-            self.set_output_sequence_flag(True)
+                self.set_output_sequence_flag(True)
 
-            self.loaded_state_dict = StateDictState.CRITIC
+                self.loaded_state_dict = StateDictState.CRITIC
 
     def _load_rm(self):
         if self.loaded_state_dict == StateDictState.CRITIC:
-            self.cpu_state_dict = swap_dict(self, self.rm_state_dict, megatron_amp_O2=self.megatron_amp_O2)
+            with print_timer("rm load"):
+                self.cpu_state_dict = swap_dict(self, self.rm_state_dict, megatron_amp_O2=self.megatron_amp_O2)
 
-            self.set_output_sequence_flag(False)
-            self.loaded_state_dict = StateDictState.REWARD
+                self.set_output_sequence_flag(False)
+                self.loaded_state_dict = StateDictState.REWARD
 
     def _infer_critic(self, *args, **kwargs):
         self._load_critic()
