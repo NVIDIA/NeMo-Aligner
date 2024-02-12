@@ -201,7 +201,7 @@ class DeepSearchTrainer:
             metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
             metrics.update({"value_optimization_step": self.value_optimization_step})
 
-            self.consumed_samples_values += self.model.cfg.global_batch_size // dp_size
+            self.consumed_samples_values += self.model.cfg.global_batch_size
             metrics.update({"consumed_samples_values": self.consumed_samples_values})
 
             self.value_optimization_step += 1
