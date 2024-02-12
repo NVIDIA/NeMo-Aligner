@@ -50,10 +50,7 @@ class TestSearch:
         path = "/datasets/models/unpack_843m_mcore/"
 
         pretrained_cfg = MegatronGPTModel.restore_from(
-            restore_path=path,
-            trainer=trainer,
-            return_config=True,
-            save_restore_connector=save_restore_connector,
+            restore_path=path, trainer=trainer, return_config=True, save_restore_connector=save_restore_connector,
         )
 
         OmegaConf.set_struct(pretrained_cfg, True)

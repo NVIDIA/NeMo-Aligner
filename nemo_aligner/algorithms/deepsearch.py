@@ -60,8 +60,10 @@ class DeepSearchTrainer:
         self,
         cfg: DictConfig,
         model,
-        optimizer,
-        scheduler,
+        policy_optimizer,
+        policy_scheduler,
+        value_optimizer,
+        value_scheduler,
         train_policy_dataloader,
         train_value_dataloader,
         val_dataloader,
@@ -73,8 +75,10 @@ class DeepSearchTrainer:
     ):
         self.cfg = cfg
         self.model = model
-        self.optimizer = optimizer
-        self.scheduler = scheduler
+        self.policy_optimizer = policy_optimizer
+        self.policy_scheduler = policy_scheduler
+        self.value_optimizer = value_optimizer
+        self.value_scheduler = value_scheduler
         self.train_policy_dataloader = train_policy_dataloader
         self.train_value_dataloader = train_value_dataloader
         self.val_dataloader = val_dataloader
@@ -154,18 +158,28 @@ class DeepSearchTrainer:
 
     def train_single_step(self, batch, train_mode):
         batch["train_mode"] = train_mode
-
-        self.optimizer.zero_grad()
+        if train_mode == TrainMode.POLICY_ONLY:
+            self.policy_optimizer.zero_grad()
+        elif train_mode == TrainMode.VALUE_ONLY:
+            self.value_optimizer.zero_grad()
+        else:
+            raise ValueError(f"Invalid train mode {train_mode}")
         self.model.prepare_for_training_step()
         loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
         self.model.finish_training_step()
 
         grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
-        lr = self.optimizer.param_groups[0]["lr"]
-
-        self.optimizer.step()
-        self.scheduler.step()
+        if train_mode == TrainMode.POLICY_ONLY:
+            lr = self.policy_optimizer.param_groups[0]["lr"]
+            self.policy_optimizer.step()
+            self.policy_scheduler.step()
+        elif train_mode == TrainMode.VALUE_ONLY:
+            lr = self.value_optimizer.param_groups[0]["lr"]
+            self.value_optimizer.step()
+            self.value_scheduler.step()
+        else:
+            raise ValueError(f"Invalid train mode {train_mode}")
 
         if grad_norm is not None:
             metrics["grad_norm"] = grad_norm
@@ -180,7 +194,7 @@ class DeepSearchTrainer:
         # TODO: add optimizer step bump
         for _, batch in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter):
             # at least if we do this the lr are not synced between the 2 stages of training
-            self.scheduler.step(self.policy_optimization_step)
+            self.policy_scheduler.step(self.policy_optimization_step)
 
             metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
             metrics.update({"policy_optimization_step": self.policy_optimization_step})
@@ -196,7 +210,7 @@ class DeepSearchTrainer:
 
         for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
             # at least if we do this the lr are not synced between the 2 stages of training
-            self.scheduler.step(self.value_optimization_step)
+            self.value_scheduler.step(self.value_optimization_step)
 
             metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
             metrics.update({"value_optimization_step": self.value_optimization_step})

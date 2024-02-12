@@ -286,7 +286,12 @@ def main(cfg) -> None:
     # TODO(geshen): better use constant LR here
     init_using_ptl(trainer, ptl_model, train_policy_dataloader, None)
 
-    optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
+    # optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
+
+    policy_optimizer = ptl_model.policy_optimizer
+    policy_scheduler = ptl_model.policy_scheduler["scheduler"]
+    value_optimizer = ptl_model.value_optimizer
+    value_scheduler = ptl_model.value_scheduler["scheduler"]
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
@@ -295,8 +300,10 @@ def main(cfg) -> None:
     deep_search_trainer = DeepSearchTrainer(
         cfg=cfg.trainer.deep_search,
         model=ptl_model,
-        optimizer=optimizer,
-        scheduler=scheduler,
+        policy_optimizer=policy_optimizer,
+        policy_scheduler=policy_scheduler,
+        value_optimizer=value_optimizer,
+        value_scheduler=value_scheduler,
         train_policy_dataloader=train_policy_dataloader,
         train_value_dataloader=train_value_dataloader,
         val_dataloader=val_dataloader,
