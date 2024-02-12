@@ -132,14 +132,18 @@ class SupervisedTrainer:
 
         grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)  # .item()
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
-        lr = self.optimizer.param_groups[0]["lr"]
+        lr = self.optimizer.param_groups[0]["lr"] 
 
         self.optimizer.step()
         if self.scheduler is not None:
             self.scheduler.step()
-        
-        if self.model.model.embedding.noise_scheduler is not None:
-            self.model.model.embedding.noise_scheduler.step()
+
+        model_ref = self.model.model.module if self.model.megatron_amp_O2 else self.model.model
+
+        # Now, you can directly access the noise_scheduler without repeated if-else checks
+        noise_scheduler = model_ref.embedding.noise_scheduler
+        if noise_scheduler is not None:
+            noise_scheduler.step()
 
         trainer_metrics = {}
         if grad_norm is not None:
