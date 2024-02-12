@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
@@ -106,15 +107,26 @@ def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
     ptl_trainer._checkpoint_connector._restore_modules_and_callbacks(ptl_trainer.ckpt_path)
     ptl_trainer._checkpoint_connector.restore_training_state()
     ptl_trainer._checkpoint_connector.resume_end()
-    if ptl_model._scheduler is not None:
-        scheduler = ptl_model._scheduler["scheduler"]
+    _, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
-        # restore the previous state of the learning rate
-        if scheduler.last_epoch > 0:
-            # NOTE: we are doing this because load_state_dict on a LRScheduler
-            # does not do anything that restores the learning rate on the optimizer
-            # stepping here will restore it properly
-            scheduler.step(scheduler.last_epoch)
+    # restore the previous state of the learning rate
+    if scheduler.last_epoch > 0:
+        # NOTE: we are doing this because load_state_dict on a LRScheduler
+        # does not do anything that restores the learning rate on the optimizer
+        # stepping here will restore it properly
+        scheduler.step(scheduler.last_epoch)
+
+
+class FakeScheduler:
+    last_epoch = 0
+
+    def step(self):
+        ...
+
+
+class FakeCheckpointCallback:
+    def custom_save(self, *args, **kwargs):
+        ...
 
 
 def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
@@ -126,15 +138,17 @@ def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
             callback.custom_save = partial(callback.custom_save_ckpt_func, ptl_trainer, ptl_model)
             return callback
 
-    class FakeCheckpointCallback:
-        def custom_save(self, *args, **kwargs):
-            ...
-
     return FakeCheckpointCallback()
 
 
 def extract_optimizer_scheduler_from_ptl_model(ptl_model):
-    return ptl_model.optimizers().optimizer, ptl_model.lr_schedulers()
+    scheduler = ptl_model.lr_schedulers()
+    assert not isinstance(scheduler, Sequence), "multiple schedulers are not supported right now"
+
+    if scheduler is None:
+        scheduler = FakeScheduler()
+
+    return ptl_model.optimizers().optimizer, scheduler
 
 
 def init_peft(ptl_model, updated_cfg):
