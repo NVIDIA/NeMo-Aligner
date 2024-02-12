@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
@@ -104,18 +105,19 @@ def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
     ptl_trainer._checkpoint_connector._restore_modules_and_callbacks(ptl_trainer.ckpt_path)
     ptl_trainer._checkpoint_connector.restore_training_state()
     ptl_trainer._checkpoint_connector.resume_end()
-    scheduler = ptl_model.lr_schedulers()
+    _, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
-    if scheduler is not None:
-        # restore the previous state of the learning rate
-        if scheduler.last_epoch > 0:
-            # NOTE: we are doing this because load_state_dict on a LRScheduler
-            # does not do anything that restores the learning rate on the optimizer
-            # stepping here will restore it properly
-            scheduler.step(scheduler.last_epoch)
+    # restore the previous state of the learning rate
+    if scheduler.last_epoch > 0:
+        # NOTE: we are doing this because load_state_dict on a LRScheduler
+        # does not do anything that restores the learning rate on the optimizer
+        # stepping here will restore it properly
+        scheduler.step(scheduler.last_epoch)
 
 
 class FakeScheduler:
+    last_epoch = 0
+
     def step(self):
         ...
 
@@ -139,6 +141,8 @@ def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
 
 def extract_optimizer_scheduler_from_ptl_model(ptl_model):
     scheduler = ptl_model.lr_schedulers()
+    assert not isinstance(scheduler, Sequence), "multiple schedulers are not supported right now"
+
     if scheduler is None:
         scheduler = FakeScheduler()
 
