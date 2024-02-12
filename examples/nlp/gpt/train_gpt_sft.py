@@ -54,17 +54,16 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         gpt_cfg.noise_scheduler_config = cfg.model.get("noise_scheduler_config", None)
         gpt_cfg.adversarial_training = cfg.model.get("adversarial_training", False)
         gpt_cfg.adversarial_training_epsilon = cfg.model.get("adversarial_training_epsilon", 0.01)
-        
+
         gpt_cfg.embedding_noise = cfg.model.get("embedding_noise", False)
         gpt_cfg.embedding_noise_mean = cfg.model.get("embedding_noise_mean", 0.0)
         gpt_cfg.embedding_noise_std = cfg.model.get("embedding_noise_std", 0.001)
         gpt_cfg.embedding_noise_type = cfg.model.get("embedding_noise_type", "uniform")
-        
+
         gpt_cfg.noise_positonal_embedding = cfg.model.get("noise_positonal_embedding", False)
 
-        gpt_cfg.neft= cfg.model.get("neft", False)
+        gpt_cfg.neft = cfg.model.get("neft", False)
         gpt_cfg.neft_alpha = cfg.model.get("neft_alpha", 0.5)
-
 
         gpt_cfg.megatron_amp_O2 = cfg.model.get("megatron_amp_O2", False)
         gpt_cfg.micro_batch_size = cfg.model.data.train_ds.micro_batch_size

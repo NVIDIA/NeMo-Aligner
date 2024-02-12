@@ -137,7 +137,7 @@ class SupervisedTrainer:
         self.optimizer.step()
         if self.scheduler is not None:
             self.scheduler.step()
-        
+
         if self.model.model.embedding.noise_scheduler is not None:
             self.model.model.embedding.noise_scheduler.step()
 
