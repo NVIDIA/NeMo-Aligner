@@ -42,6 +42,7 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
+from nemo_aligner.utils.train_script_utils import FakeScheduler
 
 """Script to start Reward Model training"""
 
@@ -289,9 +290,21 @@ def main(cfg) -> None:
     # optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
     policy_optimizer = ptl_model.policy_optimizer
-    policy_scheduler = ptl_model.policy_scheduler["scheduler"]
+    policy_scheduler = ptl_model.policy_scheduler
+
+    if policy_scheduler is None:
+        policy_scheduler = FakeScheduler()
+    else:
+        policy_scheduler = policy_scheduler["scheduler"]
+
     value_optimizer = ptl_model.value_optimizer
-    value_scheduler = ptl_model.value_scheduler["scheduler"]
+    value_scheduler = ptl_model.value_scheduler
+
+    if value_scheduler is None:
+        value_scheduler = FakeScheduler()
+    else:
+        value_scheduler = value_scheduler["scheduler"]
+
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
