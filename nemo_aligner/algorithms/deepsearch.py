@@ -301,10 +301,7 @@ class DeepSearchTrainer:
                     run_time_exceeded=run_time_exceeded,
                 )
 
-                if run_val:
 # val_metrics = self.run_validation()
-                    train_eval_metrics = self.run_train_evaluation()
-                    step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 # step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update(timing_metrics)
@@ -322,6 +319,9 @@ class DeepSearchTrainer:
                     return
                 
             self.epoch += 1
+            if (self.cfg.val_check_interval > 0) and self.epoch % self.cfg.val_check_interval == 0:
+                train_eval_metrics = self.run_train_evaluation()
+                step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
     def set_max_steps(self):
         max_steps = self.cfg.get("max_steps", -1)
