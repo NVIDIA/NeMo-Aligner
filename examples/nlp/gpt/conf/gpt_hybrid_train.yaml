@@ -118,8 +118,9 @@ model:
       - 0.98
     # define fields from the base model's config that should be ignored when merging with this config.
     overwrite_base_config:
-        data: True
-        optim: True
+      data:
+        data_prefix: True
+      optim: True
 
 # sched:
 # name: CosineAnnealing
@@ -150,8 +151,9 @@ model:
 
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
-      data: True
-      optim: True
+    data:
+      data_prefix: True
+    optim: True
 
 exp_manager:
   explicit_log_dir: /results
