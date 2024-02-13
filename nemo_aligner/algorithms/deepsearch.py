@@ -64,8 +64,8 @@ class DeepSearchTrainer:
         scheduler,
         train_policy_dataloader,
         train_value_dataloader,
-        val_dataloader,
-        train_dataloader,
+        val_dataloader_builder_func,
+        train_dataloader_builder_func,
         feedback,
         logger,
         ckpt_callback,
@@ -77,8 +77,8 @@ class DeepSearchTrainer:
         self.scheduler = scheduler
         self.train_policy_dataloader = train_policy_dataloader
         self.train_value_dataloader = train_value_dataloader
-        self.val_dataloader = val_dataloader
-        self.train_dataloader = train_dataloader
+        self.val_dataloader_builder_func = val_dataloader_builder_func
+        self.train_dataloader_builder_func = train_dataloader_builder_func
         self.feedback = feedback
         self.logger = logger
         self.ckpt_callback = ckpt_callback
@@ -106,7 +106,6 @@ class DeepSearchTrainer:
     @torch.no_grad()
     def run_inference(self, dataloader):
         self.model.prepare_for_inference()
-        # acc is not not computed properly, idk why...
 
         total = 0
         num_correct = 0
@@ -210,13 +209,15 @@ class DeepSearchTrainer:
                 metrics, step=self.step, prefix="train_optim_value/",
             )
 
-
         self.model.finish_training()
         return metrics
 
     def run_validation(self):
         self.timer.start("validation_time")
-        val_metrics = self.run_inference(self.val_dataloader)
+
+        dataloader = self.val_dataloader_builder_func()
+        val_metrics = self.run_inference(dataloader)
+
         self.timer.stop("validation_time")
         val_metrics["validation_time"] = self.timer.get("validation_time")
 
@@ -237,7 +238,10 @@ class DeepSearchTrainer:
 
     def run_train_evaluation(self):
         self.timer.start("train_eval")
-        train_metrics = self.run_inference(self.train_dataloader)
+
+        dataloader = self.train_dataloader_builder_func()
+        train_metrics = self.run_inference(dataloader)
+
         self.timer.stop("train_eval")
         train_metrics["train_eval_timing"] = self.timer.get("train_eval")
 
@@ -265,7 +269,7 @@ class DeepSearchTrainer:
             print("### MAKE SURE YOU ARE RESETTING THE SAMPLER FOR THE LOADERS OTHERWISE DATALOADING ORDER THE SAME")
 
         if self.step == 0:
-# self.run_validation()
+            # self.run_validation()
             self.run_train_evaluation()
 
         for _ in epoch_iter:
@@ -276,7 +280,11 @@ class DeepSearchTrainer:
             value_dataloader_iter = iter(self.train_value_dataloader)
 
             global_pbar = tqdm(
-                loop_iter, initial=self.step, total=self.max_steps * (self.epoch+1), leave=True, desc="DeepSearch Global Step"
+                loop_iter,
+                initial=self.step,
+                total=self.max_steps * (self.epoch + 1),
+                leave=True,
+                desc="DeepSearch Global Step",
             )
 
             for _ in global_pbar:
@@ -301,8 +309,8 @@ class DeepSearchTrainer:
                     run_time_exceeded=run_time_exceeded,
                 )
 
-# val_metrics = self.run_validation()
-# step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
+                # val_metrics = self.run_validation()
+                # step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch
@@ -317,7 +325,7 @@ class DeepSearchTrainer:
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
-                
+
             self.epoch += 1
             if (self.cfg.val_check_interval > 0) and self.epoch % self.cfg.val_check_interval == 0:
                 train_eval_metrics = self.run_train_evaluation()

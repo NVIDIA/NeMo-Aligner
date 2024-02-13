@@ -127,7 +127,7 @@ print(data_metrics)
 
 print("filtering out the negative reward cases in the policy")
 before_filter_len = len(policies)
-policies = [p for p in policies if all(r > 0 for r in p['reward'])]
-print("questions before filter {} questions after filter {}".format(before_filter_len , len(policies)))
+policies = [p for p in policies if all(r > 0 for r in p["reward"])]
+print("questions before filter {} questions after filter {}".format(before_filter_len, len(policies)))
 
 torch.save({"policies": policies, "values": values}, DATA_FILE)
