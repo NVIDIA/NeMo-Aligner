@@ -95,7 +95,6 @@ class DeepSearchTrainer:
         # TODO(geshen): steps probably wrong
         self.set_max_steps()
 
-        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
@@ -113,10 +112,10 @@ class DeepSearchTrainer:
 
         tables = []
 
-        loop_iter = zip(range(self.limit_val_batches), dataloader)
-        inference_pbar = tqdm(
-            loop_iter, total=min(len(dataloader), self.limit_val_batches), leave=True, desc="Inference"
-        )
+        limit_batches = compute_limit_batches(len(dataloader), self.cfg.limit_val_batches)
+
+        loop_iter = zip(range(limit_batches), dataloader)
+        inference_pbar = tqdm(loop_iter, total=min(len(dataloader), limit_batches), leave=True, desc="Inference")
 
         for (_, batch) in inference_pbar:
             output = self.model.generate(batch["question"])
@@ -305,7 +304,7 @@ class DeepSearchTrainer:
                     self.max_steps * (self.epoch + 1),
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
-                    self.limit_val_batches,
+                    1.0,
                     run_time_exceeded=run_time_exceeded,
                 )
 
