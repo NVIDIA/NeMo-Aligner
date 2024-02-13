@@ -21,6 +21,7 @@ from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_cal
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -75,6 +76,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         if self.enable_standardization:
             self.rew_mean = cfg.reward_standardization.mean
             self.rew_std = cfg.reward_standardization.std
+
+        self.forward_mbs = self.cfg.forward_mbs
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
@@ -399,27 +402,21 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         )
 
         # TODO: maybe cut this?
-        micro_batch_size = context_tokens_tensor.shape[0]
+        input_batch_size = context_tokens_tensor.shape[0]
         sequence_length = context_tokens_tensor.shape[1]
 
-        app_state = AppState()
-        _reconfigure_microbatch_calculator(
-            rank=app_state.global_rank,
-            rampup_batch_size=None,
-            global_batch_size=micro_batch_size,
-            micro_batch_size=micro_batch_size,
-            data_parallel_size=1,
-        )
-        attention_mask_repeat = torch.concat([attention_mask for _ in range(micro_batch_size)])
+        attention_mask_repeat = torch.concat([attention_mask for _ in range(input_batch_size)])
+
+        inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat]
+
+        num_microbatches = divide(input_batch_size, self.forward_mbs)
+        data_iter = get_iterator_k_split(inputs, num_microbatches)
+
         with print_timer("forward step"):
-            rewards = self.forward_step(
-                [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat],
-                micro_batch_size,
-                sequence_length,
-            )
+            rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches,)
 
         if parallel_state.is_pipeline_last_stage():
-            rewards = rewards[0]["reward"]
+            rewards = torch.cat(rewards)
 
             # Standardize values to subtract a bias.
             if self.enable_standardization:
@@ -437,15 +434,15 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         return rewards_list, exceeded
 
-    def forward_step(self, batch, micro_batch_size, sequence_length):
+    def forward_step(self, data_iter, micro_batch_size, sequence_length, num_microbatches):
         set_sync_funcs(self, forward_only=True)
 
         fwd_bwd_function = get_forward_backward_func()
         output_tensor = fwd_bwd_function(
             forward_step_func=self.get_forward_output_only_func(),
-            data_iterator=iter([batch]),
+            data_iterator=data_iter,
             model=self.model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=sequence_length,
             micro_batch_size=micro_batch_size,
@@ -466,7 +463,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                     output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
             def id_func(output_tensor):
-                return output_tensor, {"reward": output_tensor}
+                return output_tensor, output_tensor
 
             return output_tensor, id_func
 
