@@ -28,7 +28,7 @@ from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.utils import logging
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import SyncTimer
-from nemo_aligner.utils.train_utils import clip_gradients
+from nemo_aligner.utils.train_utils import clip_gradients, clip_optimier_gradients
 from nemo_aligner.utils.trainer_utils import check_progress
 from nemo_aligner.utils.utils import clear_memory
 
@@ -168,7 +168,13 @@ class DeepSearchTrainer:
         loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
         self.model.finish_training_step()
 
-        grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
+        if train_mode == TrainMode.POLICY_ONLY:
+            grad_norm = clip_optimier_gradients(self.model, self.policy_optimizer, self.cfg.gradient_clip_val)
+        elif train_mode == TrainMode.VALUE_ONLY:
+            grad_norm = clip_optimier_gradients(self.model, self.value_optimizer, self.cfg.gradient_clip_val)
+        else:
+            raise ValueError(f"Invalid train mode {train_mode}")
+
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
         if train_mode == TrainMode.POLICY_ONLY:
             lr = self.policy_optimizer.param_groups[0]["lr"]
