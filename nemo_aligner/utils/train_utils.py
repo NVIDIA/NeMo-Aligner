@@ -154,3 +154,24 @@ def clip_gradients(ptl_model, clip_val):
         grad_norm = clip_grad_norm_fp32(parameters=parameters, max_norm=clip_val)
 
     return grad_norm
+
+
+def clip_optimier_gradients(ptl_model, optimizer, clip_val):
+    if clip_val is None:
+        return
+
+    clip_val = float(clip_val)
+    if clip_val <= 0:
+        return
+
+    if ptl_model.with_distributed_adam:
+        grad_norm = clip_grad_norm_distributed_optimizer(optimizer, clip_val)
+    else:
+        if ptl_model.megatron_amp_O2:
+            # grep fp32 master parameters for gradient clipping
+            parameters = optimizer.get_parameters_with_grad()
+        else:
+            parameters = ptl_model.get_parameters_with_grad()
+        grad_norm = clip_grad_norm_fp32(parameters=parameters, max_norm=clip_val)
+
+    return grad_norm

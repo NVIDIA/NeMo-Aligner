@@ -64,6 +64,28 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import configure_batch_sizes, masked_mean, offload_distributed_adam
 
 
+class FakeOptimizer:
+    def __init__(self, policy_optimizer, value_optimizer):
+        self.policy_optimizer = policy_optimizer
+        self.value_optimizer = value_optimizer
+
+    def zero_grad(self):
+        self.policy_optimizer.zero_grad()
+        self.value_optimizer.zero_grad()
+
+    def _finish_bucket_grad_sync(self):
+        self.policy_optimizer._finish_bucket_grad_sync()
+        self.value_optimizer._finish_bucket_grad_sync()
+
+    def allreduce_main_grads(self):
+        self.policy_optimizer.allreduce_main_grads()
+        self.value_optimizer.allreduce_main_grads()
+
+    @property
+    def no_sync(self):
+        return self.policy_optimizer.no_sync
+
+
 class MegatronGPTHybridModel(MegatronGPTModel):
     """
     Megatron GPT Reward Model Training.
@@ -684,6 +706,8 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 self.policy_optimizer.init_param_buffer()
             if self.value_optimizer.contiguous_param_buffer:
                 self.value_optimizer.init_param_buffer()
+
+            self._optimizer = FakeOptimizer(self.policy_optimizer, self.value_optimizer)
 
             # overlap_params = []
             # no_overlap_params = []
