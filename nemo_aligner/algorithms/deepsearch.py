@@ -226,7 +226,6 @@ class DeepSearchTrainer:
                 metrics, step=self.step, prefix="train_optim_value/",
             )
 
-
         self.model.finish_training()
         return metrics
 
@@ -281,7 +280,7 @@ class DeepSearchTrainer:
             print("### MAKE SURE YOU ARE RESETTING THE SAMPLER FOR THE LOADERS OTHERWISE DATALOADING ORDER THE SAME")
 
         if self.step == 0:
-# self.run_validation()
+            # self.run_validation()
             self.run_train_evaluation()
 
         for _ in epoch_iter:
@@ -292,7 +291,11 @@ class DeepSearchTrainer:
             value_dataloader_iter = iter(self.train_value_dataloader)
 
             global_pbar = tqdm(
-                loop_iter, initial=self.step, total=self.max_steps * (self.epoch+1), leave=True, desc="DeepSearch Global Step"
+                loop_iter,
+                initial=self.step,
+                total=self.max_steps * (self.epoch + 1),
+                leave=True,
+                desc="DeepSearch Global Step",
             )
 
             for _ in global_pbar:
@@ -317,8 +320,8 @@ class DeepSearchTrainer:
                     run_time_exceeded=run_time_exceeded,
                 )
 
-# val_metrics = self.run_validation()
-# step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
+                # val_metrics = self.run_validation()
+                # step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch
@@ -333,7 +336,7 @@ class DeepSearchTrainer:
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
-                
+
             self.epoch += 1
             if self.epoch % self.cfg.val_check_interval == 0:
                 train_eval_metrics = self.run_train_evaluation()

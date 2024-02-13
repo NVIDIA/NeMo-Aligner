@@ -34,6 +34,7 @@ from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedback
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
+    FakeScheduler,
     add_custom_checkpoint_callback,
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
@@ -42,7 +43,6 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
-from nemo_aligner.utils.train_script_utils import FakeScheduler
 
 """Script to start Reward Model training"""
 
@@ -170,16 +170,12 @@ def mcts_value_collate_fn(eos_id, batches):
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    optim = deepcopy(cfg.model.optim)
     val_ds = DatasetWrapper(load_dataset("gsm8k", "main")["test"])
 
     train_ds = DatasetWrapper(load_dataset("gsm8k", "main")["train"])
     feedback = GSK8KFeedbackDataset()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
-    # hard reset the optim flag
-    cfg.model.optim = optim
-
     cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
 
     logging.info("\n\n************** Experiment configuration ***********")
