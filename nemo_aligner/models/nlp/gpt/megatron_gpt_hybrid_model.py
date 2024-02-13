@@ -92,11 +92,11 @@ class FakeOptimizer:
     @property
     def no_sync(self):
         return self.policy_optimizer.no_sync
-    
+
     @property
     def overlap_grad_sync(self):
         return self.policy_optimizer.overlap_grad_sync or self.value_optimizer.overlap_grad_sync
-    
+
 
 class MegatronGPTHybridModel(MegatronGPTModel):
     """
