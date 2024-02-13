@@ -116,11 +116,11 @@ model:
       betas:
       - 0.9
       - 0.98
-      sched:
-        name: CosineAnnealing
-        warmup_steps: 10
-        constant_steps: 1000
-        min_lr: 1e-7
+# sched:
+# name: CosineAnnealing
+# warmup_steps: 10
+# constant_steps: 1000
+# min_lr: 1e-7
 
   # miscellaneous
   seed: 1234
