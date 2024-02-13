@@ -667,11 +667,19 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         self.policy_optimizer, self.policy_scheduler = ModelPT.setup_optimization(
             self, optim_config=self.cfg.optim, optim_kwargs=optim_kwargs
         )
+        # sanity check, make sure the number of parameters in the policy network is the same as number of parameters in the policy buckets
+        if self.with_distributed_adam:
+            assert sum([len(i["params"]) for i in self._optimizer_param_groups]) == sum(
+                [len(i) for i in buckets_policy]
+            )
         self.setup_policy_optimizer = False
         self.value_optimizer, self.value_scheduler = ModelPT.setup_optimization(
             self, optim_config=self.cfg.value.optim, optim_kwargs=optim_kwargs
         )
-
+        if self.with_distributed_adam:
+            assert sum([len(i["params"]) for i in self._optimizer_param_groups]) == sum(
+                [len(i) for i in buckets_value]
+            )
         # Configure distributed optimizer
         if self.with_distributed_adam:
 
@@ -698,6 +706,8 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                         policy_no_overlap_params.append(p)
                     else:
                         policy_overlap_params.append(p)
+            assert len(policy_overlap_params) + len(policy_no_overlap_params) == sum([len(i) for i in buckets_policy])
+            assert len(value_overlap_params) + len(value_no_overlap_params) == sum([len(i) for i in buckets_value])
             self.policy_optimizer.init_params(reversed(policy_overlap_params))
             self.policy_optimizer.init_params(reversed(policy_no_overlap_params))
             self.value_optimizer.init_params(reversed(value_overlap_params))
@@ -708,17 +718,3 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 self.value_optimizer.init_param_buffer()
 
             self._optimizer = FakeOptimizer(self.policy_optimizer, self.value_optimizer)
-
-            # overlap_params = []
-            # no_overlap_params = []
-            # for p in self.parameters():
-            #     if getattr(p, '_disable_overlap_grad_sync', False):
-            #         no_overlap_params.append(p)
-            #     else:
-            #         overlap_params.append(p)
-            # self._optimizer.init_params(reversed(overlap_params))
-            # self._optimizer.init_params(reversed(no_overlap_params))
-
-            # # Initialize contiguous parameter buffer
-            # if self._optimizer.contiguous_param_buffer:
-            #     self._optimizer.init_param_buffer()
