@@ -81,10 +81,22 @@ class FakeOptimizer:
         self.policy_optimizer.allreduce_main_grads()
         self.value_optimizer.allreduce_main_grads()
 
+    def try_grad_sync(self, params=None):
+        if self.policy_optimizer.overlap_grad_sync:
+            params = self.policy_optimizer.parameters()
+            self.policy_optimizer.try_grad_sync(params)
+        if self.value_optimizer.overlap_grad_sync:
+            params = self.value_optimizer.parameters()
+            self.value_optimizer.try_grad_sync(params)
+
     @property
     def no_sync(self):
         return self.policy_optimizer.no_sync
-
+    
+    @property
+    def overlap_grad_sync(self):
+        return self.policy_optimizer.overlap_grad_sync or self.value_optimizer.overlap_grad_sync
+    
 
 class MegatronGPTHybridModel(MegatronGPTModel):
     """

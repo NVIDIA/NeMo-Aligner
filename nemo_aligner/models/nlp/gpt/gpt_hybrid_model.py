@@ -225,7 +225,7 @@ class GPTHybridModel(GPTModel):
                 inference_params=inference_params,
             )
 
-        value = None
+        value = torch.tensor(0.0).cuda()
         if self.post_process:
             # logits and loss
             output_weight = None
