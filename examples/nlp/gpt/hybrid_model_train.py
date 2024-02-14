@@ -61,6 +61,20 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 """
 
 
+def compute_limit_batches(number_of_batches: int, limit_batches):
+    if limit_batches is None:
+        limit_batches = 1.0
+
+    if isinstance(limit_batches, float):
+        limit_batches = int(number_of_batches * limit_batches)
+    elif isinstance(limit_batches, int):
+        limit_batches = min(number_of_batches, limit_batches)
+    else:
+        raise TypeError(f"Invalid data type of {type(limit_batches)} cannot compute limit batches")
+
+    return limit_batches
+
+
 def collate_fn(batch):
     # applies the steerlm format and
     # transposes the list of dict to dict of lists
@@ -232,7 +246,12 @@ def main(cfg) -> None:
     policy_data, value_data = train_data["policies"], train_data["values"]
 
     data_ids = []
-    for _, p in zip(range(cfg.model.inference.micro_batch_size * dp_size), policy_data):
+
+    num_samples = compute_limit_batches(
+        len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches
+    )
+
+    for _, p in zip(range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_data):
         data_ids.append(p["data_id"])
 
     train_ds = TrainDSDatasetWrapper(train_ds, data_ids)
