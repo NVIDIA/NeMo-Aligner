@@ -140,9 +140,10 @@ class SupervisedTrainer:
 
         model_ref = self.model.model.module if self.model.megatron_amp_O2 else self.model.model
 
-        noise_scheduler = model_ref.embedding.noise_scheduler
-        if noise_scheduler is not None:
-            noise_scheduler.step()
+        if hasattr(model_ref, "embedding") and hasattr(model_ref.embedding, "noise_scheduler"):
+            noise_scheduler = model_ref.embedding.noise_scheduler
+            if noise_scheduler is not None:
+                noise_scheduler.step()
 
         trainer_metrics = {}
         if grad_norm is not None:
