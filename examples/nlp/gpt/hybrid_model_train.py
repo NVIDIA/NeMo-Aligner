@@ -86,6 +86,19 @@ class DatasetWrapper:
         return len(self.ds)
 
 
+class TrainDSDatasetWrapper:
+    def __init__(self, ds, data_ids):
+        self.ds = ds
+        self.data_ids = data_ids
+
+    # just like a dataset but return idx
+    def __getitem__(self, idx):
+        return {**self.ds[self.data_ids[idx]], "data_id": idx}
+
+    def __len__(self):
+        return len(self.data_ids)
+
+
 def fill_padded_tensor_with_data(batches, max_seqlen, lengths, response_lengths, pad_value):
     """unpadded x * -> B x max seq len x *"""
     assert len(batches) == len(lengths)
@@ -172,7 +185,8 @@ def mcts_value_collate_fn(eos_id, batches):
 def main(cfg) -> None:
     val_ds = DatasetWrapper(load_dataset("gsm8k", "main")["test"])
 
-    train_ds = DatasetWrapper(load_dataset("gsm8k", "main")["train"])
+    # train_ds = DatasetWrapper(load_dataset("gsm8k", "main")["train"])
+    train_ds = load_dataset("gsm8k", "main")["train"]
     feedback = GSK8KFeedbackDataset()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
@@ -217,6 +231,13 @@ def main(cfg) -> None:
     # TODO(geshen): should we shuffle the data?
     policy_data, value_data = train_data["policies"], train_data["values"]
 
+    data_ids = []
+    for _, p in zip(range(cfg.model.inference.micro_batch_size * dp_size), policy_data):
+        data_ids.append(p["data_id"])
+
+    train_ds = TrainDSDatasetWrapper(train_ds, data_ids)
+    # train_ds = DatasetWrapper(train_ds)
+
     num_questions_correct = 0
 
     for p in policy_data:
@@ -257,7 +278,9 @@ def main(cfg) -> None:
     )
 
     # hack to allow using all of the validation dataset
-    val_dataloader = build_dataloader(
+    # TODO: partial this dataloader into the func
+    val_dataloader_builder_func = partial(
+        build_dataloader,
         cfg=cfg,
         dataset=val_ds,
         consumed_samples=0,
@@ -268,7 +291,8 @@ def main(cfg) -> None:
         drop_last=True,
     )
 
-    train_dataloader = build_dataloader(
+    train_dataloader_builder_func = partial(
+        build_dataloader,
         cfg=cfg,
         dataset=train_ds,
         consumed_samples=0,
@@ -315,8 +339,8 @@ def main(cfg) -> None:
         value_scheduler=value_scheduler,
         train_policy_dataloader=train_policy_dataloader,
         train_value_dataloader=train_value_dataloader,
-        val_dataloader=val_dataloader,
-        train_dataloader=train_dataloader,
+        val_dataloader_builder_func=val_dataloader_builder_func,
+        train_dataloader_builder_func=train_dataloader_builder_func,
         feedback=feedback,
         logger=logger,
         ckpt_callback=ckpt_callback,

@@ -66,8 +66,8 @@ class DeepSearchTrainer:
         value_scheduler,
         train_policy_dataloader,
         train_value_dataloader,
-        val_dataloader,
-        train_dataloader,
+        val_dataloader_builder_func,
+        train_dataloader_builder_func,
         feedback,
         logger,
         ckpt_callback,
@@ -81,8 +81,8 @@ class DeepSearchTrainer:
         self.value_scheduler = value_scheduler
         self.train_policy_dataloader = train_policy_dataloader
         self.train_value_dataloader = train_value_dataloader
-        self.val_dataloader = val_dataloader
-        self.train_dataloader = train_dataloader
+        self.val_dataloader_builder_func = val_dataloader_builder_func
+        self.train_dataloader_builder_func = train_dataloader_builder_func
         self.feedback = feedback
         self.logger = logger
         self.ckpt_callback = ckpt_callback
@@ -99,7 +99,6 @@ class DeepSearchTrainer:
         # TODO(geshen): steps probably wrong
         self.set_max_steps()
 
-        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
@@ -110,7 +109,6 @@ class DeepSearchTrainer:
     @torch.no_grad()
     def run_inference(self, dataloader):
         self.model.prepare_for_inference()
-        # acc is not not computed properly, idk why...
 
         total = 0
         num_correct = 0
@@ -118,10 +116,10 @@ class DeepSearchTrainer:
 
         tables = []
 
-        loop_iter = zip(range(self.limit_val_batches), dataloader)
-        inference_pbar = tqdm(
-            loop_iter, total=min(len(dataloader), self.limit_val_batches), leave=True, desc="Inference"
-        )
+        limit_batches = compute_limit_batches(len(dataloader), self.cfg.limit_val_batches)
+
+        loop_iter = zip(range(limit_batches), dataloader)
+        inference_pbar = tqdm(loop_iter, total=min(len(dataloader), limit_batches), leave=True, desc="Inference")
 
         for (_, batch) in inference_pbar:
             output = self.model.generate(batch["question"])
@@ -231,7 +229,10 @@ class DeepSearchTrainer:
 
     def run_validation(self):
         self.timer.start("validation_time")
-        val_metrics = self.run_inference(self.val_dataloader)
+
+        dataloader = self.val_dataloader_builder_func()
+        val_metrics = self.run_inference(dataloader)
+
         self.timer.stop("validation_time")
         val_metrics["validation_time"] = self.timer.get("validation_time")
 
@@ -252,7 +253,10 @@ class DeepSearchTrainer:
 
     def run_train_evaluation(self):
         self.timer.start("train_eval")
-        train_metrics = self.run_inference(self.train_dataloader)
+
+        dataloader = self.train_dataloader_builder_func()
+        train_metrics = self.run_inference(dataloader)
+
         self.timer.stop("train_eval")
         train_metrics["train_eval_timing"] = self.timer.get("train_eval")
 
@@ -316,7 +320,7 @@ class DeepSearchTrainer:
                     self.max_steps * (self.epoch + 1),
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
-                    self.limit_val_batches,
+                    1.0,
                     run_time_exceeded=run_time_exceeded,
                 )
 
@@ -338,7 +342,7 @@ class DeepSearchTrainer:
                     return
 
             self.epoch += 1
-            if self.epoch % self.cfg.val_check_interval == 0:
+            if (self.cfg.val_check_interval > 0) and self.epoch % self.cfg.val_check_interval == 0:
                 train_eval_metrics = self.run_train_evaluation()
                 step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
