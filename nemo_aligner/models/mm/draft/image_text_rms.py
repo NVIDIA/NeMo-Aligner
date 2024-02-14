@@ -17,7 +17,7 @@ from tqdm import tqdm
 from transformers import AutoModel, AutoProcessor
 
 from nemo.collections.multimodal.data.clip.clip_dataset import get_preprocess_fns
-from nemo.collections.multimodal.models.clip.megatron_clip_models import (
+from nemo.collections.multimodal.models.vision_language_foundation.clip.megatron_clip_models import (
     CLIPTextTransformer,
     CLIPVisionTransformer,
     MegatronCLIPModel,

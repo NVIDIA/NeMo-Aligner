@@ -19,7 +19,7 @@ from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 from nemo_aligner.utils.distributed import Timer
-from nemo.collections.multimodal.models.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -131,7 +131,7 @@ def main(cfg) -> None:
     )
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:1:30:00"))
+    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:4:00:00"))
 
     draft_trainer = SupervisedTrainer(
         cfg=cfg.model,

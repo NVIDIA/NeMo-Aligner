@@ -28,7 +28,7 @@ from PIL import Image
 from tqdm import tqdm
 
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
-from nemo.collections.multimodal.models.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
 from nemo.collections.nlp.models.language_modeling.megatron.gpt_model import GPTModel
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
@@ -309,8 +309,8 @@ class AlignableSDModel(AlignableGenerativeInterface):
             sampler_draft = sampling_utils.initialize_sampler(self.model.model, self.sampler_type.upper())
             sampler_init = sampling_utils.initialize_sampler(self.init_model, self.sampler_type.upper())
 
-            cond, u_cond = sampling_utils.encode_prompt_batch(
-                self.model.model.cond_stage_model, batch, self.unconditional_guidance_scale, 1
+            cond, u_cond = sampling_utils.encode_prompt(
+                self.model.model.cond_stage_model, batch, self.unconditional_guidance_scale
             )
 
             sampler_draft.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
