@@ -57,7 +57,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         gpt_cfg.creat_adv_temp = cfg.model.get("creat_adv_temp", 1.0)
         gpt_cfg.creat_lambda = cfg.model.get("creat_lambda", 0.5)
         gpt_cfg.creat_lr = cfg.model.get("creat_lr", 0.01)
-        gpt_cfg.crear_max_norm = cfg.model.get("crear_max_norm", 0.1)
+        gpt_cfg.creat_max_norm = cfg.model.get("creat_max_norm", 0.1)
 
         gpt_cfg.noise_scheduler_config = cfg.model.get("noise_scheduler_config", None)
         gpt_cfg.adversarial_training = cfg.model.get("adversarial_training", False)
