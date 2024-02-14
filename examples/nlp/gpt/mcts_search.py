@@ -165,12 +165,12 @@ class MCTSSearch:
 
             metrics.update(search_metrics)
             metrics["search_time"] = self.timer.get("mcts_search_time")
-            metrics["step"] = self.idx
+            metrics["step"] = self.step
 
             global_pbar.set_postfix(metrics)
 
             self.logger.log_metrics(
-                metrics, step=self.idx, prefix="search/",
+                metrics, step=self.step, prefix="search/",
             )
 
             self.outputs.extend(output)
