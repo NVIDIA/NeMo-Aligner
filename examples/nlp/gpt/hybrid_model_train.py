@@ -244,10 +244,21 @@ def main(cfg) -> None:
         if all(x > 0 for x in p["reward"]):
             num_questions_correct += 1
 
+    value_correct = 0
+    value_total = 0
+
+    for v in value_data:
+        rewards = v["reward"]
+        value_correct = sum(r > 0 for r in rewards)
+        value_total += len(rewards)
+
     data_metrics = {
         "num_questions_correct": num_questions_correct,
         "num_questions": len(policy_data),
         "accuracy": num_questions_correct / len(policy_data),
+        "value_correct": value_correct,
+        "value_total": value_total,
+        "value_accuracy": value_correct / value_total,
     }
 
     logging.info("Loaded search cached data at {} with metric {}".format(cfg.mcts_data_file, data_metrics))
