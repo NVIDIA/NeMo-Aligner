@@ -284,7 +284,7 @@ class DeepSearchTrainer:
             print("### MAKE SURE YOU ARE RESETTING THE SAMPLER FOR THE LOADERS OTHERWISE DATALOADING ORDER THE SAME")
 
         if self.step == 0:
-            # self.run_validation()
+            self.run_validation()
             self.run_train_evaluation()
 
         for _ in epoch_iter:
@@ -310,7 +310,6 @@ class DeepSearchTrainer:
                 train_metrics = self.run_training(policy_dataloader_iter, value_dataloader_iter)
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
-                # step_metrics.update({f"train_{k}": v for k, v in train_metrics.items()})
 
                 self.step += 1
                 run_time_exceeded = self.run_timer.is_finished()
@@ -324,8 +323,12 @@ class DeepSearchTrainer:
                     run_time_exceeded=run_time_exceeded,
                 )
 
-                # val_metrics = self.run_validation()
-                # step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
+                if run_val:
+                    val_metrics = self.run_validation()
+                    step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
+
+                    train_eval_metrics = self.run_train_evaluation()
+                    step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch
@@ -342,9 +345,6 @@ class DeepSearchTrainer:
                     return
 
             self.epoch += 1
-            if (self.cfg.val_check_interval > 0) and self.epoch % self.cfg.val_check_interval == 0:
-                train_eval_metrics = self.run_train_evaluation()
-                step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
     def set_max_steps(self):
         max_steps = self.cfg.get("max_steps", -1)
