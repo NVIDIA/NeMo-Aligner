@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import random
 import tempfile
 from collections import defaultdict
 from functools import partial
@@ -92,12 +93,40 @@ def collate_func(batch):
     return new_dict
 
 
+def get_local_iterator(local_data_ids, num_to_load):
+    output = [None for _ in range(parallel_state.get_data_parallel_world_size())]
+    torch.distributed.all_gather_object(output, local_data_ids, group=parallel_state.get_data_parallel_group())
+    global_set = set().union(*output)
+
+    indices = [i for i in range(num_to_load) if i not in global_set]
+
+    rng = random.Random(len(indices))
+    rng.shuffle(indices)
+
+    # rollout_micro_batch_size
+    indices = torch.as_tensor(indices).tensor_split(parallel_state.get_data_parallel_world_size())[
+        parallel_state.get_data_parallel_rank()
+    ]
+
+    return indices
+
+
 class MCTSSearch:
-    def __init__(self, search_func, collate_func, save_path, batch_chunks, dataset, logger, run_timer, save_interval):
+    def __init__(
+        self,
+        search_func,
+        collate_func,
+        save_path,
+        num_to_load,
+        rollout_micro_batch_size,
+        dataset,
+        logger,
+        run_timer,
+        save_interval,
+    ):
         self.search_func = search_func
         self.collate_func = collate_func
         self.save_path = Path(save_path).resolve()
-        self.batch_chunks = batch_chunks
 
         self.dataset = dataset
         self.logger = logger
@@ -105,33 +134,30 @@ class MCTSSearch:
         # has to be DP specific timer
         self.run_timer = run_timer
 
-        self.idx = 0
+        self.data_ids = set()
         self.outputs = []
-
         self.timer = NamedTimer(reduction="mean", sync_cuda=True, buffer_size=1)
+        self.save_interval = save_interval
 
         if self.save_path.exists():
             self.load_state_dict(torch.load(self.save_path))
 
-        self.save_interval = save_interval
+        self.batch_chunks = get_local_iterator(self.data_ids, num_to_load).split(rollout_micro_batch_size)
+        self.step = 0
 
     def search(self):
         self.run_timer.start_time()
 
-        loop_iter = range(self.idx, len(self.batch_chunks))
+        global_pbar = tqdm(self.batch_chunks, leave=True, desc="Search Global Step")
 
-        global_pbar = tqdm(
-            loop_iter, initial=self.idx, total=len(self.batch_chunks), leave=True, desc="Search Global Step"
-        )
-
-        for i in global_pbar:
-            batch_idx = self.batch_chunks[i]
+        for batch_idx in global_pbar:
 
             batch = self.collate_func([self.dataset[idx] for idx in batch_idx.tolist()])
 
             metrics = {}
             self.timer.start("mcts_search_time")
             output = self.search_func(batch=batch)
+
             # TODO(geshen): compute metrics
             self.timer.stop("mcts_search_time")
 
@@ -148,9 +174,11 @@ class MCTSSearch:
             )
 
             self.outputs.extend(output)
-            self.idx += 1
+            self.step += 1
 
-            if self.run_timer.is_within_dp_finished() or i % self.save_interval == 0:
+            self.data_ids.update(batch_idx.tolist())
+
+            if self.run_timer.is_within_dp_finished() or self.step % self.save_interval == 0:
                 self.save()
 
         # this will timeout in 30mins, but at least it gives other DP ranks a chance to finish on time
@@ -169,10 +197,10 @@ class MCTSSearch:
         torch.distributed.barrier(group=group)
 
     def state_dict(self):
-        return {"idx": self.idx, "mcts_outputs": self.outputs}
+        return {"data_ids": self.data_ids, "mcts_outputs": self.outputs}
 
     def load_state_dict(self, state_dict):
-        self.idx = state_dict["idx"]
+        self.data_ids = state_dict["data_ids"]
         self.outputs = state_dict["mcts_outputs"]
 
 
@@ -241,9 +269,6 @@ def main(cfg) -> None:
 
     num_to_load = compute_limit_batches(len(train_ds), cfg.model.mcts.num_rollouts)
 
-    dp_rank = parallel_state.get_data_parallel_rank()
-    indices = torch.arange(num_to_load).tensor_split(parallel_state.get_data_parallel_world_size())[dp_rank]
-
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
 
     if torch.distributed.get_rank() == 0:
@@ -252,6 +277,7 @@ def main(cfg) -> None:
     torch.distributed.barrier()
 
     # we only really need model parallel src to save the checkpoint
+    dp_rank = parallel_state.get_data_parallel_rank()
     save_path = os.path.join(save_dir, "dp_{}.pt".format(dp_rank))
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
@@ -263,7 +289,8 @@ def main(cfg) -> None:
         search_func=search_func,
         collate_func=collate_func,
         save_path=save_path,
-        batch_chunks=indices.split(cfg.model.mcts.rollout_micro_batch_size),
+        num_to_load=num_to_load,
+        rollout_micro_batch_size=cfg.model.mcts.rollout_micro_batch_size,
         dataset=train_ds,
         logger=logger,
         run_timer=timer,
