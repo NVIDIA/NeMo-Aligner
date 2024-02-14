@@ -28,7 +28,10 @@ from PIL import Image
 from tqdm import tqdm
 
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
+    LatentDiffusion,
+    MegatronLatentDiffusion,
+)
 from nemo.collections.nlp.models.language_modeling.megatron.gpt_model import GPTModel
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
@@ -87,13 +90,7 @@ BatchType = Mapping[str, torch.tensor]
 
 class AlignableSDModel(AlignableGenerativeInterface):
     def __init__(
-        self,
-        model,
-        reward_model,
-        tokenizer,
-        optimizer,
-        config: DictConfig,
-        logger,
+        self, model, reward_model, tokenizer, optimizer, config: DictConfig, logger,
     ):
         self.model = model
         self.init_model = LatentDiffusion(config, None).to(torch.cuda.current_device()).eval()
@@ -127,6 +124,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
 
     def get_parameters_with_grad(self):
         return self.model.get_parameters_with_grad()
+
     def finish_inference(self):
         return
 
@@ -270,10 +268,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
         )
 
     def generate(
-        self,
-        prompts,
-        latent_shape,
-        x_T,
+        self, prompts, latent_shape, x_T,
     ):
 
         # get autocast_dtype
