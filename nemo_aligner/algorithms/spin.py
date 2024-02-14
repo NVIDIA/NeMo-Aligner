@@ -266,86 +266,93 @@ class SPINTrainer:
                 "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
             )
 
-        epoch_iter = range(self.epoch, self.cfg.max_epochs)
-        if len(epoch_iter) <= 0:
-            # epoch done
-            return
-
         self.run_timer.start_time()
 
-        for _ in epoch_iter:
-            num_steps_in_epoch = min(
-                self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
-            )
-            loop_iter = range(num_steps_in_epoch)
+        iterations_iter = range(self.iteration, self.cfg.max_iterations)
+        if len(iterations_iter) <= 0:
+            # iteration done
+            return
 
-            if not loop_iter:
-                return  # training ended
-
-            global_pbar = tqdm(
-                self.augment_dataloader(self.train_dataloader),
-                initial=self.step,
-                total=self.max_steps,
-                leave=True,
-                desc="Training steps",
-            )
-
-            for _, global_batch in zip(loop_iter, global_pbar):
-                self.model.prepare_for_training()
+        for _ in iterations_iter:
+            epoch_iter = range(self.epoch, self.cfg.max_epochs)
+            if len(epoch_iter) <= 0:
+                # epoch done
+                return
+    
+            for _ in epoch_iter:
+                num_steps_in_epoch = min(
+                    self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
+                )
+                loop_iter = range(num_steps_in_epoch)
+    
+                if not loop_iter:
+                    return  # training ended
+    
+                global_pbar = tqdm(
+                    self.augment_dataloader(self.train_dataloader),
+                    initial=self.step,
+                    total=self.max_steps,
+                    leave=True,
+                    desc="Training steps",
+                )
+    
+                for _, global_batch in zip(loop_iter, global_pbar):
+                    self.model.prepare_for_training()
+                    
+                    self.timer.start("train_step_time")
+                    loss, metrics = self.train_single_step(global_batch)
+                    self.timer.stop("train_step_time")
+                    train_step_time = self.timer.get("train_step_time")
+                    # to help avoid fragmentation
+                    clear_memory()
+    
+                    # TODO(geshen): maybe use the dataloader instead
+                    # bump up the consumed samples but not the step
+                    self.consumed_samples += self.model.cfg.global_batch_size
+                    metrics["consumed_samples"] = self.consumed_samples
+                    metrics["step_time"] = train_step_time
+                    metrics["epoch"] = self.epoch
+                    metrics["iteration"] = self.iteration
+                    self.logger.log_metrics(
+                        metrics, step=self.step, prefix="train/",
+                    )
+                    metrics = {f"train_{k}": v for k, v in metrics.items()}
+    
+                    self.step += 1
+    
+                    run_time_exceeded = self.run_timer.is_finished()
+                    run_val, save_model, is_train_end = check_progress(
+                        self.step,
+                        self.max_steps,
+                        self.cfg.val_check_interval,
+                        self.cfg.save_interval,
+                        self.limit_val_batches,
+                        run_time_exceeded=run_time_exceeded,
+                    )
+    
+                    if run_val:
+                        val_loss, val_metrics = self.run_validation()
+                        # validation is done on the UPDATED weights
+                        # so we use the incremented self.step
+                        self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+                        val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
+                        metrics.update(val_metrics)
+    
+                    global_pbar.set_postfix(metrics)
+    
+                    if save_model:
+                        # PTL save wants tensors only
+                        metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
+                        self.save(metrics, is_train_end=is_train_end)
+    
+                    if run_time_exceeded:
+                        logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
+                        return
+    
+                    metrics.clear()
+                    self.model.finish_training()
                 
-                self.timer.start("train_step_time")
-                loss, metrics = self.train_single_step(global_batch)
-                self.timer.stop("train_step_time")
-                train_step_time = self.timer.get("train_step_time")
-                # to help avoid fragmentation
-                clear_memory()
-
-                # TODO(geshen): maybe use the dataloader instead
-                # bump up the consumed samples but not the step
-                self.consumed_samples += self.model.cfg.global_batch_size
-                metrics["consumed_samples"] = self.consumed_samples
-                metrics["step_time"] = train_step_time
-                metrics["epoch"] = self.epoch + 1
-                self.logger.log_metrics(
-                    metrics, step=self.step, prefix="train/",
-                )
-                metrics = {f"train_{k}": v for k, v in metrics.items()}
-
-                self.step += 1
-
-                run_time_exceeded = self.run_timer.is_finished()
-                run_val, save_model, is_train_end = check_progress(
-                    self.step,
-                    self.max_steps,
-                    self.cfg.val_check_interval,
-                    self.cfg.save_interval,
-                    self.limit_val_batches,
-                    run_time_exceeded=run_time_exceeded,
-                )
-
-                if run_val:
-                    val_loss, val_metrics = self.run_validation()
-                    # validation is done on the UPDATED weights
-                    # so we use the incremented self.step
-                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
-                    val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
-                    metrics.update(val_metrics)
-
-                global_pbar.set_postfix(metrics)
-
-                if save_model:
-                    # PTL save wants tensors only
-                    metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
-                    self.save(metrics, is_train_end=is_train_end)
-
-                if run_time_exceeded:
-                    logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
-                    return
-
-                metrics.clear()
-                self.model.finish_training()
-            
-            # update the reference policy weights 
+            # update the reference policy weights
             self.model.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model, megatron_amp_O2=self.model.cfg.get("megatron_amp_O2", False))
 
         self.logger.finalize()
@@ -367,7 +374,7 @@ class SPINTrainer:
         self.model.finish_training()
 
     def set_max_steps(self):
-        self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
+        self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs * self.cfg.max_iterations
 
         if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
@@ -377,6 +384,7 @@ class SPINTrainer:
             "step": self.step,
             "consumed_samples": self.consumed_samples,
             "epoch": self.epoch,
+            "iteration": self.iteration,
         }
 
     def load_state_dict(self, state_dict):
@@ -438,9 +446,6 @@ class SPINTrainer:
                 new_batch["ref_policy_log_probs_actual"] = act_logps
                 new_batch["ref_policy_log_probs_generated"] = gen_logps
                 
-                #print("*** new batch shapes ***", flush=True)
-                #[print(f"{k} : {v.shape}") for k,v in new_batch.items()];
-                
                 yield new_batch
                 
                 del logprobs, act_logps, gen_logps
@@ -449,4 +454,8 @@ class SPINTrainer:
 
     @property
     def epoch(self):
-        return self.step // self.num_steps_per_epoch
+        return (self.step // self.num_steps_per_epoch) % self.cfg.max_epochs
+    
+    @property
+    def iteration(self):
+        return (self.step // self.num_steps_per_epoch) // self.cfg.max_epochs
