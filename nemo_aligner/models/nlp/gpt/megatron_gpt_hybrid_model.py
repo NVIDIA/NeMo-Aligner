@@ -48,6 +48,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.classes.modelPT import ModelPT
+from nemo.core.optim import MainParamsOptimizerWrapper, prepare_lr_scheduler
 from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import logging
 from nemo_aligner.algorithms.deepsearch import TrainMode
@@ -246,10 +247,10 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None)
+            logits, values = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None)
 
             def loss_func(parallel_logits):
-                logits, values = parallel_logits
+                logits = parallel_logits
 
                 policy_loss = self.compute_policy_loss(batch, logits)
                 value_loss = self.compute_value_loss(batch, values)
@@ -268,7 +269,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     },
                 )
 
-            return parallel_logits, loss_func
+            return logits, loss_func
 
         return fwd_output_and_loss_func
 
@@ -688,12 +689,77 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         self.value_optimizer, self.value_scheduler = ModelPT.setup_optimization(
             self, optim_config=self.cfg.value.optim, optim_kwargs=optim_kwargs
         )
+
+        # Wrap the baseline optimizer with the optimizer class with master parameters
+        if self.megatron_amp_O2 and not self.with_distributed_adam:
+            if self.torch_dtype == torch.bfloat16:
+                fp32_grad_accum = True
+                contiguous_grad_bucket = True
+            elif self.torch_dtype == torch.float16:
+                fp32_grad_accum = False
+                # TODO: contiguous grad bucket for fp16 is also planned to be supported
+                contiguous_grad_bucket = False
+                raise ValueError(
+                    "fp16 training is not yet supported with O2. Please set megatron_amp_O2 to False in the model config."
+                )
+
+            # if using tensor parallel only, we automatically use async grad all-reduce
+            # if using pipeline parallel or sequence parallel or gradient accumulation fusion, then we disable it
+            if (
+                self.cfg.get("pipeline_model_parallel_size", 1) == 1
+                and not (
+                    self.cfg.get("sequence_parallel", False) or self.cfg.get("gradient_accumulation_fusion", False)
+                )
+                and self.cfg.get("async_grad_allreduce", True)
+            ):
+                async_grad_allreduce = True
+            else:
+                async_grad_allreduce = False
+
+            if async_grad_allreduce:
+                # we need this to be configurable until make_nccl_premul_sum is in public PyTorch.
+                # currently cannot be imported in PyTorch 1.12.0
+                grad_div_ar_fusion = self.cfg.get("grad_div_ar_fusion", False)
+            else:
+                grad_div_ar_fusion = False
+
+            self.policy_optimizer = MainParamsOptimizerWrapper(
+                self.policy_optimizer,
+                fp32_grad_accum=fp32_grad_accum,
+                contiguous_grad_bucket=contiguous_grad_bucket,
+                async_grad_allreduce=async_grad_allreduce,
+                grad_div_ar_fusion=grad_div_ar_fusion,
+                grad_allreduce_chunk_size_mb=self.cfg.get("grad_allreduce_chunk_size_mb", 125),
+            )
+
+            self.value_optimizer = MainParamsOptimizerWrapper(
+                self.value_optimizer,
+                fp32_grad_accum=fp32_grad_accum,
+                contiguous_grad_bucket=contiguous_grad_bucket,
+                async_grad_allreduce=async_grad_allreduce,
+                grad_div_ar_fusion=grad_div_ar_fusion,
+                grad_allreduce_chunk_size_mb=self.cfg.get("grad_allreduce_chunk_size_mb", 125),
+            )
+
+            assert self._trainer.max_steps is not None, "'max_steps' is missing in trainer config."
+            if hasattr(self._cfg.optim, "sched"):
+                sched_config = self._cfg.optim.sched
+                sched_config["max_steps"] = self._trainer.max_steps
+                self.policy_scheduler = prepare_lr_scheduler(
+                    optimizer=self.policy_scheduler, scheduler_config=sched_config, train_dataloader=self._train_dl
+                )
+
+            if hasattr(self._cfg.value.optim, "sched"):
+                sched_config = self._cfg.value.optim.sched
+                sched_config["max_steps"] = self._trainer.max_steps
+                self.value_scheduler = prepare_lr_scheduler(
+                    optimizer=self.value_scheduler, scheduler_config=sched_config, train_dataloader=self._train_dl
+                )
+
         if self.with_distributed_adam:
             assert sum([len(i["params"]) for i in self._optimizer_param_groups]) == sum(
                 [len(i) for i in buckets_value]
             )
-        # Configure distributed optimizer
-        if self.with_distributed_adam:
 
             for bucket in buckets_policy:
                 self.policy_optimizer.init_params_bucket(bucket)
@@ -729,4 +795,4 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             if self.value_optimizer.contiguous_param_buffer:
                 self.value_optimizer.init_param_buffer()
 
-            self._optimizer = FakeOptimizer(self.policy_optimizer, self.value_optimizer)
+        self._optimizer = FakeOptimizer(self.policy_optimizer, self.value_optimizer)
