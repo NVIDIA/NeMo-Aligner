@@ -1,15 +1,15 @@
 #!/bin/bash
-PROJECT="NeMo-draft++"
+PROJECT="NeMo-draft+"
 WANDB="8256bec8f68d1a0ee4a3208685a8db0474d3806b"
  
 export PYTHONPATH=/opt/NeMo:/opt/nemo-aligner:$PYTHONPATH
 
-ACTOR_NUM_DEVICES=2
+ACTOR_NUM_DEVICES=1
 ACTOR_MICRO_BS=1
-GRAD_ACCUMULATION=1
+GRAD_ACCUMULATION=4
 ACTOR_GLOBAL_BATCH_SIZE=$((ACTOR_MICRO_BS*ACTOR_NUM_DEVICES*GRAD_ACCUMULATION))
 KL_COEF=0.1
-LR=0.0005
+LR=0.001
 
 ACTOR_CONFIG_PATH="/opt/nemo-aligner/examples/mm/draft/conf"
 ACTOR_CONFIG_NAME="draft_sd_policy"
@@ -21,7 +21,7 @@ DATASET_PATH="/opt/nemo-aligner/datasets/animals45.tar"
 
 mkdir -p ${DIR_SAVE_CKPT_PATH}
 
-ACTOR_DEVICE="0,1"
+ACTOR_DEVICE="1"
 echo "Running DRaFT on ${ACTOR_DEVICE}"
 git config --global --add safe.directory /opt/nemo-aligner \
 && wandb login ${WANDB} \
@@ -48,7 +48,7 @@ git config --global --add safe.directory /opt/nemo-aligner \
     trainer.val_check_interval=20 \
     trainer.gradient_clip_val=10.0 \
     trainer.devices=${ACTOR_NUM_DEVICES} \
-    exp_manager.create_wandb_logger=False \
+    exp_manager.create_wandb_logger=True \
     exp_manager.wandb_logger_kwargs.name=${ACTOR_WANDB_NAME} \
     exp_manager.resume_if_exists=False \
     exp_manager.explicit_log_dir=${DIR_SAVE_CKPT_PATH} \

@@ -57,7 +57,7 @@ OPENAI_DATASET_STD = (0.26862954, 0.26130258, 0.27577711)
 
 
 class PickscoreRewardModel(MegatronModule):
-    """CLIP Model"""
+    """CLIP-Based Model"""
 
     def __init__(self, model_cfg, model_parallel_config, padded_vocab_size, pre_process=True, post_process=True):
         super(PickscoreRewardModel, self).__init__()

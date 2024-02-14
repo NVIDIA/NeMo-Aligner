@@ -182,11 +182,11 @@ class AlignableSDModel(AlignableGenerativeInterface):
 
             batch = prompts
             batch_size = len(prompts)
-            cond, u_cond = sampling_utils.encode_prompt_batch(
-                model.cond_stage_model, batch, self.unconditional_guidance_scale, 1
+            cond, u_cond = sampling_utils.encode_prompt(
+                model.cond_stage_model, batch, self.unconditional_guidance_scale
             )
 
-            samples, intermediates, _, _, _, _ = sampler.sample(
+            samples, intermediates = sampler.sample(
                 S=self.inference_steps,
                 conditioning=cond,
                 batch_size=batch_size,
@@ -274,12 +274,6 @@ class AlignableSDModel(AlignableGenerativeInterface):
         prompts,
         latent_shape,
         x_T,
-        return_trajectory=True,
-        return_logprobs=False,
-        return_decoded=False,
-        return_conds=True,
-        return_mean_var=True,
-        rng=None,
     ):
 
         # get autocast_dtype
