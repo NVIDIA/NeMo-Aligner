@@ -132,7 +132,7 @@ class SupervisedTrainer:
 
         grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)  # .item()
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
-        lr = self.optimizer.param_groups[0]["lr"] 
+        lr = self.optimizer.param_groups[0]["lr"]
 
         self.optimizer.step()
         if self.scheduler is not None:
