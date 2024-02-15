@@ -268,7 +268,7 @@ def main(cfg) -> None:
 
     for v in value_data:
         rewards = v["reward"]
-        value_correct = sum(r > 0 for r in rewards)
+        value_correct += sum(r > 0 for r in rewards)
         value_total += len(rewards)
 
     data_metrics = {
