@@ -786,6 +786,10 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             else:
                 optim_kwargs["store_params"] = True
 
+            # turn off store remainders because it causes some problem with the value optimizer
+            optim_kwargs['store_params'] = True
+            optim_kwargs['store_param_remainders'] = False
+
         self.setup_policy_optimizer = True
         self.policy_optimizer, self.policy_scheduler = ModelPT.setup_optimization(
             self, optim_config=self.cfg.optim, optim_kwargs=optim_kwargs
