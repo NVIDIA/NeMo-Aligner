@@ -284,7 +284,7 @@ class DeepSearchTrainer:
             print("### MAKE SURE YOU ARE RESETTING THE SAMPLER FOR THE LOADERS OTHERWISE DATALOADING ORDER THE SAME")
 
         if self.step == 0:
-            self.run_validation()
+# self.run_validation()
             self.run_train_evaluation()
 
         for _ in epoch_iter:
@@ -323,10 +323,9 @@ class DeepSearchTrainer:
                     run_time_exceeded=run_time_exceeded,
                 )
 
-                if run_val:
-                    val_metrics = self.run_validation()
-                    step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
-
+                if self.step % self.cfg.val_check_interval == 0:
+# val_metrics = self.run_validation()
+# step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
                     train_eval_metrics = self.run_train_evaluation()
                     step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
