@@ -209,6 +209,36 @@ class FakeOptimizer(Optimizable, Optimizer):
         return self.policy_optimizer.overlap_grad_sync or self.value_optimizer.overlap_grad_sync
 
 
+def compute_optim_kwargs(megatron_amp_O2, autocast_dtype, named_parameters):
+    optim_kwargs = {}
+    # Allocate contiguous buffer to avoid extra copies
+    optim_kwargs["contiguous_grad_buffer"] = True
+
+    # Make sure optimizer state is in FP32
+    optim_dtype = torch.float32
+    optim_kwargs["dtype"] = optim_dtype
+
+    # Make sure embedding grad reductions are in FP32
+    for name, param in named_parameters:
+        if "word_embedding" in name or "position_embedding" in name or "output_layer" in name:
+            param._with_fp32_optimizer = True
+
+    # Match param allgather with model dtype
+    model_dtype = torch.float32
+    model_dtype = autocast_dtype
+    optim_kwargs["param_sync_dtype"] = model_dtype
+
+    # Determine whether to store master params in optimizer
+    if optim_dtype == model_dtype:
+        optim_kwargs["store_params"] = False
+    elif optim_dtype == torch.float32 and model_dtype == torch.bfloat16 and megatron_amp_O2:
+        optim_kwargs["store_params"] = False
+        optim_kwargs["store_param_remainders"] = True
+    else:
+        optim_kwargs["store_params"] = True
+    return optim_kwargs
+
+
 class MegatronGPTHybridModel(MegatronGPTModel):
     """
     Megatron GPT Reward Model Training.
@@ -758,37 +788,11 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
         optim_kwargs = {}
         if self.with_distributed_adam:
-
-            # Allocate contiguous buffer to avoid extra copies
-            optim_kwargs["contiguous_grad_buffer"] = True
-
-            # Make sure optimizer state is in FP32
-            optim_dtype = torch.float32
-            optim_kwargs["dtype"] = optim_dtype
-
-            # Make sure embedding grad reductions are in FP32
-            for name, param in self.named_parameters():
-                if "word_embedding" in name or "position_embedding" in name or "output_layer" in name:
-                    param._with_fp32_optimizer = True
-
-            # Match param allgather with model dtype
-            model_dtype = torch.float32
-            if self.megatron_amp_O2 and hasattr(self, "autocast_dtype"):
-                model_dtype = self.autocast_dtype
-            optim_kwargs["param_sync_dtype"] = model_dtype
-
-            # Determine whether to store master params in optimizer
-            if optim_dtype == model_dtype:
-                optim_kwargs["store_params"] = False
-            elif optim_dtype == torch.float32 and model_dtype == torch.bfloat16:
-                optim_kwargs["store_params"] = False
-                optim_kwargs["store_param_remainders"] = True
-            else:
-                optim_kwargs["store_params"] = True
-
-            # turn off store remainders because it causes some problem with the value optimizer
-            optim_kwargs["store_params"] = True
-            optim_kwargs["store_param_remainders"] = False
+            optim_kwargs = compute_optim_kwargs(
+                self.cfg.megatron_amp_O2,
+                self.autocast_dtype if hasattr(self, "autocast_dtype") else None,
+                self.named_parameters(),
+            )
 
         self.setup_policy_optimizer = True
         self.policy_optimizer, self.policy_scheduler = ModelPT.setup_optimization(
@@ -798,6 +802,12 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         if self.with_distributed_adam:
             assert sum([len(i["params"]) for i in self._optimizer_param_groups]) == sum(
                 [len(i) for i in buckets_policy]
+            )
+        if self.with_distributed_adam:
+            optim_kwargs = compute_optim_kwargs(
+                self.cfg.value.megatron_amp_O2,
+                self.autocast_dtype if hasattr(self, "autocast_dtype") else None,
+                self.named_parameters(),
             )
         self.setup_policy_optimizer = False
         self.value_optimizer, self.value_scheduler = ModelPT.setup_optimization(

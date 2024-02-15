@@ -105,6 +105,7 @@ model:
     seed: 1234
     num_layers: 2 # two layers
     tensor_model_parallel_size: ${model.tensor_model_parallel_size}
+    megatron_amp_O2: False
 
     optim:
       name: distributed_fused_adam
