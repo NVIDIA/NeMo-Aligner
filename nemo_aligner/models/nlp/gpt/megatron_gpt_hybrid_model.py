@@ -68,6 +68,12 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import configure_batch_sizes, masked_mean, offload_distributed_adam
 
 
+def compute_masked_per_sample_average(tensor, mask, dim=-1):
+    loss = (tensor * mask).sum(dim=dim)
+    mask_num = mask.sum(dim=dim)
+    return (loss / mask_num).mean()
+
+
 class FakeState:
     def __init__(self, policy_optimizer, value_optimizer):
         self.policy_optimizer = policy_optimizer
@@ -329,8 +335,8 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             mask = batch["mcts_mask"]
 
             # TODO(geshen): change to cross entropy
-            value_loss = (values - rewards) ** 2
-            value_loss = masked_mean(self.value_loss_weight * value_loss, mask)
+            value_loss = (values - rewards).pow(2).mul(self.value_loss_weight)
+            value_loss = compute_masked_per_sample_average(value_loss, mask, dim=-1)
 
         return value_loss
 
@@ -350,10 +356,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             policy_loss = (log_probs.gather(dim=-1, index=actions.long()) * action_probs).sum(-1)
             policy_loss = self.policy_loss_weight * policy_loss
 
-            if torch.any(policy_mask):
-                policy_loss = masked_mean(policy_loss, policy_mask)
-            else:
-                policy_loss = (policy_loss * policy_mask).sum()
+            return compute_masked_per_sample_average(policy_loss, policy_mask, dim=-1)
 
         return policy_loss
 
@@ -422,7 +425,9 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             # TODO(geshen): if this hangs, fix it...
             # hack... this actually tosses out data :(
             # TODO: remove  below
-            num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
+            # divide out because the value might have a weird number of samples
+            # that is not divisible by the micro batch size
+            num_micro_batches = gbs_by_dp // self.cfg.micro_batch_size
             output = torch.tensor([num_micro_batches], dtype=torch.long, device=torch.cuda.current_device())
             torch.distributed.all_reduce(
                 output, op=torch.distributed.ReduceOp.MIN, group=parallel_state.get_data_parallel_group()
@@ -434,7 +439,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
         batch["train_mode"] = torch.as_tensor([batch["train_mode"]] * gbs_by_dp)
 
-        batch = {k: v[:num_micro_batches] for k, v in batch.items()}
+        batch = {k: v[: num_micro_batches * self.cfg.micro_batch_size] for k, v in batch.items()}
 
         data_iter = get_iterator_k_split(batch, num_micro_batches)
 
@@ -589,11 +594,11 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         set_train(self)
 
     def prepare_for_training(self):
-        configure_batch_sizes(
-            mbs=self.cfg.micro_batch_size,
-            gbs=self.cfg.global_batch_size,
-            dp=parallel_state.get_data_parallel_world_size(),
-        )
+        # configure_batch_sizes(
+        # mbs=self.cfg.micro_batch_size,
+        # gbs=self.cfg.global_batch_size,
+        # dp=parallel_state.get_data_parallel_world_size(),
+        # )
         self.onload_adam_states()
 
     def finish_training(self):

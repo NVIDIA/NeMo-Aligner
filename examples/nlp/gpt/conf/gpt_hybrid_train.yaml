@@ -79,6 +79,9 @@ model:
   micro_batch_size: 1
   global_batch_size: 8
 
+  # each sample in the critic is a lot
+  critic_global_batch_size: ${.global_batch_size}
+
   mcore_gpt: True
   share_embeddings_and_output_weights: False
 
