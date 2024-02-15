@@ -302,7 +302,7 @@ def main(cfg) -> None:
         dataset=value_data,
         consumed_samples=consumed_samples_values,
         mbs=cfg.model.micro_batch_size,
-        gbs=cfg.model.global_batch_size,
+        gbs=cfg.model.critic_global_batch_size,
         load_gbs=True,
         collate_fn=partial(mcts_value_collate_fn, eos_id),
     )
