@@ -322,12 +322,19 @@ def build_dataloader(
     pad_samples_to_global_batch_size=False,
     collate_fn=None,
     load_gbs=True,
+    shuffle=False,
 ):
     """Buld dataloader given an input dataset."""
 
     logging.info(f"Building dataloader with consumed samples: {consumed_samples}")
+    extra_kwargs = {}
     # Megatron sampler
-    cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
+    if shuffle:
+        cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
+        extra_kwargs["seed"] = cfg.model.seed
+    else:
+        cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+
     batch_sampler = cls(
         total_samples=len(dataset),
         consumed_samples=consumed_samples,
@@ -337,7 +344,7 @@ def build_dataloader(
         drop_last=drop_last,
         global_batch_size=gbs,
         pad_samples_to_global_batch_size=pad_samples_to_global_batch_size,
-        seed=cfg.model.seed,
+        **extra_kwargs,
     )
 
     return torch.utils.data.DataLoader(

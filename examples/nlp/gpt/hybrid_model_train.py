@@ -294,6 +294,7 @@ def main(cfg) -> None:
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
         collate_fn=partial(mcts_collate_fn, eos_id),
+        shuffle=True,
     )
 
     # TODO(geshen): can have different mbs
@@ -305,6 +306,7 @@ def main(cfg) -> None:
         gbs=cfg.model.critic_global_batch_size,
         load_gbs=True,
         collate_fn=partial(mcts_value_collate_fn, eos_id),
+        shuffle=True,
     )
 
     # hack to allow using all of the validation dataset
@@ -319,6 +321,7 @@ def main(cfg) -> None:
         load_gbs=False,
         collate_fn=collate_fn,
         drop_last=True,
+        shuffle=False,
     )
 
     train_dataloader_builder_func = partial(
@@ -331,6 +334,7 @@ def main(cfg) -> None:
         load_gbs=False,
         collate_fn=collate_fn,
         drop_last=True,
+        shuffle=False,
     )
 
     # TODO(geshen): set the optimizer steps properly, just like in PPO
