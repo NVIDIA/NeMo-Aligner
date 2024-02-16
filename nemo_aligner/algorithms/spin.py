@@ -369,7 +369,7 @@ class SPINTrainer:
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
-        # we don't want to save the ref policy at the very end, although this prohibits continuation training
+        # we don't want to save the ref policy at the very end, although this prohibits continuation training from the .nemo file
         if is_train_end:
             self.model.ref_policy_state_dict = None
 
