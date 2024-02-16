@@ -393,28 +393,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             self.distributed_adam_offload_manager.__exit__(None, None, None)
 
         self.distributed_adam_offload_manager = None
-    '''
-    def pre_load_state_dict_hook(self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs):
-        print("**************** pre_load_state_dict_hook called **************** ", flush=True)
-        [print("*** STATE DICT HAS: ", x, flush=True) for x in state_dict.keys() if "reference_policy" in x];
-        a = state_dict.pop(f'{prefix}reference_policy', None)
-        b = state_dict.pop('reference_policy', None)
-        if a is not None:
-            self.ref_policy_state_dict = a
-        if b is not None:
-            self.ref_policy_state_dict = b
-    
-    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
-        [print("*** STATE DICT HAS: ", x, flush=True) for x in state_dict.keys() if "reference_policy" in x];
-        a = state_dict.pop(f'{prefix}reference_policy', None)
-        b = state_dict.pop('reference_policy', None)
-        if a is not None:
-            self.ref_policy_state_dict = a
-        if b is not None:
-            self.ref_policy_state_dict = b
-        
-        return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
-    '''
+
     def sharded_state_dict(self, prefix: str = ''):
         sharded_state_dict = super().sharded_state_dict(prefix=prefix)
             

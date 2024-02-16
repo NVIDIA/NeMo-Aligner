@@ -369,6 +369,10 @@ class SPINTrainer:
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
+        # we don't want to save the ref policy at the very end, although this prohibits continuation training
+        if is_train_end:
+            self.model.ref_policy_state_dict = None
+
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
         
         self.model.finish_training()
