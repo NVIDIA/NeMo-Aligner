@@ -27,11 +27,10 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_an
 from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.ppo_utils import create_mask
+from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
 from nemo_aligner.utils.utils import clear_memory, cpu_weight_swap, retrieve_model_state_dict_in_cpu
-
 
 """
 GPTSFTChatDataset output is dict with keys: ['input_ids', 'mask', 'context_ids', 'answer_ids', 'metadata']
@@ -65,7 +64,7 @@ def spin_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention
         "prompt_lengths": context_lengths,
         "combined_lengths": combined_lengths,
     }
-    
+
     return output
 
 
@@ -117,10 +116,10 @@ class SPINTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-        
+
         self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
         self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
-        self.max_gen_seq_len = self.length_params['max_length']
+        self.max_gen_seq_len = self.length_params["max_length"]
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -144,8 +143,8 @@ class SPINTrainer:
         )
 
         for _, batch in val_pbar:
-            #self.model.prepare_for_validation()
-            
+            # self.model.prepare_for_validation()
+
             self.timer.start("validation_step_time")
             loss_mean, metrics = self.validation_step(batch)
             self.timer.stop("validation_step_time")
@@ -158,8 +157,8 @@ class SPINTrainer:
                 val_metrics[k].append(v)
             log_val_metrics = {f"val_{k}": v for k, v in metrics.items()}
             val_pbar.set_postfix(log_val_metrics)
-            
-            #self.model.finish_validation()
+
+            # self.model.finish_validation()
 
         val_metrics = {k: mean(v) for k, v in val_metrics.items()}
         return mean(loss_means), val_metrics
@@ -210,31 +209,45 @@ class SPINTrainer:
                     rollout_batch["init_logprobs"] = init_logprobs
 
         return rollout_batches
-    
+
     @torch.no_grad()
     def get_generations(self, batch):
         self.model.prepare_for_inference()
 
-        #prompt_tokens_list = [b['prompts_only'] for b in list_of_batches]
-        #prompt_lengths = torch.cat([b['prompt_lengths'] for b in list_of_batches], dim=0)
-        prompt_lengths = batch['prompt_lengths']
+        # prompt_tokens_list = [b['prompts_only'] for b in list_of_batches]
+        # prompt_lengths = torch.cat([b['prompt_lengths'] for b in list_of_batches], dim=0)
+        prompt_lengths = batch["prompt_lengths"]
         batch_max_length = prompt_lengths.max().item()
         max_possible_length = min(self.model.cfg.encoder_seq_length, batch_max_length + self.max_gen_seq_len)
-        
-        prompt_tokens = torch.stack([torch.cat([seq, torch.full((max_possible_length - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in batch['prompts_only']])
+
+        prompt_tokens = torch.stack(
+            [
+                torch.cat(
+                    [seq, torch.full((max_possible_length - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]
+                )
+                for seq in batch["prompts_only"]
+            ]
+        )
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
-        
+
         # downsamples from (GBS // DP) -> generation_batch_size
-        #for idx, sub_batch in enumerate(torch.split(prompt_tokens, self.cfg.generation_batch_size)):
-        strategy = TrackLengthGPTModelTextGenerationStrategy(model=self.model, context_lengths=prompt_lengths, max_length=self.max_gen_seq_len)
-        generations = self.model.generate(inputs=(prompt_tokens, prompt_lengths), length_params=self.length_params, sampling_params=self.sampling_params, strategy=strategy)
-    
+        # for idx, sub_batch in enumerate(torch.split(prompt_tokens, self.cfg.generation_batch_size)):
+        strategy = TrackLengthGPTModelTextGenerationStrategy(
+            model=self.model, context_lengths=prompt_lengths, max_length=self.max_gen_seq_len
+        )
+        generations = self.model.generate(
+            inputs=(prompt_tokens, prompt_lengths),
+            length_params=self.length_params,
+            sampling_params=self.sampling_params,
+            strategy=strategy,
+        )
+
         # this is a 1D LongTensor with the length of the responses where response is prompt+response
         response_lengths = strategy.get_lengths().cpu()
         max_response_length = response_lengths.max().item()
         response_tokens = torch.LongTensor(generations["token_ids"]).cpu()
-        
+
         # Sanity check to validate response length.
         if max_response_length != response_tokens.size(1):
             # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
@@ -251,7 +264,7 @@ class SPINTrainer:
                 )
 
         self.model.finish_inference()
-        
+
         return response_tokens, response_lengths
 
     def fit(self):
@@ -278,16 +291,16 @@ class SPINTrainer:
             if len(epoch_iter) <= 0:
                 # epoch done
                 return
-    
+
             for _ in epoch_iter:
                 num_steps_in_epoch = min(
                     self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
                 )
                 loop_iter = range(num_steps_in_epoch)
-    
+
                 if not loop_iter:
                     return  # training ended
-    
+
                 global_pbar = tqdm(
                     self.augment_dataloader(self.train_dataloader),
                     initial=self.step,
@@ -295,17 +308,17 @@ class SPINTrainer:
                     leave=True,
                     desc="Training steps",
                 )
-    
+
                 for _, global_batch in zip(loop_iter, global_pbar):
                     self.model.prepare_for_training()
-                    
+
                     self.timer.start("train_step_time")
                     loss, metrics = self.train_single_step(global_batch)
                     self.timer.stop("train_step_time")
                     train_step_time = self.timer.get("train_step_time")
                     # to help avoid fragmentation
                     clear_memory()
-    
+
                     # TODO(geshen): maybe use the dataloader instead
                     # bump up the consumed samples but not the step
                     self.consumed_samples += self.model.cfg.global_batch_size
@@ -317,9 +330,9 @@ class SPINTrainer:
                         metrics, step=self.step, prefix="train/",
                     )
                     metrics = {f"train_{k}": v for k, v in metrics.items()}
-    
+
                     self.step += 1
-    
+
                     run_time_exceeded = self.run_timer.is_finished()
                     run_val, save_model, is_train_end = check_progress(
                         self.step,
@@ -329,7 +342,7 @@ class SPINTrainer:
                         self.limit_val_batches,
                         run_time_exceeded=run_time_exceeded,
                     )
-    
+
                     if run_val:
                         val_loss, val_metrics = self.run_validation()
                         # validation is done on the UPDATED weights
@@ -337,23 +350,25 @@ class SPINTrainer:
                         self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                         val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
                         metrics.update(val_metrics)
-    
+
                     global_pbar.set_postfix(metrics)
-    
+
                     if save_model:
                         # PTL save wants tensors only
                         metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
                         self.save(metrics, is_train_end=is_train_end)
-    
+
                     if run_time_exceeded:
                         logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                         return
-    
+
                     metrics.clear()
                     self.model.finish_training()
-                
+
             # update the reference policy weights
-            self.model.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(self.model, megatron_amp_O2=self.model.cfg.get("megatron_amp_O2", False))
+            self.model.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+                self.model, megatron_amp_O2=self.model.cfg.get("megatron_amp_O2", False)
+            )
 
         self.logger.finalize()
 
@@ -374,7 +389,7 @@ class SPINTrainer:
             self.model.ref_policy_state_dict = None
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
-        
+
         self.model.finish_training()
 
     def set_max_steps(self):
@@ -412,30 +427,58 @@ class SPINTrainer:
         while not done:
             try:
                 batch = next(iter_dataloader)
-                
+
                 # generations use the reference model weights, as per the paper
-                with cpu_weight_swap(self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2):
+                with cpu_weight_swap(
+                    self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
+                ):
                     # on CPU
                     gen_tokens, gen_lengths = self.get_generations(batch)
-                act_tokens = batch['prompts_and_answers']
-                act_lengths = batch['combined_lengths']
+                act_tokens = batch["prompts_and_answers"]
+                act_lengths = batch["combined_lengths"]
                 max_batch_len = max(act_tokens.shape[1], gen_tokens.shape[1])
-                
-                act_tokens_pad = torch.stack([torch.cat([seq, torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in act_tokens])
-                gen_tokens_pad = torch.stack([torch.cat([seq, torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]) for seq in gen_tokens])
-                
-                act_mask = create_mask(act_tokens_pad, batch['prompt_lengths'], act_lengths)
-                gen_mask = create_mask(gen_tokens_pad, batch['prompt_lengths'], gen_lengths)
-                
+
+                act_tokens_pad = torch.stack(
+                    [
+                        torch.cat(
+                            [
+                                seq,
+                                torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype),
+                            ]
+                        )
+                        for seq in act_tokens
+                    ]
+                )
+                gen_tokens_pad = torch.stack(
+                    [
+                        torch.cat(
+                            [
+                                seq,
+                                torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype),
+                            ]
+                        )
+                        for seq in gen_tokens
+                    ]
+                )
+
+                act_mask = create_mask(act_tokens_pad, batch["prompt_lengths"], act_lengths)
+                gen_mask = create_mask(gen_tokens_pad, batch["prompt_lengths"], gen_lengths)
+
                 attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-                    act_tokens_pad, self.model.tokenizer.eos_id, self.model.cfg.data.reset_position_ids, self.model.cfg.data.reset_attention_mask, self.model.cfg.data.eod_mask_loss,
+                    act_tokens_pad,
+                    self.model.tokenizer.eos_id,
+                    self.model.cfg.data.reset_position_ids,
+                    self.model.cfg.data.reset_attention_mask,
+                    self.model.cfg.data.eod_mask_loss,
                 )
                 assert attention_mask.ndim == 4, "attention_mask is incorrect shape"
                 if attention_mask.shape[0] == 1:
                     # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
                     # attention_mask = attention_mask.expand(len(act_tokens_pad), *((-1,) * (len(attention_mask.shape) - 1)))
-                    attention_mask = attention_mask.repeat(len(act_tokens_pad), *((1,) * (len(attention_mask.shape) - 1)))
-                
+                    attention_mask = attention_mask.repeat(
+                        len(act_tokens_pad), *((1,) * (len(attention_mask.shape) - 1))
+                    )
+
                 new_batch = {}
                 new_batch["actual"] = act_tokens_pad
                 new_batch["generated"] = gen_tokens_pad
@@ -443,15 +486,15 @@ class SPINTrainer:
                 new_batch["position_ids"] = position_ids
                 new_batch["actual_mask"] = act_mask
                 new_batch["generated_mask"] = gen_mask
-                
+
                 logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
                 act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
-                
+
                 new_batch["ref_policy_log_probs_actual"] = act_logps
                 new_batch["ref_policy_log_probs_generated"] = gen_logps
-                
+
                 yield new_batch
-                
+
                 del logprobs, act_logps, gen_logps
             except StopIteration:
                 done = True
@@ -459,7 +502,7 @@ class SPINTrainer:
     @property
     def epoch(self):
         return (self.step // self.num_steps_per_epoch) % self.cfg.max_epochs
-    
+
     @property
     def iteration(self):
         return (self.step // self.num_steps_per_epoch) // self.cfg.max_epochs

@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import nullcontext
-
 import warnings
+from contextlib import nullcontext
 from functools import partial
 
 import torch
@@ -60,7 +59,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 "when using pipeline parallelism, it is recommended to set megatron_amp_O2 to be True to "
                 "avoid explicit casting for pipeline communication"
             )
-        
+
         self.ref_policy_state_dict = None
         self.distributed_adam_offload_manager = None
         self.to_offload_adam_states = self.cfg.spin.offload_adam_states
@@ -119,7 +118,10 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             if batch["actual_mask"] is not None and batch["generated_mask"] is not None:
                 masks = torch.cat((batch["actual_mask"], batch["generated_mask"]), dim=0)
 
-            if batch["ref_policy_log_probs_actual"] is not None and batch["ref_policy_log_probs_generated"] is not None:
+            if (
+                batch["ref_policy_log_probs_actual"] is not None
+                and batch["ref_policy_log_probs_generated"] is not None
+            ):
                 ref_logprobs = torch.cat(
                     (batch["ref_policy_log_probs_actual"], batch["ref_policy_log_probs_generated"]), dim=0
                 )
@@ -155,7 +157,9 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
             def loss_func(output_tensor):
                 if validation_step and not self.cfg.data.validation_ds.get("drop_last", True):
-                    raise NotImplementedError("SPIN does not support validation when `cfg.data.validation_ds.drop_last=False`")
+                    raise NotImplementedError(
+                        "SPIN does not support validation when `cfg.data.validation_ds.drop_last=False`"
+                    )
 
                 per_token_logps = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=output_tensor, target=tokens, higher_stability=True
@@ -170,7 +174,12 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
                 return (
                     loss,
-                    {"avg": reduced_loss, "acc": reduced_acc, "out_actual": out_actual, "out_generated": out_generated,},
+                    {
+                        "avg": reduced_loss,
+                        "acc": reduced_acc,
+                        "out_actual": out_actual,
+                        "out_generated": out_generated,
+                    },
                 )
 
             return output_tensor, loss_func
@@ -193,9 +202,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             return (logps * loss_mask).sum(-1)
 
     def loss_func(self, pi_logprobs, ref_logprobs, masks, average_log_probs=False):
-        rewards = self.get_reduced_masked_logps(
-            pi_logprobs - ref_logprobs, masks, average_log_probs=average_log_probs
-        )
+        rewards = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, masks, average_log_probs=average_log_probs)
         chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards)
 
         loss = -torch.nn.functional.logsigmoid(chosen_rewards - reject_rewards)
@@ -280,7 +287,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         metrics = {k: v.item() for k, v in metrics.items()}
 
         return loss_mean.item(), metrics
-    
+
     def get_loss_and_metrics_vanilla_sft(self, batch, forward_only):
         """Take a data_iter which is an interator over the microbatches
             and return loss as well as metrics
@@ -309,7 +316,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         )
 
         torch.cuda.synchronize()
-        
+
         self.loss_func = orig_loss_func
 
         # only the last stages of the pipeline return losses
@@ -322,13 +329,13 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         torch.distributed.broadcast(loss_mean, get_last_rank())
         loss_value = loss_mean.detach().item()
         metrics = {"loss": loss_value}
-        
+
         return loss_value, metrics
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
         prepare_for_training_step(self, zero_grad=False)
-    
+
     def prepare_for_training(self):
         configure_batch_sizes(
             mbs=self.cfg.micro_batch_size,
@@ -339,7 +346,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
     def finish_training_step(self):
         grad_reductions(self)
-    
+
     def finish_training(self):
         """no need to offload adam states here
         """
@@ -356,7 +363,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
     def finish_validation_step(self):
         finish_validation_step(self)
-    
+
     def finish_validation(self):
         """no need to offload adam states here
         """
@@ -368,13 +375,13 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         self._reset_sequence_parallelism_args()
         set_eval(self)
         self.offload_adam_states()
-    
+
     def finish_inference(self):
         # training will onload the adam states, no need to onload it here
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
         set_train(self)
-    
+
     def offload_adam_states(self):
         if self.distributed_adam_offload_manager is None:
 
@@ -394,15 +401,17 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         self.distributed_adam_offload_manager = None
 
-    def sharded_state_dict(self, prefix: str = ''):
+    def sharded_state_dict(self, prefix: str = ""):
         sharded_state_dict = super().sharded_state_dict(prefix=prefix)
-            
+
         # add in the reference policy weights
         if self.ref_policy_state_dict is not None:
-            sharded_state_dict['reference_policy'] = make_sharded_tensors_for_checkpoint(self.ref_policy_state_dict, prefix)
+            sharded_state_dict["reference_policy"] = make_sharded_tensors_for_checkpoint(
+                self.ref_policy_state_dict, prefix
+            )
 
         return sharded_state_dict
-    
+
     def on_load_checkpoint(self, checkpoint) -> None:
         """LightningModule hook:
         https://pytorch-lightning.readthedocs.io/en/stable/common/lightning_module.html#on-load-checkpoint
@@ -411,34 +420,34 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         # mcore uses distributed checkpointing
         if self.mcore_gpt:
             # checkpoint keys: ['epoch', 'global_step', 'pytorch-lightning_version', 'state_dict', 'loops', 'callbacks', 'optimizer_states', 'lr_schedulers', 'hparams_name', 'hyper_parameters']
-            if 'state_dict' in checkpoint and checkpoint['state_dict']:
+            if "state_dict" in checkpoint and checkpoint["state_dict"]:
                 for index, module in enumerate(self.get_gpt_module_list()):
                     if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-                        checkpoint_state_dict = checkpoint['state_dict'][f'model_{index}']
+                        checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
                     else:
-                        checkpoint_state_dict = checkpoint['state_dict']
+                        checkpoint_state_dict = checkpoint["state_dict"]
                     # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
                     checkpoint_state_dict = {
-                        key.replace('model.', ''): checkpoint_state_dict.pop(key)
+                        key.replace("model.", ""): checkpoint_state_dict.pop(key)
                         for key in list(checkpoint_state_dict.keys())
                     }
-                    ref_policy = checkpoint_state_dict.pop('reference_policy', None)
+                    ref_policy = checkpoint_state_dict.pop("reference_policy", None)
                     if ref_policy is not None:
                         self.ref_policy_state_dict = ref_policy
                     module.load_state_dict(checkpoint_state_dict, strict=True)
             else:
                 # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
                 # see NLPModel.on_load_checkpoint
-                checkpoint['state_dict'] = {}
+                checkpoint["state_dict"] = {}
 
         # legacy checkpointing for interleaved
         else:
             if isinstance(self.model, list):
                 for i in range(len(self.model)):
                     parallel_state.set_virtual_pipeline_model_parallel_rank(i)
-                    self.model[i].module.load_state_dict(checkpoint[f'model{i}'], strict=True)
+                    self.model[i].module.load_state_dict(checkpoint[f"model{i}"], strict=True)
                 parallel_state.set_virtual_pipeline_model_parallel_rank(0)
-    
+
     def get_logprob_output_only_func(self, inference_only=True):
         fwd_output_only_func = self.get_forward_output_only_func()
 
@@ -513,4 +522,3 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         # return in GPU, trainer needs to move to cpu
         return ref_log_probs
-
