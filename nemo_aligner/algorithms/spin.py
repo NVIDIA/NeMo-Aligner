@@ -215,8 +215,6 @@ class SPINTrainer:
     def get_generations(self, batch):
         self.model.prepare_for_inference()
 
-        #prompt_tokens_list = [b['prompts_only'] for b in list_of_batches]
-        #prompt_lengths = torch.cat([b['prompt_lengths'] for b in list_of_batches], dim=0)
         prompt_lengths = batch['prompt_lengths']
         batch_max_length = prompt_lengths.max().item()
         max_possible_length = min(self.model.cfg.encoder_seq_length, batch_max_length + self.max_gen_seq_len)
@@ -225,8 +223,6 @@ class SPINTrainer:
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
         
-        # downsamples from (GBS // DP) -> generation_batch_size
-        #for idx, sub_batch in enumerate(torch.split(prompt_tokens, self.cfg.generation_batch_size)):
         strategy = TrackLengthGPTModelTextGenerationStrategy(model=self.model, context_lengths=prompt_lengths, max_length=self.max_gen_seq_len)
         generations = self.model.generate(inputs=(prompt_tokens, prompt_lengths), length_params=self.length_params, sampling_params=self.sampling_params, strategy=strategy)
     
