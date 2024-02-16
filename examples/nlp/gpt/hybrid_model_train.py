@@ -30,6 +30,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.deepsearch import DeepSearchTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
+from nemo_aligner.utils.customized_nlpdpstrategy import CustomMegatronTrainerBuilder
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -39,8 +40,8 @@ from nemo_aligner.utils.train_script_utils import (
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
     init_using_ptl,
-    resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
+    temp_pop_from_config,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
@@ -193,6 +194,15 @@ def mcts_value_collate_fn(eos_id, batches):
     mask = create_mask(final_dict["tokens"], final_dict["context_length"], final_dict["response_length"])
 
     return final_dict | {"mcts_mask": mask}
+
+
+def resolve_and_create_trainer(cfg, pop_trainer_key):
+    """resolve the cfg, remove the key before constructing the PTL trainer
+        and then restore it after
+    """
+    OmegaConf.resolve(cfg)
+    with temp_pop_from_config(cfg.trainer, pop_trainer_key):
+        return CustomMegatronTrainerBuilder(cfg).create_trainer()
 
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
