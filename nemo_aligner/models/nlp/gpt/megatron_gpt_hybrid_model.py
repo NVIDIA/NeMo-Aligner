@@ -38,8 +38,10 @@ from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
 from megatron.core.utils import divide
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
+import re
 from pytorch_lightning.trainer.trainer import Trainer
 from torch.optim.optimizer import Optimizer
+from megatron.core.utils import get_attr_wrapped_model
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
@@ -73,6 +75,19 @@ def compute_masked_per_sample_average(tensor, mask, dim=-1):
     mask_num = mask.sum(dim=dim)
     return (loss / mask_num).mean()
 
+
+def find_number_after_prefix(string, prefix):
+    # Define the regex pattern to match the prefix followed by a number
+    pattern = re.compile(rf'{re.escape(prefix)}(\d+)(.*)')
+    
+    # Search for the pattern in the string
+    match = pattern.search(string)
+    
+    # If a match is found, return the number (group 1 of the match)
+    if match:
+        return match.group(1), match.group(2)
+    else:
+        return None
 
 class FakeState:
     def __init__(self, policy_optimizer, value_optimizer):
@@ -541,7 +556,23 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     key.replace("model.", ""): checkpoint_state_dict.pop(key)
                     for key in list(checkpoint_state_dict.keys())
                 }
-                module.load_state_dict(checkpoint_state_dict, strict=False)
+
+                layer_offset = len(get_attr_wrapped_model(self.model, "decoder").submodules.layer_specs)
+                print("#### PRE LOAD", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
+
+                modified_dict = {}
+                prefix_to_use = "value_head.layers."
+
+                for k,v in checkpoint_state_dict.items():
+                    output = find_number_after_prefix(k, prefix=prefix_to_use)
+                    
+                    if output is not None:
+                        num, rest_to_use = output
+                        k = "{}{}{}".format(prefix_to_use, int(num) - layer_offset, rest_to_use)
+                    modified_dict[k] = v
+
+                module.load_state_dict(modified_dict, strict=True)
+                print("#### POST LOAD", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
         else:
             # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
             # see NLPModel.on_load_checkpoint
