@@ -293,7 +293,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
             "truncation_method", "right"
         ),  # used to choose truncation method. Options: ['random', 'left', 'right']
         special_tokens=special_tokens,
-        #output_original_text=data_cfg.get("output_original_text", False),
+        # output_original_text=data_cfg.get("output_original_text", False),
     )
     return dataset
 
