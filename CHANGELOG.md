@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - SFT: added support for custom validation metrics based on model generations.
 - Added the ability to do multi-epoch (cfg.max_epochs > 1) training for reward models, DPO, PPO, and SFT
 - Added the SPIN (Self-Play Fine Tuning) algorithm which allows SPIN SFT training using SFT-format dataset files 
+- SFT/SteerLM: added LoRA tuning as an option besides full fine-tuning, only attention_qkv layer is supported
 
 ### Breaking changes
 - We have changed the shuffle logic in the data sampler to support multi-epoch training, so training runs using identical parameters
@@ -23,7 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 a dictionary from the training configuration.
 - `exp_manager.max_time_per_run` is now respected, the trainers will save and run validation before exiting if we've reached the time limit.
 - Fixed crash in PPO when using a separate reward model server (i.e., with `combine_rm_and_critic_server=False`).
-- Fixed a crash when LR scheduler was not specified
+- Fixed crash when LR scheduler is not specified
 
 ## [0.1.0] - 2023-12-04
 ### Added
