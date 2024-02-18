@@ -356,18 +356,8 @@ def main(cfg) -> None:
     policy_optimizer = ptl_model.policy_optimizer
     policy_scheduler = ptl_model.policy_scheduler
 
-    if policy_scheduler is None:
-        policy_scheduler = FakeScheduler()
-    else:
-        policy_scheduler = policy_scheduler["scheduler"]
-
     value_optimizer = ptl_model.value_optimizer
     value_scheduler = ptl_model.value_scheduler
-
-    if value_scheduler is None:
-        value_scheduler = FakeScheduler()
-    else:
-        value_scheduler = value_scheduler["scheduler"]
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 

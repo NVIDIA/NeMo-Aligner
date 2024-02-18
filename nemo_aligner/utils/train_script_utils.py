@@ -135,6 +135,16 @@ class FakeScheduler:
     def step(self, *args, **kwargs):
         ...
 
+    @property
+    def last_epoch(self):
+        return 0
+
+    def state_dict(self):
+        return {}
+
+    def load_state_dict(self, state_dict):
+        ...
+
 
 class FakeCheckpointCallback:
     def custom_save(self, *args, **kwargs):

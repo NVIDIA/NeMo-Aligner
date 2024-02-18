@@ -57,6 +57,7 @@ from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import logging
 from nemo_aligner.algorithms.deepsearch import TrainMode
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
+from nemo_aligner.utils.train_script_utils import FakeScheduler
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -965,11 +966,15 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
         self._optimizer = FakeOptimizer(self.policy_optimizer, self.value_optimizer)
 
-        if self.policy_scheduler is None and self.value_scheduler is None:
-            return self._optimizer
+        if self.policy_scheduler is None:
+            self.policy_scheduler = FakeScheduler()
         else:
-            assert self.policy_scheduler is not None and self.value_scheduler is not None
-            self._scheduler = FakeSaveScheduler(
-                self._optimizer, self.policy_scheduler["scheduler"], self.value_scheduler["scheduler"]
-            )
-            return [self._optimizer], [self._scheduler]
+            self.policy_scheduler = self.policy_scheduler["scheduler"]
+
+        if self.value_scheduler is None:
+            self.value_scheduler = FakeScheduler()
+        else:
+            self.value_scheduler = self.value_scheduler["scheduler"]
+
+        self._scheduler = FakeSaveScheduler(self._optimizer, self.policy_scheduler, self.value_scheduler)
+        return [self._optimizer], [self._scheduler]
