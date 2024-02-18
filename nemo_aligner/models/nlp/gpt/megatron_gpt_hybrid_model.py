@@ -39,6 +39,7 @@ from megatron.core.utils import divide
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
+from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.optimizer import Optimizer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
@@ -141,6 +142,44 @@ class FakeState:
         return [(("policy", key), value) for key, value in self.policy_optimizer.state.items()] + [
             (("value", key), value) for key, value in self.value_optimizer.state.items()
         ]
+
+
+class FakeSaveScheduler(LRScheduler):
+    def __init__(self, optimizer: Optimizer, policy_scheduler, value_scheduler) -> None:
+        self.optimizer = optimizer
+        self.policy_scheduler = policy_scheduler
+        self.value_scheduler = value_scheduler
+
+    @property
+    def last_epoch(self):
+        return (self.policy_scheduler.last_epoch, self.value_scheduler.last_epoch)
+
+    def step(self, epoch: int | None = ...) -> None:
+        self.policy_scheduler.step(epoch[0])
+        self.value_scheduler.step(epoch[1])
+
+    def state_dict(self) -> Dict[str, Any]:
+        state1 = self.policy_scheduler.state_dict()
+        state2 = self.value_scheduler.state_dict()
+        output = OrderedDict()
+        for k, v in state1.items():
+            output[("policy", k)] = v
+        for k, v in state2.items():
+            output[("value", k)] = v
+        return output
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        state1 = {}
+        state2 = {}
+        for k, v in state_dict.items():
+            if k[0] == "policy":
+                state1[k[1]] = v
+            elif k[0] == "value":
+                state2[k[1]] = v
+            else:
+                raise KeyError(f"Key {k} not found in state")
+        self.policy_scheduler.load_state_dict(state1)
+        self.value_scheduler.load_state_dict(state2)
 
 
 class FakeOptimizer(Optimizable, Optimizer):
@@ -930,4 +969,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             return self._optimizer
         else:
             assert self.policy_scheduler is not None and self.value_scheduler is not None
-            return [self._optimizer], [self.policy_scheduler, self.value_scheduler]
+            self._scheduler = FakeSaveScheduler(
+                self._optimizer, self.policy_scheduler["scheduler"], self.value_scheduler["scheduler"]
+            )
+            return [self._optimizer], [self._scheduler]

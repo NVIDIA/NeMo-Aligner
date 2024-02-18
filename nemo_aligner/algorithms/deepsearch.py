@@ -15,6 +15,7 @@
 from collections import defaultdict
 from enum import IntEnum, auto
 from functools import partial
+from math import ceil
 from typing import Union
 
 import pandas as pd
@@ -23,7 +24,6 @@ from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
-from math import ceil
 
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.utils import logging
@@ -297,12 +297,7 @@ class DeepSearchTrainer:
             policy_dataloader_iter = iter(self.train_policy_dataloader)
             value_dataloader_iter = iter(self.train_value_dataloader)
 
-            global_pbar = tqdm(
-                loop_iter,
-                total=self.max_steps,
-                leave=True,
-                desc=f"DeepSearch Epoch {e + 1}",
-            )
+            global_pbar = tqdm(loop_iter, total=self.max_steps, leave=True, desc=f"DeepSearch Epoch {e + 1}",)
 
             inner_step = 0
             for _ in global_pbar:
