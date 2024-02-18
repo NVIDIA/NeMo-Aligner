@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import warnings
+from collections import OrderedDict
 
 # from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from contextlib import nullcontext
@@ -22,7 +23,12 @@ import torch
 from apex.normalization import MixedFusedRMSNorm
 from apex.normalization.fused_layer_norm import FusedLayerNorm  # NOQA
 from apex.transformer.layers.layer_norm import FastLayerNorm
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, listify_model
+from apex.transformer.pipeline_parallel.utils import (
+    _reconfigure_microbatch_calculator,
+    get_num_microbatches,
+    listify_model,
+)
+from lightning_fabric.utilities.types import Optimizable
 from megatron.core import InferenceParams, parallel_state
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -33,6 +39,7 @@ from megatron.core.utils import divide
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
+from torch.optim.optimizer import Optimizer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
@@ -67,10 +74,80 @@ def compute_masked_per_sample_average(tensor, mask, dim=-1):
     return (loss / mask_num).mean()
 
 
-class FakeOptimizer:
+class FakeState:
     def __init__(self, policy_optimizer, value_optimizer):
         self.policy_optimizer = policy_optimizer
         self.value_optimizer = value_optimizer
+
+    def __getitem__(self, key):
+        if key[0] == "value":
+            key = key[1]
+            return self.value_optimizer.state[key]
+        elif key[0] == "policy":
+            key = key[1]
+            return self.policy_optimizer.state[key]
+        else:
+            raise KeyError(f"Key {key} not found in state")
+
+    def __setitem__(self, key, value):
+        if key[0] == "value":
+            key = key[1]
+            self.value_optimizer.state[key] = value
+        elif key[0] == "policy":
+            key = key[1]
+            self.policy_optimizer.state[key] = value
+        else:
+            raise KeyError(f"Key {key} not found in state")
+
+    def __delitem__(self, key):
+        if key[0] == "value":
+            key = key[1]
+            del self.value_optimizer.state[key]
+        elif key[0] == "policy":
+            key = key[1]
+            del self.policy_optimizer.state[key]
+        else:
+            raise KeyError(f"Key {key} not found in state")
+
+    def __contains__(self, key):
+        if key[0] == "value":
+            key = key[1]
+            return key in self.value_optimizer.state
+        elif key[0] == "policy":
+            key = key[1]
+            return key in self.policy_optimizer.state
+        else:
+            return False
+
+    def __iter__(self):
+        # iter both states
+        for key in self.policy_optimizer.state:
+            yield ("policy", key)
+        for key in self.value_optimizer.state:
+            yield ("value", key)
+
+    def __len__(self):
+        return len(self.policy_optimizer.state) + len(self.value_optimizer.state)
+
+    def keys(self):
+        return [("policy", key) for key in self.policy_optimizer.state] + [
+            ("value", key) for key in self.value_optimizer.state
+        ]
+
+    def values(self):
+        return list(self.policy_optimizer.state.values()) + list(self.value_optimizer.state.values())
+
+    def items(self):
+        return [(("policy", key), value) for key, value in self.policy_optimizer.state.items()] + [
+            (("value", key), value) for key, value in self.value_optimizer.state.items()
+        ]
+
+
+class FakeOptimizer(Optimizable, Optimizer):
+    def __init__(self, policy_optimizer, value_optimizer):
+        self.policy_optimizer = policy_optimizer
+        self.value_optimizer = value_optimizer
+        self.fs = FakeState(policy_optimizer, value_optimizer)
 
     def zero_grad(self):
         self.policy_optimizer.zero_grad()
@@ -92,6 +169,43 @@ class FakeOptimizer:
             params = self.value_optimizer.parameters()
             self.value_optimizer.try_grad_sync(params)
 
+    def sharded_state_dict(self, model_sharded_state_dict):
+        state1 = self.policy_optimizer.sharded_state_dict(model_sharded_state_dict)
+        state2 = self.value_optimizer.sharded_state_dict(model_sharded_state_dict)
+        output = OrderedDict()
+        for k, v in state1.items():
+            output[("policy", k)] = v
+        for k, v in state2.items():
+            output[("value", k)] = v
+        return output
+
+    def state_dict(self):
+        state1 = self.policy_optimizer.state_dict()
+        state2 = self.value_optimizer.state_dict()
+        output = OrderedDict()
+        for k, v in state1.items():
+            output[("policy", k)] = v
+        for k, v in state2.items():
+            output[("value", k)] = v
+        return output
+
+    def load_state_dict(self, state_dict):
+        value_state_dict = {}
+        policy_state_dict = {}
+        for k, v in state_dict.items():
+            if k[0] == "policy":
+                policy_state_dict[k[1]] = v
+            elif k[0] == "value":
+                value_state_dict[k[1]] = v
+            else:
+                raise KeyError(f"Key {k} not found in state")
+        self.policy_optimizer.load_state_dict(policy_state_dict)
+        self.value_optimizer.load_state_dict(value_state_dict)
+
+    @property
+    def state(self):
+        return self.fs
+
     @property
     def no_sync(self):
         return self.policy_optimizer.no_sync
@@ -99,6 +213,36 @@ class FakeOptimizer:
     @property
     def overlap_grad_sync(self):
         return self.policy_optimizer.overlap_grad_sync or self.value_optimizer.overlap_grad_sync
+
+
+def compute_optim_kwargs(megatron_amp_O2, autocast_dtype, named_parameters):
+    optim_kwargs = {}
+    # Allocate contiguous buffer to avoid extra copies
+    optim_kwargs["contiguous_grad_buffer"] = True
+
+    # Make sure optimizer state is in FP32
+    optim_dtype = torch.float32
+    optim_kwargs["dtype"] = optim_dtype
+
+    # Make sure embedding grad reductions are in FP32
+    for name, param in named_parameters:
+        if "word_embedding" in name or "position_embedding" in name or "output_layer" in name:
+            param._with_fp32_optimizer = True
+
+    # Match param allgather with model dtype
+    model_dtype = torch.float32
+    model_dtype = autocast_dtype
+    optim_kwargs["param_sync_dtype"] = model_dtype
+
+    # Determine whether to store master params in optimizer
+    if optim_dtype == model_dtype:
+        optim_kwargs["store_params"] = False
+    elif optim_dtype == torch.float32 and model_dtype == torch.bfloat16 and megatron_amp_O2:
+        optim_kwargs["store_params"] = False
+        optim_kwargs["store_param_remainders"] = True
+    else:
+        optim_kwargs["store_params"] = True
+    return optim_kwargs
 
 
 class MegatronGPTHybridModel(MegatronGPTModel):
@@ -649,33 +793,11 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
         optim_kwargs = {}
         if self.with_distributed_adam:
-
-            # Allocate contiguous buffer to avoid extra copies
-            optim_kwargs["contiguous_grad_buffer"] = True
-
-            # Make sure optimizer state is in FP32
-            optim_dtype = torch.float32
-            optim_kwargs["dtype"] = optim_dtype
-
-            # Make sure embedding grad reductions are in FP32
-            for name, param in self.named_parameters():
-                if "word_embedding" in name or "position_embedding" in name or "output_layer" in name:
-                    param._with_fp32_optimizer = True
-
-            # Match param allgather with model dtype
-            model_dtype = torch.float32
-            if self.megatron_amp_O2 and hasattr(self, "autocast_dtype"):
-                model_dtype = self.autocast_dtype
-            optim_kwargs["param_sync_dtype"] = model_dtype
-
-            # Determine whether to store master params in optimizer
-            if optim_dtype == model_dtype:
-                optim_kwargs["store_params"] = False
-            elif optim_dtype == torch.float32 and model_dtype == torch.bfloat16:
-                optim_kwargs["store_params"] = False
-                optim_kwargs["store_param_remainders"] = True
-            else:
-                optim_kwargs["store_params"] = True
+            optim_kwargs = compute_optim_kwargs(
+                self.cfg.megatron_amp_O2,
+                self.autocast_dtype if hasattr(self, "autocast_dtype") else None,
+                self.named_parameters(),
+            )
 
         self.setup_policy_optimizer = True
         self.policy_optimizer, self.policy_scheduler = ModelPT.setup_optimization(
@@ -685,6 +807,12 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         if self.with_distributed_adam:
             assert sum([len(i["params"]) for i in self._optimizer_param_groups]) == sum(
                 [len(i) for i in buckets_policy]
+            )
+        if self.with_distributed_adam:
+            optim_kwargs = compute_optim_kwargs(
+                self.cfg.value.megatron_amp_O2,
+                self.autocast_dtype if hasattr(self, "autocast_dtype") else None,
+                self.named_parameters(),
             )
         self.setup_policy_optimizer = False
         self.value_optimizer, self.value_scheduler = ModelPT.setup_optimization(
@@ -797,3 +925,9 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 self.value_optimizer.init_param_buffer()
 
         self._optimizer = FakeOptimizer(self.policy_optimizer, self.value_optimizer)
+
+        if self.policy_scheduler is None and self.value_scheduler is None:
+            return self._optimizer
+        else:
+            assert self.policy_scheduler is not None and self.value_scheduler is not None
+            return [self._optimizer], [self.policy_scheduler, self.value_scheduler]

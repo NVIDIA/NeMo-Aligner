@@ -108,6 +108,7 @@ model:
     seed: 1234
     num_layers: 2 # two layers
     tensor_model_parallel_size: ${model.tensor_model_parallel_size}
+    megatron_amp_O2: False
 
     optim:
       name: distributed_fused_adam
@@ -176,5 +177,5 @@ exp_manager:
     mode: max
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt-{step}-{consumed_samples}-{consumed_samples_values}-{policy_optimization_step}-{value_optimization_step}-{value_optimization_step}-{val_global_accuracy:.3f}'
+    filename: 'megatron_gpt-{step}-{consumed_samples}-{consumed_samples_values}-{policy_optimization_step}-{value_optimization_step}-{val_global_accuracy:.3f}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
