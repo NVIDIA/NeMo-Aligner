@@ -156,7 +156,6 @@ class DeepSearchTrainer:
 
     def train_single_step(self, batch, train_mode):
         batch["train_mode"] = train_mode
-        self.optimizer.zero_grad()
 
         self.model.prepare_for_training_step()
         loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
@@ -166,9 +165,6 @@ class DeepSearchTrainer:
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
 
         lr = self.optimizer.param_groups[0]["lr"]
-        self.optimizer.step()
-        self.scheduler.step()
-
         if grad_norm is not None:
             metrics["grad_norm"] = grad_norm
 
@@ -177,6 +173,7 @@ class DeepSearchTrainer:
 
     def run_training(self, policy_dataloader_iter, value_dataloader_iter):
         self.model.prepare_for_training()
+        self.optimizer.zero_grad()
         dp_size = parallel_state.get_data_parallel_world_size()
         # TODO: add consumed samples logic
         # TODO: add optimizer step bump
@@ -207,7 +204,8 @@ class DeepSearchTrainer:
             self.logger.log_metrics(
                 metrics, step=self.step, prefix="train_optim_value/",
             )
-
+        self.optimizer.step()
+        self.scheduler.step()
         self.model.finish_training()
         return metrics
 
@@ -267,9 +265,9 @@ class DeepSearchTrainer:
         if self.cfg.max_epochs > 1:
             print("### MAKE SURE YOU ARE RESETTING THE SAMPLER FOR THE LOADERS OTHERWISE DATALOADING ORDER THE SAME")
 
-        # if self.step == 0:
-        #     self.run_validation()
-        #     self.run_train_evaluation()
+        if self.step == 0:
+            self.run_validation()
+            self.run_train_evaluation()
 
         for e in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
