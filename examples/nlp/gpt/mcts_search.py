@@ -45,13 +45,12 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
-steerlm_template = """<extra_id_0>System
-A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-<extra_id_1>User
+prompt_template = """\x00System
+
+\x11User
 {prompt}
 Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-<extra_id_1>Assistant
-<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
+\x11Assistant
 """
 
 
@@ -225,7 +224,7 @@ class DatasetWrapper:
     # just like a dataset but return idx
     def __getitem__(self, idx):
         data_item = self.ds[idx]
-        data_item["question"] = steerlm_template.format(prompt=data_item["question"])
+        data_item["question"] = prompt_template.format(prompt=data_item["question"])
         return {**data_item, "data_id": idx}
 
     def __len__(self):
