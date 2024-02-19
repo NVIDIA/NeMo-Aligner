@@ -16,6 +16,7 @@ import os
 from collections import defaultdict
 from copy import deepcopy
 from functools import partial
+from omegaconf import open_dict
 
 import torch
 import torch.multiprocessing as mp
@@ -347,9 +348,24 @@ def main(cfg) -> None:
         shuffle=False,
     )
 
-    # TODO(geshen): set the optimizer steps properly, just like in PPO
-    # TODO(geshen): better use constant LR here
-    init_using_ptl(trainer, ptl_model, train_policy_dataloader, None)
+    assert cfg.trainer.deep_search.max_epochs > 0
+
+    # on the first time we ever save a checkpoint
+    # these steps will be set correctly and subsequent resumes
+    # we rely on PTL keeping the max step in the state dict
+    # to set it properly, since the below would be incorrect
+    def set_max_steps(sched, steps):
+        if sched is not None and 'max_steps' not in sched:
+            with open_dict(sched):
+                sched.max_steps = steps
+
+    policy_steps = len(train_policy_dataloader) * cfg.trainer.deep_search.max_epochs
+    value_steps = len(train_value_dataloader) * cfg.trainer.deep_search.max_epochs
+
+    set_max_steps(ptl_model.cfg.optim.get("sched", None), policy_steps)
+    set_max_steps(ptl_model.cfg.value.optim.get("sched", None), value_steps)
+
+    init_using_ptl(trainer, ptl_model, None, None)
 
     # optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
