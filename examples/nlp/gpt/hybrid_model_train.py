@@ -41,6 +41,7 @@ from nemo_aligner.utils.train_script_utils import (
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
     init_using_ptl,
+    resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
     temp_pop_from_config,
 )
@@ -195,15 +196,6 @@ def mcts_value_collate_fn(eos_id, batches):
     mask = create_mask(final_dict["tokens"], final_dict["context_length"], final_dict["response_length"])
 
     return final_dict | {"mcts_mask": mask}
-
-
-def resolve_and_create_trainer(cfg, pop_trainer_key):
-    """resolve the cfg, remove the key before constructing the PTL trainer
-        and then restore it after
-    """
-    OmegaConf.resolve(cfg)
-    with temp_pop_from_config(cfg.trainer, pop_trainer_key):
-        return CustomMegatronTrainerBuilder(cfg).create_trainer()
 
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
@@ -367,13 +359,13 @@ def main(cfg) -> None:
 
     init_using_ptl(trainer, ptl_model, None, None)
 
-    # optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
+    optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
-    policy_optimizer = ptl_model.policy_optimizer
-    policy_scheduler = ptl_model.policy_scheduler
+    # policy_optimizer = ptl_model.policy_optimizer
+    # policy_scheduler = ptl_model.policy_scheduler
 
-    value_optimizer = ptl_model.value_optimizer
-    value_scheduler = ptl_model.value_scheduler
+    # value_optimizer = ptl_model.value_optimizer
+    # value_scheduler = ptl_model.value_scheduler
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
@@ -383,10 +375,8 @@ def main(cfg) -> None:
     deep_search_trainer = DeepSearchTrainer(
         cfg=cfg.trainer.deep_search,
         model=ptl_model,
-        policy_optimizer=policy_optimizer,
-        policy_scheduler=policy_scheduler,
-        value_optimizer=value_optimizer,
-        value_scheduler=value_scheduler,
+        optimizer=optimizer,
+        scheduler=scheduler,
         train_policy_dataloader=train_policy_dataloader,
         train_value_dataloader=train_value_dataloader,
         val_dataloader_builder_func=val_dataloader_builder_func,

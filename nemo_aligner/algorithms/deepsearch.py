@@ -65,10 +65,8 @@ class DeepSearchTrainer:
         self,
         cfg: DictConfig,
         model,
-        policy_optimizer,
-        policy_scheduler,
-        value_optimizer,
-        value_scheduler,
+        optimizer,
+        scheduler,
         train_policy_dataloader,
         train_value_dataloader,
         val_dataloader_builder_func,
@@ -80,10 +78,8 @@ class DeepSearchTrainer:
     ):
         self.cfg = cfg
         self.model = model
-        self.policy_optimizer = policy_optimizer
-        self.policy_scheduler = policy_scheduler
-        self.value_optimizer = value_optimizer
-        self.value_scheduler = value_scheduler
+        self.optimizer = optimizer
+        self.scheduler = scheduler
         self.train_policy_dataloader = train_policy_dataloader
         self.train_value_dataloader = train_value_dataloader
         self.val_dataloader_builder_func = val_dataloader_builder_func
@@ -160,34 +156,18 @@ class DeepSearchTrainer:
 
     def train_single_step(self, batch, train_mode):
         batch["train_mode"] = train_mode
-        if train_mode == TrainMode.POLICY_ONLY:
-            self.policy_optimizer.zero_grad()
-        elif train_mode == TrainMode.VALUE_ONLY:
-            self.value_optimizer.zero_grad()
-        else:
-            raise ValueError(f"Invalid train mode {train_mode}")
+        self.optimizer.zero_grad()
+
         self.model.prepare_for_training_step()
         loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
         self.model.finish_training_step()
 
-        if train_mode == TrainMode.POLICY_ONLY:
-            grad_norm = clip_optimier_gradients(self.model, self.policy_optimizer, self.cfg.gradient_clip_val)
-        elif train_mode == TrainMode.VALUE_ONLY:
-            grad_norm = clip_optimier_gradients(self.model, self.value_optimizer, self.cfg.gradient_clip_val)
-        else:
-            raise ValueError(f"Invalid train mode {train_mode}")
-
+        grad_norm = clip_optimier_gradients(self.model, self.optimizer, self.cfg.gradient_clip_val)
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
-        if train_mode == TrainMode.POLICY_ONLY:
-            lr = self.policy_optimizer.param_groups[0]["lr"]
-            self.policy_optimizer.step()
-            self.policy_scheduler.step()
-        elif train_mode == TrainMode.VALUE_ONLY:
-            lr = self.value_optimizer.param_groups[0]["lr"]
-            self.value_optimizer.step()
-            self.value_scheduler.step()
-        else:
-            raise ValueError(f"Invalid train mode {train_mode}")
+
+        lr = self.optimizer.param_groups[0]["lr"]
+        self.optimizer.step()
+        self.scheduler.step()
 
         if grad_norm is not None:
             metrics["grad_norm"] = grad_norm
@@ -287,9 +267,9 @@ class DeepSearchTrainer:
         if self.cfg.max_epochs > 1:
             print("### MAKE SURE YOU ARE RESETTING THE SAMPLER FOR THE LOADERS OTHERWISE DATALOADING ORDER THE SAME")
 
-        if self.step == 0:
-            self.run_validation()
-            self.run_train_evaluation()
+        # if self.step == 0:
+        #     self.run_validation()
+        #     self.run_train_evaluation()
 
         for e in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
