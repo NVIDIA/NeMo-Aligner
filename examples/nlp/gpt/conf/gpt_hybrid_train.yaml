@@ -51,6 +51,8 @@ model:
     top_k: 50
     end_strings: ["<extra_id_1>"]  # generation will stop when one of these tokens is generated
 
+    oracle: True  # whether to use the oracle value for the search results, Default True, so it uses ground truth value when it reaches the terminal state
+
     train:
       value_weight: 1 # weight of the value portion of the loss
       policy_weight: 1 # weight of the policy portion of the loss
@@ -120,17 +122,17 @@ model:
       betas:
       - 0.9
       - 0.98
+      sched:
+        name: CosineAnnealing
+        warmup_steps: 5
+        constant_steps: 10
+        min_lr: 1e-7
+
     # define fields from the base model's config that should be ignored when merging with this config.
     overwrite_base_config:
       data:
         data_prefix: True
       optim: True
-
-# sched:
-# name: CosineAnnealing
-# warmup_steps: 10
-# constant_steps: 1000
-# min_lr: 1e-7
 
   # miscellaneous
   seed: 1234
@@ -145,11 +147,11 @@ model:
     betas:
     - 0.9
     - 0.98
-#     sched:
-#       name: CosineAnnealing
-#       warmup_steps: 10
-#       constant_steps: 1000
-#       min_lr: 9e-8
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 5
+      constant_steps: 10
+      min_lr: 1e-7
 
   precision: ${trainer.precision}
 

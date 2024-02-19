@@ -22,6 +22,7 @@ import torch.multiprocessing as mp
 from datasets import load_dataset
 from megatron.core import parallel_state
 from megatron.core.utils import divide
+from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
 from nemo.core.config import hydra_runner
@@ -30,6 +31,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.deepsearch import DeepSearchTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
+from nemo_aligner.utils.customized_nlpdpstrategy import CustomMegatronTrainerBuilder
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -39,8 +41,8 @@ from nemo_aligner.utils.train_script_utils import (
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
     init_using_ptl,
-    resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
+    temp_pop_from_config,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
@@ -195,6 +197,15 @@ def mcts_value_collate_fn(eos_id, batches):
     return final_dict | {"mcts_mask": mask}
 
 
+def resolve_and_create_trainer(cfg, pop_trainer_key):
+    """resolve the cfg, remove the key before constructing the PTL trainer
+        and then restore it after
+    """
+    OmegaConf.resolve(cfg)
+    with temp_pop_from_config(cfg.trainer, pop_trainer_key):
+        return CustomMegatronTrainerBuilder(cfg).create_trainer()
+
+
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
     val_ds = DatasetWrapper(load_dataset("gsm8k", "main")["test"])
@@ -337,27 +348,32 @@ def main(cfg) -> None:
         shuffle=False,
     )
 
-    # TODO(geshen): set the optimizer steps properly, just like in PPO
-    # TODO(geshen): better use constant LR here
-    init_using_ptl(trainer, ptl_model, train_policy_dataloader, None)
+    assert cfg.trainer.deep_search.max_epochs > 0
+
+    # on the first time we ever save a checkpoint
+    # these steps will be set correctly and subsequent resumes
+    # we rely on PTL keeping the max step in the state dict
+    # to set it properly, since the below would be incorrect
+    def set_max_steps(sched, steps):
+        if sched is not None and "max_steps" not in sched:
+            with open_dict(sched):
+                sched.max_steps = steps
+
+    policy_steps = len(train_policy_dataloader) * cfg.trainer.deep_search.max_epochs
+    value_steps = len(train_value_dataloader) * cfg.trainer.deep_search.max_epochs
+
+    set_max_steps(ptl_model.cfg.optim.get("sched", None), policy_steps)
+    set_max_steps(ptl_model.cfg.value.optim.get("sched", None), value_steps)
+
+    init_using_ptl(trainer, ptl_model, None, None)
 
     # optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
     policy_optimizer = ptl_model.policy_optimizer
     policy_scheduler = ptl_model.policy_scheduler
 
-    if policy_scheduler is None:
-        policy_scheduler = FakeScheduler()
-    else:
-        policy_scheduler = policy_scheduler["scheduler"]
-
     value_optimizer = ptl_model.value_optimizer
     value_scheduler = ptl_model.value_scheduler
-
-    if value_scheduler is None:
-        value_scheduler = FakeScheduler()
-    else:
-        value_scheduler = value_scheduler["scheduler"]
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 

@@ -119,16 +119,30 @@ def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
     scheduler = ptl_model.lr_schedulers()
 
     if scheduler is not None:
-        # restore the previous state of the learning rate
-        if scheduler.last_epoch > 0:
-            # NOTE: we are doing this because load_state_dict on a LRScheduler
-            # does not do anything that restores the learning rate on the optimizer
-            # stepping here will restore it properly
-            scheduler.step(scheduler.last_epoch)
+        if isinstance(scheduler.last_epoch, tuple):
+            if scheduler.last_epoch[0] > 0 or scheduler.last_epoch[1] > 0:
+                scheduler.step(scheduler.last_epoch)
+        else:
+            # restore the previous state of the learning rate
+            if scheduler.last_epoch > 0:
+                # NOTE: we are doing this because load_state_dict on a LRScheduler
+                # does not do anything that restores the learning rate on the optimizer
+                # stepping here will restore it properly
+                scheduler.step(scheduler.last_epoch)
 
 
 class FakeScheduler:
     def step(self, *args, **kwargs):
+        ...
+
+    @property
+    def last_epoch(self):
+        return 0
+
+    def state_dict(self):
+        return {}
+
+    def load_state_dict(self, state_dict):
         ...
 
 

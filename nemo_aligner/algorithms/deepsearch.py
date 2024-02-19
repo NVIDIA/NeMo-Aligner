@@ -15,6 +15,7 @@
 from collections import defaultdict
 from enum import IntEnum, auto
 from functools import partial
+from math import ceil
 from typing import Union
 
 import pandas as pd
@@ -39,6 +40,10 @@ class TrainMode(IntEnum):
 
     def cuda(self):
         return torch.cuda.LongTensor([self])
+
+
+def safe_divide(a, b):
+    return a / b if b != 0 else 0
 
 
 def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, float, None]):
@@ -95,7 +100,6 @@ class DeepSearchTrainer:
         self.consumed_samples_values = 0
         self.consumed_samples = 0
 
-        self._train_dataloader_len = len(train_policy_dataloader)
         # TODO(geshen): steps probably wrong
         self.set_max_steps()
 
@@ -287,21 +291,19 @@ class DeepSearchTrainer:
             self.run_validation()
             self.run_train_evaluation()
 
-        for _ in epoch_iter:
+        for e in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
-            loop_iter = range(self.step, self.max_steps * (self.epoch + 1))
+
+            # max step is set accordingly because the dataloader
+            # gets consumed each step
+            loop_iter = range(self.max_steps)
 
             policy_dataloader_iter = iter(self.train_policy_dataloader)
             value_dataloader_iter = iter(self.train_value_dataloader)
 
-            global_pbar = tqdm(
-                loop_iter,
-                initial=self.step,
-                total=self.max_steps * (self.epoch + 1),
-                leave=True,
-                desc="DeepSearch Global Step",
-            )
+            global_pbar = tqdm(loop_iter, total=self.max_steps, leave=True, desc=f"DeepSearch Epoch {e + 1}",)
 
+            inner_step = 0
             for _ in global_pbar:
                 step_metrics = {}
                 timing_metrics = {}
@@ -312,14 +314,17 @@ class DeepSearchTrainer:
                 timing_metrics["train_time"] = self.timer.get("train_time")
 
                 self.step += 1
+                inner_step += 1
                 run_time_exceeded = self.run_timer.is_finished()
 
                 run_val, save_model, is_train_end = check_progress(
-                    self.step,
-                    self.max_steps * (self.epoch + 1),
+                    inner_step,
+                    self.max_steps,
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
                     1.0,
+                    epoch=self.epoch,
+                    max_epochs=self.cfg.max_epochs,
                     run_time_exceeded=run_time_exceeded,
                 )
 
@@ -346,19 +351,27 @@ class DeepSearchTrainer:
 
             self.epoch += 1
 
+            # when we resume we will load back the dataloader, which can have less max steps than 1 full epoch
+            # so then in the next epoch the max steps is wrong, so we need to reset this
+            self.set_max_steps()
+
     def set_max_steps(self):
         max_steps = self.cfg.get("max_steps", -1)
+
+        # each step is one run of policy/value
+        max_steps_policy = ceil(safe_divide(len(self.train_policy_dataloader), self.cfg.num_policy_batches))
+        max_steps_value = ceil(safe_divide(len(self.train_value_dataloader), self.cfg.num_value_batches))
+
+        dataloader_max_steps = max(max_steps_policy, max_steps_value)
 
         if max_steps == -1:
             # the dataloader already knows how much longer
             # because consumed samples is resumed
-            max_steps = self._train_dataloader_len
+            max_steps = dataloader_max_steps
         else:
-            # user specified the max step, figure out how much longer
-            # we need to run for
-            max_steps = max_steps - self.step
+            raise NotImplementedError("manual max step doesn't work right now")
 
-        self.max_steps = min(max_steps, self._train_dataloader_len) + self.step
+        self.max_steps = min(max_steps, dataloader_max_steps)
 
     def state_dict(self):
         # TODO(geshen): add epoch logic
