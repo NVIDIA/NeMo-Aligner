@@ -16,13 +16,13 @@ import os
 from collections import defaultdict
 from copy import deepcopy
 from functools import partial
-from omegaconf import open_dict
 
 import torch
 import torch.multiprocessing as mp
 from datasets import load_dataset
 from megatron.core import parallel_state
 from megatron.core.utils import divide
+from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
 from nemo.core.config import hydra_runner
@@ -355,7 +355,7 @@ def main(cfg) -> None:
     # we rely on PTL keeping the max step in the state dict
     # to set it properly, since the below would be incorrect
     def set_max_steps(sched, steps):
-        if sched is not None and 'max_steps' not in sched:
+        if sched is not None and "max_steps" not in sched:
             with open_dict(sched):
                 sched.max_steps = steps
 

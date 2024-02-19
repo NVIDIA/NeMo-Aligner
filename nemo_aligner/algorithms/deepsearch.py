@@ -42,6 +42,10 @@ class TrainMode(IntEnum):
         return torch.cuda.LongTensor([self])
 
 
+def safe_divide(a, b):
+    return a / b if b != 0 else 0
+
+
 def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, float, None]):
     if limit_batches is None:
         limit_batches = 1.0
@@ -355,8 +359,8 @@ class DeepSearchTrainer:
         max_steps = self.cfg.get("max_steps", -1)
 
         # each step is one run of policy/value
-        max_steps_policy = ceil(len(self.train_policy_dataloader) / self.cfg.num_policy_batches)
-        max_steps_value = ceil(len(self.train_value_dataloader) / self.cfg.num_value_batches)
+        max_steps_policy = ceil(safe_divide(len(self.train_policy_dataloader), self.cfg.num_policy_batches))
+        max_steps_value = ceil(safe_divide(len(self.train_value_dataloader), self.cfg.num_value_batches))
 
         dataloader_max_steps = max(max_steps_policy, max_steps_value)
 
