@@ -6,7 +6,7 @@ export PYTHONPATH=/opt/NeMo:/opt/nemo-aligner:$PYTHONPATH
 
 ACTOR_NUM_DEVICES=1
 ACTOR_MICRO_BS=1
-GRAD_ACCUMULATION=4
+GRAD_ACCUMULATION=1
 ACTOR_GLOBAL_BATCH_SIZE=$((ACTOR_MICRO_BS*ACTOR_NUM_DEVICES*GRAD_ACCUMULATION))
 KL_COEF=0.1
 LR=0.001
@@ -48,7 +48,7 @@ git config --global --add safe.directory /opt/nemo-aligner \
     trainer.val_check_interval=20 \
     trainer.gradient_clip_val=10.0 \
     trainer.devices=${ACTOR_NUM_DEVICES} \
-    exp_manager.create_wandb_logger=False \
+    exp_manager.create_wandb_logger=True \
     exp_manager.wandb_logger_kwargs.name=${ACTOR_WANDB_NAME} \
     exp_manager.resume_if_exists=False \
     exp_manager.explicit_log_dir=${DIR_SAVE_CKPT_PATH} \

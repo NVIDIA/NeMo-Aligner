@@ -60,6 +60,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
 
         self.distributed_adam_offload_manager = None
 
+        self.vae_batch_size = self.cfg.infer.get("vae_batch_size", 8)
         self.height = self.cfg.infer.get("height", 512)
         self.width = self.cfg.infer.get("width", 512)
         self.downsampling_factor = self.cfg.infer.get("down_factor", 8)
@@ -110,10 +111,9 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
         return
 
     @torch.no_grad()
-    def generate_log_images(self, latents, latent_shape, prompts, model):
+    def generate_log_images(self, latents, batch, model):
 
         # setup default values for inference configs
-
         # get autocast_dtype
         if self.cfg.precision == "bf16":
             autocast_dtype = torch.bfloat16
@@ -130,8 +130,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
 
             sampler = sampling_utils.initialize_sampler(model, self.sampler_type.upper())
 
-            batch = prompts
-            batch_size = len(prompts)
+            batch_size = len(batch)
             cond, u_cond = sampling_utils.encode_prompt(
                 model.cond_stage_model, batch, self.unconditional_guidance_scale
             )
@@ -140,7 +139,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
                 S=self.inference_steps,
                 conditioning=cond,
                 batch_size=batch_size,
-                shape=latent_shape,
+                shape=list(latents.shape[:1] + latents.shape[2:]),
                 verbose=False,
                 unconditional_guidance_scale=self.unconditional_guidance_scale,
                 unconditional_conditioning=u_cond,
@@ -160,13 +159,12 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
                 .view(-1, *intermediates["pred_x0"][0].shape[1:])
             )
 
-            vae_batch_size = 8
             vae_decoder_output = []
             idx_denoised_imgs = [self.inference_steps + (self.inference_steps + 1) * i for i in range(batch_size)]
 
-            for i in range(0, batch_size, vae_batch_size):
+            for i in range(0, batch_size, self.vae_batch_size):
                 image = self.model.model.differentiable_decode_first_stage(
-                    trajectories_predx0[idx_denoised_imgs[i : i + vae_batch_size]]
+                    trajectories_predx0[idx_denoised_imgs[i : i + self.vae_batch_size]]
                 )
 
                 vae_decoder_output.append(image)
@@ -190,8 +188,6 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
     def log_visualization(self, prompts):
 
         batch_size = len(prompts)
-
-        latent_shape = [batch_size, self.height // self.downsampling_factor, self.width // self.downsampling_factor]
         latents = torch.randn(
             [
                 batch_size,
@@ -202,8 +198,8 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             generator=None,
         ).to(torch.cuda.current_device())
 
-        image_draft_p, reward_draft_p = self.generate_log_images(latents, latent_shape, prompts, self.model.model)
-        image_init, reward_init = self.generate_log_images(latents, latent_shape, prompts, self.init_model)
+        image_draft_p, reward_draft_p = self.generate_log_images(latents, prompts, self.model.model)
+        image_init, reward_init = self.generate_log_images(latents, prompts, self.init_model)
 
         images = []
         captions = []
@@ -220,7 +216,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
         )
 
     def generate(
-        self, prompts, latent_shape, x_T,
+        self, batch, x_T,
     ):
 
         # get autocast_dtype
@@ -237,13 +233,8 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             enabled=autocast_dtype in (torch.half, torch.bfloat16), dtype=autocast_dtype,
         ):
 
-            batch = prompts
-            batch_size = len(prompts)
-            C, H, W = latent_shape
-            shape = (batch_size, C, H, W)
-            b = shape[0]
+            batch_size = len(batch)
             prev_img_draft_p = x_T
-            ddim_use_original_steps = False
 
             device_draft_p = self.model.model.betas.device
 
@@ -257,12 +248,10 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             sampler_draft_p.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
             sampler_init.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
 
-            timesteps = (
-                sampler_draft_p.ddpm_num_timesteps if ddim_use_original_steps else sampler_draft_p.ddim_timesteps
-            )
+            timesteps = (sampler_draft_p.ddim_timesteps)
 
-            time_range = reversed(range(0, timesteps)) if ddim_use_original_steps else np.flip(timesteps)
-            total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
+            time_range = np.flip(timesteps)
+            total_steps = timesteps.shape[0]
 
             print(f"Running {sampler_draft_p.sampler.name} Sampling with {total_steps} timesteps")
             iterator = tqdm(time_range, desc=f"{sampler_draft_p.sampler.name} Sampler", total=total_steps)
@@ -279,7 +268,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
                             prev_img_draft_p,
                             total_steps,
                             i,
-                            b,
+                            batch_size,
                             device_draft_p,
                             step,
                             cond,
@@ -294,7 +283,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
                         prev_img_draft_p,
                         total_steps,
                         i,
-                        b,
+                        batch_size,
                         device_draft_p,
                         step,
                         cond,
@@ -307,7 +296,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
                             prev_img_draft_p,
                             total_steps,
                             i,
-                            b,
+                            batch_size,
                             device_draft_p,
                             step,
                             cond,
@@ -325,10 +314,9 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             t_eps_draft_p = torch.stack(list_eps_draft_p).to(torch.device("cuda"))
             t_eps_init = torch.stack(list_eps_init).to(torch.device("cuda"))
 
-            vae_batch_size = 8
             vae_decoder_output = []
-            for i in range(0, batch_size, vae_batch_size):
-                image = self.model.model.differentiable_decode_first_stage(trajectories_predx0[i : i + vae_batch_size])
+            for i in range(0, batch_size, self.vae_batch_size):
+                image = self.model.model.differentiable_decode_first_stage(trajectories_predx0[i : i + self.vae_batch_size])
                 vae_decoder_output.append(image)
 
             vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
@@ -364,11 +352,6 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
 
             batch_size = len(dataloader_iter)
 
-            latent_shape = [
-                batch_size,
-                self.height // self.downsampling_factor,
-                self.width // self.downsampling_factor,
-            ]
             latents = torch.randn(
                 [
                     batch_size,
@@ -380,7 +363,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             ).to(torch.cuda.current_device())
 
             output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(
-                dataloader_iter, latent_shape, latents
+                dataloader_iter, latents
             )
 
             # in this nemo version the model and autocast dtypes are not synced
@@ -411,7 +394,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
     def calculate_gaussian_kl_penalty_shared_var(self, curr_eps, init_eps):
 
         diff = curr_eps - init_eps
-        kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()  # / (stds**2)
+        kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()
         dimensionality = torch.numel(curr_eps[0])
         kl /= dimensionality
 
