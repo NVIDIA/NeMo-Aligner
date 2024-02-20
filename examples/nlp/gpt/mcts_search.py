@@ -54,8 +54,6 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
 
-<<<<<<< HEAD
-=======
 def groupby(key, output):
     grouped = defaultdict(list)
 
@@ -63,7 +61,6 @@ def groupby(key, output):
         grouped[item[key]].append(item)
 
     return grouped
->>>>>>> geshen/mainline
 
 def compute_metric_from_output(output):
     return_memory, _ = output
