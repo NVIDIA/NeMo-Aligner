@@ -35,7 +35,6 @@ model:
   mcts:
     C: 2 # weight for the UCB piror term
     num_searches: 200  # number of MCTS searches
-    num_self_play_iterations: 2 # number of self play iterations
 
     rollout_micro_batch_size: 1 # batch size for each dp worker to handle
     num_rollouts: 1.0 # float(will be % of the dataset) or int
