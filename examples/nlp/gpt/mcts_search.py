@@ -236,8 +236,8 @@ class DatasetWrapper:
 def main(cfg) -> None:
     dataset = load_dataset("gsm8k", "main")
 
-    train_ds = DatasetWrapper(dataset["train"])
-    score_fn = GSK8KFeedbackHF(split="train")
+    train_ds = DatasetWrapper(dataset["test"])
+    score_fn = GSK8KFeedbackHF(split="test")
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
