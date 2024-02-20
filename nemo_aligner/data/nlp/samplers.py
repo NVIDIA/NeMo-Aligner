@@ -87,8 +87,8 @@ class MegatronPretrainingRandomSampler(BaseMegatronSampler):
         bucket_offset = current_epoch_samples // self.data_parallel_size
         start_idx = self.data_parallel_rank * bucket_size
 
-        random_idx = torch.randperm(bucket_size, generator=g).tolist()
-        idx_range = [start_idx + x for x in random_idx[bucket_offset:]]
+        fixed_idx = list(range(bucket_size))
+        idx_range = [start_idx + x for x in fixed_idx[bucket_offset:]]
 
         batch = []
         # Last batch if not complete will be dropped.
