@@ -17,15 +17,18 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
+
 <<<<<<< HEAD:examples/mm/stable_diffusion/train_sd_draftp.py
-from nemo_aligner.utils.distributed import Timer
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import MegatronLatentDiffusion
+from nemo_aligner.utils.distributed import Timer
+
 =======
 
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
     LatentDiffusion,
     MegatronLatentDiffusion,
 )
+
 >>>>>>> 427cd75d73051c98c1f5732af192e8d25673d4b4:examples/mm/draft/train_sd_draft.py
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -34,15 +37,18 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.mm import text_webdataset
+
 <<<<<<< HEAD:examples/mm/stable_diffusion/train_sd_draftp.py
 from nemo_aligner.data.nlp.builders import build_dataloader
-from nemo_aligner.models.mm.stable_diffusion.megatron_sd_draftp_model import MegatronSDDRaFTPModel
 from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
+from nemo_aligner.models.mm.stable_diffusion.megatron_sd_draftp_model import MegatronSDDRaFTPModel
+
 =======
 from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_rm_datasets
 from nemo_aligner.models.mm.draft.alignable_sd_model import AlignableSDModel
 from nemo_aligner.models.mm.draft.image_text_rms import get_reward_model
 from nemo_aligner.utils.distributed import Timer
+
 >>>>>>> 427cd75d73051c98c1f5732af192e8d25673d4b4:examples/mm/draft/train_sd_draft.py
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,

@@ -13,25 +13,21 @@
 # limitations under the License.
 
 from typing import Mapping
+
 import numpy as np
 import torch
 import wandb
 from omegaconf.dictconfig import DictConfig
 from PIL import Image
 from tqdm import tqdm
+
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion
-from nemo.collections.nlp.modules.common.megatron.utils import (
-    average_losses_across_data_parallel_group,
-)
+from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
-from nemo_aligner.utils.train_utils import (
-    prepare_for_training_step,
-)
-from nemo_aligner.utils.utils import (
-    configure_batch_sizes,
-)
+from nemo_aligner.utils.train_utils import prepare_for_training_step
+from nemo_aligner.utils.utils import configure_batch_sizes
 
 try:
     from megatron.core import parallel_state
@@ -261,7 +257,9 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             sampler_draft_p.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
             sampler_init.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
 
-            timesteps = sampler_draft_p.ddpm_num_timesteps if ddim_use_original_steps else sampler_draft_p.ddim_timesteps
+            timesteps = (
+                sampler_draft_p.ddpm_num_timesteps if ddim_use_original_steps else sampler_draft_p.ddim_timesteps
+            )
 
             time_range = reversed(range(0, timesteps)) if ddim_use_original_steps else np.flip(timesteps)
             total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
@@ -381,7 +379,9 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-            output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(dataloader_iter, latent_shape, latents)
+            output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(
+                dataloader_iter, latent_shape, latents
+            )
 
             # in this nemo version the model and autocast dtypes are not synced
             # so we need to explicitly cast it
