@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import sys
 
 import torch
 import torch.multiprocessing as mp
@@ -19,19 +18,17 @@ from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 from nemo_aligner.utils.distributed import Timer
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import MegatronLatentDiffusion
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
-from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.draft import DraftTrainer
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.mm import text_webdataset
-from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_rm_datasets
-from nemo_aligner.models.mm.draft.alignable_sd_model import AlignableSDModel
-from nemo_aligner.models.mm.draft.image_text_rms import get_reward_model
+from nemo_aligner.data.nlp.builders import build_dataloader
+from nemo_aligner.models.mm.stable_diffusion.megatron_sd_draftp_model import MegatronSDDRaFTPModel
+from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -40,11 +37,10 @@ from nemo_aligner.utils.train_script_utils import (
     init_using_ptl,
     retrieve_custom_trainer_state_dict,
 )
-from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
 mp.set_start_method("spawn", force=True)
 
-@hydra_runner(config_path="conf", config_name="train_sd_draft")
+@hydra_runner(config_path="conf", config_name="draftp_sd")
 def main(cfg) -> None:
 
     logging.info("\n\n************** Experiment configuration ***********")
@@ -126,7 +122,7 @@ def main(cfg) -> None:
 
     reward_model = get_reward_model(cfg.RM, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
 
-    alignable_model = AlignableSDModel(
+    alignable_model = MegatronSDDRaFTPModel(
         ptl_model, reward_model, ptl_model.tokenizer, optimizer, cfg.model, logger=logger
     )
 

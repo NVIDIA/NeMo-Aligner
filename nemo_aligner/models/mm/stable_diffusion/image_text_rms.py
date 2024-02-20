@@ -1,21 +1,22 @@
-import argparse
-import os
-from collections import deque
-from pathlib import Path
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import clip  # pip install git+https://github.com/openai/CLIP.git
-import matplotlib.pyplot as plt
 import numpy as np
-import requests
 import torch
 import torch.nn.functional as F
-from packaging import version
 from PIL import Image
-from torch import nn
-from torchvision.transforms import CenterCrop, Compose, Normalize, Resize, ToTensor
-from tqdm import tqdm
-from transformers import AutoModel, AutoProcessor
-
+from torchvision.transforms import CenterCrop, Compose, Normalize, Resize
 from nemo.collections.multimodal.data.clip.clip_dataset import get_preprocess_fns
 from nemo.collections.multimodal.models.vision_language_foundation.clip.megatron_clip_models import (
     CLIPTextTransformer,
@@ -23,25 +24,8 @@ from nemo.collections.multimodal.models.vision_language_foundation.clip.megatron
     MegatronCLIPModel,
 )
 from nemo.collections.multimodal.parts.utils import setup_trainer_and_model_for_inference
-from nemo.collections.nlp.modules.common.megatron.module import Float16Module, MegatronModule
+from nemo.collections.nlp.modules.common.megatron.module import MegatronModule
 
-try:
-    from apex.transformer.enums import AttnMaskType
-    from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
-
-    HAVE_APEX = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_APEX = False
-
-try:
-    from megatron.core import parallel_state
-    from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-
-    HAVE_MEGATRON_CORE = True
-
-except (ImportError, ModuleNotFoundError):
-
-    HAVE_MEGATRON_CORE = False
 
 try:
     from torchvision.transforms import InterpolationMode

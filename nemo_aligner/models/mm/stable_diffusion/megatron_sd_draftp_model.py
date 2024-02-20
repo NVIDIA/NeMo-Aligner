@@ -12,67 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
-from collections import defaultdict, deque
-from contextlib import nullcontext
-from functools import partial
-from typing import Any, Callable, Iterable, List, Mapping, Optional, Tuple, Union
-
+from typing import Mapping
 import numpy as np
 import torch
-import torch.nn.functional as F
 import wandb
-from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from PIL import Image
 from tqdm import tqdm
-
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
-from nemo.collections.nlp.models.language_modeling.megatron.gpt_model import GPTModel
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
-from nemo.collections.nlp.modules.common.megatron.module import Float16Module
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
-    get_ltor_masks_and_position_ids,
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
-from nemo.utils import AppState, logging
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
-from nemo_aligner.utils.distributed import (
-    broadcast_2d_tensor,
-    broadcast_2d_tensor_within_mp,
-    calculate_distributed_entropy,
-    from_parallel_logits_to_logprobs,
-    gather_tensor,
-    run_if_model_parallel_src,
-)
-from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
-    clip_gradients,
-    finish_validation_step,
-    grad_reductions,
     prepare_for_training_step,
-    prepare_for_validation_step,
-    set_sync_funcs,
 )
 from nemo_aligner.utils.utils import (
-    calculate_dialogue_response_lengths,
-    collate_with_batch_max_sequence_length,
     configure_batch_sizes,
-    cpu_weight_swap,
-    extract_value_from_ckpt,
-    masked_mean,
-    masked_std,
-    offload_distributed_adam,
 )
-
-try:
-    from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
-
-    HAVE_APEX = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_APEX = False
 
 try:
     from megatron.core import parallel_state
@@ -85,7 +44,7 @@ except (ImportError, ModuleNotFoundError):
 BatchType = Mapping[str, torch.tensor]
 
 
-class AlignableSDModel(AlignableGenerativeInterface):
+class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
     def __init__(
         self,
         model,
@@ -186,7 +145,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
                 model.cond_stage_model, batch, self.unconditional_guidance_scale
             )
 
-            samples, intermediates = sampler.sample(
+            _, intermediates = sampler.sample(
                 S=self.inference_steps,
                 conditioning=cond,
                 batch_size=batch_size,
@@ -252,15 +211,15 @@ class AlignableSDModel(AlignableGenerativeInterface):
             generator=None,
         ).to(torch.cuda.current_device())
 
-        image_draft, reward_draft = self.generate_log_images(latents, latent_shape, prompts, self.model.model)
+        image_draft_p, reward_draft_p = self.generate_log_images(latents, latent_shape, prompts, self.model.model)
         image_init, reward_init = self.generate_log_images(latents, latent_shape, prompts, self.init_model)
 
         images = []
         captions = []
-        for i in range(len(image_draft)):
-            images.append(image_draft[i])
+        for i in range(len(image_draft_p)):
+            images.append(image_draft_p[i])
             images.append(image_init[i])
-            captions.append("DRaFT: " + prompts[i] + ", Reward = " + str(reward_draft[i]))
+            captions.append("draft_p: " + prompts[i] + ", Reward = " + str(reward_draft_p[i]))
             captions.append("SD: " + prompts[i] + ", Reward = " + str(reward_init[i]))
 
         self.logger.loggers[1].log_image(
@@ -295,30 +254,30 @@ class AlignableSDModel(AlignableGenerativeInterface):
             C, H, W = latent_shape
             shape = (batch_size, C, H, W)
             b = shape[0]
-            prev_img_draft = x_T
+            prev_img_draft_p = x_T
             ddim_use_original_steps = False
 
-            device_draft = self.model.model.betas.device
+            device_draft_p = self.model.model.betas.device
 
-            sampler_draft = sampling_utils.initialize_sampler(self.model.model, self.sampler_type.upper())
+            sampler_draft_p = sampling_utils.initialize_sampler(self.model.model, self.sampler_type.upper())
             sampler_init = sampling_utils.initialize_sampler(self.init_model, self.sampler_type.upper())
 
             cond, u_cond = sampling_utils.encode_prompt(
                 self.model.model.cond_stage_model, batch, self.unconditional_guidance_scale
             )
 
-            sampler_draft.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
+            sampler_draft_p.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
             sampler_init.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
 
-            timesteps = sampler_draft.ddpm_num_timesteps if ddim_use_original_steps else sampler_draft.ddim_timesteps
+            timesteps = sampler_draft_p.ddpm_num_timesteps if ddim_use_original_steps else sampler_draft_p.ddim_timesteps
 
             time_range = reversed(range(0, timesteps)) if ddim_use_original_steps else np.flip(timesteps)
             total_steps = timesteps if ddim_use_original_steps else timesteps.shape[0]
 
-            print(f"Running {sampler_draft.sampler.name} Sampling with {total_steps} timesteps")
-            iterator = tqdm(time_range, desc=f"{sampler_draft.sampler.name} Sampler", total=total_steps)
+            print(f"Running {sampler_draft_p.sampler.name} Sampling with {total_steps} timesteps")
+            iterator = tqdm(time_range, desc=f"{sampler_draft_p.sampler.name} Sampler", total=total_steps)
 
-            list_eps_draft = []
+            list_eps_draft_p = []
             list_eps_init = []
             truncation_steps = self.cfg.truncation_steps
 
@@ -326,54 +285,54 @@ class AlignableSDModel(AlignableGenerativeInterface):
 
                 if i < total_steps - truncation_steps:
                     with torch.no_grad():
-                        img_draft, pred_x0_draft, eps_t_draft = sampler_draft.single_ddim_denoise_step(
-                            prev_img_draft,
+                        img_draft_p, pred_x0_draft_p, eps_t_draft_p = sampler_draft_p.single_ddim_denoise_step(
+                            prev_img_draft_p,
                             total_steps,
                             i,
                             b,
-                            device_draft,
+                            device_draft_p,
                             step,
                             cond,
                             unconditional_guidance_scale=self.unconditional_guidance_scale,
                             unconditional_conditioning=u_cond,
                         )
 
-                        prev_img_draft = img_draft
+                        prev_img_draft_p = img_draft_p
                 else:
 
-                    img_draft, pred_x0_draft, eps_t_draft = sampler_draft.single_ddim_denoise_step(
-                        prev_img_draft,
+                    img_draft_p, pred_x0_draft_p, eps_t_draft_p = sampler_draft_p.single_ddim_denoise_step(
+                        prev_img_draft_p,
                         total_steps,
                         i,
                         b,
-                        device_draft,
+                        device_draft_p,
                         step,
                         cond,
                         unconditional_guidance_scale=self.unconditional_guidance_scale,
                         unconditional_conditioning=u_cond,
                     )
-                    list_eps_draft.append(eps_t_draft)
+                    list_eps_draft_p.append(eps_t_draft_p)
                     with torch.no_grad():
                         _, _, eps_t_init = sampler_init.single_ddim_denoise_step(
-                            prev_img_draft,
+                            prev_img_draft_p,
                             total_steps,
                             i,
                             b,
-                            device_draft,
+                            device_draft_p,
                             step,
                             cond,
                             unconditional_guidance_scale=self.unconditional_guidance_scale,
                             unconditional_conditioning=u_cond,
                         )
                         list_eps_init.append(eps_t_init)
-                    prev_img_draft = img_draft
+                    prev_img_draft_p = img_draft_p
 
-            last_states = [pred_x0_draft]
+            last_states = [pred_x0_draft_p]
 
             trajectories_predx0 = (
                 torch.stack(last_states, dim=0).transpose(0, 1).contiguous().view(-1, *last_states[0].shape[1:])
             )
-            t_eps_draft = torch.stack(list_eps_draft).to(torch.device("cuda"))
+            t_eps_draft_p = torch.stack(list_eps_draft_p).to(torch.device("cuda"))
             t_eps_init = torch.stack(list_eps_init).to(torch.device("cuda"))
 
             vae_batch_size = 8
@@ -385,7 +344,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
             vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
             vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1) * 255.0
 
-            return vae_decoder_output, t_eps_draft, t_eps_init
+            return vae_decoder_output, t_eps_draft_p, t_eps_init
 
     def prepare_for_training(self):
         configure_batch_sizes(
@@ -430,20 +389,20 @@ class AlignableSDModel(AlignableGenerativeInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-            output_tensor_draft, epsilons_draft, epsilons_init = self.generate(dataloader_iter, latent_shape, latents)
+            output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(dataloader_iter, latent_shape, latents)
 
             # in this nemo version the model and autocast dtypes are not synced
             # so we need to explicitly cast it
             if not parallel_state.is_pipeline_last_stage():
-                output_tensor_draft = output_tensor_draft.to(dtype=self.autocast_dtype)
+                output_tensor_draft_p = output_tensor_draft_p.to(dtype=self.autocast_dtype)
 
-            def loss_func(output_tensor_draft):
+            def loss_func(output_tensor_draft_p):
                 # Loss per micro batch (ub).
                 if self.cfg.kl_coeff == 0.0:
                     kl_penalty = torch.tensor([0.0]).to(torch.cuda.current_device())
                 else:
-                    kl_penalty = self.calculate_gaussian_kl_penalty_shared_var(epsilons_draft, epsilons_init).mean()
-                rewards = self.reward_model.get_reward(output_tensor_draft.permute(0, 2, 3, 1), dataloader_iter)
+                    kl_penalty = self.calculate_gaussian_kl_penalty_shared_var(epsilons_draft_p, epsilons_init).mean()
+                rewards = self.reward_model.get_reward(output_tensor_draft_p.permute(0, 2, 3, 1), dataloader_iter)
                 loss = -rewards.mean() + kl_penalty * self.cfg.kl_coeff
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
@@ -453,7 +412,7 @@ class AlignableSDModel(AlignableGenerativeInterface):
                     {"loss": reduced_loss, "kl_penalty": kl_penalty},
                 )
 
-            return output_tensor_draft, loss_func
+            return output_tensor_draft_p, loss_func
 
         return fwd_output_and_loss_func
 
