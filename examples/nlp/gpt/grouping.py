@@ -1,3 +1,4 @@
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -5,7 +6,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-CACHE_DIR = ""
+CACHE_DIR = sys.argv[1]
 DATA_FILE = "data.pt"
 
 GLOBAL_CONTEXT_LENGTH_DICT = {}
