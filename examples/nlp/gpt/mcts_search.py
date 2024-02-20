@@ -36,7 +36,7 @@ from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedback
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
-from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
+from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, preemptable_save
 
 """Script to start Reward Model training"""
 
@@ -52,16 +52,6 @@ prompt_template = """\x00System
 Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
 \x11Assistant
 """
-
-
-def preemptable_save(obj, save_path: Path):
-    with tempfile.NamedTemporaryFile(dir=save_path.parent, delete=False) as temp_file:
-        # do the expensive op before replace
-        torch.save(obj, temp_file.name)
-
-        # this should be atomic
-        Path(temp_file.name).replace(save_path)
-
 
 def compute_metric_from_output(output):
     return_memory, _ = output
