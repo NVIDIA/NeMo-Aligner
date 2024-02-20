@@ -51,8 +51,6 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
         self.optimizer = optimizer
         self.cfg = config
         self.logger = logger
-
-        self.generation_counter = 0
         self.with_distributed_adam = self.model.with_distributed_adam
         self.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
         self.model.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
@@ -345,10 +343,6 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
 
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
-
-            self.generation_counter += 1
-            torch.cuda.manual_seed(0 + self.generation_counter * 1000 + torch.distributed.get_rank())
-            torch.manual_seed(0 + self.generation_counter * 1000 + torch.distributed.get_rank())
 
             batch_size = len(dataloader_iter)
 
