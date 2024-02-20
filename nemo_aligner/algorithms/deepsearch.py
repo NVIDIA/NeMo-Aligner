@@ -262,9 +262,6 @@ class DeepSearchTrainer:
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
 
-        if self.cfg.max_epochs > 1:
-            print("### MAKE SURE YOU ARE RESETTING THE SAMPLER FOR THE LOADERS OTHERWISE DATALOADING ORDER THE SAME")
-
         if self.step == 0:
             self.run_validation()
             self.run_train_evaluation()
@@ -279,7 +276,7 @@ class DeepSearchTrainer:
             policy_dataloader_iter = iter(self.train_policy_dataloader)
             value_dataloader_iter = iter(self.train_value_dataloader)
 
-            global_pbar = tqdm(loop_iter, total=self.max_steps, leave=True, desc=f"DeepSearch Epoch {e + 1}",)
+            global_pbar = tqdm(loop_iter, total=self.max_steps, leave=True, desc=f"DeepSearch Epoch {e}",)
 
             inner_step = 0
             for _ in global_pbar:
@@ -293,6 +290,10 @@ class DeepSearchTrainer:
 
                 self.step += 1
                 inner_step += 1
+
+                if inner_step == self.max_steps:
+                    self.epoch += 1
+
                 run_time_exceeded = self.run_timer.is_finished()
 
                 run_val, save_model, is_train_end = check_progress(
@@ -315,7 +316,7 @@ class DeepSearchTrainer:
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch
-                self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
+                self.logger.log_metrics(timing_metrics | {"epoch": self.epoch}, step=self.step, prefix="timers/")
 
                 global_pbar.set_postfix(step_metrics)
 
@@ -326,8 +327,6 @@ class DeepSearchTrainer:
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
-
-            self.epoch += 1
 
             # when we resume we will load back the dataloader, which can have less max steps than 1 full epoch
             # so then in the next epoch the max steps is wrong, so we need to reset this
@@ -355,6 +354,7 @@ class DeepSearchTrainer:
         # TODO(geshen): add epoch logic
         return {
             "step": self.step,
+            "epoch": self.epoch,
             "consumed_samples": self.consumed_samples,
             "consumed_samples_values": self.consumed_samples_values,
             "policy_optimization_step": self.policy_optimization_step,
@@ -365,6 +365,7 @@ class DeepSearchTrainer:
         self.step = state_dict["step"]
         self.consumed_samples = state_dict["consumed_samples"]
         self.consumed_samples_values = state_dict["consumed_samples_values"]
+        self.epoch = state_dict["epoch"]
         self.policy_optimization_step = state_dict["policy_optimization_step"]
         self.value_optimization_step = state_dict["value_optimization_step"]
 

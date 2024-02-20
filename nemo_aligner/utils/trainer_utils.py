@@ -49,7 +49,7 @@ def check_progress(
 ):
     is_validation_enabled = limit_val_batches != 0 and val_check_interval > 0
     is_save_enabled = save_interval > 0
-    is_train_end = step == max_steps and (epoch + 1 == max_epochs)
+    is_train_end = step == max_steps and epoch == max_epochs
 
     if is_validation_enabled:
         assert save_interval % val_check_interval == 0, f"{save_interval=} must be divisible by {val_check_interval=}"
