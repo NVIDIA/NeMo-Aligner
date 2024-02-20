@@ -336,23 +336,25 @@ class MCTSParallel:
                 node = ps[mappingIdx].node
                 # corresponding policy and value
                 spg_policy, spg_value, spg_action = policy[i], value[i], actions[i]
+                value_head_output = spg_value.item()
+                if self.args["turn_off_value"]:
+                    value_head_output = 0.0
 
                 if isinstance(node, tuple):
-                    # if the node is a boolean, then it means the node is terminal
-                    # the node has the meaning of ends_properly
+                    # if the node is a tuple, then it means the node is terminal
                     # backpropagate the value
                     node, ends_properly = node
-                    node.backpropagate(spg_value.item())
+                    node.backpropagate(value_head_output)
                     if ends_properly:
                         # collect the memory from the root to the terminal node
                         # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
                         all_tokens = tuple(node.get_all_tokens())
-                        ps[mappingIdx].value_memory.add((all_tokens, spg_value.item()))
-                        self.cache[all_tokens] = spg_value.item()
+                        ps[mappingIdx].value_memory.add((all_tokens, value_head_output))
+                        self.cache[all_tokens] = value_head_output
                 else:
                     node.expand(spg_policy, spg_action)
 
-                    node.backpropagate(spg_value.item())
+                    node.backpropagate(value_head_output)
 
 
 class DeepSearch:
