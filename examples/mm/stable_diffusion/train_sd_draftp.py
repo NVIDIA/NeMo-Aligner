@@ -27,6 +27,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.mm import text_webdataset
 from nemo_aligner.data.nlp.builders import build_dataloader
+from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
 from nemo_aligner.models.mm.stable_diffusion.megatron_sd_draftp_model import MegatronSDDRaFTPModel
 from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
 from nemo_aligner.utils.train_script_utils import (
