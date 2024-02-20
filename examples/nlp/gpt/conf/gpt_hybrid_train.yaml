@@ -51,6 +51,9 @@ model:
     top_k: 50
     end_strings: ["<extra_id_1>"]  # generation will stop when one of these tokens is generated
 
+    oracle: True  # whether to use the oracle value for the search results, Default True, so it uses ground truth value when it reaches the terminal state
+    turn_off_value: False  # whether to turn off the value model, if True, it will set the value head output to 0 
+
     train:
       value_weight: 1 # weight of the value portion of the loss
       policy_weight: 1 # weight of the policy portion of the loss
@@ -177,5 +180,5 @@ exp_manager:
     mode: max
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt-{step}-{consumed_samples}-{consumed_samples_values}-{policy_optimization_step}-{value_optimization_step}-{val_global_accuracy:.3f}'
+    filename: 'megatron_gpt-{step}-{consumed_samples}-{consumed_samples_values}-{policy_optimization_step}-{value_optimization_step}-{epoch}-{val_global_accuracy:.3f}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}

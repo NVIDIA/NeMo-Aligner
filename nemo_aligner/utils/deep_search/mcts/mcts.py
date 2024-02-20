@@ -145,6 +145,7 @@ class MCTSParallel:
         self.score_fn = score_fn
         self.terminate_fns = terminate_fns
         self.client_fun = client_fun
+        self.cache = {}
 
     def decode_text(self, state):
         decoded_text = self.tokenizer.decode(state)
@@ -185,12 +186,20 @@ class MCTSParallel:
 
     def get_input_action_depth(self, ps, expandable_search):
         # get the action to execute and depths in the search tree
-        actions = np.stack([ps[mappingIdx].node.action for mappingIdx in expandable_search])[:, np.newaxis].astype(
-            np.int32
-        )
+        actions = np.stack(
+            [
+                ps[mappingIdx].node.action if isinstance(ps[mappingIdx].node, Node) else ps[mappingIdx].node[0].action
+                for mappingIdx in expandable_search
+            ]
+        )[:, np.newaxis].astype(np.int32)
         # get the context ids for the search nodes
         # context_ids = [ps[mappingIdx].node.context_id for mappingIdx in expandable_search]
-        context_ids = [self.get_context_id(ps[mappingIdx].node) for mappingIdx in expandable_search]
+        context_ids = [
+            self.get_context_id(ps[mappingIdx].node)
+            if isinstance(ps[mappingIdx].node, Node)
+            else self.get_context_id(ps[mappingIdx].node[0])
+            for mappingIdx in expandable_search
+        ]
         # # verify context ids are the same
         # for old_context_id, new_context_id in zip(context_ids, new_context_ids):
         #     assert old_context_id == new_context_id
@@ -286,6 +295,18 @@ class MCTSParallel:
                 value, is_terminal, ends_properly = self.get_value_and_terminated(text, spg.data_id, depth)
 
                 if is_terminal:
+                    if not self.args["oracle"]:
+                        # if no oracle, then we need to run value inference to get the value
+
+                        # cache the value for this node
+                        all_tokens = tuple(node.get_all_tokens())
+                        if all_tokens in self.cache:
+                            value = self.cache[all_tokens]
+                        else:
+                            spg.node = (node, ends_properly)
+                            # skip the backpropagation and run inference later to get the value
+                            continue
+
                     # if terminal, then backpropagate the value, and skip the expansion of the node because spg.node is None
                     node.backpropagate(value)
                     # collect the memory from the root to the terminal node
@@ -315,10 +336,25 @@ class MCTSParallel:
                 node = ps[mappingIdx].node
                 # corresponding policy and value
                 spg_policy, spg_value, spg_action = policy[i], value[i], actions[i]
+                value_head_output = spg_value.item()
+                if self.args["turn_off_value"]:
+                    value_head_output = 0.0
 
-                node.expand(spg_policy, spg_action)
+                if isinstance(node, tuple):
+                    # if the node is a tuple, then it means the node is terminal
+                    # backpropagate the value
+                    node, ends_properly = node
+                    node.backpropagate(value_head_output)
+                    if ends_properly:
+                        # collect the memory from the root to the terminal node
+                        # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                        all_tokens = tuple(node.get_all_tokens())
+                        ps[mappingIdx].value_memory.add((all_tokens, value_head_output))
+                        self.cache[all_tokens] = value_head_output
+                else:
+                    node.expand(spg_policy, spg_action)
 
-                node.backpropagate(spg_value.item())
+                    node.backpropagate(value_head_output)
 
 
 class DeepSearch:
@@ -345,6 +381,8 @@ class DeepSearch:
         self.save_flag = True
 
     def search(self, parallel_searches: List[ParallelSearch], batch_id):
+        # clear the cache
+        self.mcts.cache = {}
         # serialize the partial result to disk
         dp_rank = parallel_state.get_data_parallel_rank()
         pp_rank = parallel_state.get_pipeline_model_parallel_rank()
