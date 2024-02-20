@@ -248,7 +248,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             sampler_draft_p.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
             sampler_init.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
 
-            timesteps = (sampler_draft_p.ddim_timesteps)
+            timesteps = sampler_draft_p.ddim_timesteps
 
             time_range = np.flip(timesteps)
             total_steps = timesteps.shape[0]
@@ -316,7 +316,9 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
 
             vae_decoder_output = []
             for i in range(0, batch_size, self.vae_batch_size):
-                image = self.model.model.differentiable_decode_first_stage(trajectories_predx0[i : i + self.vae_batch_size])
+                image = self.model.model.differentiable_decode_first_stage(
+                    trajectories_predx0[i : i + self.vae_batch_size]
+                )
                 vae_decoder_output.append(image)
 
             vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
@@ -362,9 +364,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-            output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(
-                dataloader_iter, latents
-            )
+            output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(dataloader_iter, latents)
 
             # in this nemo version the model and autocast dtypes are not synced
             # so we need to explicitly cast it
