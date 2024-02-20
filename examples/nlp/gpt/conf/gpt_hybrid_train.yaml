@@ -49,7 +49,7 @@ model:
     cache_dir: null  # cache dir for the search results
 
     top_k: 50
-    end_strings: ["<extra_id_1>"]  # generation will stop when one of these tokens is generated
+    end_strings: ["<extra_id_1>", "\x11"]  # generation will stop when one of these tokens is generated
 
     oracle: True  # whether to use the oracle value for the search results, Default True, so it uses ground truth value when it reaches the terminal state
     turn_off_value: False  # whether to turn off the value model, if True, it will set the value head output to 0 
