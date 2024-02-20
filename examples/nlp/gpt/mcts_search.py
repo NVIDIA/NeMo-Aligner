@@ -54,18 +54,28 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
 
+<<<<<<< HEAD
+=======
+def groupby(key, output):
+    grouped = defaultdict(list)
+
+    for item in output:
+        grouped[item[key]].append(item)
+
+    return grouped
+>>>>>>> geshen/mainline
 
 def compute_metric_from_output(output):
     return_memory, _ = output
+    return_memory = groupby("data_id", return_memory)
+
     num_correct = 0
     num_total = 0
 
-    for item in return_memory:
-        reward = item["reward"]
+    for k, v in return_memory.items():
+        is_correct = all(r['reward'] > 0 for r in v)
 
-        if reward > 0:
-            num_correct += 1
-
+        num_correct += is_correct
         num_total += 1
 
     return {"num_correct": num_correct, "num_total": num_total, "accuracy": num_correct / num_total}
