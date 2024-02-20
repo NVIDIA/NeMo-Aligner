@@ -17,7 +17,7 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
-from nemo_aligner.utils.distributed import Timer
+
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import MegatronLatentDiffusion
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -29,7 +29,7 @@ from nemo_aligner.data.mm import text_webdataset
 from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
 from nemo_aligner.models.mm.stable_diffusion.megatron_sd_draftp_model import MegatronSDDRaFTPModel
-from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
+from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -40,6 +40,7 @@ from nemo_aligner.utils.train_script_utils import (
 )
 
 mp.set_start_method("spawn", force=True)
+
 
 @hydra_runner(config_path="conf", config_name="draftp_sd")
 def main(cfg) -> None:
