@@ -15,7 +15,6 @@
 import abc
 import copy
 import os
-import pickle
 import re
 import warnings
 from typing import List, Set, Tuple
@@ -32,6 +31,7 @@ from nemo_aligner.utils.deep_search.forward_only import (
 )
 from nemo_aligner.utils.deep_search.mcts.mcts import Node, get_state
 from nemo_aligner.utils.deep_search.mcts.search_db import SearchDB, get_kv_cache
+from nemo_aligner.utils.utils import preemptable_save
 
 try:
     from apex.transformer.enums import AttnMaskType
@@ -394,13 +394,11 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         node.state = state
         node.value_sum = value
 
-    def seraialize_cache(self, filename: str):
-        with open(filename, "wb") as f:
-            pickle.dump(self.search_db, f)
+    def state_dict(self):
+        return {"search_db": self.search_db}
 
-    def deserialize_cache(self, filename: str):
-        with open(filename, "rb") as f:
-            self.search_db = pickle.load(f)
+    def load_state_dict(self, state_dict):
+        self.search_db = state_dict["search_db"]
 
     def save_kv_cache(
         self,
