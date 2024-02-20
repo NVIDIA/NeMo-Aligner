@@ -36,7 +36,7 @@ from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedback
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
-from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
+from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, preemptable_save
 
 """Script to start Reward Model training"""
 
@@ -54,27 +54,25 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
 
+def groupby(key, output):
+    grouped = defaultdict(list)
 
-def preemptable_save(obj, save_path: Path):
-    with tempfile.NamedTemporaryFile(dir=save_path.parent, delete=False) as temp_file:
-        # do the expensive op before replace
-        torch.save(obj, temp_file.name)
+    for item in output:
+        grouped[item[key]].append(item)
 
-        # this should be atomic
-        Path(temp_file.name).replace(save_path)
-
+    return grouped
 
 def compute_metric_from_output(output):
     return_memory, _ = output
+    return_memory = groupby("data_id", return_memory)
+
     num_correct = 0
     num_total = 0
 
-    for item in return_memory:
-        reward = item["reward"]
+    for k, v in return_memory.items():
+        is_correct = all(r['reward'] > 0 for r in v)
 
-        if reward > 0:
-            num_correct += 1
-
+        num_correct += is_correct
         num_total += 1
 
     return {"num_correct": num_correct, "num_total": num_total, "accuracy": num_correct / num_total}
