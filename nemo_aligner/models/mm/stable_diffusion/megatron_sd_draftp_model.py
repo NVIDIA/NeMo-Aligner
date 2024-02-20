@@ -46,13 +46,7 @@ BatchType = Mapping[str, torch.tensor]
 
 class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
     def __init__(
-        self,
-        model,
-        reward_model,
-        tokenizer,
-        optimizer,
-        config: DictConfig,
-        logger,
+        self, model, reward_model, tokenizer, optimizer, config: DictConfig, logger,
     ):
         self.model = model
         self.init_model = LatentDiffusion(config, None).to(torch.cuda.current_device()).eval()
@@ -86,6 +80,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
 
     def get_parameters_with_grad(self):
         return self.model.get_parameters_with_grad()
+
     def finish_inference(self):
         return
 
@@ -229,10 +224,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
         )
 
     def generate(
-        self,
-        prompts,
-        latent_shape,
-        x_T,
+        self, prompts, latent_shape, x_T,
     ):
 
         # get autocast_dtype

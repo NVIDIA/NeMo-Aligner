@@ -17,8 +17,16 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
+<<<<<<< HEAD:examples/mm/stable_diffusion/train_sd_draftp.py
 from nemo_aligner.utils.distributed import Timer
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import MegatronLatentDiffusion
+=======
+
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
+    LatentDiffusion,
+    MegatronLatentDiffusion,
+)
+>>>>>>> 427cd75d73051c98c1f5732af192e8d25673d4b4:examples/mm/draft/train_sd_draft.py
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.core.config import hydra_runner
@@ -26,9 +34,16 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.mm import text_webdataset
+<<<<<<< HEAD:examples/mm/stable_diffusion/train_sd_draftp.py
 from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.models.mm.stable_diffusion.megatron_sd_draftp_model import MegatronSDDRaFTPModel
 from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
+=======
+from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_rm_datasets
+from nemo_aligner.models.mm.draft.alignable_sd_model import AlignableSDModel
+from nemo_aligner.models.mm.draft.image_text_rms import get_reward_model
+from nemo_aligner.utils.distributed import Timer
+>>>>>>> 427cd75d73051c98c1f5732af192e8d25673d4b4:examples/mm/draft/train_sd_draft.py
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -40,7 +55,12 @@ from nemo_aligner.utils.train_script_utils import (
 
 mp.set_start_method("spawn", force=True)
 
+<<<<<<< HEAD:examples/mm/stable_diffusion/train_sd_draftp.py
 @hydra_runner(config_path="conf", config_name="draftp_sd")
+=======
+
+@hydra_runner(config_path="conf", config_name="train_sd_draft")
+>>>>>>> 427cd75d73051c98c1f5732af192e8d25673d4b4:examples/mm/draft/train_sd_draft.py
 def main(cfg) -> None:
 
     logging.info("\n\n************** Experiment configuration ***********")
@@ -87,7 +107,7 @@ def main(cfg) -> None:
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
     train_dataset, _ = text_webdataset.build_train_valid_datasets(cfg.model, consumed_samples=consumed_samples)
-    train_dataset = [d["captions"] for d in list(train_dataset)]  
+    train_dataset = [d["captions"] for d in list(train_dataset)]
 
     train_dataloader = build_dataloader(
         cfg,
@@ -139,7 +159,7 @@ def main(cfg) -> None:
         test_dataloader=[],
         logger=logger,
         ckpt_callback=ckpt_callback,
-        run_timer=timer
+        run_timer=timer,
     )
 
     if custom_trainer_state_dict is not None:
