@@ -54,6 +54,7 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
 
+
 def groupby(key, output):
     grouped = defaultdict(list)
 
@@ -61,6 +62,7 @@ def groupby(key, output):
         grouped[item[key]].append(item)
 
     return grouped
+
 
 def compute_metric_from_output(output):
     return_memory, _ = output
@@ -70,7 +72,7 @@ def compute_metric_from_output(output):
     num_total = 0
 
     for k, v in return_memory.items():
-        is_correct = all(r['reward'] > 0 for r in v)
+        is_correct = all(r["reward"] > 0 for r in v)
 
         num_correct += is_correct
         num_total += 1
@@ -175,7 +177,9 @@ class MCTSSearch:
             self.step += 1
 
             self.data_ids.update(batch_idx.tolist())
-
+            print(
+                "### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx.tolist(), "at step", self.step
+            )
             if self.run_timer.is_within_dp_finished() or self.step % self.save_interval == 0:
                 self.save()
 
