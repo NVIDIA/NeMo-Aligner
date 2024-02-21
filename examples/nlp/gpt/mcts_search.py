@@ -16,12 +16,13 @@ import os
 import random
 import tempfile
 from collections import defaultdict
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Union
 
-import torch
 import pandas as pd
+import torch
 import torch.multiprocessing as mp
 from datasets import load_dataset
 from megatron.core import parallel_state
@@ -38,7 +39,6 @@ from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, preemptable_save
-from dataclasses import dataclass
 
 """Script to start Reward Model training"""
 
@@ -79,7 +79,11 @@ def compute_metric_from_output(output):
         num_correct += is_correct
         num_total += 1
 
-    return {"num_correct": num_correct, "num_total": num_total, "accuracy": num_correct / num_total}
+    return {
+        "num_correct": num_correct,
+        "num_total": num_total,
+        "accuracy": num_correct / num_total if num_total > 0 else 0,
+    }
 
 
 def collate_func(batch):
@@ -294,7 +298,8 @@ class DatasetWrapper:
 
     def __len__(self):
         return len(self.ds)
-    
+
+
 def get_dataset(dataset_name, split):
     assert dataset_name == "gsm8k"
     dataset = load_dataset("gsm8k", "main")
@@ -302,6 +307,7 @@ def get_dataset(dataset_name, split):
     score_fn = GSK8KFeedbackHF(split=split)
 
     return ds, score_fn
+
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
@@ -327,7 +333,7 @@ def main(cfg) -> None:
         cfg.model,
         trainer,
         strict=True,
-        load_base_model_only=False,
+        load_base_model_only=not cfg.pretrained_checkpoint.from_mcts_trained,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
@@ -351,6 +357,10 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
+
+    logger.log_metrics(
+        {"dataset_length": len(ds)}, step=0, prefix="data/",
+    )
 
     search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
 
