@@ -182,6 +182,9 @@ class MCTSParallel:
             if fun.ends_by_end_strings(text):
                 end_properly = True
                 break
+        if not end_properly:
+            # penalize the value if the text does not end properly
+            value = -1.0
         return value, terminate, end_properly
 
     def get_input_action_depth(self, ps, expandable_search):
@@ -380,22 +383,20 @@ class DeepSearch:
     def save_data(self):
         self.save_flag = True
 
-    def search(self, parallel_searches: List[ParallelSearch], batch_id):
+    def search(self, parallel_searches: List[ParallelSearch], filename):
+        filename = os.path.join(self.cache_dir, filename)
+
+        dp_rank = parallel_state.get_data_parallel_rank()
         # clear the cache
         self.mcts.cache = {}
         # serialize the partial result to disk
-        dp_rank = parallel_state.get_data_parallel_rank()
-        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
-        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+
         if self.cache_dir is not None:
             # create the cache dir if it does not exist
             if torch.distributed.get_rank() == 0:
                 if not os.path.exists(self.cache_dir):
                     os.makedirs(self.cache_dir, exist_ok=True)
             torch.distributed.barrier()
-            filename = os.path.join(self.cache_dir, f"current_search_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pt")
-        else:
-            filename = f"current_search_and_kv_cache_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pt"
 
         # equavalent to the alpha zero self play
         # for a list of parallel_searche instances
@@ -512,7 +513,7 @@ class DeepSearch:
                             "return_memory": return_memory,
                             "return_value_memory": return_value_memory,
                         }
-                        | self.stategy.state_dict(),
+                        | self.strategy.state_dict(),
                         filename,
                     )
 

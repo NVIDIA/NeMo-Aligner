@@ -16,10 +16,12 @@ import os
 import random
 import tempfile
 from collections import defaultdict
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Union
 
+import pandas as pd
 import torch
 import torch.multiprocessing as mp
 from datasets import load_dataset
@@ -76,7 +78,11 @@ def compute_metric_from_output(output):
         num_correct += is_correct
         num_total += 1
 
-    return {"num_correct": num_correct, "num_total": num_total, "accuracy": num_correct / num_total}
+    return {
+        "num_correct": num_correct,
+        "num_total": num_total,
+        "accuracy": num_correct / num_total if num_total > 0 else 0,
+    }
 
 
 def collate_func(batch):
@@ -92,12 +98,53 @@ def collate_func(batch):
     return new_dict
 
 
-def get_local_iterator(local_data_ids, num_to_load):
+def get_cached_outputs(cache_dir, global_set):
+    """get the cached outputs that we didn't finish, need to make sure the rank actually completes it
+    """
+    dp_rank = parallel_state.get_data_parallel_rank()
+
+    local_batches_to_load = []
+    global_batch_ids = set()
+
+    if cache_dir is None:
+        return local_batches_to_load, global_batch_ids
+
+    to_delete = []
+
+    for p in sorted(Path(cache_dir).glob("*.pt")):
+        batches = list(map(int, p.name.split("_")[0].split("-")))
+        fs_dp_rank = int(p.name.split("_")[2])
+
+        if dp_rank == fs_dp_rank:
+            local_batches_to_load.extend(batches)
+
+        if all(b in global_set for b in batches):
+            to_delete.append(p)
+
+        global_batch_ids.update(batches)
+
+    if torch.distributed.get_rank() == 0:
+        for p in to_delete:
+            p.unlink()
+
+    torch.distributed.barrier()
+
+    return local_batches_to_load, global_batch_ids
+
+
+def get_global_set(local_data_ids):
     output = [None for _ in range(parallel_state.get_data_parallel_world_size())]
     torch.distributed.all_gather_object(output, local_data_ids, group=parallel_state.get_data_parallel_group())
     global_set = set().union(*output)
 
+    return global_set
+
+
+def get_local_iterator(global_set, num_to_load, extra_filters=None):
     indices = [i for i in range(num_to_load) if i not in global_set]
+
+    if extra_filters is not None:
+        indices = list(filter(lambda x: x not in extra_filters, indices))
 
     rng = random.Random(len(indices))
     rng.shuffle(indices)
@@ -122,6 +169,7 @@ class MCTSSearch:
         logger,
         run_timer,
         save_interval,
+        cache_dir,
     ):
         self.search_func = search_func
         self.collate_func = collate_func
@@ -141,7 +189,24 @@ class MCTSSearch:
         if self.save_path.exists():
             self.load_state_dict(torch.load(self.save_path))
 
-        self.batch_chunks = get_local_iterator(self.data_ids, num_to_load).split(rollout_micro_batch_size)
+        dp_rank = parallel_state.get_data_parallel_rank()
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+        self.filename_format = "{num}" + f"_dp_{dp_rank}_tp_{tp_rank}_pp_{pp_rank}.pt"
+
+        global_set = get_global_set(self.data_ids)
+        local_cached_batches, global_cached_batch_ids = get_cached_outputs(cache_dir, global_set)
+
+        # search for the files here
+        assert len(local_cached_batches) <= rollout_micro_batch_size
+
+        self.batch_chunks = list(
+            get_local_iterator(global_set, num_to_load, global_cached_batch_ids).split(rollout_micro_batch_size)
+        )
+
+        if len(local_cached_batches) > 0:
+            self.batch_chunks = [torch.as_tensor(local_cached_batches)] + self.batch_chunks
+
         self.step = 0
 
     def search(self):
@@ -150,12 +215,13 @@ class MCTSSearch:
         global_pbar = tqdm(self.batch_chunks, leave=True, desc="Search Global Step")
 
         for batch_idx in global_pbar:
-
+            batch_file_name = "-".join([str(b) for b in batch_idx.tolist()])
             batch = self.collate_func([self.dataset[idx] for idx in batch_idx.tolist()])
 
             metrics = {}
             self.timer.start("mcts_search_time")
-            output = self.search_func(batch=batch)
+
+            output = self.search_func(batch=batch, filename=self.filename_format.format(num=batch_file_name))
 
             # TODO(geshen): compute metrics
             self.timer.stop("mcts_search_time")
@@ -219,9 +285,9 @@ def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, floa
     return limit_batches
 
 
+@dataclass
 class DatasetWrapper:
-    def __init__(self, ds):
-        self.ds = ds
+    ds: torch.utils.data.Dataset
 
     # just like a dataset but return idx
     def __getitem__(self, idx):
@@ -233,12 +299,19 @@ class DatasetWrapper:
         return len(self.ds)
 
 
+def get_dataset(dataset_name, split):
+    assert dataset_name == "gsm8k"
+    dataset = load_dataset("gsm8k", "main")
+    ds = DatasetWrapper(dataset[split])
+    score_fn = GSK8KFeedbackHF(split=split)
+
+    return ds, score_fn
+
+
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    dataset = load_dataset("gsm8k", "main")
-
-    train_ds = DatasetWrapper(dataset["train"])
-    score_fn = GSK8KFeedbackHF(split="train")
+    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split)
+    logging.info(f"loaded {ds}")
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
@@ -259,7 +332,7 @@ def main(cfg) -> None:
         cfg.model,
         trainer,
         strict=True,
-        load_base_model_only=True,
+        load_base_model_only=not cfg.pretrained_checkpoint.from_mcts_trained,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
@@ -268,7 +341,7 @@ def main(cfg) -> None:
     ptl_model.prepare_for_inference()
     ptl_model.freeze()
 
-    num_to_load = compute_limit_batches(len(train_ds), cfg.model.mcts.num_rollouts)
+    num_to_load = compute_limit_batches(len(ds), cfg.model.mcts.num_rollouts)
 
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
 
@@ -284,6 +357,10 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
+    logger.log_metrics(
+        {"dataset_length": len(ds)}, step=0, prefix="data/",
+    )
+
     search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
 
     searcher = MCTSSearch(
@@ -292,10 +369,11 @@ def main(cfg) -> None:
         save_path=save_path,
         num_to_load=num_to_load,
         rollout_micro_batch_size=cfg.model.mcts.rollout_micro_batch_size,
-        dataset=train_ds,
+        dataset=ds,
         logger=logger,
         run_timer=timer,
         save_interval=cfg.trainer.deep_search.save_interval,
+        cache_dir=cfg.model.mcts.cache_dir,
     )
 
     searcher.search()

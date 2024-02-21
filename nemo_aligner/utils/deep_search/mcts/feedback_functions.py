@@ -77,7 +77,7 @@ class GSK8KFeedback(Feedback):
 
 
 class GSK8KFeedbackHF(Feedback):
-    def __init__(self, split="train"):
+    def __init__(self, split):
         super().__init__()
         self.ds = load_dataset("gsm8k", "main")
         self.split = split

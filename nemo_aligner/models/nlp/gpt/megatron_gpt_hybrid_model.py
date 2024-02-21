@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 import warnings
 from collections import OrderedDict
 
@@ -35,7 +36,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transfor
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.mappings import gather_from_tensor_model_parallel_region
 from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
-from megatron.core.utils import divide
+from megatron.core.utils import divide, get_attr_wrapped_model
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
@@ -74,6 +75,20 @@ def compute_masked_per_sample_average(tensor, mask, dim=-1):
     loss = (tensor * mask).sum(dim=dim)
     mask_num = mask.sum(dim=dim)
     return (loss / mask_num).mean()
+
+
+def find_number_after_prefix(string, prefix):
+    # Define the regex pattern to match the prefix followed by a number
+    pattern = re.compile(rf"{re.escape(prefix)}(\d+)(.*)")
+
+    # Search for the pattern in the string
+    match = pattern.search(string)
+
+    # If a match is found, return the number (group 1 of the match)
+    if match:
+        return match.group(1), match.group(2)
+    else:
+        return None
 
 
 class FakeState:
@@ -581,7 +596,23 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     key.replace("model.", ""): checkpoint_state_dict.pop(key)
                     for key in list(checkpoint_state_dict.keys())
                 }
-                module.load_state_dict(checkpoint_state_dict, strict=False)
+
+                layer_offset = len(get_attr_wrapped_model(self.model, "decoder").submodules.layer_specs)
+                print("#### PRE LOAD", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
+
+                modified_dict = {}
+                prefix_to_use = "value_head.layers."
+
+                for k, v in checkpoint_state_dict.items():
+                    output = find_number_after_prefix(k, prefix=prefix_to_use)
+
+                    if output is not None:
+                        num, rest_to_use = output
+                        k = "{}{}{}".format(prefix_to_use, int(num) - layer_offset, rest_to_use)
+                    modified_dict[k] = v
+
+                module.load_state_dict(modified_dict, strict=self.cfg.from_mcts_trained)
+                print("#### POST LOAD", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
         else:
             # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
             # see NLPModel.on_load_checkpoint
