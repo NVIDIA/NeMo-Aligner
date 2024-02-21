@@ -30,6 +30,10 @@ pretrained_checkpoint:
   restore_from_path: null
 
 mcts_data_file: null
+
+dataset:
+    name: gsm8k
+    split: train
  
 model:
   mcts:

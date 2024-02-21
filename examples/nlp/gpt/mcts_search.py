@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Union
 
 import torch
+import pandas as pd
 import torch.multiprocessing as mp
 from datasets import load_dataset
 from megatron.core import parallel_state
@@ -37,6 +38,7 @@ from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, preemptable_save
+from dataclasses import dataclass
 
 """Script to start Reward Model training"""
 
@@ -215,6 +217,7 @@ class MCTSSearch:
 
             metrics = {}
             self.timer.start("mcts_search_time")
+
             output = self.search_func(batch=batch, filename=self.filename_format.format(num=batch_file_name))
 
             # TODO(geshen): compute metrics
@@ -279,9 +282,9 @@ def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, floa
     return limit_batches
 
 
+@dataclass
 class DatasetWrapper:
-    def __init__(self, ds):
-        self.ds = ds
+    ds: torch.utils.data.Dataset
 
     # just like a dataset but return idx
     def __getitem__(self, idx):
@@ -291,14 +294,19 @@ class DatasetWrapper:
 
     def __len__(self):
         return len(self.ds)
+    
+def get_dataset(dataset_name, split):
+    assert dataset_name == "gsm8k"
+    dataset = load_dataset("gsm8k", "main")
+    ds = DatasetWrapper(dataset[split])
+    score_fn = GSK8KFeedbackHF(split=split)
 
+    return ds, score_fn
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    dataset = load_dataset("gsm8k", "main")
-
-    train_ds = DatasetWrapper(dataset["train"])
-    score_fn = GSK8KFeedbackHF(split="train")
+    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split)
+    logging.info(f"loaded {ds}")
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
@@ -328,7 +336,7 @@ def main(cfg) -> None:
     ptl_model.prepare_for_inference()
     ptl_model.freeze()
 
-    num_to_load = compute_limit_batches(len(train_ds), cfg.model.mcts.num_rollouts)
+    num_to_load = compute_limit_batches(len(ds), cfg.model.mcts.num_rollouts)
 
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
 
@@ -352,7 +360,7 @@ def main(cfg) -> None:
         save_path=save_path,
         num_to_load=num_to_load,
         rollout_micro_batch_size=cfg.model.mcts.rollout_micro_batch_size,
-        dataset=train_ds,
+        dataset=ds,
         logger=logger,
         run_timer=timer,
         save_interval=cfg.trainer.deep_search.save_interval,
