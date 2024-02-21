@@ -1,3 +1,4 @@
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -5,7 +6,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-CACHE_DIR = ""
+CACHE_DIR = sys.argv[1]
 DATA_FILE = "data.pt"
 
 GLOBAL_CONTEXT_LENGTH_DICT = {}
@@ -98,15 +99,20 @@ def batch_value_memory(output_value):
     return batches
 
 
+total_data_ids = set()
 for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
     print(p)
-    x = torch.load(p)["mcts_outputs"]
+    save_file = torch.load(p)
+    data_ids = save_file["data_ids"]
+    total_data_ids.update(data_ids)
+    x = save_file["mcts_outputs"]
 
     assert len(x[1::2]) == len(x[::2])
 
     for output_policy, output_value in zip(x[::2], x[1::2]):
         values.extend(batch_value_memory(output_value))
         policies.extend(batch_policy_memory(output_policy))
+print("total data ids", len(total_data_ids))
 
 # TODO(geshen): should we shuffle the data?
 policy_data, value_data = policies, values

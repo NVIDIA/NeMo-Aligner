@@ -420,9 +420,7 @@ class DeepSearch:
 
         # add a progress bar to show the progress of the self play
         total_steps = self.max_steps
-        pb = tqdm.tqdm(
-            total=total_steps, initial=count, desc=f"Self Play rank {dp_rank}", position=2 * dp_rank, leave=True
-        )
+        pb = tqdm.tqdm(total=total_steps, initial=count, desc=f"Self Play rank {dp_rank}", leave=True)
         while len(parallel_searches) > 0:
             # TODO need to clear the session memory in the server
             count += 1
