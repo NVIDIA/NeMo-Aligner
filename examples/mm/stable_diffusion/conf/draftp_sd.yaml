@@ -46,7 +46,7 @@ exp_manager:
 reward_model: "pickscore"
 
 pretrained_checkpoint:
-  restore_from_path: /opt/nemo-aligner/checkpoints/model_weights.ckpt
+  restore_from_path: null
 
 model:
   val_check_interval: 0
@@ -57,7 +57,7 @@ model:
   gradient_clip_val: 1000000
   max_epochs: 5 # PTL default. In practice, max_steps will be reached first.
   max_steps: 1000000
-  restore_from_path: null #/opt/nemo-aligner/checkpoints/model_weights.ckpt
+  restore_from_path: null 
   infer:
     unconditional_guidance_scale: 7.5
     num_images_per_prompt: 1
@@ -96,7 +96,7 @@ model:
   scale_factor: 0.18215
   use_ema: False
   scale_by_std: False
-  ckpt_path: null #/opt/nemo-aligner/checkpoints/model_weights.ckpt
+  ckpt_path: null 
   ignore_keys: []
   parameterization: eps
   clip_denoised: True
@@ -121,7 +121,7 @@ model:
 
   unet_config:
     _target_: nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel.UNetModel
-    from_pretrained: null #/ckpts/nemo-v1-2.ckpt
+    from_pretrained: null 
     from_NeMo: True #Must be specified when from pretrained is not None, False means loading unet from HF ckpt
     image_size: 32 # unused
     in_channels: 4
@@ -150,7 +150,7 @@ model:
 
   first_stage_config:
     _target_: nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoencoder.AutoencoderKL
-    from_pretrained: null #/ckpts/vae.bin
+    from_pretrained: null 
     embed_dim: 4
     monitor: val/rec_loss
     ddconfig:
@@ -212,7 +212,7 @@ model:
               - null
       webdataset:
           infinite_sampler: False
-          local_root_path:  null # /opt/nemo-aligner/laion_data/2B-en-5_10_0_tarfiles/{00000..00059}.tar # /opt/rlhf/laion_shard.tar # 
+          local_root_path:  null 
   
   peft:
     enable: False
@@ -237,6 +237,6 @@ RM:
     precision: 32 # 16, 32, or bf16
 
   model:
-    restore_from_path: "/opt/nemo-aligner/checkpoints/pickscore.nemo"  # Path to a trained ViT .nemo file
+    restore_from_path:  # Path to a trained ViT .nemo file
     precision: ${trainer.precision}
   
