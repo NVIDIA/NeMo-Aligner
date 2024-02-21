@@ -165,13 +165,17 @@ def remove_padded_prompts(response, nb_paddings):
     return result
 
 
+def in_slurm():
+    return "SLURM_JOB_ID" in os.environ
+
 @hydra_runner(config_path="conf", config_name="inference_service_llama")
 def main(cfg) -> None:
+    plugins = [TorchElasticEnvironment()] if in_slurm() else []
     # trainer required for restoring model parallel models
     trainer = Trainer(
         strategy=NLPDDPStrategy(timeout=datetime.timedelta(seconds=18000)),
         **cfg.trainer,
-        callbacks=[CustomProgressBar()], plugins=[TorchElasticEnvironment()]
+        callbacks=[CustomProgressBar()], plugins=plugins
     )
 
     if cfg.gpt_model_file is not None:
