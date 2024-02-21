@@ -177,7 +177,9 @@ class MCTSSearch:
             self.step += 1
 
             self.data_ids.update(batch_idx.tolist())
-
+            print(
+                "### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx.tolist(), "at step", self.step
+            )
             if self.run_timer.is_within_dp_finished() or self.step % self.save_interval == 0:
                 self.save()
 
