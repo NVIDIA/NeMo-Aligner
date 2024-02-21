@@ -11,10 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import torch
 
 from nemo.collections.multimodal.data.common.webdataset import WebDatasetCommon
-from nemo.collections.multimodal.data.stable_diffusion.augmentation.augmentations import identical_transform
 
 
 def build_train_valid_datasets(
