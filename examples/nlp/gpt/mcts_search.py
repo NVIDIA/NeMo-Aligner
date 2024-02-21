@@ -93,12 +93,38 @@ def collate_func(batch):
     return new_dict
 
 
-def get_local_iterator(local_data_ids, num_to_load):
+def get_cached_outputs(cache_dir):
+    """get the cached outputs that we didn't finish, need to make sure the rank actually completes it
+    """
+    dp_rank = parallel_state.get_data_parallel_rank()
+
+    local_batches_to_load = []
+    global_batch_ids = set()
+
+    if cache_dir is None:
+        return local_batches_to_load, global_batch_ids
+
+    for p in sorted(Path(cache_dir).glob("*.pt")):
+        batches = list(map(int, p.name.split("_")[0].split("-")))
+        fs_dp_rank = int(p.name.split("_")[2])
+
+        if dp_rank == fs_dp_rank:
+            local_batches_to_load.extend(batches)
+
+        global_batch_ids.update(batches)
+    
+    return local_batches_to_load, global_batch_ids
+
+
+def get_local_iterator(local_data_ids, num_to_load, extra_filters=None):
     output = [None for _ in range(parallel_state.get_data_parallel_world_size())]
     torch.distributed.all_gather_object(output, local_data_ids, group=parallel_state.get_data_parallel_group())
     global_set = set().union(*output)
 
     indices = [i for i in range(num_to_load) if i not in global_set]
+
+    if extra_filters is not None:
+        indices = list(filter(lambda x: x not in extra_filters, indices))
 
     rng = random.Random(len(indices))
     rng.shuffle(indices)
@@ -123,6 +149,8 @@ class MCTSSearch:
         logger,
         run_timer,
         save_interval,
+        local_cached_batches,
+        global_cached_batch_ids,
     ):
         self.search_func = search_func
         self.collate_func = collate_func
@@ -142,7 +170,20 @@ class MCTSSearch:
         if self.save_path.exists():
             self.load_state_dict(torch.load(self.save_path))
 
-        self.batch_chunks = get_local_iterator(self.data_ids, num_to_load).split(rollout_micro_batch_size)
+        dp_rank = parallel_state.get_data_parallel_rank()
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+        self.filename_format = "{num}" + f"_dp_{dp_rank}_tp_{tp_rank}_pp_{pp_rank}.pt"
+
+        # search for the files here
+        assert len(local_cached_batches) <= rollout_micro_batch_size
+        self.batch_chunks = list(
+            get_local_iterator(self.data_ids, num_to_load, global_cached_batch_ids).split(rollout_micro_batch_size)
+        )
+
+        if len(local_cached_batches) > 0:
+            self.batch_chunks = [torch.as_tensor(local_cached_batches)] + self.batch_chunks
+
         self.step = 0
 
     def search(self):
@@ -151,12 +192,12 @@ class MCTSSearch:
         global_pbar = tqdm(self.batch_chunks, leave=True, desc="Search Global Step")
 
         for batch_idx in global_pbar:
-
+            batch_file_name = "-".join([str(b) for b in batch_idx.tolist()])
             batch = self.collate_func([self.dataset[idx] for idx in batch_idx.tolist()])
 
             metrics = {}
             self.timer.start("mcts_search_time")
-            output = self.search_func(batch=batch)
+            output = self.search_func(batch=batch, filename=self.filename_format.format(num=batch_file_name))
 
             # TODO(geshen): compute metrics
             self.timer.stop("mcts_search_time")
@@ -287,6 +328,8 @@ def main(cfg) -> None:
 
     search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
 
+    local_cached_batches, global_cached_batch_ids = get_cached_outputs(cfg.model.mcts.cache_dir)
+
     searcher = MCTSSearch(
         search_func=search_func,
         collate_func=collate_func,
@@ -297,6 +340,8 @@ def main(cfg) -> None:
         logger=logger,
         run_timer=timer,
         save_interval=cfg.trainer.deep_search.save_interval,
+        local_cached_batches=local_cached_batches,
+        global_cached_batch_ids=global_cached_batch_ids,
     )
 
     searcher.search()
