@@ -50,7 +50,7 @@ def main(cfg) -> None:
 
     # TODO: has to be set true for PyTorch 1.12 and later.
     torch.backends.cuda.matmul.allow_tf32 = True
-
+    cfg.model.data.train.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)]
     trainer = MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
@@ -131,7 +131,7 @@ def main(cfg) -> None:
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
     timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:4:00:00"))
 
-    draft_trainer = SupervisedTrainer(
+    draft_p_trainer = SupervisedTrainer(
         cfg=cfg.model,
         model=alignable_model,
         optimizer=optimizer,
@@ -145,9 +145,9 @@ def main(cfg) -> None:
     )
 
     if custom_trainer_state_dict is not None:
-        draft_trainer.load_state_dict(custom_trainer_state_dict)
+        draft_p_trainer.load_state_dict(custom_trainer_state_dict)
 
-    draft_trainer.fit()
+    draft_p_trainer.fit()
 
 
 if __name__ == "__main__":
