@@ -6,10 +6,8 @@ from nemo_aligner.utils.deep_search.mcts.termination_condition import Terminatio
 from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
 
-BATCH_ID = 0
 
-
-def run_mcts(batch, ptl_model, score_fn):
+def run_mcts(batch, filename, ptl_model, score_fn):
     mcts_cfg = ptl_model.cfg.mcts
 
     strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
@@ -47,12 +45,7 @@ def run_mcts(batch, ptl_model, score_fn):
     ps = []
 
     for question, answer, data_id in zip(batch["question"], batch["answer"], batch["data_id"]):
-
         ps.append(ParallelSearch(ptl_model.tokenizer.text_to_ids(question,), data_id,))
 
-    global BATCH_ID
-
-    output = ds.search(ps, BATCH_ID)
-    BATCH_ID = BATCH_ID + 1
-
+    output = ds.search(ps, filename)
     return output
