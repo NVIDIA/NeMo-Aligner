@@ -26,7 +26,7 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm 
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
-from nemo_aligner.utils.train_utils import prepare_for_training_step
+from nemo_aligner.utils.train_utils import prepare_for_training_step, grad_reductions
 from nemo_aligner.utils.utils import configure_batch_sizes
 
 try:
@@ -55,9 +55,8 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
         self.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
         self.model.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
         self.model.model.first_stage_model.requires_grad_(False)
-
+        
         self.distributed_adam_offload_manager = None
-
         self.vae_batch_size = self.cfg.infer.get("vae_batch_size", 8)
         self.height = self.cfg.infer.get("height", 512)
         self.width = self.cfg.infer.get("width", 512)
@@ -79,8 +78,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
         return
 
     def finish_training_step(self):
-        self.grad_reductions()
-        # grad_reductions(self)
+        grad_reductions(self.model)
 
     def infer(self):
         return
@@ -96,12 +94,13 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
         return
 
     def prepare_for_generation(self):
-        # self.model.eval()
+
         self.model._reset_activation_checkpointing_args()
         self.model._reset_sequence_parallelism_args()
         return
 
     def finished_generation(self):
+
         self.model._restore_activation_checkpointing_args()
         self.model._restore_sequence_parallelism_args()
         return
@@ -443,26 +442,3 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
 
         return metrics["loss"], metrics
 
-    def grad_reductions(self):
-        # when using sequence parallelism, the sequence parallel layernorm grads must be all-reduced
-        if parallel_state.get_tensor_model_parallel_world_size() > 1 and self.cfg.get("sequence_parallel", False):
-            self.model.allreduce_sequence_parallel_gradients()
-
-        if self.model.with_distributed_adam:
-            # synchronize asynchronous grad reductions
-            # note: not necessary, but reduces performance degradation
-            # from multiple simultaneous NCCL calls
-            self.optimizer._finish_bucket_grad_sync()
-        elif self.model.megatron_amp_O2:
-            # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
-            if parallel_state.get_pipeline_model_parallel_world_size() > 1 or self.cfg.get("sequence_parallel", False):
-                # main grads are stored in the MainParamsOptimizer wrapper
-                self.optimizer.allreduce_main_grads()
-        else:
-            # async grad allreduce is not currently implemented for O1/autocasting mixed precision training
-            # so we all-reduce gradients after the pipeline
-            self.model.allreduce_gradients()  # @sangkug we think this is causing memory to blow up (hurts perf)
-
-        if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-            # when using pipeline parallelism the first and last stage must keep embeddings in sync
-            self.model.allreduce_first_last_embeddings()
