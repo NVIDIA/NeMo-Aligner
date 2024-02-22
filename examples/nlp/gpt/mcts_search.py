@@ -220,6 +220,7 @@ class MCTSSearch:
 
             metrics = {}
             self.timer.start("mcts_search_time")
+
             output = self.search_func(batch=batch, filename=self.filename_format.format(num=batch_file_name))
 
             # TODO(geshen): compute metrics
@@ -361,8 +362,6 @@ def main(cfg) -> None:
     )
 
     search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
-
-    local_cached_batches, global_cached_batch_ids = get_cached_outputs(cfg.model.mcts.cache_dir)
 
     searcher = MCTSSearch(
         search_func=search_func,
