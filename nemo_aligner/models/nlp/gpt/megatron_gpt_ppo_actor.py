@@ -290,23 +290,12 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
 
-        tic = time.time()
         if self.use_trtllm_generation:
-            actor_output = self.trtllm_generate.generate(inputs, self._length_params, self._sampling_params)
+            actor_output = self.trtllm_generate.generate(inputs)
         else:
             actor_output = self.generate(
                 inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params
             )
-        toc = time.time()
-        # print(f"Generate took {toc-tic}")
-
-        print(f"PROMPT LENS {prompt_tokens.shape} {prompt_lengths}")
-        # for i,j in zip(actor_output['sentences'],actor_output1['sentences']):
-        #     print("---------------------------------------------------------------")
-        #     print(i)
-        #     print(j)
-        #     print(i == j, len(i), len(j))
-        #     print("---------------------------------------------------------------")
 
         response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
         response_lengths = calculate_dialogue_response_lengths(
@@ -331,7 +320,6 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         }
 
         # return in GPU, trainer needs to move to cpu
-        print(f"  flag1")
 
         return rollout_batch
 

@@ -12,24 +12,33 @@ class GPTGenerateTRTLLM():
         self.cfg = cfg
         self.tokenizer = tokenizer
         self.max_generation_length = self.cfg.ppo.length_params.get('max_length')
-        self.generation_batch_size = self.cfg.ppo.get('rollout_micro_batch_size')
         self.max_context_length = 2048
+        self.max_attn_window_size = 2048
+        self.generation_batch_size = self.cfg.ppo.get('rollout_micro_batch_size')
         self._trtllm_model_compiled = False
 
         self._import_tensorrt_llm()
-        self.trt_llm_exporter = TensorRTLLM(trt_model_dir, load_model=False)
-        self.stop_words = self._create_stop_words_()
+        self.trt_llm_exporter = TRTExport(trt_model_dir, load_model=False)
+        self.stop_words = self._create_stop_words()
+        self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
+            end_id=tokenizer.eos_id, 
+            pad_id=tokenizer.eos_id, #TODO
+            temperature=self.cfg.ppo.sampling_params.get('temperature'),
+            top_k=self.cfg.ppo.sampling_params.get('top_k'),
+            top_p=self.cfg.ppo.sampling_params.get('top_p'),
+        )
 
     def _import_tensorrt_llm(self):        
         from mpi4py import MPI 
-        from nemo.export import TensorRTLLM
+        from nemo.export import TensorRTLLM as TRTExport
         from nemo.export.trt_llm.tensorrt_llm_run import forward as trtllm_forward
         import tensorrt_llm
 
-        globals()["TensorRTLLM"] = TensorRTLLM
+        globals()["TRTExport"] = TRTExport
+        globals()["tensorrt_llm"] = tensorrt_llm
         globals()["trtllm_forward"] = trtllm_forward
         
-    def _create_stop_words_(self):
+    def _create_stop_words(self):
         # stop_id = self.tokenizer.text_to_ids("<extra_id_1>")
         stop_id = [29966, 17833, 29918, 333, 29918, 29896, 29958]
         eos_id = self.tokenizer.eos_id
@@ -64,13 +73,8 @@ class GPTGenerateTRTLLM():
             )
 
 
-    def generate(self, inputs, length_params, sampling_params, stop_words=None):
-        self._length_params = length_params
-        self._sampling_params = sampling_params
-
-        if stop_words is None:
-            stop_words = self.stop_words
-
+    def generate(self, inputs):
+        stop_words = self.stop_words
         output_ids = self.forward(inputs, stop_words)
         
         if output_ids is not None:
@@ -98,7 +102,6 @@ class GPTGenerateTRTLLM():
     def forward(self, inputs, stop_ids):
         from nemo.export.trt_llm.tensorrt_llm_run import tensorrt_llm_worker_context
         decoder = tensorrt_llm_worker_context.decoder
-        sampling_config = tensorrt_llm_worker_context.sampling_config
 
         prompt_tokens, prompt_lengths = inputs
         prompt_tokens = prompt_tokens[:, :max(prompt_lengths)]
@@ -109,13 +112,13 @@ class GPTGenerateTRTLLM():
             batch_size=self.generation_batch_size, 
             max_context_length=int(max(prompt_lengths)), 
             max_new_tokens=self.max_generation_length,
-            max_attention_window_size=512
+            max_attention_window_size=self.max_attn_window_size
         )
 
         output_ids = decoder.decode(
             input_ids=prompt_tokens,
             context_lengths=prompt_lengths,
-            sampling_config=sampling_config,
+            sampling_config=self.sampling_config,
             prompt_embedding_table=None,
             tasks=None,
             prompt_vocab_size=None,
@@ -123,7 +126,6 @@ class GPTGenerateTRTLLM():
         )
         return output_ids
 
-    def free(self):
-        from nemo.export.trt_llm.tensorrt_llm_run import tensorrt_llm_worker_context
-        del tensorrt_llm_worker_context.decoder
+    def free(self):        
+        self.trt_llm_exporter.unload_engine(keep_generate_session=True)
         torch.cuda.empty_cache()

@@ -214,7 +214,6 @@ class PPOTrainer:
             rollout_batch = self.model.infer(inference_batch)
             rollout_batches.append(rollout_batch)
             futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
-        print(f"  flag2")
 
         if not is_validation and self.compute_init_policy_kl:
             init_policy_logprobs = self.model.get_init_policy_logprobs(rollout_batches)
@@ -231,7 +230,6 @@ class PPOTrainer:
             rewards, values = future.result() if isinstance(future, FutureResult) else future
             rollout_batch["rewards"] = rewards
             rollout_batch["values"] = values
-        print(f"  flag3")
 
         return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
 
