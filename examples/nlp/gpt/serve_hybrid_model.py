@@ -83,7 +83,7 @@ def main(cfg) -> None:
         cfg.model,
         trainer,
         strict=True,
-        load_base_model_only=True,
+        load_base_model_only=not cfg.pretrained_checkpoint.from_mcts_trained,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
