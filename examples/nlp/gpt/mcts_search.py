@@ -99,11 +99,7 @@ def collate_func(batch):
     return new_dict
 
 
-<<<<<<< HEAD
-def get_cached_outputs(cache_dir):
-=======
 def get_cached_outputs(cache_dir, global_set):
->>>>>>> geshen/mainline
     """get the cached outputs that we didn't finish, need to make sure the rank actually completes it
     """
     dp_rank = parallel_state.get_data_parallel_rank()
@@ -114,11 +110,8 @@ def get_cached_outputs(cache_dir, global_set):
     if cache_dir is None:
         return local_batches_to_load, global_batch_ids
 
-<<<<<<< HEAD
-=======
     to_delete = []
 
->>>>>>> geshen/mainline
     for p in sorted(Path(cache_dir).glob("*.pt")):
         batches = list(map(int, p.name.split("_")[0].split("-")))
         fs_dp_rank = int(p.name.split("_")[2])
@@ -126,14 +119,6 @@ def get_cached_outputs(cache_dir, global_set):
         if dp_rank == fs_dp_rank:
             local_batches_to_load.extend(batches)
 
-<<<<<<< HEAD
-        global_batch_ids.update(batches)
-    
-    return local_batches_to_load, global_batch_ids
-
-
-def get_local_iterator(local_data_ids, num_to_load, extra_filters=None):
-=======
         if all(b in global_set for b in batches):
             to_delete.append(p)
 
@@ -149,7 +134,6 @@ def get_local_iterator(local_data_ids, num_to_load, extra_filters=None):
 
 
 def get_global_set(local_data_ids):
->>>>>>> geshen/mainline
     output = [None for _ in range(parallel_state.get_data_parallel_world_size())]
     torch.distributed.all_gather_object(output, local_data_ids, group=parallel_state.get_data_parallel_group())
     global_set = set().union(*output)
@@ -186,12 +170,7 @@ class MCTSSearch:
         logger,
         run_timer,
         save_interval,
-<<<<<<< HEAD
-        local_cached_batches,
-        global_cached_batch_ids,
-=======
         cache_dir,
->>>>>>> geshen/mainline
     ):
         self.search_func = search_func
         self.collate_func = collate_func
@@ -216,12 +195,6 @@ class MCTSSearch:
         tp_rank = parallel_state.get_tensor_model_parallel_rank()
         self.filename_format = "{num}" + f"_dp_{dp_rank}_tp_{tp_rank}_pp_{pp_rank}.pt"
 
-<<<<<<< HEAD
-        # search for the files here
-        assert len(local_cached_batches) <= rollout_micro_batch_size
-        self.batch_chunks = list(
-            get_local_iterator(self.data_ids, num_to_load, global_cached_batch_ids).split(rollout_micro_batch_size)
-=======
         global_set = get_global_set(self.data_ids)
         local_cached_batches, global_cached_batch_ids = get_cached_outputs(cache_dir, global_set)
 
@@ -230,7 +203,6 @@ class MCTSSearch:
 
         self.batch_chunks = list(
             get_local_iterator(global_set, num_to_load, global_cached_batch_ids).split(rollout_micro_batch_size)
->>>>>>> geshen/mainline
         )
 
         if len(local_cached_batches) > 0:
@@ -249,10 +221,6 @@ class MCTSSearch:
 
             metrics = {}
             self.timer.start("mcts_search_time")
-<<<<<<< HEAD
-=======
-
->>>>>>> geshen/mainline
             output = self.search_func(batch=batch, filename=self.filename_format.format(num=batch_file_name))
 
             # TODO(geshen): compute metrics
@@ -407,12 +375,7 @@ def main(cfg) -> None:
         logger=logger,
         run_timer=timer,
         save_interval=cfg.trainer.deep_search.save_interval,
-<<<<<<< HEAD
-        local_cached_batches=local_cached_batches,
-        global_cached_batch_ids=global_cached_batch_ids,
-=======
         cache_dir=cfg.model.mcts.cache_dir,
->>>>>>> geshen/mainline
     )
 
     searcher.search()
