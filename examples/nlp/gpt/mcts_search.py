@@ -212,8 +212,10 @@ class MCTSSearch:
         self.run_timer.start_time()
 
         global_pbar = tqdm(self.batch_chunks, leave=True, desc="Search Global Step")
+        print("### BATCH ID TO USE", self.batch_chunks)
 
         for batch_idx in global_pbar:
+            print("###### START", batch_idx.tolist())
             batch_file_name = "-".join([str(b) for b in batch_idx.tolist()])
             batch = self.collate_func([self.dataset[idx] for idx in batch_idx.tolist()])
 
@@ -241,6 +243,8 @@ class MCTSSearch:
             self.step += 1
 
             self.data_ids.update(batch_idx.tolist())
+            print("###### DONE", batch_idx.tolist())
+
             print(
                 "### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx.tolist(), "at step", self.step
             )
