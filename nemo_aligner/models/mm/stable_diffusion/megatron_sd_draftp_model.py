@@ -26,7 +26,7 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm 
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
-from nemo_aligner.utils.train_utils import prepare_for_training_step, grad_reductions
+from nemo_aligner.utils.train_utils import grad_reductions, prepare_for_training_step
 from nemo_aligner.utils.utils import configure_batch_sizes
 
 try:
@@ -55,7 +55,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
         self.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
         self.model.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
         self.model.model.first_stage_model.requires_grad_(False)
-        
+
         self.distributed_adam_offload_manager = None
         self.vae_batch_size = self.cfg.infer.get("vae_batch_size", 8)
         self.height = self.cfg.infer.get("height", 512)
@@ -441,4 +441,3 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             metrics[key] = metric_mean.cpu().item()
 
         return metrics["loss"], metrics
-
