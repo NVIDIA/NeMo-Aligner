@@ -384,7 +384,6 @@ class DeepSearch:
         self.save_flag = True
 
     def search(self, parallel_searches: List[ParallelSearch], filename):
-        filename = os.path.join(self.cache_dir, filename)
 
         dp_rank = parallel_state.get_data_parallel_rank()
         # clear the cache
@@ -397,6 +396,8 @@ class DeepSearch:
                 if not os.path.exists(self.cache_dir):
                     os.makedirs(self.cache_dir, exist_ok=True)
             torch.distributed.barrier()
+
+            filename = os.path.join(self.cache_dir, filename)
 
         # equavalent to the alpha zero self play
         # for a list of parallel_searche instances
