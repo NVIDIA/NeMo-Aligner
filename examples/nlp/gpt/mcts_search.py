@@ -116,11 +116,10 @@ def get_cached_outputs(cache_dir, global_set):
         batches = list(map(int, p.name.split("_")[0].split("-")))
         fs_dp_rank = int(p.name.split("_")[2])
 
-        if dp_rank == fs_dp_rank:
-            local_batches_to_load.extend(batches)
-
         if all(b in global_set for b in batches):
             to_delete.append(p)
+        elif dp_rank == fs_dp_rank:
+            local_batches_to_load.extend(batches)
 
         global_batch_ids.update(batches)
 
