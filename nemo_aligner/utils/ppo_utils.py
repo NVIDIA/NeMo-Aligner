@@ -64,9 +64,6 @@ def calculate_ppo_rewards(values, rewards, response_lengths, init_policy_kl, pen
 
     idx = (response_lengths - 2).clamp(min=0, max=None)
 
-    print(f"rewards_sequence {rewards_sequence.shape} {idx}")
-    print(f"arange {torch.arange(rewards_sequence.size(0))}")
-
     rewards_sequence[torch.arange(rewards_sequence.size(0)), idx] = rewards.flatten()
 
     return rewards_sequence - penalty_factor * init_policy_kl

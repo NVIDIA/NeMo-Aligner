@@ -98,6 +98,9 @@ def load_checkpoint_model_config(restore_path):
     """
     config_name_in_ckpt = NLPSaveRestoreConnector()._model_config_yaml
 
+    if os.path.isdir(restore_path):
+            return OmegaConf.load(os.path.join(restore_path, config_name_in_ckpt))
+
     with tempfile.TemporaryDirectory() as tmpdir:
         NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, extract_config_only=True)
         cfg = OmegaConf.load(os.path.join(tmpdir, config_name_in_ckpt))

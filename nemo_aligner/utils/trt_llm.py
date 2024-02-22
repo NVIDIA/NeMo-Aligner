@@ -5,66 +5,74 @@ from nemo_aligner.utils.distributed import broadcast_2d_tensor
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from typing import List
 
+
+
 class GPTGenerateTRTLLM():
     def __init__(self, cfg, tokenizer, trt_model_dir="/tmp/trt_llm_model", ):
         self.cfg = cfg
         self.tokenizer = tokenizer
         self.max_generation_length = self.cfg.ppo.length_params.get('max_length')
-        self.max_context_length = 4096 - self.max_generation_length
+        self.generation_batch_size = self.cfg.ppo.get('rollout_micro_batch_size')
+        self.max_context_length = 2048
+        self._trtllm_model_compiled = False
 
+        self._import_tensorrt_llm()
+        self.trt_llm_exporter = TensorRTLLM(trt_model_dir, load_model=False)
+        self.stop_words = self._create_stop_words_()
+
+    def _import_tensorrt_llm(self):        
         from mpi4py import MPI 
-        rank = MPI.COMM_WORLD.Get_rank()
-        worldsize = MPI.COMM_WORLD.Get_size()
-        print(f"Loaded mpi lib {MPI.__file__} successfully; rank={rank}, worldsize={worldsize}")
-
         from nemo.export import TensorRTLLM
-        from nemo.export.trt_llm.nemo_utils import WrappedNemoSentencePiece
         from nemo.export.trt_llm.tensorrt_llm_run import forward as trtllm_forward
         import tensorrt_llm
 
         globals()["TensorRTLLM"] = TensorRTLLM
         globals()["trtllm_forward"] = trtllm_forward
-        print(f"TRTLLM MPI settings {tensorrt_llm.mpi_world_size()} {tensorrt_llm.mpi_rank()}")
-
-        self.trt_llm_exporter = TensorRTLLM(trt_model_dir, load_model=False)
-        self.trt_llm_exporter.tokenizer = WrappedNemoSentencePiece(self.tokenizer)
-
-        stop_id = self.tokenizer.text_to_ids("<extra_id_1>")[-1]
+        
+    def _create_stop_words_(self):
+        # stop_id = self.tokenizer.text_to_ids("<extra_id_1>")
+        stop_id = [29966, 17833, 29918, 333, 29918, 29896, 29958]
         eos_id = self.tokenizer.eos_id
-        stop_id = torch.IntTensor([[stop_id, eos_id, -1], [1, 2, -1]])
-        self.stop_id = stop_id.unsqueeze(0).repeat(self.cfg.ppo.get('rollout_micro_batch_size'),1,1).cuda()
+        stop_strings = [stop_id]
+        stop_tokens = [[eos_id]]
+
+        stop_words = [[],[]]
+        for w in (stop_strings+stop_tokens):
+            stop_words[0] += w
+            stop_words[1].append(len(stop_words[0]))
+        stop_words[1] += [-1] * (len(stop_words[0]) - len(stop_words[1]))
+
+        stop_words = torch.IntTensor(stop_words).cuda()
+        return stop_words.unsqueeze(0).repeat(self.generation_batch_size,1,1)
 
     def refit(self, model):
-        self.model = model
-        self.trt_llm_exporter.build(
-            self.model, 
-            self.cfg, 
-            max_input_len=self.max_context_length,
-            max_output_len=self.max_generation_length,
-            max_batch_size=self.cfg.ppo.get('rollout_micro_batch_size'),
-            refit=True,
-            model_type="llama")
+        if not self._trtllm_model_compiled:
+            self.trt_llm_exporter.build(
+                nemo_model = model, 
+                nemo_model_config = self.cfg, 
+                tokenizer = self.tokenizer,
+                max_input_token=self.max_context_length,
+                max_output_token=self.max_generation_length,
+                max_batch_size=self.cfg.ppo.get('rollout_micro_batch_size'),
+                use_refit=True,
+                model_type="llama")
+            self._trtllm_model_compiled = True
+        else:
+            self.trt_llm_exporter.refit(
+                nemo_model = model, 
+                nemo_model_config = self.cfg, 
+            )
 
 
-    def generate(self, inputs, length_params, sampling_params, stopid=None):
+    def generate(self, inputs, length_params, sampling_params, stop_words=None):
         self._length_params = length_params
         self._sampling_params = sampling_params
-        prompt_tokens, prompt_lengths = inputs
 
-        mbs = prompt_lengths.shape[0]
-        prompt_tokens = prompt_tokens.to(torch.int32)
-        prompt_tokens = [sample[0:prompt_lengths[idx]] for idx, sample in enumerate(prompt_tokens)]
+        if stop_words is None:
+            stop_words = self.stop_words
 
-        if stopid is not None:
-            self.stop_id = stopid
-
-        output_ids = self.forward(
-            prompt_tokens, 
-            self._length_params["max_length"], 
-            self._sampling_params["top_k"], 
-            self._sampling_params["top_p"], 
-            self._sampling_params["temperature"],
-            self.stop_id)
+        output_ids = self.forward(inputs, stop_words)
+        
         if output_ids is not None:
             mbs = output_ids.shape[0]
             if mbs == 1:
@@ -87,38 +95,26 @@ class GPTGenerateTRTLLM():
         
         return output
 
-    def forward(
-        self,
-        input_tensors: List[torch.IntTensor],
-        max_output_len: int,
-        top_k: int = 1,
-        top_p: float = 0.0,
-        temperature: float = 1.0,
-        stop_ids=None,
-    ):
+    def forward(self, inputs, stop_ids):
         from nemo.export.trt_llm.tensorrt_llm_run import tensorrt_llm_worker_context
         decoder = tensorrt_llm_worker_context.decoder
         sampling_config = tensorrt_llm_worker_context.sampling_config
 
-        pad_id = sampling_config.pad_id
-        line_encoded = torch.nested.to_padded_tensor(
-            torch.nested.nested_tensor(input_tensors, dtype=torch.int32), pad_id
-        ).cuda()
-
-        input_lengths = [t.shape[0] for t in input_tensors]
-        input_lengths = torch.tensor(input_lengths, dtype=torch.int32).cuda()
-        batch_size = len(input_tensors)
-        max_length = max(input_lengths)
+        prompt_tokens, prompt_lengths = inputs
+        prompt_tokens = prompt_tokens[:, :max(prompt_lengths)]
+        prompt_tokens = prompt_tokens.to(torch.int32).cuda()
+        prompt_lengths = prompt_lengths.to(torch.int32).cuda()
 
         decoder.setup(
-            batch_size, 
-            max_context_length=max_length, 
+            batch_size=self.generation_batch_size, 
+            max_context_length=int(max(prompt_lengths)), 
             max_new_tokens=self.max_generation_length,
-            max_kv_cache_length=self.max_generation_length)
-        
+            max_attention_window_size=512
+        )
+
         output_ids = decoder.decode(
-            input_ids=line_encoded,
-            context_lengths=input_lengths,
+            input_ids=prompt_tokens,
+            context_lengths=prompt_lengths,
             sampling_config=sampling_config,
             prompt_embedding_table=None,
             tasks=None,
