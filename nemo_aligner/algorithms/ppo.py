@@ -39,10 +39,10 @@ from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 
 def compute_num_rollout_microbatches(dataloader, use_trtllm = False):
-    if use_trtllm:
-        data_parallel_size = torch.distributed.get_world_size() // parallel_state.get_tensor_model_parallel_world_size()
-    else:
-        data_parallel_size = parallel_state.get_data_parallel_world_size()
+    # if use_trtllm:
+    #     data_parallel_size = torch.distributed.get_world_size() // parallel_state.get_tensor_model_parallel_world_size()
+    # else:
+    data_parallel_size = parallel_state.get_data_parallel_world_size()
     return divide(
         divide(dataloader.batch_sampler.global_batch_size, dataloader.batch_sampler.micro_batch_size),
         data_parallel_size,
@@ -289,7 +289,7 @@ class PPOTrainer:
     def run_validation(self):
         self.model.prepare_for_inference()
 
-        num_val_micro_batches = compute_num_rollout_microbatches(self.train_dataloader, self.cfg.use_trtllm)
+        num_val_micro_batches = compute_num_rollout_microbatches(self.val_dataloader, self.cfg.use_trtllm)
         val_dataloader = iter(self.val_dataloader)
 
         _, rollout_metrics = self._run_inference(val_dataloader, num_val_micro_batches, is_validation=True)
