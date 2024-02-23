@@ -182,9 +182,6 @@ class MCTSParallel:
             if fun.ends_by_end_strings(text):
                 end_properly = True
                 break
-        if not end_properly:
-            # penalize the value if the text does not end properly
-            value = -1.0
         return value, terminate, end_properly
 
     def get_input_action_depth(self, ps, expandable_search):
