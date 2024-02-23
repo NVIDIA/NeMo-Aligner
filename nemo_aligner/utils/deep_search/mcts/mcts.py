@@ -409,6 +409,7 @@ class DeepSearch:
         count = 0
         # load the partial result from disk
         if os.path.exists(filename) and self.strategy is not None:
+            print("### LOADING CACHE FROM", filename)
             cache = torch.load(filename)
             parallel_searches = cache["parallel_searches"]
             count = cache["count"]
@@ -514,7 +515,7 @@ class DeepSearch:
                         | self.strategy.state_dict(),
                         filename,
                     )
-
+                    print("#### SAVING CACHE TO", filename)
                     # only save one
                 self.save_flag = False
 

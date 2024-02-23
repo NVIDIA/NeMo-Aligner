@@ -44,16 +44,16 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("not", lambda x: not x)
 
 mp.set_start_method("spawn", force=True)
 
-steerlm_template = """<extra_id_0>System
-A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-<extra_id_1>User
+prompt_template = """\x00System
+
+\x11User
 {prompt}
 Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-<extra_id_1>Assistant
-<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
+\x11Assistant
 """
 
 
@@ -124,6 +124,7 @@ def get_cached_outputs(cache_dir, global_set):
         global_batch_ids.update(batches)
 
     if torch.distributed.get_rank() == 0:
+        print("### DELETING FILES", to_delete)
         for p in to_delete:
             p.unlink()
 
@@ -213,8 +214,10 @@ class MCTSSearch:
         self.run_timer.start_time()
 
         global_pbar = tqdm(self.batch_chunks, leave=True, desc="Search Global Step")
+        print("### BATCH ID TO USE", self.batch_chunks)
 
         for batch_idx in global_pbar:
+            print("###### START", batch_idx.tolist())
             batch_file_name = "-".join([str(b) for b in batch_idx.tolist()])
             batch = self.collate_func([self.dataset[idx] for idx in batch_idx.tolist()])
 
@@ -242,6 +245,8 @@ class MCTSSearch:
             self.step += 1
 
             self.data_ids.update(batch_idx.tolist())
+            print("###### DONE", batch_idx.tolist())
+
             print(
                 "### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx.tolist(), "at step", self.step
             )
@@ -292,7 +297,7 @@ class DatasetWrapper:
     # just like a dataset but return idx
     def __getitem__(self, idx):
         data_item = self.ds[idx]
-        data_item["question"] = steerlm_template.format(prompt=data_item["question"])
+        data_item["question"] = prompt_template.format(prompt=data_item["question"])
         return {**data_item, "data_id": idx}
 
     def __len__(self):

@@ -93,12 +93,8 @@ class GSK8KFeedbackHF(Feedback):
         # Extract the last number
         last_number = numbers[-1] if numbers else None
         if last_number is None:
-            # add a little bonus if the response can end the conversation
-            if response.endswith("<extra_id_1>") or response.endswith("\x11"):
-                return 0.05
             return 0.0
         if last_number == answer:
             return 1.0
         else:
-            # add a little bonus if the response has a number in it
-            return 0.05
+            return 0.0
