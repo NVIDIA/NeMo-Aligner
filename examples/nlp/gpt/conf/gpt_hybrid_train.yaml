@@ -48,7 +48,7 @@ model:
     temperature: 0.2  # use low temperature for more greedy search
     dirichlet_epsilon: 0.0  # weight for dirichelt noise added to the root state, turn off the dirichlet noise by setting this to 0
     dirichlet_alpha: 0.3 # parameter for dirichlet noise, the piror probability of the action happens 
-    max_depth: 250  # maxium depth of the search tree
+    max_depth: 500  # maxium depth of the search tree
 
     save_timer: 13500 # save the intermediate search results at 3 hours and 45 minutes
     cache_dir: null  # cache dir for the search results
