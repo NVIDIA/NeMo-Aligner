@@ -25,7 +25,7 @@ args = {
     'dirichlet_alpha': 0.3,
     'max_depth': 250,
     'save_timer': 135000,
-    "turn_off_value": False,
+    "turn_off_value": True,
     "oracle": True
 }
 
