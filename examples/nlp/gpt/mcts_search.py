@@ -44,6 +44,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("not", lambda x: not x)
 
 mp.set_start_method("spawn", force=True)
 
@@ -123,6 +124,7 @@ def get_cached_outputs(cache_dir, global_set):
         global_batch_ids.update(batches)
 
     if torch.distributed.get_rank() == 0:
+        print("### DELETING FILES", to_delete)
         for p in to_delete:
             p.unlink()
 
