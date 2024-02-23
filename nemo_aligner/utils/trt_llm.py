@@ -13,19 +13,23 @@ class GPTGenerateTRTLLM():
         self.tokenizer = tokenizer
         self.max_generation_length = self.cfg.ppo.length_params.get('max_length')
         self.max_context_length = 2048
-        self.max_attn_window_size = 2048
+        self.max_attn_window_size = 4096
         self.generation_batch_size = self.cfg.ppo.get('rollout_micro_batch_size')
         self._trtllm_model_compiled = False
 
         self._import_tensorrt_llm()
         self.trt_llm_exporter = TRTExport(trt_model_dir, load_model=False)
         self.stop_words = self._create_stop_words()
+
         self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
             end_id=tokenizer.eos_id, 
             pad_id=tokenizer.eos_id, #TODO
             temperature=self.cfg.ppo.sampling_params.get('temperature'),
             top_k=self.cfg.ppo.sampling_params.get('top_k'),
             top_p=self.cfg.ppo.sampling_params.get('top_p'),
+            max_new_tokens=self.max_generation_length,
+            max_attention_window_size=self.max_attn_window_size,
+            stop_words_list=self.stop_words
         )
 
     def _import_tensorrt_llm(self):        
@@ -84,6 +88,7 @@ class GPTGenerateTRTLLM():
             else:
                 output_ids = output_ids.squeeze()
             output_ids = output_ids.to(torch.int64)
+
         group = parallel_state.get_model_parallel_group()
         if torch.distributed.get_world_size(group) > 1:
             output_ids = broadcast_2d_tensor(
@@ -102,28 +107,27 @@ class GPTGenerateTRTLLM():
     def forward(self, inputs, stop_ids):
         from nemo.export.trt_llm.tensorrt_llm_run import tensorrt_llm_worker_context
         decoder = tensorrt_llm_worker_context.decoder
+        from tensorrt_llm.runtime import ModelRunner
+
+        self.model_runner = ModelRunner(
+            session = decoder,
+            max_batch_size = self.generation_batch_size,
+            max_input_len = self.max_context_length,
+            max_seq_len = 4096,
+            max_beam_width = 1,
+        )
 
         prompt_tokens, prompt_lengths = inputs
-        prompt_tokens = prompt_tokens[:, :max(prompt_lengths)]
-        prompt_tokens = prompt_tokens.to(torch.int32).cuda()
-        prompt_lengths = prompt_lengths.to(torch.int32).cuda()
 
-        decoder.setup(
-            batch_size=self.generation_batch_size, 
-            max_context_length=int(max(prompt_lengths)), 
-            max_new_tokens=self.max_generation_length,
-            max_attention_window_size=self.max_attn_window_size
-        )
+        batch_input_ids = []
+        for idx in range(prompt_tokens.shape[0]):
+            batch_input_ids.append(prompt_tokens[idx][0:prompt_lengths[idx]].cpu())
 
-        output_ids = decoder.decode(
-            input_ids=prompt_tokens,
-            context_lengths=prompt_lengths,
+        output_ids = self.model_runner.generate(
+            batch_input_ids=batch_input_ids,
             sampling_config=self.sampling_config,
-            prompt_embedding_table=None,
-            tasks=None,
-            prompt_vocab_size=None,
-            stop_words_list=stop_ids,
-        )
+            streaming=False)
+
         return output_ids
 
     def free(self):        
