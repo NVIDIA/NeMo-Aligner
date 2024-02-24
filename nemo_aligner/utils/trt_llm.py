@@ -128,6 +128,9 @@ class GPTGenerateTRTLLM():
             sampling_config=self.sampling_config,
             streaming=False)
 
+        output_ids = torch.clamp(
+            output_ids, max=self.tokenizer.vocab_size - 1) #TODO: hack for padded vocab 
+
         return output_ids
 
     def free(self):        
