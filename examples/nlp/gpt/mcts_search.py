@@ -56,6 +56,15 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 \x11Assistant
 """
 
+steerlm_template = """<extra_id_0>System
+A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
+<extra_id_1>User
+{prompt}
+Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
+<extra_id_1>Assistant
+<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
+"""
+
 
 def groupby(key, output):
     grouped = defaultdict(list)
@@ -293,21 +302,26 @@ def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, floa
 @dataclass
 class DatasetWrapper:
     ds: torch.utils.data.Dataset
+    template: str
 
     # just like a dataset but return idx
     def __getitem__(self, idx):
         data_item = self.ds[idx]
-        data_item["question"] = prompt_template.format(prompt=data_item["question"])
+        data_item["question"] = self.template.format(prompt=data_item["question"])
         return {**data_item, "data_id": idx}
 
     def __len__(self):
         return len(self.ds)
 
 
-def get_dataset(dataset_name, split):
+def get_dataset(dataset_name, split, template_name):
     assert dataset_name == "gsm8k"
     dataset = load_dataset("gsm8k", "main")
-    ds = DatasetWrapper(dataset[split])
+    if template_name == "steerlm":
+        template = steerlm_template
+    else:
+        template = prompt_template
+    ds = DatasetWrapper(dataset[split], template)
     score_fn = GSK8KFeedbackHF(split=split)
 
     return ds, score_fn
@@ -315,7 +329,7 @@ def get_dataset(dataset_name, split):
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split)
+    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split, cfg.dataset.prompt_template_name)
     logging.info(f"loaded {ds}")
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
