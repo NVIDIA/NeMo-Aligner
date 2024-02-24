@@ -122,7 +122,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             mask = batch["mask"]
 
             attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-                tokens, self.tokenizer.eos_id, False, True, False,
+                tokens.cuda(), self.tokenizer.eos_id, False, True, False,
             )
 
             attention_mask = attention_mask[0:1].cuda(non_blocking=True)
