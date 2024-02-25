@@ -400,6 +400,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         if batch["train_mode"][0] == TrainMode.POLICY_ONLY and (self.policy_loss_weight > 0):
             # slow on TP
             logits = gather_from_tensor_model_parallel_region(logits)
+            logits = logits[..., :self.tokenizer.vocab_size]
             log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
 
             actions = batch["actions"]
