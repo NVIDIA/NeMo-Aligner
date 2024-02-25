@@ -470,7 +470,7 @@ class DeepSearch:
                 #  get the value and termination condition from the current taken `action`
                 text = self.mcts.decode_text(spg.state)
                 pb.write(text)
-                value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, i + 1)
+                value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, count)
 
                 if is_terminal:
                     # loop through all the steps and add to the memory
