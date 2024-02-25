@@ -173,10 +173,14 @@ def main(cfg) -> None:
         "kashif/pickascore",
         split="validation",
     )
+    from datasets import concatenate_datasets
 
-    
+    # Assuming 'my_dataset' is your original Dataset instance with 500 rows
+    # First, create a list to hold copies of the original dataset
+    dataset_copies = [train_dataset] * 100  # Create 10 references to the original dataset
 
-    
+    # Use concatenate_datasets to concatenate all copies into a single dataset
+    train_dataset = concatenate_datasets(dataset_copies)
 
     train_dataset = train_dataset.with_transform(preprocess_train)
 
@@ -188,7 +192,7 @@ def main(cfg) -> None:
 
     # train_dataset, _ = text_webdataset.build_train_valid_datasets(cfg.model, consumed_samples=consumed_samples)
     # train_dataset = [d["captions"] for d in list(train_dataset)]
-
+    
     train_dataloader = build_dataloader(
         cfg,
         dataset=train_dataset,

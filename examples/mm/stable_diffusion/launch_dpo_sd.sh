@@ -4,12 +4,12 @@ WANDB="8256bec8f68d1a0ee4a3208685a8db0474d3806b"
  
 export PYTHONPATH=/opt/NeMo:/opt/nemo-aligner:$PYTHONPATH
 
-ACTOR_NUM_DEVICES=1
+ACTOR_NUM_DEVICES=2
 ACTOR_MICRO_BS=1
-GRAD_ACCUMULATION=2
+GRAD_ACCUMULATION=8
 ACTOR_GLOBAL_BATCH_SIZE=$((ACTOR_MICRO_BS*ACTOR_NUM_DEVICES*GRAD_ACCUMULATION))
 KL_COEF=0.1
-LR=0.001
+LR=0.00001
 
 ACTOR_CONFIG_PATH="/opt/nemo-aligner/examples/mm/stable_diffusion/conf"
 ACTOR_CONFIG_NAME="sd_dpo"
@@ -21,11 +21,11 @@ DATASET_PATH="/opt/nemo-aligner/datasets/animals45.tar"
 
 mkdir -p ${DIR_SAVE_CKPT_PATH}
 
-ACTOR_DEVICE="0"
+ACTOR_DEVICE="0,1"
 echo "Running Diffusion DPO on ${ACTOR_DEVICE}"
 git config --global --add safe.directory /opt/nemo-aligner \
 && wandb login ${WANDB} \
-&&  MASTER_PORT=15003 CUDA_VISIBLE_DEVICES="${ACTOR_DEVICE}" torchrun /opt/nemo-aligner/examples/mm/stable_diffusion/train_sd_dpo.py \
+&&  MASTER_PORT=15003 CUDA_VISIBLE_DEVICES="${ACTOR_DEVICE}" torchrun --nproc_per_node=${ACTOR_NUM_DEVICES} /opt/nemo-aligner/examples/mm/stable_diffusion/train_sd_dpo.py \
     --config-path=${ACTOR_CONFIG_PATH} \
     --config-name=${ACTOR_CONFIG_NAME} \
     model.optim.lr=${LR} \
@@ -42,13 +42,13 @@ git config --global --add safe.directory /opt/nemo-aligner \
     model.first_stage_config.from_pretrained=${VAE_CKPT} \
     model.micro_batch_size=${ACTOR_MICRO_BS} \
     model.global_batch_size=${ACTOR_GLOBAL_BATCH_SIZE} \
-    model.peft.enable=False \
+    model.peft.enable=True \
     model.data.train.dataset_path=${DATASET_PATH} \
     model.data.webdataset.local_root_path=${DATASET_PATH} \
     trainer.val_check_interval=20 \
     trainer.gradient_clip_val=10.0 \
     trainer.devices=${ACTOR_NUM_DEVICES} \
-    exp_manager.create_wandb_logger=False \
+    exp_manager.create_wandb_logger=True \
     exp_manager.wandb_logger_kwargs.name=${ACTOR_WANDB_NAME} \
     exp_manager.resume_if_exists=False \
     exp_manager.explicit_log_dir=${DIR_SAVE_CKPT_PATH} \

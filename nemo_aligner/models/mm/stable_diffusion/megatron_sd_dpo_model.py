@@ -196,10 +196,10 @@ class MegatronSDDPOModel(AlignableGenerativeInterface):
             vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1) * 255.0
 
             log_reward = [
-                self.reward_model.get_reward(
-                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch
-                ).item()
-                for i in range(batch_size)
+                # self.reward_model.get_reward(
+                #     vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch
+                # ).item()
+                0 for i in range(batch_size)
             ]
             log_img = [
                 np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0))
@@ -231,8 +231,8 @@ class MegatronSDDPOModel(AlignableGenerativeInterface):
         for i in range(len(image_draft)):
             images.append(image_draft[i])
             images.append(image_init[i])
-            captions.append("DRaFT: " + prompts[i] + ", Reward = " + str(reward_draft[i]))
-            captions.append("SD: " + prompts[i] + ", Reward = " + str(reward_init[i]))
+            captions.append("DPO: " + prompts[i])# + ", Reward = " + str(reward_draft[i]))
+            captions.append("SD: " + prompts[i])# + ", Reward = " + str(reward_init[i]))
 
         self.logger.loggers[1].log_image(
             key="Inference Images",
@@ -392,20 +392,16 @@ class MegatronSDDPOModel(AlignableGenerativeInterface):
                 latents.append(self.model.model.get_first_stage_encoding(encoder_posterior))
 
             latents = torch.cat(latents, dim=0)
-            latents = latents * self.model.model.scale_factor            
- 
             noise = torch.randn_like(latents).chunk(2)[0].repeat(2, 1, 1, 1)
 
             bsz = latents.shape[0] // 2
 
-            timesteps = torch.randint(0, self.model.model.num_timesteps, (bsz,), device=latents.device).long().repeat(2)
+            timesteps = torch.randint(0, self.model.model.num_timesteps, (bsz,), device=latents.device).long().repeat(2) 
             x_noisy = self.model.model.q_sample(x_start=latents, t=timesteps, noise=noise)
-            batch = {'images':x_noisy, "captions":dataloader_iter["input_ids"]}
+            batch = {'images':feed_pixel_values.permute(0, 2, 3, 1), "captions":dataloader_iter["input_ids"]}
             _, cond = self.model.model.get_input(batch, self.model.model.first_stage_key)
             cond = cond.repeat(2, 1, 1)
-            
             pi_model_output = self.model.model.apply_model(x_noisy, timesteps, cond)
-
             with torch.no_grad():
 
                 ref_model_output = self.init_model.apply_model(x_noisy, timesteps, cond)
@@ -481,7 +477,7 @@ class MegatronSDDPOModel(AlignableGenerativeInterface):
         )
 
         if torch.distributed.get_rank() == 0 and len(self.logger.loggers) > 1:
-            self.log_visualization(batch[0:1])
+            self.log_visualization(batch['input_ids'][0:1])
 
         if self.model.with_distributed_adam:
             # synchronize asynchronous grad reductions

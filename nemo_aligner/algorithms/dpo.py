@@ -177,16 +177,16 @@ class DPOTrainer:
         return loss_mean, {**metrics, **trainer_metrics}
 
     def fit(self):
-        if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
-            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
-        ):
-            # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
-            # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
-            # to fix this, you should use MegatronPretrainingRandomBatchSampler instead, which alleviates this issue and allows
-            # random shuffling for each epoch.
-            raise ValueError(
-                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
-            )
+        # if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
+        #     self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
+        # ):
+        #     # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
+        #     # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
+        #     # to fix this, you should use MegatronPretrainingRandomBatchSampler instead, which alleviates this issue and allows
+        #     # random shuffling for each epoch.
+        #     raise ValueError(
+        #         "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
+        #     )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
         if len(epoch_iter) <= 0:
@@ -205,7 +205,7 @@ class DPOTrainer:
                 return  # training ended
 
             global_pbar = tqdm(
-                self.augment_dataloader(self.train_dataloader),
+                self.train_dataloader, #self.augment_dataloader(self.train_dataloader),
                 initial=self.step,
                 total=self.max_steps,
                 leave=True,
