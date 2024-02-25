@@ -599,7 +599,10 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 }
 
                 layer_offset = len(get_attr_wrapped_model(self.model, "decoder").submodules.layer_specs)
-                print("#### PRE LOAD", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
+
+                with torch.no_grad():
+                    print("#### PRE LOAD VALUE", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
+                    print("#### PRE LOAD STEM", self.model.module.decoder.layers[0].mlp.linear_fc1.weight.sum())
 
                 modified_dict = {}
                 prefix_to_use = "value_head.layers."
@@ -613,7 +616,9 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     modified_dict[k] = v
 
                 module.load_state_dict(modified_dict, strict=self.cfg.from_mcts_trained)
-                print("#### POST LOAD", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
+                with torch.no_grad():
+                    print("#### POST LOAD VALUE", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
+                    print("#### POST LOAD STEM", self.model.module.decoder.layers[0].mlp.linear_fc1.weight.sum())
         else:
             # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
             # see NLPModel.on_load_checkpoint
