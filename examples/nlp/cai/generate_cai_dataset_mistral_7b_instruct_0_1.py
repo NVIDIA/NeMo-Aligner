@@ -202,7 +202,7 @@ def generate_cai_dataset(batch_size: int, save_to_file_interval: int , save_file
 
 
 if __name__ == '__main__':
-    generate_cai_dataset(batch_size=2,
+    generate_cai_dataset(batch_size=32,
                          save_to_file_interval=1,
                          save_file_path='cai_samples_from_anthropic_red_team_attempts_train.json')
 
