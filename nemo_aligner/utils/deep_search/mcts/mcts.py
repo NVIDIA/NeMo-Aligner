@@ -275,9 +275,10 @@ class MCTSParallel:
                 spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
                 spg.root.expand(spg_policy, spg_action)
 
-        dp_rank = parallel_state.get_data_parallel_rank()
+# dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
-        for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False):
+# for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False):
+        for search in range(self.args["num_searches"]):
             for spg in ps:
                 # spg.node is to save the node that needs to be expanded
                 spg.node = None
