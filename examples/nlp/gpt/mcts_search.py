@@ -317,10 +317,14 @@ class DatasetWrapper:
 def get_dataset(dataset_name, split, template_name):
     assert dataset_name == "gsm8k"
     dataset = load_dataset("gsm8k", "main")
+
     if template_name == "steerlm":
         template = steerlm_template
-    else:
+    elif template_name == "mistral":
         template = prompt_template
+    else:
+        raise NotImplementedError(f"template {template_name} is not supported")
+
     ds = DatasetWrapper(dataset[split], template)
     score_fn = GSK8KFeedbackHF(split=split)
 
