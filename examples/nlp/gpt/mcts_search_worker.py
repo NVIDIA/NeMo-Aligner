@@ -217,10 +217,9 @@ class MCTSSearchOneBatch:
         self.data_ids.update(batch_idx)
         print("###### DONE", batch_idx)
 
-        print("### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx.tolist(), "at step", self.step)
+        print("### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx, "at step", self.step)
         save_path = os.path.join(self.save_path, f"{batch_file_name}_.pt")
         self.save(save_path)
-        return batch_idx
 
     def save(self, save_path):
         group = parallel_state.get_model_parallel_group()
@@ -358,7 +357,6 @@ def start_worker(search_func, collate_func, save_path, ds, cfg):
                 cache_dir=cfg.model.mcts.cache_dir,
             )
             searcher.search(batch_idx)
-            return batch_idx
 
         app.worker_main(["worker", "--loglevel=INFO", "--concurrency=1", "--pool=solo"])
     else:
