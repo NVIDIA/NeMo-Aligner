@@ -35,6 +35,7 @@ mcts_data_file: null
 dataset:
     name: gsm8k
     split: train
+    prompt_template_name: ''
  
 model:
   from_mcts_trained: ${pretrained_checkpoint.from_mcts_trained}
@@ -48,16 +49,16 @@ model:
     temperature: 0.2  # use low temperature for more greedy search
     dirichlet_epsilon: 0.0  # weight for dirichelt noise added to the root state, turn off the dirichlet noise by setting this to 0
     dirichlet_alpha: 0.3 # parameter for dirichlet noise, the piror probability of the action happens 
-    max_depth: 250  # maxium depth of the search tree
+    max_depth: 500  # maxium depth of the search tree
 
     save_timer: 13500 # save the intermediate search results at 3 hours and 45 minutes
     cache_dir: null  # cache dir for the search results
 
     top_k: 50
-    end_strings: ["<extra_id_1>"]  # generation will stop when one of these tokens is generated
+    end_strings: ["<extra_id_1>", "\x11"]  # generation will stop when one of these tokens is generated
 
     oracle: True  # whether to use the oracle value for the search results, Default True, so it uses ground truth value when it reaches the terminal state
-    turn_off_value: False  # whether to turn off the value model, if True, it will set the value head output to 0 
+    turn_off_value: ${not:${pretrained_checkpoint.from_mcts_trained}}
 
     train:
       value_weight: 1 # weight of the value portion of the loss

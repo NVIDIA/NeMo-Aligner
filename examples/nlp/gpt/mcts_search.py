@@ -44,8 +44,17 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("not", lambda x: not x)
 
 mp.set_start_method("spawn", force=True)
+
+prompt_template = """\x00System
+
+\x11User
+{prompt}
+Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
+\x11Assistant
+"""
 
 steerlm_template = """<extra_id_0>System
 A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
@@ -124,6 +133,7 @@ def get_cached_outputs(cache_dir, global_set):
         global_batch_ids.update(batches)
 
     if torch.distributed.get_rank() == 0:
+        print("### DELETING FILES", to_delete)
         for p in to_delete:
             p.unlink()
 
@@ -213,8 +223,10 @@ class MCTSSearch:
         self.run_timer.start_time()
 
         global_pbar = tqdm(self.batch_chunks, leave=True, desc="Search Global Step")
+        print("### BATCH ID TO USE", self.batch_chunks)
 
         for batch_idx in global_pbar:
+            print("###### START", batch_idx.tolist())
             batch_file_name = "-".join([str(b) for b in batch_idx.tolist()])
             batch = self.collate_func([self.dataset[idx] for idx in batch_idx.tolist()])
 
@@ -242,6 +254,8 @@ class MCTSSearch:
             self.step += 1
 
             self.data_ids.update(batch_idx.tolist())
+            print("###### DONE", batch_idx.tolist())
+
             print(
                 "### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx.tolist(), "at step", self.step
             )
@@ -288,21 +302,26 @@ def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, floa
 @dataclass
 class DatasetWrapper:
     ds: torch.utils.data.Dataset
+    template: str
 
     # just like a dataset but return idx
     def __getitem__(self, idx):
         data_item = self.ds[idx]
-        data_item["question"] = steerlm_template.format(prompt=data_item["question"])
+        data_item["question"] = self.template.format(prompt=data_item["question"])
         return {**data_item, "data_id": idx}
 
     def __len__(self):
         return len(self.ds)
 
 
-def get_dataset(dataset_name, split):
+def get_dataset(dataset_name, split, template_name):
     assert dataset_name == "gsm8k"
     dataset = load_dataset("gsm8k", "main")
-    ds = DatasetWrapper(dataset[split])
+    if template_name == "steerlm":
+        template = steerlm_template
+    else:
+        template = prompt_template
+    ds = DatasetWrapper(dataset[split], template)
     score_fn = GSK8KFeedbackHF(split=split)
 
     return ds, score_fn
@@ -310,7 +329,7 @@ def get_dataset(dataset_name, split):
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split)
+    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split, cfg.dataset.prompt_template_name)
     logging.info(f"loaded {ds}")
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)

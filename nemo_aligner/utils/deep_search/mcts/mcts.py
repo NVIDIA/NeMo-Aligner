@@ -409,6 +409,7 @@ class DeepSearch:
         count = 0
         # load the partial result from disk
         if os.path.exists(filename) and self.strategy is not None:
+            print("### LOADING CACHE FROM", filename)
             cache = torch.load(filename)
             parallel_searches = cache["parallel_searches"]
             count = cache["count"]
@@ -468,7 +469,7 @@ class DeepSearch:
                 #  get the value and termination condition from the current taken `action`
                 text = self.mcts.decode_text(spg.state)
                 pb.write(text)
-                value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, i + 1)
+                value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, count)
 
                 if is_terminal:
                     # loop through all the steps and add to the memory
@@ -514,7 +515,7 @@ class DeepSearch:
                         | self.strategy.state_dict(),
                         filename,
                     )
-
+                    print("#### SAVING CACHE TO", filename)
                     # only save one
                 self.save_flag = False
 
