@@ -332,12 +332,12 @@ def main(cfg) -> None:
     search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
 
     # start the worker on the rank
-    start_worker(search_func, collate_func, save_dir, ds, cfg)
+    start_worker(search_func, collate_func, save_dir, ds, cfg, cfg.server_url)
 
 
-def start_worker(search_func, collate_func, save_path, ds, cfg):
+def start_worker(search_func, collate_func, save_path, ds, cfg, url):
     if torch.distributed.get_rank() == 0:
-        app = Celery("tasks", backend="rpc://", broker="pyamqp://guest@10.110.40.145:5672//")
+        app = Celery("tasks", backend="rpc://", broker=f"pyamqp://guest@{url}//")
 
         app.conf.task_acks_late = True
 
@@ -357,6 +357,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg):
                 cache_dir=cfg.model.mcts.cache_dir,
             )
             searcher.search(batch_idx)
+            return batch_idx
 
         app.worker_main(["worker", "--loglevel=INFO", "--concurrency=1", "--pool=solo"])
     else:

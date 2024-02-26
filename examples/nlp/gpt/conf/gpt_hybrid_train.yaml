@@ -31,7 +31,7 @@ pretrained_checkpoint:
   from_mcts_trained: False
 
 mcts_data_file: null
-
+server_url: 10.110.40.145:5672  # the rabbitmq server url
 dataset:
     name: gsm8k
     split: train

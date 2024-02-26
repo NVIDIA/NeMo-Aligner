@@ -1,11 +1,14 @@
 from celery import Celery
 
-app = Celery("tasks", backend="rpc://", broker="pyamqp://guest@10.110.40.145:5672//")
 
-# CELERY_ACKS_LATE = True
-app.conf.task_acks_late = True
+def get_search_for_batch(url):
+    app = Celery("tasks", backend="rpc://", broker=f"pyamqp://guest@{url}//")
 
+    # CELERY_ACKS_LATE = True
+    app.conf.task_acks_late = True
 
-@app.task
-def search_for_batch(batch_idx):
-    pass
+    @app.task
+    def search_for_batch(batch_idx):
+        pass
+
+    return search_for_batch
