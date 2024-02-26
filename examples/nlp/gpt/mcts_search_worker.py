@@ -337,7 +337,7 @@ def main(cfg) -> None:
 
 def start_worker(search_func, collate_func, save_path, ds, cfg, url):
     if torch.distributed.get_rank() == 0:
-        app = Celery("tasks", backend="rpc://", broker=f"pyamqp://guest@{url}//")
+        app = Celery("tasks", backend="rpc://", broker=f"{url}")
 
         app.conf.task_acks_late = True
 
