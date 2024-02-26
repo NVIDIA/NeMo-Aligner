@@ -195,38 +195,41 @@ class DeepSearchTrainer:
         metrics.update({"lr": lr, "loss": loss_mean})
         return metrics
 
-    def run_training(self, policy_dataloader_iter, value_dataloader_iter):
+    def run_training(self, policy_dataloader_iter, value_dataloader_iter, step):
         self.model.prepare_for_training()
         dp_size = parallel_state.get_data_parallel_world_size()
         # TODO: add consumed samples logic
         # TODO: add optimizer step bump
-        for _, batch in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter):
-            # at least if we do this the lr are not synced between the 2 stages of training
-            metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
-            metrics.update({"policy_optimization_step": self.policy_optimization_step})
+        if step < self.max_steps_policy:
+            print("### POLICY TRAIN", step, self.max_steps_policy)
+            for _, batch in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter):
+                # at least if we do this the lr are not synced between the 2 stages of training
+                metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
+                metrics.update({"policy_optimization_step": self.policy_optimization_step})
 
-            self.consumed_samples += batch["tokens"].size(0) * dp_size
-            self.policy_optimization_step += 1
+                self.consumed_samples += batch["tokens"].size(0) * dp_size
+                self.policy_optimization_step += 1
 
-            metrics.update({"consumed_samples": self.consumed_samples})
+                metrics.update({"consumed_samples": self.consumed_samples})
 
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="train_optim_policy/",
-            )
+                self.logger.log_metrics(
+                    metrics, step=self.step, prefix="train_optim_policy/",
+                )
+        else:
+            print("### VALUE TRAIN", step, self.max_steps_value)
+            for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
+                # at least if we do this the lr are not synced between the 2 stages of training
+                metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
+                metrics.update({"value_optimization_step": self.value_optimization_step})
 
-        for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
-            # at least if we do this the lr are not synced between the 2 stages of training
-            metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
-            metrics.update({"value_optimization_step": self.value_optimization_step})
+                self.consumed_samples_values += self.model.cfg.critic_global_batch_size
+                metrics.update({"consumed_samples_values": self.consumed_samples_values})
 
-            self.consumed_samples_values += self.model.cfg.critic_global_batch_size
-            metrics.update({"consumed_samples_values": self.consumed_samples_values})
+                self.value_optimization_step += 1
 
-            self.value_optimization_step += 1
-
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="train_optim_value/",
-            )
+                self.logger.log_metrics(
+                    metrics, step=self.step, prefix="train_optim_value/",
+                )
 
         self.model.finish_training()
         return metrics
@@ -306,7 +309,7 @@ class DeepSearchTrainer:
                 timing_metrics = {}
 
                 self.timer.start("train_time")
-                train_metrics = self.run_training(policy_dataloader_iter, value_dataloader_iter)
+                train_metrics = self.run_training(policy_dataloader_iter, value_dataloader_iter, step=inner_step)
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
 
@@ -358,10 +361,11 @@ class DeepSearchTrainer:
         max_steps = self.cfg.get("max_steps", -1)
 
         # each step is one run of policy/value
-        max_steps_policy = ceil(safe_divide(len(self.train_policy_dataloader), self.cfg.num_policy_batches))
-        max_steps_value = ceil(safe_divide(len(self.train_value_dataloader), self.cfg.num_value_batches))
+        self.max_steps_policy = ceil(safe_divide(len(self.train_policy_dataloader), self.cfg.num_policy_batches))
+        self.max_steps_value = ceil(safe_divide(len(self.train_value_dataloader), self.cfg.num_value_batches))
 
-        dataloader_max_steps = max(max_steps_policy, max_steps_value)
+# dataloader_max_steps = max(max_steps_policy, max_steps_value)
+        dataloader_max_steps = self.max_steps_policy + self.max_steps_value
 
         if max_steps == -1:
             # the dataloader already knows how much longer
