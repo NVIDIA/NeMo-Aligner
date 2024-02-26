@@ -321,7 +321,7 @@ def build_dataloader(
     pad_samples_to_global_batch_size=False,
     collate_fn=None,
     load_gbs=True,
-    use_random_sampler=True
+    use_random_sampler=True,
 ):
     """Buld dataloader given an input dataset."""
 
@@ -332,14 +332,14 @@ def build_dataloader(
     logging.info(f"Building dataloader with consumed samples: {consumed_samples}")
     # Common parameters for batch sampler creation
     common_params = {
-        'total_samples': len(dataset),
-        'consumed_samples': consumed_samples,
-        'micro_batch_size': mbs,
-        'data_parallel_rank': parallel_state.get_data_parallel_rank(),
-        'data_parallel_size': parallel_state.get_data_parallel_world_size(),
-        'drop_last': drop_last,
-        'global_batch_size': gbs,
-        'pad_samples_to_global_batch_size': pad_samples_to_global_batch_size,
+        "total_samples": len(dataset),
+        "consumed_samples": consumed_samples,
+        "micro_batch_size": mbs,
+        "data_parallel_rank": parallel_state.get_data_parallel_rank(),
+        "data_parallel_size": parallel_state.get_data_parallel_world_size(),
+        "drop_last": drop_last,
+        "global_batch_size": gbs,
+        "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
 
     # Megatron sampler
@@ -351,7 +351,9 @@ def build_dataloader(
 
         batch_sampler = create_batch_sampler(cls, **common_params, seed=cfg.model.seed if use_random_sampler else None)
     else:
-        raise ValueError('cfg.model.data.dataloader_type must be "single" or cfg.model.data.dataloader_type not found.')
+        raise ValueError(
+            'cfg.model.data.dataloader_type must be "single" or cfg.model.data.dataloader_type not found.'
+        )
 
     return torch.utils.data.DataLoader(
         dataset,
