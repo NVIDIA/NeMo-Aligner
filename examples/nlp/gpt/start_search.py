@@ -12,7 +12,7 @@ from tqdm import tqdm
 def main(cfg):
     dataset = load_dataset("gsm8k", "main")
 
-    total = len(dataset)
+    total = len(dataset['train'])
     data_id_list = torch.tensor(range(total)).split(cfg.model.mcts.rollout_micro_batch_size)  # list of data to process
     search_for_batch = get_search_for_batch(cfg.server_url)
 
