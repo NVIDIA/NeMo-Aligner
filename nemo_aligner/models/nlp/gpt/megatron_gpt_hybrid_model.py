@@ -239,9 +239,9 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             logits, values = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None)
 
             def loss_func(parallel_logits):
-                num_micro_batches = batch["num_micro_batches"]
+                # num_micro_batches = batch["num_micro_batches"]
                 amount_of_batches = batch["amount_of_batches"]
-                divisor = num_micro_batches * amount_of_batches
+                divisor = amount_of_batches
 
                 logits = parallel_logits
 
