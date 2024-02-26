@@ -120,7 +120,7 @@ policy_data, value_data = policies, values
 num_questions_correct = 0
 
 for p in policy_data:
-    if all(x > 0 for x in p["reward"]):
+    if all(x == 1 for x in p["reward"]):
         num_questions_correct += 1
 
 data_metrics = {
