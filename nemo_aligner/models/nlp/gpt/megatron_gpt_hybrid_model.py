@@ -58,7 +58,6 @@ from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import logging
 from nemo_aligner.algorithms.deepsearch import TrainMode
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
-from nemo_aligner.utils.train_script_utils import FakeScheduler
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -89,215 +88,6 @@ def find_number_after_prefix(string, prefix):
         return match.group(1), match.group(2)
     else:
         return None
-
-
-class FakeState:
-    def __init__(self, policy_optimizer, value_optimizer):
-        self.policy_optimizer = policy_optimizer
-        self.value_optimizer = value_optimizer
-
-    def __getitem__(self, key):
-        if key[0] == "value":
-            key = key[1]
-            return self.value_optimizer.state[key]
-        elif key[0] == "policy":
-            key = key[1]
-            return self.policy_optimizer.state[key]
-        else:
-            raise KeyError(f"Key {key} not found in state")
-
-    def __setitem__(self, key, value):
-        if key[0] == "value":
-            key = key[1]
-            self.value_optimizer.state[key] = value
-        elif key[0] == "policy":
-            key = key[1]
-            self.policy_optimizer.state[key] = value
-        else:
-            raise KeyError(f"Key {key} not found in state")
-
-    def __delitem__(self, key):
-        if key[0] == "value":
-            key = key[1]
-            del self.value_optimizer.state[key]
-        elif key[0] == "policy":
-            key = key[1]
-            del self.policy_optimizer.state[key]
-        else:
-            raise KeyError(f"Key {key} not found in state")
-
-    def __contains__(self, key):
-        if key[0] == "value":
-            key = key[1]
-            return key in self.value_optimizer.state
-        elif key[0] == "policy":
-            key = key[1]
-            return key in self.policy_optimizer.state
-        else:
-            return False
-
-    def __iter__(self):
-        # iter both states
-        for key in self.policy_optimizer.state:
-            yield ("policy", key)
-        for key in self.value_optimizer.state:
-            yield ("value", key)
-
-    def __len__(self):
-        return len(self.policy_optimizer.state) + len(self.value_optimizer.state)
-
-    def keys(self):
-        return [("policy", key) for key in self.policy_optimizer.state] + [
-            ("value", key) for key in self.value_optimizer.state
-        ]
-
-    def values(self):
-        return list(self.policy_optimizer.state.values()) + list(self.value_optimizer.state.values())
-
-    def items(self):
-        return [(("policy", key), value) for key, value in self.policy_optimizer.state.items()] + [
-            (("value", key), value) for key, value in self.value_optimizer.state.items()
-        ]
-
-
-class FakeSaveScheduler(LRScheduler):
-    def __init__(self, optimizer: Optimizer, policy_scheduler, value_scheduler) -> None:
-        self.optimizer = optimizer
-        self.policy_scheduler = policy_scheduler
-        self.value_scheduler = value_scheduler
-
-    @property
-    def last_epoch(self):
-        return (self.policy_scheduler.last_epoch, self.value_scheduler.last_epoch)
-
-    def step(self, epoch: int | None = ...) -> None:
-        self.policy_scheduler.step(epoch[0])
-        self.value_scheduler.step(epoch[1])
-
-    def state_dict(self) -> Dict[str, Any]:
-        state1 = self.policy_scheduler.state_dict()
-        state2 = self.value_scheduler.state_dict()
-        output = OrderedDict()
-        for k, v in state1.items():
-            output[("policy", k)] = v
-        for k, v in state2.items():
-            output[("value", k)] = v
-        return output
-
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        state1 = {}
-        state2 = {}
-        for k, v in state_dict.items():
-            if k[0] == "policy":
-                state1[k[1]] = v
-            elif k[0] == "value":
-                state2[k[1]] = v
-            else:
-                raise KeyError(f"Key {k} not found in state")
-        self.policy_scheduler.load_state_dict(state1)
-        self.value_scheduler.load_state_dict(state2)
-
-
-class FakeOptimizer(Optimizable, Optimizer):
-    def __init__(self, policy_optimizer, value_optimizer):
-        self.policy_optimizer = policy_optimizer
-        self.value_optimizer = value_optimizer
-        self.fs = FakeState(policy_optimizer, value_optimizer)
-
-    def zero_grad(self):
-        self.policy_optimizer.zero_grad()
-        self.value_optimizer.zero_grad()
-
-    def _finish_bucket_grad_sync(self):
-        self.policy_optimizer._finish_bucket_grad_sync()
-        self.value_optimizer._finish_bucket_grad_sync()
-
-    def allreduce_main_grads(self):
-        self.policy_optimizer.allreduce_main_grads()
-        self.value_optimizer.allreduce_main_grads()
-
-    def try_grad_sync(self, params=None):
-        if self.policy_optimizer.overlap_grad_sync:
-            params = self.policy_optimizer.parameters()
-            self.policy_optimizer.try_grad_sync(params)
-        if self.value_optimizer.overlap_grad_sync:
-            params = self.value_optimizer.parameters()
-            self.value_optimizer.try_grad_sync(params)
-
-    def sharded_state_dict(self, model_sharded_state_dict):
-        state1 = self.policy_optimizer.sharded_state_dict(model_sharded_state_dict)
-        state2 = self.value_optimizer.sharded_state_dict(model_sharded_state_dict)
-        output = OrderedDict()
-        for k, v in state1.items():
-            output[("policy", k)] = v
-        for k, v in state2.items():
-            output[("value", k)] = v
-        return output
-
-    def state_dict(self):
-        state1 = self.policy_optimizer.state_dict()
-        state2 = self.value_optimizer.state_dict()
-        output = OrderedDict()
-        for k, v in state1.items():
-            output[("policy", k)] = v
-        for k, v in state2.items():
-            output[("value", k)] = v
-        return output
-
-    def load_state_dict(self, state_dict):
-        value_state_dict = {}
-        policy_state_dict = {}
-        for k, v in state_dict.items():
-            if k[0] == "policy":
-                policy_state_dict[k[1]] = v
-            elif k[0] == "value":
-                value_state_dict[k[1]] = v
-            else:
-                raise KeyError(f"Key {k} not found in state")
-        self.policy_optimizer.load_state_dict(policy_state_dict)
-        self.value_optimizer.load_state_dict(value_state_dict)
-
-    @property
-    def state(self):
-        return self.fs
-
-    @property
-    def no_sync(self):
-        return self.policy_optimizer.no_sync
-
-    @property
-    def overlap_grad_sync(self):
-        return self.policy_optimizer.overlap_grad_sync or self.value_optimizer.overlap_grad_sync
-
-
-def compute_optim_kwargs(megatron_amp_O2, autocast_dtype, named_parameters):
-    optim_kwargs = {}
-    # Allocate contiguous buffer to avoid extra copies
-    optim_kwargs["contiguous_grad_buffer"] = True
-
-    # Make sure optimizer state is in FP32
-    optim_dtype = torch.float32
-    optim_kwargs["dtype"] = optim_dtype
-
-    # Make sure embedding grad reductions are in FP32
-    for name, param in named_parameters:
-        if "word_embedding" in name or "position_embedding" in name or "output_layer" in name:
-            param._with_fp32_optimizer = True
-
-    # Match param allgather with model dtype
-    model_dtype = torch.float32
-    model_dtype = autocast_dtype
-    optim_kwargs["param_sync_dtype"] = model_dtype
-
-    # Determine whether to store master params in optimizer
-    if optim_dtype == model_dtype:
-        optim_kwargs["store_params"] = False
-    elif optim_dtype == torch.float32 and model_dtype == torch.bfloat16 and megatron_amp_O2:
-        optim_kwargs["store_params"] = False
-        optim_kwargs["store_param_remainders"] = True
-    else:
-        optim_kwargs["store_params"] = True
-    return optim_kwargs
 
 
 class MegatronGPTHybridModel(MegatronGPTModel):
@@ -449,14 +239,18 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             logits, values = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None)
 
             def loss_func(parallel_logits):
+                num_micro_batches = batch["num_micro_batches"]
+                amount_of_batches = batch["amount_of_batches"]
+                divisor = num_micro_batches * amount_of_batches
+
                 logits = parallel_logits
 
                 policy_loss = self.compute_policy_loss(batch, logits)
                 value_loss = self.compute_value_loss(batch, values)
 
-                loss = value_loss - policy_loss
+                loss = (value_loss - policy_loss) / divisor
                 reduced_loss, reduced_value_loss, reduced_policy_loss = average_losses_across_data_parallel_group(
-                    [loss, value_loss, policy_loss]
+                    [loss, value_loss / divisor, policy_loss / divisor]
                 )
 
                 return (
@@ -494,6 +288,8 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             num_micro_batches = divide(gbs_by_dp, self.cfg.micro_batch_size)
 
         batch["train_mode"] = torch.as_tensor([batch["train_mode"]] * gbs_by_dp)
+        batch["amount_of_batches"] = torch.as_tensor([batch["amount_of_batches"]] * gbs_by_dp)
+        batch["num_micro_batches"] = torch.as_tensor([num_micro_batches] * gbs_by_dp)
 
         batch = {k: v[: num_micro_batches * self.cfg.micro_batch_size] for k, v in batch.items()}
 

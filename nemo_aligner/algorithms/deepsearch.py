@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import random
 from collections import defaultdict
 from enum import IntEnum, auto
 from functools import partial
@@ -177,33 +178,44 @@ class DeepSearchTrainer:
         dp_size = parallel_state.get_data_parallel_world_size()
         # TODO: add consumed samples logic
         # TODO: add optimizer step bump
-        for _, batch in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter):
-            # at least if we do this the lr are not synced between the 2 stages of training
-            metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
-            metrics.update({"policy_optimization_step": self.policy_optimization_step})
+        run_value = self.value_steps.pop()
+        run_policy = self.policy_steps.pop()
 
-            self.consumed_samples += batch["tokens"].size(0) * dp_size
-            self.policy_optimization_step += 1
+        if run_policy:
+            policy_batches = [output[1] for output in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter)]
 
-            metrics.update({"consumed_samples": self.consumed_samples})
+            for batch in policy_batches:
+                # at least if we do this the lr are not synced between the 2 stages of training
+                batch["amount_of_batches"] = len(policy_batches)
+                metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
+                metrics.update({"policy_optimization_step": self.policy_optimization_step})
 
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="train_optim_policy/",
-            )
+                self.consumed_samples += batch["tokens"].size(0) * dp_size
+                self.policy_optimization_step += 1
 
-        for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
-            # at least if we do this the lr are not synced between the 2 stages of training
-            metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
-            metrics.update({"value_optimization_step": self.value_optimization_step})
+                metrics.update({"consumed_samples": self.consumed_samples})
 
-            self.consumed_samples_values += self.model.cfg.critic_global_batch_size
-            metrics.update({"consumed_samples_values": self.consumed_samples_values})
+                self.logger.log_metrics(
+                    metrics, step=self.step, prefix="train_optim_policy/",
+                )
 
-            self.value_optimization_step += 1
+        if run_value:
+            value_batches = [output[1] for output in zip(range(self.cfg.num_value_batches), value_dataloader_iter)]
+            for batch in value_batches:
+                # at least if we do this the lr are not synced between the 2 stages of training
+                batch["amount_of_batches"] = len(value_batches)
+                metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
+                metrics.update({"value_optimization_step": self.value_optimization_step})
 
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="train_optim_value/",
-            )
+                self.consumed_samples_values += self.model.cfg.critic_global_batch_size
+                metrics.update({"consumed_samples_values": self.consumed_samples_values})
+
+                self.value_optimization_step += 1
+
+                self.logger.log_metrics(
+                    metrics, step=self.step, prefix="train_optim_value/",
+                )
+
         self.optimizer.step()
         self.scheduler.step()
         self.model.finish_training()
@@ -349,6 +361,18 @@ class DeepSearchTrainer:
             raise NotImplementedError("manual max step doesn't work right now")
 
         self.max_steps = min(max_steps, dataloader_max_steps)
+
+        # TODO(geshen): this slightly changes how things go when we restore
+        # so it's not perfectly the same whenevr we get preempted
+        value_steps = [True] * max_steps_value + [False] * (max_steps - max_steps_value)
+        policy_steps = [True] * max_steps_policy + [False] * (max_steps - max_steps_policy)
+
+        g = random.Random(max_steps)
+        g.shuffle(value_steps)
+        g.shuffle(policy_steps)
+
+        self.value_steps = value_steps
+        self.policy_steps = policy_steps
 
     def state_dict(self):
         # TODO(geshen): add epoch logic

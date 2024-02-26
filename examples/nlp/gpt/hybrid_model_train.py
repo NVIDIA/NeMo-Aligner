@@ -15,6 +15,7 @@
 import os
 from collections import defaultdict
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
 
 import torch
@@ -355,18 +356,11 @@ def main(cfg) -> None:
     policy_steps = len(train_policy_dataloader) * cfg.trainer.deep_search.max_epochs
     value_steps = len(train_value_dataloader) * cfg.trainer.deep_search.max_epochs
 
-    set_max_steps(ptl_model.cfg.optim.get("sched", None), policy_steps)
-    set_max_steps(ptl_model.cfg.value.optim.get("sched", None), value_steps)
+    set_max_steps(ptl_model.cfg.optim.get("sched", None), max(policy_steps, value_steps))
 
     init_using_ptl(trainer, ptl_model, None, None)
 
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
-
-    # policy_optimizer = ptl_model.policy_optimizer
-    # policy_scheduler = ptl_model.policy_scheduler
-
-    # value_optimizer = ptl_model.value_optimizer
-    # value_scheduler = ptl_model.value_scheduler
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
