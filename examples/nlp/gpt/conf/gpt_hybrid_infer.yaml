@@ -1,6 +1,6 @@
 inference:
   top_k: 50  # The number of highest probability vocabulary tokens to keep for top-k-filtering.
-  tokens_to_generate: 500 # The search depth
+  tokens_to_generate: 4096 # The search depth
   micro_batch_size: 16
   port: 2323
 
@@ -14,10 +14,17 @@ trainer:
 
 pretrained_checkpoint:
   restore_from_path: null
- 
+  from_mcts_trained: False
+
 model:
+  from_mcts_trained: ${pretrained_checkpoint.from_mcts_trained}
   mcore_gpt: True
   share_embeddings_and_output_weights: False
+  mcts:
+
+    train:
+      value_weight: 1 # weight of the value portion of the loss
+      policy_weight: 1 # weight of the policy portion of the loss
 
   # reward_model_type: binary_ranking # ["binary_ranking, "regression"]
   regression:
@@ -36,6 +43,26 @@ model:
   pipeline_model_parallel_split_rank: 0 # used for encoder and decoder model (0 for others)
   encoder_seq_length: 4096
   max_position_embeddings: ${model.encoder_seq_length}
+
+  offload_adam_states: False
+
+  inference:
+
+    micro_batch_size: 16
+
+    sampling_params:
+      use_greedy: True # Whether or not to use sampling ; use greedy decoding otherwise
+      top_k: ${inference.top_k}  # The number of highest probability vocabulary tokens to keep for top-k-filtering.
+      top_p: 0.9 # If set to float < 1, only the most probable tokens with probabilities that add up to top_p or higher are kept for generation.
+      temperature: 1.0 # sampling temperature
+      repetition_penalty: 1.2  # The parameter for repetition penalty. 1.0 means no penalty.
+      add_BOS: False # add the bos token at the begining of the prompt
+      all_probs: False  # whether return the log prob for all the tokens in vocab
+      compute_logprob: False  # a flag used to compute logprob of all the input text, a very special case of running inference, default False
+
+    length_params:
+      max_length: ${int_div:${model.encoder_seq_length}, 2}
+      min_length: 1
 
   # parameters for value output
   value:
@@ -164,4 +191,3 @@ model:
 #   user: User
 #   assistant: Assistant
 #   system: "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions.\n\n"
-# 

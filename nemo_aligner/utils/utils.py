@@ -19,6 +19,7 @@ import re
 import tempfile
 from contextlib import contextmanager
 from functools import partial
+from pathlib import Path
 from unittest.mock import patch
 
 import torch
@@ -31,6 +32,16 @@ from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
+
+
+def preemptable_save(obj, save_path):
+    save_path = Path(save_path).resolve()
+    with tempfile.NamedTemporaryFile(dir=save_path.parent, delete=False) as temp_file:
+        # do the expensive op before replace
+        torch.save(obj, temp_file.name)
+
+        # this should be atomic
+        Path(temp_file.name).replace(save_path)
 
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):

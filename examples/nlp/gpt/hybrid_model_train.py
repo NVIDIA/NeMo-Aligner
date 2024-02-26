@@ -51,6 +51,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("not", lambda x: not x)
 
 mp.set_start_method("spawn", force=True)
 
@@ -224,7 +225,7 @@ def main(cfg) -> None:
         cfg.model,
         trainer,
         strict=True,
-        load_base_model_only=True,
+        load_base_model_only=not cfg.pretrained_checkpoint.from_mcts_trained,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 

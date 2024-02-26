@@ -15,7 +15,6 @@
 import hashlib
 import math
 import os
-import pickle
 import sys
 import threading
 from typing import Callable, List
@@ -24,6 +23,7 @@ import numpy as np
 import torch
 import tqdm
 from megatron.core import InferenceParams, parallel_state
+from nemo_aligner.utils.utils import preemptable_save
 
 sys.setrecursionlimit(10000)  # Increase the recursion limit to 10000
 
@@ -275,9 +275,10 @@ class MCTSParallel:
                 spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
                 spg.root.expand(spg_policy, spg_action)
 
-        dp_rank = parallel_state.get_data_parallel_rank()
+        # dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
-        for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False):
+        # for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False):
+        for search in range(self.args["num_searches"]):
             for spg in ps:
                 # spg.node is to save the node that needs to be expanded
                 spg.node = None
@@ -380,22 +381,14 @@ class DeepSearch:
     def save_data(self):
         self.save_flag = True
 
-    def search(self, parallel_searches: List[ParallelSearch], batch_id):
+    def search(self, parallel_searches: List[ParallelSearch], filename):
+        dp_rank = parallel_state.get_data_parallel_rank()
         # clear the cache
         self.mcts.cache = {}
         # serialize the partial result to disk
-        dp_rank = parallel_state.get_data_parallel_rank()
-        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
-        tp_rank = parallel_state.get_tensor_model_parallel_rank()
+
         if self.cache_dir is not None:
-            # create the cache dir if it does not exist
-            if not os.path.exists(self.cache_dir):
-                os.makedirs(self.cache_dir, exist_ok=True)
-            filename = os.path.join(self.cache_dir, f"current_search_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pkl")
-            filename2 = os.path.join(self.cache_dir, f"current_kv_cache_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pkl")
-        else:
-            filename = f"current_search_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pkl"
-            filename2 = f"current_kv_cache_{batch_id}_{dp_rank}_{pp_rank}_{tp_rank}.pkl"
+            filename = os.path.join(self.cache_dir, filename)
 
         # equavalent to the alpha zero self play
         # for a list of parallel_searche instances
@@ -409,19 +402,19 @@ class DeepSearch:
 
         count = 0
         # load the partial result from disk
-        if os.path.exists(filename) and self.strategy is not None and os.path.exists(filename2):
-            with open(filename, "rb") as f:
-                parallel_searches = pickle.load(f)
-                count = pickle.load(f)
-                backup_root_states = pickle.load(f)
-                return_memory = pickle.load(f)
-                return_value_memory = pickle.load(f)
-            self.strategy.deserialize_cache(filename2)
+        if os.path.exists(filename) and self.strategy is not None:
+            print("### LOADING CACHE FROM", filename)
+            cache = torch.load(filename)
+            parallel_searches = cache["parallel_searches"]
+            count = cache["count"]
+            backup_root_states = cache["backup_root_states"]
+            return_memory = cache["return_memory"]
+            return_value_memory = cache["return_value_memory"]
+            self.strategy.load_state_dict(cache)
+
         # add a progress bar to show the progress of the self play
         total_steps = self.max_steps
-        pb = tqdm.tqdm(
-            total=total_steps, initial=count, desc=f"Self Play rank {dp_rank}", position=2 * dp_rank, leave=True
-        )
+        pb = tqdm.tqdm(total=total_steps, initial=count, desc=f"Self Play rank {dp_rank}", leave=True)
         while len(parallel_searches) > 0:
             # TODO need to clear the session memory in the server
             count += 1
@@ -470,7 +463,7 @@ class DeepSearch:
                 #  get the value and termination condition from the current taken `action`
                 text = self.mcts.decode_text(spg.state)
                 pb.write(text)
-                value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, i + 1)
+                value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, count)
 
                 if is_terminal:
                     # loop through all the steps and add to the memory
@@ -503,14 +496,20 @@ class DeepSearch:
 
             if self.save_flag:
                 if self.strategy is not None:
-                    pb.write(f"saving the search to disk {filename} and {filename2}")
-                    with open(filename, "wb") as f:
-                        pickle.dump(parallel_searches, f)
-                        pickle.dump(count, f)
-                        pickle.dump(backup_root_states, f)
-                        pickle.dump(return_memory, f)
-                        pickle.dump(return_value_memory, f)
-                    self.strategy.seraialize_cache(filename2)
+                    pb.write(f"saving the search to disk {filename}")
+
+                    preemptable_save(
+                        {
+                            "parallel_searches": parallel_searches,
+                            "count": count,
+                            "backup_root_states": backup_root_states,
+                            "return_memory": return_memory,
+                            "return_value_memory": return_value_memory,
+                        }
+                        | self.strategy.state_dict(),
+                        filename,
+                    )
+                    print("#### SAVING CACHE TO", filename)
                     # only save one
                 self.save_flag = False
 

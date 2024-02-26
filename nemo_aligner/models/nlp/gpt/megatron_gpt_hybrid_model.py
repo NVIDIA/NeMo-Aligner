@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 import warnings
 from collections import OrderedDict
 
@@ -35,7 +36,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transfor
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.mappings import gather_from_tensor_model_parallel_region
 from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
-from megatron.core.utils import divide
+from megatron.core.utils import divide, get_attr_wrapped_model
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
@@ -74,6 +75,229 @@ def compute_masked_per_sample_average(tensor, mask, dim=-1):
     loss = (tensor * mask).sum(dim=dim)
     mask_num = mask.sum(dim=dim)
     return (loss / mask_num).mean()
+
+
+def find_number_after_prefix(string, prefix):
+    # Define the regex pattern to match the prefix followed by a number
+    pattern = re.compile(rf"{re.escape(prefix)}(\d+)(.*)")
+
+    # Search for the pattern in the string
+    match = pattern.search(string)
+
+    # If a match is found, return the number (group 1 of the match)
+    if match:
+        return match.group(1), match.group(2)
+    else:
+        return None
+
+
+class FakeState:
+    def __init__(self, policy_optimizer, value_optimizer):
+        self.policy_optimizer = policy_optimizer
+        self.value_optimizer = value_optimizer
+
+    def __getitem__(self, key):
+        if key[0] == "value":
+            key = key[1]
+            return self.value_optimizer.state[key]
+        elif key[0] == "policy":
+            key = key[1]
+            return self.policy_optimizer.state[key]
+        else:
+            raise KeyError(f"Key {key} not found in state")
+
+    def __setitem__(self, key, value):
+        if key[0] == "value":
+            key = key[1]
+            self.value_optimizer.state[key] = value
+        elif key[0] == "policy":
+            key = key[1]
+            self.policy_optimizer.state[key] = value
+        else:
+            raise KeyError(f"Key {key} not found in state")
+
+    def __delitem__(self, key):
+        if key[0] == "value":
+            key = key[1]
+            del self.value_optimizer.state[key]
+        elif key[0] == "policy":
+            key = key[1]
+            del self.policy_optimizer.state[key]
+        else:
+            raise KeyError(f"Key {key} not found in state")
+
+    def __contains__(self, key):
+        if key[0] == "value":
+            key = key[1]
+            return key in self.value_optimizer.state
+        elif key[0] == "policy":
+            key = key[1]
+            return key in self.policy_optimizer.state
+        else:
+            return False
+
+    def __iter__(self):
+        # iter both states
+        for key in self.policy_optimizer.state:
+            yield ("policy", key)
+        for key in self.value_optimizer.state:
+            yield ("value", key)
+
+    def __len__(self):
+        return len(self.policy_optimizer.state) + len(self.value_optimizer.state)
+
+    def keys(self):
+        return [("policy", key) for key in self.policy_optimizer.state] + [
+            ("value", key) for key in self.value_optimizer.state
+        ]
+
+    def values(self):
+        return list(self.policy_optimizer.state.values()) + list(self.value_optimizer.state.values())
+
+    def items(self):
+        return [(("policy", key), value) for key, value in self.policy_optimizer.state.items()] + [
+            (("value", key), value) for key, value in self.value_optimizer.state.items()
+        ]
+
+
+class FakeSaveScheduler(LRScheduler):
+    def __init__(self, optimizer: Optimizer, policy_scheduler, value_scheduler) -> None:
+        self.optimizer = optimizer
+        self.policy_scheduler = policy_scheduler
+        self.value_scheduler = value_scheduler
+
+    @property
+    def last_epoch(self):
+        return (self.policy_scheduler.last_epoch, self.value_scheduler.last_epoch)
+
+    def step(self, epoch: int | None = ...) -> None:
+        self.policy_scheduler.step(epoch[0])
+        self.value_scheduler.step(epoch[1])
+
+    def state_dict(self) -> Dict[str, Any]:
+        state1 = self.policy_scheduler.state_dict()
+        state2 = self.value_scheduler.state_dict()
+        output = OrderedDict()
+        for k, v in state1.items():
+            output[("policy", k)] = v
+        for k, v in state2.items():
+            output[("value", k)] = v
+        return output
+
+    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
+        state1 = {}
+        state2 = {}
+        for k, v in state_dict.items():
+            if k[0] == "policy":
+                state1[k[1]] = v
+            elif k[0] == "value":
+                state2[k[1]] = v
+            else:
+                raise KeyError(f"Key {k} not found in state")
+        self.policy_scheduler.load_state_dict(state1)
+        self.value_scheduler.load_state_dict(state2)
+
+
+class FakeOptimizer(Optimizable, Optimizer):
+    def __init__(self, policy_optimizer, value_optimizer):
+        self.policy_optimizer = policy_optimizer
+        self.value_optimizer = value_optimizer
+        self.fs = FakeState(policy_optimizer, value_optimizer)
+
+    def zero_grad(self):
+        self.policy_optimizer.zero_grad()
+        self.value_optimizer.zero_grad()
+
+    def _finish_bucket_grad_sync(self):
+        self.policy_optimizer._finish_bucket_grad_sync()
+        self.value_optimizer._finish_bucket_grad_sync()
+
+    def allreduce_main_grads(self):
+        self.policy_optimizer.allreduce_main_grads()
+        self.value_optimizer.allreduce_main_grads()
+
+    def try_grad_sync(self, params=None):
+        if self.policy_optimizer.overlap_grad_sync:
+            params = self.policy_optimizer.parameters()
+            self.policy_optimizer.try_grad_sync(params)
+        if self.value_optimizer.overlap_grad_sync:
+            params = self.value_optimizer.parameters()
+            self.value_optimizer.try_grad_sync(params)
+
+    def sharded_state_dict(self, model_sharded_state_dict):
+        state1 = self.policy_optimizer.sharded_state_dict(model_sharded_state_dict)
+        state2 = self.value_optimizer.sharded_state_dict(model_sharded_state_dict)
+        output = OrderedDict()
+        for k, v in state1.items():
+            output[("policy", k)] = v
+        for k, v in state2.items():
+            output[("value", k)] = v
+        return output
+
+    def state_dict(self):
+        state1 = self.policy_optimizer.state_dict()
+        state2 = self.value_optimizer.state_dict()
+        output = OrderedDict()
+        for k, v in state1.items():
+            output[("policy", k)] = v
+        for k, v in state2.items():
+            output[("value", k)] = v
+        return output
+
+    def load_state_dict(self, state_dict):
+        value_state_dict = {}
+        policy_state_dict = {}
+        for k, v in state_dict.items():
+            if k[0] == "policy":
+                policy_state_dict[k[1]] = v
+            elif k[0] == "value":
+                value_state_dict[k[1]] = v
+            else:
+                raise KeyError(f"Key {k} not found in state")
+        self.policy_optimizer.load_state_dict(policy_state_dict)
+        self.value_optimizer.load_state_dict(value_state_dict)
+
+    @property
+    def state(self):
+        return self.fs
+
+    @property
+    def no_sync(self):
+        return self.policy_optimizer.no_sync
+
+    @property
+    def overlap_grad_sync(self):
+        return self.policy_optimizer.overlap_grad_sync or self.value_optimizer.overlap_grad_sync
+
+
+def compute_optim_kwargs(megatron_amp_O2, autocast_dtype, named_parameters):
+    optim_kwargs = {}
+    # Allocate contiguous buffer to avoid extra copies
+    optim_kwargs["contiguous_grad_buffer"] = True
+
+    # Make sure optimizer state is in FP32
+    optim_dtype = torch.float32
+    optim_kwargs["dtype"] = optim_dtype
+
+    # Make sure embedding grad reductions are in FP32
+    for name, param in named_parameters:
+        if "word_embedding" in name or "position_embedding" in name or "output_layer" in name:
+            param._with_fp32_optimizer = True
+
+    # Match param allgather with model dtype
+    model_dtype = torch.float32
+    model_dtype = autocast_dtype
+    optim_kwargs["param_sync_dtype"] = model_dtype
+
+    # Determine whether to store master params in optimizer
+    if optim_dtype == model_dtype:
+        optim_kwargs["store_params"] = False
+    elif optim_dtype == torch.float32 and model_dtype == torch.bfloat16 and megatron_amp_O2:
+        optim_kwargs["store_params"] = False
+        optim_kwargs["store_param_remainders"] = True
+    else:
+        optim_kwargs["store_params"] = True
+    return optim_kwargs
 
 
 class MegatronGPTHybridModel(MegatronGPTModel):
@@ -176,6 +400,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         if batch["train_mode"][0] == TrainMode.POLICY_ONLY and (self.policy_loss_weight > 0):
             # slow on TP
             logits = gather_from_tensor_model_parallel_region(logits)
+            logits = logits[..., : self.tokenizer.vocab_size]
             log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
 
             actions = batch["actions"]
@@ -372,7 +597,28 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     key.replace("model.", ""): checkpoint_state_dict.pop(key)
                     for key in list(checkpoint_state_dict.keys())
                 }
-                module.load_state_dict(checkpoint_state_dict, strict=False)
+
+                layer_offset = len(get_attr_wrapped_model(self.model, "decoder").submodules.layer_specs)
+
+                with torch.no_grad():
+                    print("#### PRE LOAD VALUE", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
+                    print("#### PRE LOAD STEM", self.model.module.decoder.layers[0].mlp.linear_fc1.weight.sum())
+
+                modified_dict = {}
+                prefix_to_use = "value_head.layers."
+
+                for k, v in checkpoint_state_dict.items():
+                    output = find_number_after_prefix(k, prefix=prefix_to_use)
+
+                    if output is not None:
+                        num, rest_to_use = output
+                        k = "{}{}{}".format(prefix_to_use, int(num) - layer_offset, rest_to_use)
+                    modified_dict[k] = v
+
+                module.load_state_dict(modified_dict, strict=self.cfg.from_mcts_trained)
+                with torch.no_grad():
+                    print("#### POST LOAD VALUE", self.model.module.value_head.layers[0].mlp.linear_fc1.weight.sum())
+                    print("#### POST LOAD STEM", self.model.module.decoder.layers[0].mlp.linear_fc1.weight.sum())
         else:
             # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
             # see NLPModel.on_load_checkpoint

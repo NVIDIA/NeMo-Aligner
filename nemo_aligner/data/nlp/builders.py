@@ -312,6 +312,38 @@ def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg):
     )
 
 
+class TrueMegatronPretrainingRandomBatchSampler(MegatronPretrainingRandomBatchSampler):
+    def __iter__(self):
+        active_total_samples = self.total_samples - self.last_batch_size
+        self.epoch = self.consumed_samples // active_total_samples
+        current_epoch_samples = self.consumed_samples % active_total_samples
+        assert current_epoch_samples % (self.micro_batch_size * self.data_parallel_size) == 0
+
+        # data sharding and random sampling
+        bucket_size = (self.total_samples // (self.micro_batch_size * self.data_parallel_size)) * self.micro_batch_size
+        bucket_offset = current_epoch_samples // self.data_parallel_size
+        start_idx = self.data_parallel_rank * bucket_size
+
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+        shuffle_map = torch.randperm(self.total_samples, generator=g).tolist()
+
+        fixed_idx = list(range(bucket_size))
+        idx_range = [start_idx + x for x in fixed_idx[bucket_offset:]]
+
+        batch = []
+        # Last batch if not complete will be dropped.
+        for idx in idx_range:
+            batch.append(shuffle_map[idx])
+            if len(batch) == self._global_batch_size_on_this_data_parallel_rank:
+                self.consumed_samples += self._global_batch_size
+                yield batch
+                batch = []
+        # Check the last partial batch and see drop_last is set
+        if len(batch) > 0 and not self.drop_last:
+            yield batch
+
+
 def build_dataloader(
     cfg,
     dataset,
@@ -330,7 +362,7 @@ def build_dataloader(
     extra_kwargs = {}
     # Megatron sampler
     if shuffle:
-        cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
+        cls = TrueMegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
         extra_kwargs["seed"] = cfg.model.seed
     else:
         cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
