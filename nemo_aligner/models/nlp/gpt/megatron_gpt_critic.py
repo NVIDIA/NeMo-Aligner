@@ -116,7 +116,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         # validation step is not used
         def fwd_output_and_loss_func(data_iterator, model):
             batch = next(data_iterator)
-            tokens = batch["tokens"]
+            tokens = batch["tokens"].cuda()
             returns = batch["returns"]
             prev_values = batch["prev_values"]
             mask = batch["mask"]
@@ -125,7 +125,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
                 tokens, self.tokenizer.eos_id, False, True, False,
             )
 
-            attention_mask = attention_mask[0:1].cuda(non_blocking=True)
+            attention_mask = attention_mask[0:1]
 
             # when using PP, set the unused variables to None just to be safe
             if parallel_state.get_pipeline_model_parallel_world_size() > 1:
