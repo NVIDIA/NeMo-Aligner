@@ -332,28 +332,51 @@ def main(cfg) -> None:
 
     search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
 
-    # start the worker on the rank  assumes tp=1,pp=1,dp=1
+    # start the worker on the rank
     start_worker(search_func, collate_func, save_dir, ds, cfg)
 
 
 def start_worker(search_func, collate_func, save_path, ds, cfg):
-    app = Celery("tasks", backend="rpc://", broker="pyamqp://guest@10.110.40.145:5672//")
+    if torch.distributed.get_rank() == 0:
+        app = Celery("tasks", backend="rpc://", broker="pyamqp://guest@10.110.40.145:5672//")
 
-    app.conf.task_acks_late = True
+        app.conf.task_acks_late = True
 
-    @app.task
-    def search_for_batch(batch_idx):
-        searcher = MCTSSearchOneBatch(
-            search_func=search_func,
-            collate_func=collate_func,
-            save_path=save_path,
-            dataset=ds,
-            cache_dir=cfg.model.mcts.cache_dir,
-        )
-        searcher.search(batch_idx)
-        return batch_idx
+        @app.task
+        def search_for_batch(batch_idx):
+            batch_size = torch.tensor([len(batch_idx)], dtype=torch.int64).cuda()
+            torch.distributed.broadcast(batch_size, 0)
+            batch_idx = torch.tensor(batch_idx, dtype=torch.int64).cuda()
+            torch.distributed.broadcast(batch_idx, 0)
+            batch_idx = batch_idx.tolist()
+            # braodcast the
+            searcher = MCTSSearchOneBatch(
+                search_func=search_func,
+                collate_func=collate_func,
+                save_path=save_path,
+                dataset=ds,
+                cache_dir=cfg.model.mcts.cache_dir,
+            )
+            searcher.search(batch_idx)
+            return batch_idx
 
-    app.worker_main(["worker", "--loglevel=INFO", "--concurrency=1", "--pool=solo"])
+        app.worker_main(["worker", "--loglevel=INFO", "--concurrency=1", "--pool=solo"])
+    else:
+        while True:
+            batch_size = torch.tensor([0], dtype=torch.int64).cuda()
+            torch.distributed.broadcast(batch_size, 0)
+            batch_size = batch_size.tolist()[0]
+            batch_idx = torch.tensor([0] * batch_size, dtype=torch.int64).cuda()
+            torch.distributed.broadcast(batch_idx, 0)
+            batch_idx = batch_idx.tolist()
+            searcher = MCTSSearchOneBatch(
+                search_func=search_func,
+                collate_func=collate_func,
+                save_path=save_path,
+                dataset=ds,
+                cache_dir=cfg.model.mcts.cache_dir,
+            )
+            searcher.search(batch_idx)
 
 
 if __name__ == "__main__":
