@@ -340,6 +340,8 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url):
         app = Celery("tasks", backend="rpc://", broker=f"{url}")
 
         app.conf.task_acks_late = True
+        # 5 hrs timeout
+        app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
 
         @app.task
         def search_for_batch(batch_idx):
