@@ -126,7 +126,7 @@ def main(cfg):
     search_for_batch = get_search_for_batch(cfg.server_url)
 
     results = [search_for_batch.delay(data.tolist()) for data in data_id_list]
-    global_pbar = tqdm(total=total, desc="Search Global Progress")
+    global_pbar = tqdm(total=len(non_processed_ids), desc="Search Global Progress")
     while len(results) > 0:
         for subtask in results:  # Iterate over a copy of the list
             try:
