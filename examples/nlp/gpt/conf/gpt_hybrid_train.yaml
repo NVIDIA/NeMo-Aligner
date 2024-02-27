@@ -33,9 +33,9 @@ pretrained_checkpoint:
 mcts_data_file: null
 
 dataset:
-    name: gsm8k
-    split: train
-    prompt_template_name: ''
+  name: gsm8k
+  split: train
+  prompt_template_name: ''
  
 model:
   from_mcts_trained: ${pretrained_checkpoint.from_mcts_trained}

@@ -275,9 +275,10 @@ class MCTSParallel:
                 spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
                 spg.root.expand(spg_policy, spg_action)
 
-        dp_rank = parallel_state.get_data_parallel_rank()
+        # dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
-        for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False):
+        # for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False):
+        for search in range(self.args["num_searches"]):
             for spg in ps:
                 # spg.node is to save the node that needs to be expanded
                 spg.node = None
@@ -381,19 +382,12 @@ class DeepSearch:
         self.save_flag = True
 
     def search(self, parallel_searches: List[ParallelSearch], filename):
-
         dp_rank = parallel_state.get_data_parallel_rank()
         # clear the cache
         self.mcts.cache = {}
         # serialize the partial result to disk
 
         if self.cache_dir is not None:
-            # create the cache dir if it does not exist
-            if torch.distributed.get_rank() == 0:
-                if not os.path.exists(self.cache_dir):
-                    os.makedirs(self.cache_dir, exist_ok=True)
-            torch.distributed.barrier()
-
             filename = os.path.join(self.cache_dir, filename)
 
         # equavalent to the alpha zero self play

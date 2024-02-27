@@ -314,9 +314,6 @@ def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg):
 
 class TrueMegatronPretrainingRandomBatchSampler(MegatronPretrainingRandomBatchSampler):
     def __iter__(self):
-        g = torch.Generator()
-        g.manual_seed(self.seed + self.epoch)
-        shuffle_map = torch.randperm(self.total_samples, generator=g).tolist()
         active_total_samples = self.total_samples - self.last_batch_size
         self.epoch = self.consumed_samples // active_total_samples
         current_epoch_samples = self.consumed_samples % active_total_samples
@@ -326,6 +323,10 @@ class TrueMegatronPretrainingRandomBatchSampler(MegatronPretrainingRandomBatchSa
         bucket_size = (self.total_samples // (self.micro_batch_size * self.data_parallel_size)) * self.micro_batch_size
         bucket_offset = current_epoch_samples // self.data_parallel_size
         start_idx = self.data_parallel_rank * bucket_size
+
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+        shuffle_map = torch.randperm(self.total_samples, generator=g).tolist()
 
         fixed_idx = list(range(bucket_size))
         idx_range = [start_idx + x for x in fixed_idx[bucket_offset:]]

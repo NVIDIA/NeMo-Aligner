@@ -317,10 +317,14 @@ class DatasetWrapper:
 def get_dataset(dataset_name, split, template_name):
     assert dataset_name == "gsm8k"
     dataset = load_dataset("gsm8k", "main")
+
     if template_name == "steerlm":
         template = steerlm_template
-    else:
+    elif template_name == "mistral":
         template = prompt_template
+    else:
+        raise NotImplementedError(f"template {template_name} is not supported")
+
     ds = DatasetWrapper(dataset[split], template)
     score_fn = GSK8KFeedbackHF(split=split)
 
@@ -382,6 +386,15 @@ def main(cfg) -> None:
 
     search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
 
+    search_cache_dir = cfg.model.mcts.cache_dir
+
+    if search_cache_dir is not None:
+        # create the cache dir if it does not exist
+        if torch.distributed.get_rank() == 0:
+            if not os.path.exists(search_cache_dir):
+                os.makedirs(search_cache_dir, exist_ok=True)
+        torch.distributed.barrier()
+
     searcher = MCTSSearch(
         search_func=search_func,
         collate_func=collate_func,
@@ -392,7 +405,7 @@ def main(cfg) -> None:
         logger=logger,
         run_timer=timer,
         save_interval=cfg.trainer.deep_search.save_interval,
-        cache_dir=cfg.model.mcts.cache_dir,
+        cache_dir=search_cache_dir,
     )
 
     searcher.search()
