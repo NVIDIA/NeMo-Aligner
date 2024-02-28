@@ -325,10 +325,6 @@ def build_dataloader(
 ):
     """Buld dataloader given an input dataset."""
 
-    def create_batch_sampler(cls, **kwargs):
-        """Helper function to create a batch sampler."""
-        return cls(**kwargs)
-
     logging.info(f"Building dataloader with consumed samples: {consumed_samples}")
     # Common parameters for batch sampler creation
     common_params = {
@@ -346,10 +342,10 @@ def build_dataloader(
     if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type == "single":
         if use_random_sampler:
             cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
+            common_params['seed'] = cfg.model.seed
         else:
-            cls = MegatronPretrainingSampler
-
-        batch_sampler = create_batch_sampler(cls, **common_params, seed=cfg.model.seed if use_random_sampler else None)
+            cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+        batch_sampler = cls(**common_params)
     else:
         raise ValueError(
             'cfg.model.data.dataloader_type` must be set to "single"
