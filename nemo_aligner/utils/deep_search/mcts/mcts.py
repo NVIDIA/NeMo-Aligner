@@ -379,6 +379,7 @@ class DeepSearch:
         self.timer.start()
 
     def save_data(self):
+        print("### TIMER TRIGGER")
         self.save_flag = True
 
     def search(self, parallel_searches: List[ParallelSearch], filename):
