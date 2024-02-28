@@ -39,7 +39,12 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.utils import configure_batch_sizes, cpu_weight_swap, make_sharded_optimizer_tensor_and_state, offload_distributed_adam
+from nemo_aligner.utils.utils import (
+    configure_batch_sizes,
+    cpu_weight_swap,
+    make_sharded_optimizer_tensor_and_state,
+    offload_distributed_adam,
+)
 
 
 class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
@@ -397,23 +402,23 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             self.distributed_adam_offload_manager.__exit__(None, None, None)
 
         self.distributed_adam_offload_manager = None
-    
+
     # Alternative 1: swap in the ref weights and create a custom key which then needs to be handled in the loader
-    def sharded_state_dict_alt_1(self, prefix: str = ''):
+    def sharded_state_dict_alt_1(self, prefix: str = ""):
         sharded_state_dict_orig = super().sharded_state_dict(prefix=prefix)
-        
+
         if self.ref_policy_state_dict is None:
             return sharded_state_dict_orig
-        
+
         sharded_state_dict_new = {}
         with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
-            module_prefix = f'{prefix}ref_policy_model.'
+            module_prefix = f"{prefix}ref_policy_model."
             for index, module in enumerate(self.get_gpt_module_list()):
                 if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
                     # virtual pipline rank must be set so that GPTModel returns the correct sharded state dict
                     parallel_state.set_virtual_pipeline_model_parallel_rank(index)
                     module_sharded_state_dict = module.sharded_state_dict(prefix=module_prefix)
-                    sharded_state_dict_new[f'ref_policy_model_{index}'] = module_sharded_state_dict
+                    sharded_state_dict_new[f"ref_policy_model_{index}"] = module_sharded_state_dict
                 else:
                     module_sharded_state_dict = module.sharded_state_dict(prefix=module_prefix)
                     sharded_state_dict_new.update(module_sharded_state_dict)
@@ -421,22 +426,26 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             # reset vp rank
             if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
                 parallel_state.set_virtual_pipeline_model_parallel_rank(0)
-        
+
         return sharded_state_dict_orig | sharded_state_dict_new
-    
+
     # Alternative 2: use make_sharded_optimizer_tensor to link the TP/PP/DP info, but this may break under VP logic
-    def sharded_state_dict(self, prefix: str = ''):
+    def sharded_state_dict(self, prefix: str = ""):
         sharded_state_dict_orig = super().sharded_state_dict(prefix=prefix)
-        
+
         if self.ref_policy_state_dict is not None:
             # Link ref_policy keys with sharded_state_dict to reuse sharding information
             ref_policy_sharded_state_dict = {}
             for k in self.ref_policy_state_dict:
                 key = k.replace("model.module.", "model.", 1) if self.megatron_amp_O2 else k
-                assert key in sharded_state_dict_orig, f"key [ {key} ] exists in ref_policy but not in sharded_state_dict_orig" # may fail due to nesting?
-                ref_policy_sharded_state_dict[k] = make_sharded_optimizer_tensor_and_state(sharded_state_dict_orig[key], self.ref_policy_state_dict[k], 'reference_policy')
-            sharded_state_dict_orig['reference_policy'] = ref_policy_sharded_state_dict
-        
+                assert (
+                    key in sharded_state_dict_orig
+                ), f"key [ {key} ] exists in ref_policy but not in sharded_state_dict_orig"  # may fail due to nesting?
+                ref_policy_sharded_state_dict[k] = make_sharded_optimizer_tensor_and_state(
+                    sharded_state_dict_orig[key], self.ref_policy_state_dict[k], "reference_policy"
+                )
+            sharded_state_dict_orig["reference_policy"] = ref_policy_sharded_state_dict
+
         return sharded_state_dict_orig
 
     # use this version for alternative 1
@@ -468,9 +477,12 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                     }
                     ref_policy = ref_state_dict
                     if ref_policy is not None and len(ref_policy) > 0:
-                        #param_mean_ref = sum([v.mean().item() for k,v in ref_policy.items() if isinstance(v, torch.Tensor)])
-                        #print(f"*** REF_MEAN_LOAD_RAW: {param_mean_ref}", flush=True)
-                        self.ref_policy_state_dict = {("model."+("module." if self.megatron_amp_O2 else "")+k):v for k,v in ref_policy.items()}
+                        # param_mean_ref = sum([v.mean().item() for k,v in ref_policy.items() if isinstance(v, torch.Tensor)])
+                        # print(f"*** REF_MEAN_LOAD_RAW: {param_mean_ref}", flush=True)
+                        self.ref_policy_state_dict = {
+                            ("model." + ("module." if self.megatron_amp_O2 else "") + k): v
+                            for k, v in ref_policy.items()
+                        }
                     module.load_state_dict(checkpoint_state_dict, strict=True)
             else:
                 # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
@@ -484,7 +496,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                     parallel_state.set_virtual_pipeline_model_parallel_rank(i)
                     self.model[i].module.load_state_dict(checkpoint[f"model{i}"], strict=True)
                 parallel_state.set_virtual_pipeline_model_parallel_rank(0)
-    
+
     # use this one for alternative 2
     def on_load_checkpoint(self, checkpoint) -> None:
         """LightningModule hook:
@@ -507,8 +519,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                     }
                     ref_policy = checkpoint_state_dict.pop("reference_policy", None)
                     if ref_policy is not None and len(ref_policy) > 0:
-                        #param_mean_ref = sum([v.mean().item() for k,v in ref_policy.items() if isinstance(v, torch.Tensor)])
-                        #print(f"*** REF_MEAN_LOAD_RAW: {param_mean_ref}", flush=True)
+                        # param_mean_ref = sum([v.mean().item() for k,v in ref_policy.items() if isinstance(v, torch.Tensor)])
+                        # print(f"*** REF_MEAN_LOAD_RAW: {param_mean_ref}", flush=True)
                         self.ref_policy_state_dict = ref_policy
                     module.load_state_dict(checkpoint_state_dict, strict=True)
             else:

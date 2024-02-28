@@ -73,8 +73,8 @@ def main(cfg) -> None:
             ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
         ptl_model.ref_policy_state_dict = ref_policy_state_dict
-        #param_mean_ref = sum([v.mean().item() for k,v in ptl_model.ref_policy_state_dict.items() if isinstance(v, torch.Tensor)])
-        #print(f"*** ORIG_REF_POLICY [ {param_mean_ref} ]", flush=True)
+        # param_mean_ref = sum([v.mean().item() for k,v in ptl_model.ref_policy_state_dict.items() if isinstance(v, torch.Tensor)])
+        # print(f"*** ORIG_REF_POLICY [ {param_mean_ref} ]", flush=True)
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
@@ -180,8 +180,8 @@ def main(cfg) -> None:
 
     if custom_trainer_state_dict is not None:
         spin_trainer.load_state_dict(custom_trainer_state_dict)
-        #param_mean_ref = sum([v.mean().item() for k,v in ptl_model.ref_policy_state_dict.items() if isinstance(v, torch.Tensor)])
-        #print(f"*** REF_PARAM_MEAN: {param_mean_ref} ***", flush=True)
+        # param_mean_ref = sum([v.mean().item() for k,v in ptl_model.ref_policy_state_dict.items() if isinstance(v, torch.Tensor)])
+        # print(f"*** REF_PARAM_MEAN: {param_mean_ref} ***", flush=True)
 
     spin_trainer.fit()
 
