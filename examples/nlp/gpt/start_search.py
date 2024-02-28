@@ -4,6 +4,7 @@ import pathlib
 import sys
 from typing import Any, Callable, Optional
 
+import amqp
 import torch
 from datasets import load_dataset
 from hydra import TaskFunction
@@ -138,6 +139,8 @@ def main(cfg):
                     # results.children.remove(subtask)  # Remove the subtask from the list
             except TimeoutError:
                 pass
+            except amqp.exceptions.PreconditionFailed:
+                global_pbar.write("RabbitMQ connection failed")
 
 
 if __name__ == "__main__":
