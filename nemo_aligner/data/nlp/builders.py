@@ -352,7 +352,7 @@ def build_dataloader(
         batch_sampler = create_batch_sampler(cls, **common_params, seed=cfg.model.seed if use_random_sampler else None)
     else:
         raise ValueError(
-            'cfg.model.data.dataloader_type must be "single" or cfg.model.data.dataloader_type not found.'
+            'cfg.model.data.dataloader_type` must be set to "single"
         )
 
     return torch.utils.data.DataLoader(
