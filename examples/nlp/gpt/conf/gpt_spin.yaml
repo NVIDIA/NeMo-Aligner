@@ -23,7 +23,7 @@ trainer:
   logger: False # logger provided by exp_manager
   enable_checkpointing: False
   use_distributed_sampler: False
-  max_time: '00:03:45:00'
+  max_time: null
   max_epochs: ${.spin.max_epochs}
   max_steps: ${.spin.max_steps}
 
@@ -71,8 +71,6 @@ model:
       add_BOS: False
       all_probs: False
       compute_logprob: False
-      # will be used in NeMo version > 1.20.0
-      # keeping it for now
       end_strings: ["<|endoftext|>", "<extra_id_1>", "\x11"]
 
     # length argument for autoregressive sampling

@@ -24,9 +24,8 @@ from unittest.mock import patch
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
+from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
 from omegaconf import DictConfig, OmegaConf
-
-from megatron.core.dist_checkpointing.mapping import ShardedTensorFactory, ShardedObject
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
@@ -372,13 +371,11 @@ def convert_to_amp_o2_format(state_dict):
 
 def make_sharded_optimizer_tensor_and_state(model_param, optim_param, prefix: str):
     if isinstance(model_param, ShardedTensorFactory):
-        return replace(model_param, key=f'{prefix}.{model_param.key}', data=optim_param)
+        return replace(model_param, key=f"{prefix}.{model_param.key}", data=optim_param)
     if isinstance(model_param, ShardedObject):
-        return replace(model_param, key=f'{prefix}.{model_param.key}', data=optim_param)
+        return replace(model_param, key=f"{prefix}.{model_param.key}", data=optim_param)
 
     assert (
         tuple(optim_param.shape) == model_param.local_shape
-    ), f'Optimizer shape ({tuple(optim_param.shape)} does not match model shape ({model_param.local_shape})'
-    return replace(
-        model_param, key=f'{prefix}.{model_param.key}', data=optim_param, dtype=optim_param.dtype
-    )
+    ), f"Optimizer shape ({tuple(optim_param.shape)} does not match model shape ({model_param.local_shape})"
+    return replace(model_param, key=f"{prefix}.{model_param.key}", data=optim_param, dtype=optim_param.dtype)

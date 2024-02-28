@@ -405,7 +405,7 @@ class SPINTrainer:
                 with cpu_weight_swap(
                     self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
                 ):
-                    # on CPU
+                    # Generation happens on GPU but the returned tensors are on CPU.
                     gen_tokens, gen_lengths = self.get_generations(batch)
                 act_tokens = batch["prompts_and_answers"]
                 act_lengths = batch["combined_lengths"]
