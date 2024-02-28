@@ -35,9 +35,9 @@ mcts_data_file: null
 server_url: ??  # the rabbitmq server url, e.g. pyamqp://guest@localhost:5672//
 
 dataset:
-    name: gsm8k
-    split: train
-    prompt_template_name: ''
+  name: gsm8k
+  split: train
+  prompt_template_name: ''
  
 model:
   from_mcts_trained: ${pretrained_checkpoint.from_mcts_trained}
