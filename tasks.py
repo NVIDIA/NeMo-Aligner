@@ -7,6 +7,7 @@ def get_search_for_batch(url):
     # CELERY_ACKS_LATE = True
     app.conf.task_acks_late = True
     app.conf.worker_deduplicate_successful_tasks = True
+    app.conf.worker_prefetch_multiplier = 1
 
     # 5 hrs timeout
     app.conf.update(broker_transport_options={"visibility_timeout": 18000})

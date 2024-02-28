@@ -341,6 +341,8 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url):
 
         app.conf.task_acks_late = True
         app.conf.worker_deduplicate_successful_tasks = True
+        app.conf.worker_prefetch_multiplier = 1
+
         # 5 hrs timeout
         app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
 
@@ -362,7 +364,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url):
             searcher.search(batch_idx)
             return batch_idx
 
-        app.worker_main(["worker", "--loglevel=INFO", "--concurrency=1", "--pool=threads"])
+        app.worker_main(["worker", "--loglevel=INFO", "--concurrency=1", "--pool=threads", "-Ofair"])
     else:
         while True:
             batch_size = torch.tensor([0], dtype=torch.int64).cuda()
