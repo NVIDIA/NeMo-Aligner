@@ -364,7 +364,17 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url):
             searcher.search(batch_idx)
             return batch_idx
 
-        app.worker_main(["worker", "--loglevel=INFO", "--concurrency=1", "--pool=threads", "-Ofair"])
+        RAND_ID = os.environ.get("local_rank", random.randint(0, 10000))
+        app.worker_main(
+            [
+                "worker",
+                "--loglevel=INFO",
+                "--concurrency=1",
+                "--pool=threads",
+                "-Ofair",
+                f"--hostname=worker-{RAND_ID}@%%h",
+            ]
+        )
     else:
         while True:
             batch_size = torch.tensor([0], dtype=torch.int64).cuda()
