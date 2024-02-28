@@ -187,29 +187,6 @@ class SPINTrainer:
 
         return loss_mean, {**metrics, **trainer_metrics}
 
-    def _run_inference(self, dataloader_iter, num_microbatches, is_validation):
-        """this function is run per DP so the metrics need to be computed globally
-        """
-        rollout_batches = []
-
-        for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
-            rollout_batch = self.model.infer(inference_batch)
-
-            rollout_batches.append(rollout_batch)
-
-        if not is_validation and self.compute_init_policy_kl:
-            init_policy_logprobs = self.model.get_init_policy_logprobs(rollout_batches)
-
-            if init_policy_logprobs is not None:
-                assert len(init_policy_logprobs) == len(
-                    rollout_batches
-                ), "init policy log probs must be same size as rollout batches"
-
-                for init_logprobs, rollout_batch in zip(init_policy_logprobs, rollout_batches):
-                    rollout_batch["init_logprobs"] = init_logprobs
-
-        return rollout_batches
-
     @torch.no_grad()
     def get_generations(self, batch):
         self.model.prepare_for_inference()
@@ -317,7 +294,7 @@ class SPINTrainer:
 
                     # TODO(geshen): maybe use the dataloader instead
                     # bump up the consumed samples but not the step
-                    self.consumed_samples += self.model.cfg.global_batch_size
+                    self.consumed_samples += self.model.cfg.data.train_ds.global_batch_size
                     metrics["consumed_samples"] = self.consumed_samples
                     metrics["step_time"] = train_step_time
                     metrics["epoch"] = self.epoch
@@ -369,8 +346,8 @@ class SPINTrainer:
         self.logger.finalize()
 
     def save(self, extra_candidates=None, is_train_end=False):
-        self.model.prepare_for_training()
         # load back in the adam states if needed
+        self.model.prepare_for_training()
         torch.cuda.synchronize()
         torch.distributed.barrier()
 
@@ -491,7 +468,7 @@ class SPINTrainer:
 
                 yield new_batch
 
-                del logprobs, act_logps, gen_logps
+                del logprobs, act_logps, gen_logps, new_batch
             except StopIteration:
                 done = True
 

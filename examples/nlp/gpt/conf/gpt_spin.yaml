@@ -9,8 +9,8 @@ trainer:
   
   # spin specific args
   spin:
-    max_iterations: 3
-    max_epochs: 1  # use this to control the number of episodes played (T in the original paper)
+    max_iterations: 3   # the number of iterations (rounds) for which the SPIN "game" is played. This is T in the original paper
+    max_epochs: 1       # the number of epochs to use per iteration. In the paper, they do 3 iterations with 2 epochs per iteration
     max_steps: -1
     val_check_interval: 0.1
     save_interval: 100
@@ -54,8 +54,6 @@ pretrained_checkpoint:
 
 model:  
   mcore_gpt: True
-  micro_batch_size: 1
-  global_batch_size: 64
   megatron_amp_O2: True
 
   spin:
@@ -129,8 +127,8 @@ model:
       # Example of how each dataset is formatted
       # {'input': 'John von Neumann\nVon Neumann made fundamental contributions .... Q: What did the math of artificial viscosity do?', 'output': 'smoothed the shock transition without sacrificing basic physics'}
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
-      global_batch_size: ${model.global_batch_size}
-      micro_batch_size: ${model.micro_batch_size}
+      global_batch_size: 64
+      micro_batch_size: 1
       shuffle: True
       memmap_workers: null
       max_seq_length: 4096

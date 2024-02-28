@@ -44,7 +44,12 @@ from nemo_aligner.utils.utils import configure_batch_sizes, cpu_weight_swap, mak
 
 class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
     """
-    Megatron GPT SPIN Model Training.
+    Megatron GPT SPIN Model Training
+    Adapted from the paper Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models (Chen, et al, 2024)
+    https://arxiv.org/abs/2401.01335
+    
+    Our implementation differs in that we do not have a scheduler for the KL divergence parameter and we do not currently
+    inject generations from iteration t-1 into iteration t.
     """
 
     def __init__(self, cfg: DictConfig, trainer: Trainer):
@@ -225,7 +230,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.micro_batch_size
+            micro_batch_size=self.cfg.data.train_ds.micro_batch_size
             * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
         )
 
@@ -286,8 +291,13 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         return loss_mean.item(), metrics
 
     def get_loss_and_metrics_vanilla_sft(self, batch, forward_only):
-        """Take a data_iter which is an interator over the microbatches
-            and return loss as well as metrics
+        """Take a local batch as input and returns loss and metrics for a vanilla SFT loss
+           meaning the loss for standard SFT and NOT SPIN loss. This is to speed up validation,
+           as it can be argued that the goal of SPIN is to produce a quality SFT model so we train
+           on SPIN but validate using vanilla SFT loss. This also bypasses needing to do costly generation
+           for validation.
+           
+           TODO: possibly change to SPIN loss for validation once we have TRT-LLM
         """
         seq_length = batch["tokens"].shape[1]
         batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
@@ -308,7 +318,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             model=self.model,
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
-            micro_batch_size=self.cfg.micro_batch_size,
+            micro_batch_size=self.cfg.data.validation_ds.micro_batch_size,
             seq_length=seq_length,
         )
 
@@ -335,8 +345,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
     def prepare_for_training(self):
         configure_batch_sizes(
-            mbs=self.cfg.micro_batch_size,
-            gbs=self.cfg.global_batch_size,
+            mbs=self.cfg.data.train_ds.micro_batch_size,
+            gbs=self.cfg.data.train_ds.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
         self.onload_adam_states()
@@ -350,8 +360,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
     def prepare_for_validation(self):
         configure_batch_sizes(
-            mbs=self.cfg.micro_batch_size,
-            gbs=self.cfg.global_batch_size,
+            mbs=self.cfg.data.validation_ds.micro_batch_size,
+            gbs=self.cfg.data.validation_ds.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
 
