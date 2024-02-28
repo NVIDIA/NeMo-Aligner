@@ -23,7 +23,7 @@ trainer:
   logger: False # logger provided by exp_manager
   enable_checkpointing: False
   use_distributed_sampler: False
-  max_time: '00:03:45:00'
+  max_time: null
   max_epochs: ${.spin.max_epochs}
   max_steps: ${.spin.max_steps}
 
