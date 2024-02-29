@@ -367,7 +367,7 @@ class DeepSearchTrainer:
         value_steps = [True] * max_steps_value + [False] * (max_steps - max_steps_value)
         policy_steps = [True] * max_steps_policy + [False] * (max_steps - max_steps_policy)
 
-        g = random.Random(max_steps)
+        g = random.Random(self.epoch)
         g.shuffle(value_steps)
         g.shuffle(policy_steps)
 
