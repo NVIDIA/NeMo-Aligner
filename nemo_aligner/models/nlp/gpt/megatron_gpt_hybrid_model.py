@@ -362,6 +362,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     extra_arg["set_inference_key_value_memory"] = set_inference_key_value_memory[0].item()
                     extra_arg["inference_max_sequence_len"] = inference_max_sequence_len[0].item()
             output_tensor, value = model(tokens, position_ids, attention_mask, **extra_arg)
+            value = value.sigmoid()
 
             # Advance inference sequence offset.
             if self.inference_params:
