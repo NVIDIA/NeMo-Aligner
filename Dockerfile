@@ -1,4 +1,4 @@
-# CUDA 12.2
+# CUDA 12.3
 FROM nvcr.io/nvidia/pytorch:24.01-py3
 
 ### config tags
