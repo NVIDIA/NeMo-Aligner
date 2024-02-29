@@ -18,7 +18,7 @@ import torch
 from omegaconf import OmegaConf
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo.collections.nlp.modules.common.megatron.megatron_init import fake_initialize_model_parallel
 from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy, NLPSaveRestoreConnector
 from nemo.core.config import hydra_runner
@@ -105,7 +105,7 @@ def main(cfg) -> None:
             "megatron_amp_O2": cfg.get("megatron_amp_O2", False),
             "tokenizer": cfg.tokenizer,
         }
-        model = MegatronGPTModel.load_from_checkpoint(
+        model = MegatronGPTHybridModel.load_from_checkpoint(
             checkpoint_path, hparams_file=None, trainer=trainer, **overwrite_cfg
         )
     else:
