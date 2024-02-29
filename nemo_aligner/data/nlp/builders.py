@@ -23,6 +23,8 @@ from functools import partial
 import numpy as np
 import torch
 from megatron.core import parallel_state
+from megatron.core.utils import divide
+
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
@@ -317,18 +319,18 @@ def build_dataloader(
 ):
     """Buld dataloader given an input dataset."""
 
-    # if cfg.model.ppo.use_trtllm and parallel_state.get_pipeline_model_parallel_world_size() > 0:
-    #     from nemo.utils import AppState
-    #     app_state = AppState()
+    #TRTLLM resharding
+    if cfg.model.ppo.use_trtllm and parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        from nemo.utils import AppState
+        app_state = AppState()
 
-    #     #reshard away PP
-    #     data_parallel_size = torch.distributed.get_world_size() // parallel_state.get_tensor_model_parallel_world_size()
-    #     data_parallel_rank = app_state.global_rank // parallel_state.get_tensor_model_parallel_world_size()
-    #     print(f"adjusting dataloader for TRTLLM PP resharding dpsize - {data_parallel_size} dprank - {data_parallel_rank} {app_state.global_rank}")
+        data_parallel_size = divide(torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size())
+        data_parallel_rank = app_state.global_rank // parallel_state.get_tensor_model_parallel_world_size()
+        print(f"adjusting dataloader for TRTLLM PP resharding to DP {data_parallel_size}; rank {app_state.global_rank} mapped to dprank: {data_parallel_rank} ")
 
-    # else:
-    #     data_parallel_rank=parallel_state.get_data_parallel_rank()
-    #     data_parallel_size=parallel_state.get_data_parallel_world_size()
+    else:
+        data_parallel_rank=parallel_state.get_data_parallel_rank()
+        data_parallel_size=parallel_state.get_data_parallel_world_size()
 
     logging.info(f"Building dataloader with consumed samples: {consumed_samples}")
     # Megatron sampler
@@ -339,8 +341,8 @@ def build_dataloader(
                 total_samples=len(dataset),
                 consumed_samples=consumed_samples,
                 micro_batch_size=mbs,
-                data_parallel_rank=parallel_state.get_data_parallel_rank(),
-                data_parallel_size=parallel_state.get_data_parallel_world_size(),
+                data_parallel_rank=data_parallel_rank,
+                data_parallel_size=data_parallel_size,
                 drop_last=drop_last,
                 global_batch_size=gbs,
                 pad_samples_to_global_batch_size=pad_samples_to_global_batch_size,

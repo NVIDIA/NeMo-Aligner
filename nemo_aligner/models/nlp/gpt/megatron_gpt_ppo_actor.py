@@ -73,7 +73,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         # sampling parameters for generation
         self._sampling_params = OmegaConf.to_container(self.cfg.ppo.sampling_params, resolve=True)
 
-        self.to_offload_adam_states = self.cfg.ppo.offload_adam_states
+        self.to_offload_adam_states = self.cfg.ppo.offload_adam_states and self.with_distributed_adam
         self.entropy_bonus = self.cfg.ppo.entropy_bonus
         self.ratio_eps = self.cfg.ppo.ratio_eps
         self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
@@ -307,33 +307,22 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             max_sequence_length=self.cfg.encoder_seq_length,
         )
 
-        # TODO(geshen): get nemo generate to return the unaltered log probs
-        log_probs = self.get_inference_log_probs(
-            response_tokens, forward_micro_batch_size=self.forward_micro_batch_size
-        )
-
         rollout_batch = {
             "response_tokens": response_tokens,
             "response_lengths": response_lengths,
             "prompt_lengths": prompt_lengths,
-            "logprobs": log_probs,
         }
 
         # return in GPU, trainer needs to move to cpu
 
         return rollout_batch
 
-    def get_init_policy_logprobs(self, rollout_batches):
-        init_log_probs = []
-        with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
-            for rollout_batch in rollout_batches:
-                init_log_prob = self.get_inference_log_probs(
-                    rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
-                )
-                init_log_probs.append(init_log_prob)
+    def get_logprobs(self, response_tokens):
+        return self.get_inference_log_probs(response_tokens, forward_micro_batch_size=self.forward_micro_batch_size)
 
-        # return in GPU, trainer needs to move to cpu
-        return init_log_probs
+    def get_init_policy_logprobs(self, response_tokens):
+        with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
+            return self.get_logprobs(response_tokens)
 
     def finish_inference(self):
         # training will onload the adam states, no need to onload it here

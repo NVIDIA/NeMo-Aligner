@@ -89,10 +89,17 @@ class GPTGenerateTRTLLM():
                 output_ids = output_ids.squeeze()
             output_ids = output_ids.to(torch.int64)
 
-        group = parallel_state.get_model_parallel_group()
+        #TRTLLM PP resharding
+        if parallel_state.get_pipeline_model_parallel_world_size() > 1:  
+            group = parallel_state.get_tensor_model_parallel_group()
+            src = parallel_state.get_tensor_model_parallel_src_rank()
+        else:
+            group = parallel_state.get_model_parallel_group()
+            src = get_model_parallel_src_rank()
+
         if torch.distributed.get_world_size(group) > 1:
             output_ids = broadcast_2d_tensor(
-                output_ids, get_model_parallel_src_rank(), group, dtype=output_ids.dtype)
+                output_ids, src, group, dtype=output_ids.dtype)
 
         sentences = [self.tokenizer.ids_to_text(output.tolist()) for output in output_ids]
         output_ids = torch.Tensor.tolist(output_ids)
