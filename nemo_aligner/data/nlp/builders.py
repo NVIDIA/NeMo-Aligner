@@ -348,7 +348,7 @@ def build_dataloader(
         batch_sampler = cls(**common_params)
     else:
         raise ValueError(
-            'cfg.model.data.dataloader_type` must be set to "single"
+            '`cfg.model.data.dataloader_type` must be set to "single"'
         )
 
     return torch.utils.data.DataLoader(
