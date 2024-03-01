@@ -198,6 +198,17 @@ def chunks(lst, n):
         yield lst[i : i + n]
 
 
+def get_answer(data):
+    full_text = data["full_text"]
+    context = data["context"]
+    ans = full_text[len(context) :]
+    if ans.endswith("\x11"):
+        ans = ans[: -len("\x11")]
+    if ans.endswith("<extra_id_1>"):
+        ans = ans[: -len("<extra_id_1>")]
+    return ans.strip()
+
+
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg):
     data_path = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
@@ -212,7 +223,8 @@ def main(cfg):
 
     search_for_batch = get_search_for_batch(cfg.server_url)
 
-    eval = EvalMTBenchmark("output", "mt_bench.jsonl")
+    mt_bench_file = os.path.join(cfg.exp_manager.explicit_log_dir, "mt_bench.jsonl")
+    eval = EvalMTBenchmark("output", mt_bench_file)
     first_turn_inputs = {}
     with open(eval.data_file, "r", encoding="utf-8") as f:
         for line in f:
@@ -257,15 +269,12 @@ def main(cfg):
                     input = eval.get_input({"text": obj["turns"][i]})
                 else:
                     input = input + eval.get_next_turn_template().format(**{"text": obj["turns"][i]})
+                    continue
                 if question_id in finished:
-                    full_text = finished[question_id]["full_text"]
-                    context = finished[question_id]["context"]
-                    ans = full_text[len(context) :]
-                    if ans.endswith("\x11"):
-                        ans = ans[: -len("\x11")]
-                    if ans.endswith("<extra_id_1>"):
-                        ans = ans[: -len("<extra_id_1>")]
-                input = input + ans.strip() + "\n"
+                    ans = get_answer(finished[question_id])
+                else:
+                    raise ValueError("The first turn should be finished")
+                input = input + ans + "\n"
             second_turn_inputs[obj["question_id"] + turn_2_offset] = {"turn": 1, "question": input}
     data_points = [
         {"question": v["question"], "answer": "", "data_id": k}
@@ -293,6 +302,27 @@ def main(cfg):
                 pass
             except amqp.exceptions.PreconditionFailed:
                 global_pbar.write("RabbitMQ connection failed")
+
+    all = []
+    # save the final result
+    with open(eval.data_file, "r", encoding="utf-8") as f:
+        for line in f:
+            obj = json.loads(line)
+            obj["choices"] = [{"index": 0, "turns": []}]
+            question_id = obj["question_id"]
+            for i in range(len(obj["turns"])):
+                if i == 0:
+                    ans = get_answer(finished[question_id])
+                    obj["choices"][0]["turns"].append(ans)
+                else:
+                    ans = get_answer(finished[question_id + turn_2_offset])
+                    obj["choices"][0]["turns"].append(ans)
+            all.append(obj)
+
+    with open("output.jsonl", "w", encoding="utf-8") as f:
+        for obj in all:
+            f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
     # results = [search_for_batch.delay(data.tolist()) for data in data_id_list]
 
     # data_id_list = torch.tensor(list(non_processed_ids)).split(
