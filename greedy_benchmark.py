@@ -47,7 +47,7 @@ for data_id in range(0, total_data, batch_size):
 
     input_text = []
     for i in range(batch_size):
-        question = score_fun.ds['train'][data_id + i]["question"]
+        question = score_fun.ds["train"][data_id + i]["question"]
         input_text.append(steerlm_template.format(prompt=question))
 
     str_ndarray = np.array(input_text)[..., np.newaxis]
@@ -101,7 +101,7 @@ for data_id in range(0, total_data, batch_size):
 
     # save decoded to jsonl file
     for i in range(batch_size):
-        answer = score_fun.ds['train'][data_id + i]["answer"]
+        answer = score_fun.ds["train"][data_id + i]["answer"]
         output = {}
         output["question"] = input_text[i]
         output["answer"] = answer

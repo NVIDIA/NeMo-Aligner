@@ -7,7 +7,7 @@ from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
 from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
 
 
-def run_mcts(batch, filename, ptl_model, score_fn):
+def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False):
     mcts_cfg = ptl_model.cfg.mcts
 
     strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
@@ -40,7 +40,15 @@ def run_mcts(batch, filename, ptl_model, score_fn):
         client_fun=get_client_fun(ptl_model, mcts_cfg.top_k, mcts_cfg.max_depth, **strategy_args),
     )
 
-    ds = DeepSearch(mcts, mcts_cfg.max_depth, mcts_cfg.temperature, strategy, mcts_cfg.save_timer, mcts_cfg.cache_dir)
+    ds = DeepSearch(
+        mcts,
+        mcts_cfg.max_depth,
+        mcts_cfg.temperature,
+        strategy,
+        mcts_cfg.save_timer,
+        mcts_cfg.cache_dir,
+        inference_only,
+    )
 
     ps = []
 

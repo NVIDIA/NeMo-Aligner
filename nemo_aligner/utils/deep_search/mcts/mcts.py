@@ -367,6 +367,7 @@ class DeepSearch:
         strategy=None,
         timer_seconds: int = 10.0,
         cache_dir: str = None,
+        inference_only: bool = False,
     ):
         self.mcts = mcts
         self.max_steps = max_steps
@@ -374,6 +375,8 @@ class DeepSearch:
         self.strategy = strategy
         self.save_flag = False
         self.cache_dir = cache_dir
+        # if inference_only is True, then the search will only run the inference and not the self play
+        self.inference_only = inference_only
         # Start the timer
         self.timer = threading.Timer(timer_seconds, self.save_data)
         self.timer.start()
@@ -467,6 +470,27 @@ class DeepSearch:
                 value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, count)
 
                 if is_terminal:
+                    if self.inference_only:
+                        # if inference only, we only collect the best tokens from the inference
+                        all_tokens = tuple(spg.state)
+                        if all_tokens in self.mcts.cache:
+                            value = self.mcts.cache[all_tokens]
+                        else:
+                            value = -1
+                        return_memory.append(
+                            {
+                                "tokens": spg.state,
+                                "reward": value,
+                                "data_id": spg.data_id,
+                                "context_length": len(backup_root_states[i]),
+                                "full_text": self.mcts.decode_text(spg.state),
+                                "context": self.mcts.decode_text(backup_root_states[i]),
+                            }
+                        )
+                        # we can remove the search instance
+                        del parallel_searches[i]
+                        del backup_root_states[i]
+                        continue
                     # loop through all the steps and add to the memory
                     # need to update the value based on the game play at the end of the games
                     if ends_properly:

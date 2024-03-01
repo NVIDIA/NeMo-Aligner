@@ -116,11 +116,11 @@ for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
 print("### FILTERING OUT empty lists")
 
 print("length of value before filtering", len(values))
-values = [v for v in values if len(v['tokens']) > 0]
+values = [v for v in values if len(v["tokens"]) > 0]
 print("length of value after filtering", len(values))
 
 print("length of policies before filtering", len(policies))
-policies = [p for p in policies if len(p['tokens']) > 0]
+policies = [p for p in policies if len(p["tokens"]) > 0]
 print("length of policies after filtering", len(policies))
 
 print("total data ids", len(total_data_ids))
