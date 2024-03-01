@@ -53,10 +53,8 @@ def get_forward_output_only_func_hybrid(text_gen_strategy, session_info):
         extra_arg["inference_params"] = inference_params
         output_tensor, value = model(tokens, position_ids, attention_mask, **extra_arg)
         # TODO. hard coded signmoid for now. only works with model trained with cross entropy loss
-        value = value.sigmoid()
-
         def id_func(output_tensor):
-            return output_tensor, {"logits": output_tensor, "value": value}
+            return output_tensor, {"logits": output_tensor, "value": value.sigmoid()}
 
         return output_tensor, id_func
 
