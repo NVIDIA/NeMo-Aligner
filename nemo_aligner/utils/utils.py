@@ -260,6 +260,22 @@ def offload_distributed_adam(state_dict):
         torch.cuda.synchronize()
 
 
+def batch_pad_to_fixed_len(batch, max_batch_len, pad_token):
+    batch_pad = torch.stack(
+        [
+            torch.cat(
+                [
+                    seq,
+                    torch.full((max_batch_len - len(seq),), pad_token, dtype=seq.dtype),
+                ]
+            )
+            for seq in batch
+        ]
+    )
+    
+    return batch_pad
+
+
 def collate_with_batch_max_sequence_length(
     data_batch, response_token_length, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
 ):
@@ -271,12 +287,12 @@ def collate_with_batch_max_sequence_length(
     batch_max_length = lengths.max()
 
     # pad each sequence to len(prompt) + response token length
-    texts = [
-        torch.cat([seq, torch.full((batch_max_length + response_token_length - len(seq),), eos_id, dtype=seq.dtype)])
-        for seq in texts
-    ]
-
-    texts = torch.stack(texts)
+    #texts = [
+    #    torch.cat([seq, torch.full((batch_max_length + response_token_length - len(seq),), eos_id, dtype=seq.dtype)])
+    #    for seq in texts
+    #]
+    #texts = torch.stack(texts)
+    texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
     # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
     attention_masks, loss_masks, position_ids = get_ltor_masks_and_position_ids(
@@ -369,13 +385,19 @@ def convert_to_amp_o2_format(state_dict):
     return new_state_dict
 
 
-def make_sharded_optimizer_tensor_and_state(model_param, optim_param, prefix: str):
-    if isinstance(model_param, ShardedTensorFactory):
-        return replace(model_param, key=f"{prefix}.{model_param.key}", data=optim_param)
-    if isinstance(model_param, ShardedObject):
-        return replace(model_param, key=f"{prefix}.{model_param.key}", data=optim_param)
+# this function uses dataclasses.replace to create ShardedTensors/ShardedObjects from torch.Tensor and IOBytes objects
+# based on the TP/PP/DP axis information taken from already existing ShardedTensors/Objects belonging to some reference model
+# this is useful for creating TP/PP/DP compliant ShardedDicts where the TP/PP/DP of each sharded tensor can be copied from some
+# reference model, like in the case of a reference policy which has a 1:1 architecture as some actor policy. We use this in SPIN
+# to ensure the ref policy is sharded along the correct axis during saving of the checkpoint
+# NOTE: dataclasses.replace is out-of-place so this is safe
+def make_sharded_tensors_from_reference(reference_param, model_param, prefix: str):
+    if isinstance(reference_param, ShardedTensorFactory):
+        return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param)
+    if isinstance(reference_param, ShardedObject):
+        return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param)
 
     assert (
-        tuple(optim_param.shape) == model_param.local_shape
-    ), f"Optimizer shape ({tuple(optim_param.shape)} does not match model shape ({model_param.local_shape})"
-    return replace(model_param, key=f"{prefix}.{model_param.key}", data=optim_param, dtype=optim_param.dtype)
+        tuple(model_param.shape) == reference_param.local_shape
+    ), f"Model shape ({tuple(model_param.shape)} does not match reference shape ({reference_param.local_shape})"
+    return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param, dtype=model_param.dtype)

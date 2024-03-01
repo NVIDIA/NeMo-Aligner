@@ -42,7 +42,7 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import (
     configure_batch_sizes,
     cpu_weight_swap,
-    make_sharded_optimizer_tensor_and_state,
+    make_sharded_tensors_from_reference,
     offload_distributed_adam,
 )
 
@@ -235,7 +235,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.data.train_ds.micro_batch_size
+            micro_batch_size=self.cfg.micro_batch_size
             * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
         )
 
@@ -350,8 +350,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
     def prepare_for_training(self):
         configure_batch_sizes(
-            mbs=self.cfg.data.train_ds.micro_batch_size,
-            gbs=self.cfg.data.train_ds.global_batch_size,
+            mbs=self.cfg.micro_batch_size,
+            gbs=self.cfg.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
         self.onload_adam_states()
@@ -414,6 +414,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         self.distributed_adam_offload_manager = None
 
     # Alternative 1: swap in the ref weights and create a custom key which then needs to be handled in the loader
+    # this method is confirmed working, and is mothballed here in case we need to use it in the future
     def sharded_state_dict_alt_1(self, prefix: str = ""):
         sharded_state_dict_orig = super().sharded_state_dict(prefix=prefix)
 
@@ -451,7 +452,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 assert (
                     key in sharded_state_dict_orig
                 ), f"key [ {key} ] exists in ref_policy but not in sharded_state_dict_orig"  # may fail due to nesting?
-                ref_policy_sharded_state_dict[k] = make_sharded_optimizer_tensor_and_state(
+                ref_policy_sharded_state_dict[k] = make_sharded_tensors_from_reference(
                     sharded_state_dict_orig[key], self.ref_policy_state_dict[k], "reference_policy"
                 )
             sharded_state_dict_orig["reference_policy"] = ref_policy_sharded_state_dict
@@ -459,6 +460,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         return sharded_state_dict_orig
 
     # use this version for alternative 1
+    # this method is confirmed working, and is mothballed here in case we need to use it in the future
     def on_load_checkpoint_alt_1(self, checkpoint) -> None:
         """LightningModule hook:
         https://pytorch-lightning.readthedocs.io/en/stable/common/lightning_module.html#on-load-checkpoint
@@ -499,13 +501,9 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 # see NLPModel.on_load_checkpoint
                 checkpoint["state_dict"] = {}
 
-        # legacy checkpointing for interleaved
+        # legacy checkpointing no longer supported (sorry)
         else:
-            if isinstance(self.model, list):
-                for i in range(len(self.model)):
-                    parallel_state.set_virtual_pipeline_model_parallel_rank(i)
-                    self.model[i].module.load_state_dict(checkpoint[f"model{i}"], strict=True)
-                parallel_state.set_virtual_pipeline_model_parallel_rank(0)
+            raise RuntimeError("legacy checkpoints are not supported by NeMo-Aligner")
 
     # use this one for alternative 2
     def on_load_checkpoint(self, checkpoint) -> None:
@@ -538,13 +536,9 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 # see NLPModel.on_load_checkpoint
                 checkpoint["state_dict"] = {}
 
-        # legacy checkpointing for interleaved
+        # legacy checkpointing no longer supported (sorry)
         else:
-            if isinstance(self.model, list):
-                for i in range(len(self.model)):
-                    parallel_state.set_virtual_pipeline_model_parallel_rank(i)
-                    self.model[i].module.load_state_dict(checkpoint[f"model{i}"], strict=True)
-                parallel_state.set_virtual_pipeline_model_parallel_rank(0)
+            raise RuntimeError("legacy checkpoints are not supported by NeMo-Aligner")
 
     def get_logprob_output_only_func(self, inference_only=True):
         fwd_output_only_func = self.get_forward_output_only_func()

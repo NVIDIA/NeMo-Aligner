@@ -14,6 +14,7 @@ trainer:
     max_steps: -1
     val_check_interval: 0.1
     save_interval: 100
+    limit_steps_per_epoch: -1
 
     # how many GBS we loop over
     limit_val_batches: 1.0
@@ -54,6 +55,8 @@ pretrained_checkpoint:
 
 model:  
   mcore_gpt: True
+  micro_batch_size: 1
+  global_batch_size: 64
   megatron_amp_O2: True
 
   spin:
@@ -71,7 +74,7 @@ model:
       add_BOS: False
       all_probs: False
       compute_logprob: False
-      end_strings: ["<|endoftext|>", "<extra_id_1>", "\x11"]
+      end_strings: ["<|endoftext|>", "<extra_id_1>"]
 
     # length argument for autoregressive sampling
     # max length means max amount of tokens to generate
@@ -125,8 +128,6 @@ model:
       # Example of how each dataset is formatted
       # {'input': 'John von Neumann\nVon Neumann made fundamental contributions .... Q: What did the math of artificial viscosity do?', 'output': 'smoothed the shock transition without sacrificing basic physics'}
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
-      global_batch_size: 64
-      micro_batch_size: 1
       shuffle: True
       memmap_workers: null
       max_seq_length: 4096
@@ -149,8 +150,8 @@ model:
 
     validation_ds:
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
-      global_batch_size: ${model.data.train_ds.global_batch_size}
-      micro_batch_size: ${model.data.train_ds.micro_batch_size}
+      global_batch_size: ${model.global_batch_size}
+      micro_batch_size: ${model.micro_batch_size}
       shuffle: False
       memmap_workers: ${model.data.train_ds.memmap_workers}
       max_seq_length: ${model.data.train_ds.max_seq_length}

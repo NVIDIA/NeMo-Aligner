@@ -30,7 +30,7 @@ from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
-from nemo_aligner.utils.utils import clear_memory, cpu_weight_swap, retrieve_model_state_dict_in_cpu
+from nemo_aligner.utils.utils import batch_pad_to_fixed_len, clear_memory, cpu_weight_swap, retrieve_model_state_dict_in_cpu
 
 """
 GPTSFTChatDataset output is dict with keys: ['input_ids', 'mask', 'context_ids', 'answer_ids', 'metadata']
@@ -104,6 +104,8 @@ class SPINTrainer:
 
         # compute `max_steps`
         self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
+        if (limit_steps_per_epoch := self.cfg.get("limit_steps_per_epoch", -1)) > 0:
+            self.num_steps_per_epoch = min(self.num_steps_per_epoch, limit_steps_per_epoch)
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
@@ -195,14 +197,15 @@ class SPINTrainer:
         batch_max_length = prompt_lengths.max().item()
         max_possible_length = min(self.model.cfg.encoder_seq_length, batch_max_length + self.max_gen_seq_len)
 
-        prompt_tokens = torch.stack(
-            [
-                torch.cat(
-                    [seq, torch.full((max_possible_length - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]
-                )
-                for seq in batch["prompts_only"]
-            ]
-        )
+        #prompt_tokens = torch.stack(
+        #    [
+        #        torch.cat(
+        #            [seq, torch.full((max_possible_length - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]
+        #        )
+        #        for seq in batch["prompts_only"]
+        #    ]
+        #)
+        prompt_tokens = batch_pad_to_fixed_len(batch["prompts_only"], max_possible_length, pad_token=self.model.tokenizer.eos_id)
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
 
@@ -294,7 +297,7 @@ class SPINTrainer:
 
                     # TODO(geshen): maybe use the dataloader instead
                     # bump up the consumed samples but not the step
-                    self.consumed_samples += self.model.cfg.data.train_ds.global_batch_size
+                    self.consumed_samples += self.model.cfg.global_batch_size
                     metrics["consumed_samples"] = self.consumed_samples
                     metrics["step_time"] = train_step_time
                     metrics["epoch"] = self.epoch
@@ -368,7 +371,7 @@ class SPINTrainer:
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs * self.cfg.max_iterations
 
-        if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
+        if (max_steps := self.cfg.get("max_steps", -1)) > 0:
             self.max_steps = min(self.max_steps, max_steps)
 
     def state_dict(self):
@@ -411,28 +414,30 @@ class SPINTrainer:
                 act_lengths = batch["combined_lengths"]
                 max_batch_len = max(act_tokens.shape[1], gen_tokens.shape[1])
 
-                act_tokens_pad = torch.stack(
-                    [
-                        torch.cat(
-                            [
-                                seq,
-                                torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype),
-                            ]
-                        )
-                        for seq in act_tokens
-                    ]
-                )
-                gen_tokens_pad = torch.stack(
-                    [
-                        torch.cat(
-                            [
-                                seq,
-                                torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype),
-                            ]
-                        )
-                        for seq in gen_tokens
-                    ]
-                )
+                #act_tokens_pad = torch.stack(
+                #    [
+                #        torch.cat(
+                #            [
+                #                seq,
+                #                torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype),
+                #            ]
+                #        )
+                #        for seq in act_tokens
+                #    ]
+                #)
+                act_tokens_pad = batch_pad_to_fixed_len(act_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id)
+                #gen_tokens_pad = torch.stack(
+                #    [
+                #        torch.cat(
+                #            [
+                #                seq,
+                #                torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype),
+                #            ]
+                #        )
+                #        for seq in gen_tokens
+                #    ]
+                #)
+                gen_tokens_pad = batch_pad_to_fixed_len(gen_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id)
 
                 act_mask = create_mask(act_tokens_pad, batch["prompt_lengths"], act_lengths)
                 gen_mask = create_mask(gen_tokens_pad, batch["prompt_lengths"], gen_lengths)

@@ -97,7 +97,7 @@ def main(cfg) -> None:
         if cfg.trainer.spin.max_steps < 0:
             num_samples = None
         else:
-            num_samples = cfg.trainer.spin.max_steps * train_data_cfg.global_batch_size
+            num_samples = cfg.trainer.spin.max_steps * cfg.model.global_batch_size
     else:
         num_samples = None
     train_ds = build_sft_dataset(
@@ -137,8 +137,8 @@ def main(cfg) -> None:
         cfg=cfg,
         dataset=train_ds,
         consumed_samples=consumed_samples,
-        mbs=train_data_cfg.micro_batch_size,
-        gbs=train_data_cfg.global_batch_size,
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.global_batch_size,
         collate_fn=collate_fn,
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=False,
