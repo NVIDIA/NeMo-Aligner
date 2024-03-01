@@ -197,14 +197,6 @@ class SPINTrainer:
         batch_max_length = prompt_lengths.max().item()
         max_possible_length = min(self.model.cfg.encoder_seq_length, batch_max_length + self.max_gen_seq_len)
 
-        #prompt_tokens = torch.stack(
-        #    [
-        #        torch.cat(
-        #            [seq, torch.full((max_possible_length - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype)]
-        #        )
-        #        for seq in batch["prompts_only"]
-        #    ]
-        #)
         prompt_tokens = batch_pad_to_fixed_len(batch["prompts_only"], max_possible_length, pad_token=self.model.tokenizer.eos_id)
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
@@ -414,29 +406,7 @@ class SPINTrainer:
                 act_lengths = batch["combined_lengths"]
                 max_batch_len = max(act_tokens.shape[1], gen_tokens.shape[1])
 
-                #act_tokens_pad = torch.stack(
-                #    [
-                #        torch.cat(
-                #            [
-                #                seq,
-                #                torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype),
-                #            ]
-                #        )
-                #        for seq in act_tokens
-                #    ]
-                #)
                 act_tokens_pad = batch_pad_to_fixed_len(act_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id)
-                #gen_tokens_pad = torch.stack(
-                #    [
-                #        torch.cat(
-                #            [
-                #                seq,
-                #                torch.full((max_batch_len - len(seq),), self.model.tokenizer.eos_id, dtype=seq.dtype),
-                #            ]
-                #        )
-                #        for seq in gen_tokens
-                #    ]
-                #)
                 gen_tokens_pad = batch_pad_to_fixed_len(gen_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id)
 
                 act_mask = create_mask(act_tokens_pad, batch["prompt_lengths"], act_lengths)

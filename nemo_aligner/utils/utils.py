@@ -286,12 +286,6 @@ def collate_with_batch_max_sequence_length(
     lengths = torch.as_tensor([item["length"] for item in data_batch])
     batch_max_length = lengths.max()
 
-    # pad each sequence to len(prompt) + response token length
-    #texts = [
-    #    torch.cat([seq, torch.full((batch_max_length + response_token_length - len(seq),), eos_id, dtype=seq.dtype)])
-    #    for seq in texts
-    #]
-    #texts = torch.stack(texts)
     texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
     # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
