@@ -262,17 +262,9 @@ def offload_distributed_adam(state_dict):
 
 def batch_pad_to_fixed_len(batch, max_batch_len, pad_token):
     batch_pad = torch.stack(
-        [
-            torch.cat(
-                [
-                    seq,
-                    torch.full((max_batch_len - len(seq),), pad_token, dtype=seq.dtype),
-                ]
-            )
-            for seq in batch
-        ]
+        [torch.cat([seq, torch.full((max_batch_len - len(seq),), pad_token, dtype=seq.dtype),]) for seq in batch]
     )
-    
+
     return batch_pad
 
 
