@@ -162,14 +162,8 @@ class DeepSearchTrainer:
         loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
         self.model.finish_training_step()
 
-        grad_norm = clip_optimier_gradients(self.model, self.optimizer, self.cfg.gradient_clip_val)
-        grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
+        metrics.update({"loss": loss_mean})
 
-        lr = self.optimizer.param_groups[0]["lr"]
-        if grad_norm is not None:
-            metrics["grad_norm"] = grad_norm
-
-        metrics.update({"lr": lr, "loss": loss_mean})
         return metrics
 
     def run_training(self, policy_dataloader_iter, value_dataloader_iter):
@@ -180,6 +174,7 @@ class DeepSearchTrainer:
         # TODO: add optimizer step bump
         run_value = self.value_steps.pop()
         run_policy = self.policy_steps.pop()
+        value_losses, policy_losses = [], []
 
         if run_policy:
             policy_batches = [output[1] for output in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter)]
@@ -187,34 +182,46 @@ class DeepSearchTrainer:
             for batch in policy_batches:
                 # at least if we do this the lr are not synced between the 2 stages of training
                 batch["amount_of_batches"] = len(policy_batches)
-                metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
-                metrics.update({"policy_optimization_step": self.policy_optimization_step})
+                policy_metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
+                policy_losses.append(policy_metrics["loss"])
 
                 self.consumed_samples += batch["tokens"].size(0) * dp_size
-                self.policy_optimization_step += 1
 
-                metrics.update({"consumed_samples": self.consumed_samples})
-
-                self.logger.log_metrics(
-                    metrics, step=self.step, prefix="train_optim_policy/",
-                )
+            self.policy_optimization_step += 1
 
         if run_value:
             value_batches = [output[1] for output in zip(range(self.cfg.num_value_batches), value_dataloader_iter)]
+
             for batch in value_batches:
                 # at least if we do this the lr are not synced between the 2 stages of training
                 batch["amount_of_batches"] = len(value_batches)
-                metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
-                metrics.update({"value_optimization_step": self.value_optimization_step})
+                value_metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
+                value_losses.append(value_metrics["loss"])
 
                 self.consumed_samples_values += self.model.cfg.critic_global_batch_size
-                metrics.update({"consumed_samples_values": self.consumed_samples_values})
 
-                self.value_optimization_step += 1
+            self.value_optimization_step += 1
 
-                self.logger.log_metrics(
-                    metrics, step=self.step, prefix="train_optim_value/",
-                )
+        metrics = {}
+
+        grad_norm = clip_optimier_gradients(self.model, self.optimizer, self.cfg.gradient_clip_val)
+        grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
+
+        lr = self.optimizer.param_groups[0]["lr"]
+        if grad_norm is not None:
+            metrics["grad_norm"] = grad_norm
+
+        metrics.update({"policy_optimization_step": self.policy_optimization_step})
+        metrics.update({"value_optimization_step": self.value_optimization_step})
+        metrics.update({"consumed_samples_values": self.consumed_samples_values})
+        metrics.update({"consumed_samples": self.consumed_samples})
+        metrics.update({"value_loss": sum(value_losses)})
+        metrics.update({"policy_loss": sum(policy_losses)})
+        metrics.update({"lr": lr})
+
+        self.logger.log_metrics(
+            metrics, step=self.step, prefix="train_optim",
+        )
 
         self.optimizer.step()
         self.scheduler.step()
