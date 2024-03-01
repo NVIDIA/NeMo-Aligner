@@ -262,17 +262,9 @@ def offload_distributed_adam(state_dict):
 
 def batch_pad_to_fixed_len(batch, max_batch_len, pad_token):
     batch_pad = torch.stack(
-        [
-            torch.cat(
-                [
-                    seq,
-                    torch.full((max_batch_len - len(seq),), pad_token, dtype=seq.dtype),
-                ]
-            )
-            for seq in batch
-        ]
+        [torch.cat([seq, torch.full((max_batch_len - len(seq),), pad_token, dtype=seq.dtype),]) for seq in batch]
     )
-    
+
     return batch_pad
 
 
@@ -287,11 +279,11 @@ def collate_with_batch_max_sequence_length(
     batch_max_length = lengths.max()
 
     # pad each sequence to len(prompt) + response token length
-    #texts = [
+    # texts = [
     #    torch.cat([seq, torch.full((batch_max_length + response_token_length - len(seq),), eos_id, dtype=seq.dtype)])
     #    for seq in texts
-    #]
-    #texts = torch.stack(texts)
+    # ]
+    # texts = torch.stack(texts)
     texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
     # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
