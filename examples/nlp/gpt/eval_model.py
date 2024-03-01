@@ -254,19 +254,19 @@ def main(cfg) -> None:
     val_dataloader = val_dataloader_builder_func()
     train_dataloader = train_dataloader_builder_func()
 
-    val_metrics, val_table, val_wrong = run_inference(ptl_model, feedback, val_dataloader, desc="val inference", limit_batches=1)
+    val_metrics, val_table, val_wrong = run_inference(ptl_model, feedback, val_dataloader, desc="val inference")
     logger.log_metrics(val_metrics, step=0, prefix="val/")
     logger.log_table("table/val", dataframe=val_table, step=0)
 
-    train_metrics, train_table, train_wrong = run_inference(ptl_model, feedback, train_dataloader, desc="train inference", limit_batches=1)
+    train_metrics, train_table, train_wrong = run_inference(ptl_model, feedback, train_dataloader, desc="train inference")
     logger.log_metrics(train_metrics, step=0, prefix="train/")
     logger.log_table("table/train", dataframe=train_table, step=0)
 
     save_dir = Path(cfg.exp_manager.explicit_log_dir) / "sets"
     save_dir.mkdir(exist_ok=True)
 
-    torch.save(train_wrong, save_dir / "train_wrong.pt")
-    torch.save(val_wrong, save_dir / "val_wrong.pt")
+    torch.save(train_wrong, save_dir / "train_wrong_{}.pt".format(parallel_state.get_data_parallel_rank()))
+    torch.save(val_wrong, save_dir / "val_wrong_{}.pt".format(parallel_state.get_data_parallel_rank()))
 
 if __name__ == "__main__":
     main()
