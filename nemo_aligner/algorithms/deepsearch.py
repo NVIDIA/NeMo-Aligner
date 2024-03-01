@@ -220,7 +220,7 @@ class DeepSearchTrainer:
         metrics.update({"lr": lr})
 
         self.logger.log_metrics(
-            metrics, step=self.step, prefix="train_optim",
+            metrics, step=self.step, prefix="train_optim/",
         )
 
         self.optimizer.step()
