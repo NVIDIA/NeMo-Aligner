@@ -178,8 +178,8 @@ To launch the server:
    export PYTHONPATH="${GPFS}:${PYTHONPATH}" \
    && export HYDRA_FULL_ERROR=1 \
    && python -u ${GPFS}/examples/nlp/gpt/serve_ppo_critic.py \
-      trainer.devices=1 \
-      trainer.num_nodes=8 \
+      trainer.devices=8 \
+      trainer.num_nodes=1 \
       ++model.tensor_model_parallel_size=1 \
       ++model.pipeline_model_parallel_size=1 \
       exp_manager.create_wandb_logger=False \
