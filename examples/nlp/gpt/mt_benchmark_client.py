@@ -223,7 +223,7 @@ def main(cfg):
 
     search_for_batch = get_search_for_batch(cfg.server_url)
 
-    mt_bench_file = os.path.join(cfg.exp_manager.explicit_log_dir, "mt_bench.jsonl")
+    mt_bench_file = os.path.join(data_path, "mt_bench.jsonl")
     eval = EvalMTBenchmark("output", mt_bench_file)
     first_turn_inputs = {}
     with open(eval.data_file, "r", encoding="utf-8") as f:
