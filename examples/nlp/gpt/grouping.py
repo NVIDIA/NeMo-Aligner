@@ -122,6 +122,7 @@ print("length of value after filtering", len(values))
 print("length of policies before filtering", len(policies))
 policies = [p for p in policies if len(p["tokens"]) > 0]
 print("length of policies after filtering", len(policies))
+print("not finished ids", total_data_ids - set([i["data_id"] for i in policies]))
 
 print("total data ids", len(total_data_ids))
 
@@ -130,9 +131,14 @@ policy_data, value_data = policies, values
 
 num_questions_correct = 0
 
+correct_ids = set()
+finished_ids = set()
 for p in policy_data:
     if all(x == 1 for x in p["reward"]):
         num_questions_correct += 1
+        finished_ids = set()
+    finished_ids = set()
+print("wrong ids", finished_ids - correct_ids)
 
 data_metrics = {
     "num_questions_correct": num_questions_correct,
