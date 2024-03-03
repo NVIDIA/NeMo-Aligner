@@ -221,7 +221,7 @@ def main(cfg):
         for item in outputs:
             finished[item["data_id"]] = item
 
-    search_for_batch = get_search_for_batch(cfg.server_url)
+    search_for_batch = get_search_for_batch(cfg.server_url, cfg.backend_url)
 
     mt_bench_file = os.path.join(data_path, "mt_bench.jsonl")
     eval = EvalMTBenchmark("output", mt_bench_file)

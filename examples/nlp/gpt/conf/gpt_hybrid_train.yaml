@@ -33,6 +33,7 @@ pretrained_checkpoint:
 mcts_data_file: null
 
 server_url: ??  # the rabbitmq server url, e.g. pyamqp://guest@localhost:5672//
+backend_url: rpc://  # the backend server url, e.g. rpc://
 
 dataset:
   name: gsm8k

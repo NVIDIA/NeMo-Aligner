@@ -1,8 +1,8 @@
 from celery import Celery
 
 
-def get_search_for_batch(url):
-    app = Celery("tasks", backend=f"{url}", broker=f"{url}")
+def get_search_for_batch(url, backend_url):
+    app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
 
     # CELERY_ACKS_LATE = True
     app.conf.task_acks_late = True

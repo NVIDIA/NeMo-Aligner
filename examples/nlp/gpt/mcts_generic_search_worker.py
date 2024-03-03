@@ -232,12 +232,12 @@ def main(cfg) -> None:
     search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn, inference_only=True)
 
     # start the worker on the rank
-    start_worker(search_func, collate_func, save_dir, cfg, cfg.server_url)
+    start_worker(search_func, collate_func, save_dir, cfg, cfg.server_url, cfg.backend_url)
 
 
-def start_worker(search_func, collate_func, save_path, cfg, url):
+def start_worker(search_func, collate_func, save_path, cfg, url, backend_url):
     if torch.distributed.get_rank() == 0:
-        app = Celery("tasks", backend=f"{url}", broker=f"{url}")
+        app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
 
         app.conf.task_acks_late = True
         app.conf.worker_deduplicate_successful_tasks = True

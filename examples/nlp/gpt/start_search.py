@@ -124,7 +124,7 @@ def main(cfg):
         cfg.model.mcts.rollout_micro_batch_size
     )  # list of data to process
 
-    search_for_batch = get_search_for_batch(cfg.server_url)
+    search_for_batch = get_search_for_batch(cfg.server_url, cfg.backend_url)
 
     results = [search_for_batch.delay(data.tolist()) for data in data_id_list]
     global_pbar = tqdm(total=len(non_processed_ids), desc="Search Global Progress")
