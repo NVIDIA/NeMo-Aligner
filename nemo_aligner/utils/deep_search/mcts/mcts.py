@@ -182,7 +182,12 @@ class MCTSParallel:
             if fun.ends_by_end_strings(text):
                 end_properly = True
                 break
-        return value, terminate, end_properly
+        has_answer = False
+        for fun in self.terminate_fns:
+            if fun.has_answer(text):
+                has_answer = True
+                break
+        return value, terminate, end_properly, has_answer
 
     def get_input_action_depth(self, ps, expandable_search):
         # get the action to execute and depths in the search tree
@@ -293,7 +298,7 @@ class MCTSParallel:
 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
                 text = self.get_text(node)
-                value, is_terminal, ends_properly = self.get_value_and_terminated(text, spg.data_id, depth)
+                value, is_terminal, ends_properly, has_answer = self.get_value_and_terminated(text, spg.data_id, depth)
 
                 if is_terminal:
                     if not self.args["oracle"]:
@@ -467,7 +472,9 @@ class DeepSearch:
                 #  get the value and termination condition from the current taken `action`
                 text = self.mcts.decode_text(spg.state)
                 pb.write(text)
-                value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, count)
+                value, is_terminal, ends_properly, has_answer = self.mcts.get_value_and_terminated(
+                    text, spg.data_id, count
+                )
 
                 if is_terminal:
                     if self.inference_only:
@@ -493,7 +500,9 @@ class DeepSearch:
                         continue
                     # loop through all the steps and add to the memory
                     # need to update the value based on the game play at the end of the games
-                    if ends_properly:
+                    # collects the value buffer if the response ends properly with <extra_id> or byte token
+                    # or if the response has the answer inside it
+                    if ends_properly or has_answer:
                         # only collect the memory if it ends properly
                         for tokens, hist_action_probs, actions in spg.memory:
                             hist_outcome = value

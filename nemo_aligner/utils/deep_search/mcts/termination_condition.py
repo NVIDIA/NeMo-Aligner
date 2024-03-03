@@ -13,6 +13,9 @@
 # limitations under the License.
 
 
+import re
+
+
 class TerminationCondition:
     def __init__(self, max_depth, end_strings):
         self.end_strings = end_strings
@@ -31,3 +34,13 @@ class TerminationCondition:
         if self.ends_by_depth(depth):
             return True
         return self.ends_by_end_strings(text)
+
+    def has_answer(self, response):
+        response = response.lower()
+        # predicted answer matches the answer pattern
+        numbers = re.findall(r"\{\{([\d,]+)\}\}", response)
+        # Extract the last number
+        last_number = numbers[-1] if numbers else None
+        if last_number is not None:
+            return True
+        return False
