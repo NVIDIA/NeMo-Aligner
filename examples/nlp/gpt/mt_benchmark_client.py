@@ -238,52 +238,9 @@ def main(cfg):
     ]
     chunked_data_points = chunks(data_points, cfg.model.mcts.rollout_micro_batch_size)
     results = [search_for_batch.delay(data) for data in chunked_data_points]
-    global_pbar = tqdm(total=len(data_points), desc="Search Global Progress")
-    while len(results) > 0:
-        for subtask in results:  # Iterate over a copy of the list
-            try:
-                if subtask.ready():
-                    output = subtask.get()
-                    output = output[0]
-                    args = [i["data_id"] for i in output]
-                    for item in output:
-                        finished[item["data_id"]] = item
 
-                    global_pbar.update(cfg.model.mcts.rollout_micro_batch_size)
-                    global_pbar.write(f"Finished {args}")
-                    results.remove(subtask)
-                    # results.children.remove(subtask)  # Remove the subtask from the list
-            except TimeoutError:
-                pass
-            except amqp.exceptions.PreconditionFailed:
-                global_pbar.write("RabbitMQ connection failed")
-    # the second turn
-    second_turn_inputs = {}
     turn_2_offset = 1000
-    with open(eval.data_file, "r", encoding="utf-8") as f:
-        for line in f:
-            obj = json.loads(line)
-            question_id = obj["question_id"]
-            for i in range(len(obj["turns"])):
-                if i == 0:
-                    input = eval.get_input({"text": obj["turns"][i]})
-                else:
-                    input = input + eval.get_next_turn_template().format(**{"text": obj["turns"][i]})
-                    continue
-                if question_id in finished:
-                    ans = get_answer(finished[question_id])
-                else:
-                    raise ValueError("The first turn should be finished")
-                input = input + ans + "\n"
-            second_turn_inputs[obj["question_id"] + turn_2_offset] = {"turn": 1, "question": input}
-    data_points = [
-        {"question": v["question"], "answer": "", "data_id": k}
-        for k, v in second_turn_inputs.items()
-        if k not in finished
-    ]
-    chunked_data_points = chunks(data_points, cfg.model.mcts.rollout_micro_batch_size)
-    results = [search_for_batch.delay(data) for data in chunked_data_points]
-    global_pbar = tqdm(total=len(data_points), desc="Search Global Progress")
+    global_pbar = tqdm(total=len(data_points) * 2, desc="Search Global Progress")
     while len(results) > 0:
         for subtask in results:  # Iterate over a copy of the list
             try:
@@ -293,7 +250,36 @@ def main(cfg):
                     args = [i["data_id"] for i in output]
                     for item in output:
                         finished[item["data_id"]] = item
+                    
+                    # start to submit the next turn job
+                    second_turn_inputs = {}
+                    with open(eval.data_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            obj = json.loads(line)
+                            question_id = obj["question_id"]
+                            if question_id not in args:
+                                continue
 
+                            for i in range(len(obj["turns"])):
+                                if i == 0:
+                                    input = eval.get_input({"text": obj["turns"][i]})
+                                else:
+                                    input = input + eval.get_next_turn_template().format(**{"text": obj["turns"][i]})
+                                    continue
+                                if question_id in finished:
+                                    ans = get_answer(finished[question_id])
+                                else:
+                                    raise ValueError("The first turn should be finished")
+                                input = input + ans + "\n"
+                            second_turn_inputs[obj["question_id"] + turn_2_offset] = {"turn": 1, "question": input}
+                    data_points = [
+                        {"question": v["question"], "answer": "", "data_id": k}
+                        for k, v in second_turn_inputs.items()
+                        if k not in finished
+                    ]
+
+                    chunked_data_points = chunks(data_points, cfg.model.mcts.rollout_micro_batch_size)
+                    results.extend([search_for_batch.delay(data) for data in chunked_data_points])
                     global_pbar.update(cfg.model.mcts.rollout_micro_batch_size)
                     global_pbar.write(f"Finished {args}")
                     results.remove(subtask)
@@ -322,30 +308,6 @@ def main(cfg):
     with open("output.jsonl", "w", encoding="utf-8") as f:
         for obj in all:
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
-
-    # results = [search_for_batch.delay(data.tolist()) for data in data_id_list]
-
-    # data_id_list = torch.tensor(list(non_processed_ids)).split(
-    #     cfg.model.mcts.rollout_micro_batch_size
-    # )  # list of data to process
-
-    # search_for_batch = get_search_for_batch(cfg.server_url)
-
-    # results = [search_for_batch.delay(data.tolist()) for data in data_id_list]
-    # global_pbar = tqdm(total=len(non_processed_ids), desc="Search Global Progress")
-    # while len(results) > 0:
-    #     for subtask in results:  # Iterate over a copy of the list
-    #         try:
-    #             if subtask.ready():
-    #                 args = subtask.get()
-    #                 global_pbar.update(cfg.model.mcts.rollout_micro_batch_size)
-    #                 global_pbar.write(f"Finished {args}")
-    #                 results.remove(subtask)
-    #                 # results.children.remove(subtask)  # Remove the subtask from the list
-    #         except TimeoutError:
-    #             pass
-    #         except amqp.exceptions.PreconditionFailed:
-    #             global_pbar.write("RabbitMQ connection failed")
 
 
 if __name__ == "__main__":
