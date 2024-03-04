@@ -18,7 +18,7 @@ To start, we must first get a pretrained model to align. There are 2 models we r
 
         #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
         #. Extract the NeMo File to a folder with ``mkdir model_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C model_checkpoint``
-        #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/86b198ff93438d454f9c7f3550bcfb7d4e59feab/scripts/nlp_language_modeling/convert_nemo_gpt_to_mcore.py>`__.
+        #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/6865c39d85c4f3b120a02fe74024ad10d5fab286/scripts/nlp_language_modeling/convert_nemo_gpt_to_mcore.py>`__. Please do not use the script in the container, but use the script in the link.
             .. code-block:: bash 
 
                python convert_nemo_gpt_to_mcore.py \
