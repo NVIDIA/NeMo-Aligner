@@ -53,6 +53,16 @@ exp_manager:
     save_best_model: False   # need to keep this false otherwise it will create multiple last.ckpt files because restore reset the previous best model
 
 model:
+  steerable_attributes:
+    quality: 4
+    toxicity: 0
+    humor: 0
+    creativity: 0
+    helpfulness: 4
+    correctness: 4
+    coherence: 4
+    complexity: 4
+    verbosity: 4
   seed: 1234
   tensor_model_parallel_size: 1 # intra-layer model parallelism
   pipeline_model_parallel_size: 1 # inter-layer model parallelism

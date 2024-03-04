@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 
+import numpy as np
+import torch
 import torch.multiprocessing as mp
+from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
@@ -28,7 +32,6 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset
 from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel
-from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -92,6 +95,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
             prompt_template = get_prompt_template_example(cfg.model.data.chat_prompt_tokens)
             gpt_cfg.data.train_ds.prompt_template = prompt_template
             gpt_cfg.data.validation_ds.prompt_template = prompt_template
+            gpt_cfg.data.test_ds.prompt_template = prompt_template
 
         sft_cls = GPTSFTModel
         gpt_cfg.target = f"{sft_cls.__module__}.{sft_cls.__name__}"
@@ -101,9 +105,8 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
 
         if cfg.model.get("seq_len_interpolation_factor", None) is not None:
             gpt_cfg.seq_len_interpolation_factor = cfg.model.seq_len_interpolation_factor
-
-        gpt_cfg.inference = cfg.model.get("inference", {})
-
+        if cfg.model.get("steerable_attributes", None) is not None:
+            gpt_cfg.steerable_attributes = cfg.model.steerable_attributes
         # This is needed when modifying a hparam file directly to load `.ckpt` files.
         # This is not needed to modify the cfg in `.nemo` files.
         if add_cfg_to_tree:
@@ -160,10 +163,10 @@ def main(cfg) -> None:
 
     if cfg.model.data.get("sample", False):
         # if it is negative, num_samples is None
-        if cfg.trainer.sft.max_steps < 0:
+        if cfg.sft_trainer.max_steps < 0:
             num_samples = None
         else:
-            num_samples = cfg.trainer.sft.max_steps * train_data_cfg.global_batch_size
+            num_samples = cfg.sft_trainer.max_steps * train_data_cfg.global_batch_size
     else:
         num_samples = None
     train_ds = build_sft_dataset(
@@ -175,7 +178,7 @@ def main(cfg) -> None:
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
     if cfg.model.data.get("sample", False):
-        num_samples = cfg.trainer.sft.limit_val_batches * val_data_cfg.global_batch_size
+        num_samples = cfg.sft_trainer.limit_val_batches * val_data_cfg.global_batch_size
     else:
         num_samples = None
     validation_ds = build_sft_dataset(
@@ -218,7 +221,6 @@ def main(cfg) -> None:
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
-    timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
     sft_trainer = SupervisedTrainer(
         cfg=cfg.trainer.sft,
@@ -230,7 +232,6 @@ def main(cfg) -> None:
         test_dataloader=None,
         logger=logger,
         ckpt_callback=ckpt_callback,
-        run_timer=timer,
     )
 
     if custom_trainer_state_dict is not None:

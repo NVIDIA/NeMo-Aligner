@@ -33,12 +33,18 @@ The two methods tackle model alignment from different angles - RLHF by directly 
 
 .. note::
    For details of SteerLM, please refer to our paper `SteerLM: Attribute Conditioned SFT as an (User-Steerable) Alternative to RLHF <https://arxiv.org/abs/2310.05344>`_.
+
    For details of HelpSteer dataset, please refer to our paper `HelpSteer: Multi-attribute Helpfulness Dataset for SteerLM <https://arxiv.org/abs/2311.09528>`_.
+
+   For detail on leveraging scalable training and inference via integration with `NeMo-Megatron-Launcher <https://github.com/NVIDIA/NeMo-Megatron-Launcher>`_, please refer to the `user guide <https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#project-instructions-and-milestones>`_.
 
 Train a SteerLM model 
 #####################
 
-This section is a step-by-step tutorial that walks you through how to run a full SteerLM pipeline with a Llama2 70B LLM model. It includes the following:
+This section is a step-by-step tutorial that walks you through how to run a full SteerLM pipeline with a Llama2 70B LLM model. 
+Each step will contain an alternative method marked **NeMo Megatron Launcher method for Step N :**, please refer to `user guide Step 1-3 in order to set up the environment <https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#nemo-tools-and-resources>`_
+
+It includes the following:
 
 1. Data download and preprocessing
 
@@ -49,41 +55,75 @@ This section is a step-by-step tutorial that walks you through how to run a full
 4. Inference on the SteerLM model with different attribute values
 
 
+
 Step 1: Download Llama 2 LLM model 
 #############################################################
 Download the Llama 2 70B LLM model from HF <https://huggingface.co/meta-llama/Llama-2-70b-hf> into the models folder.
 
-Then convert the Llama 2 LLM into .nemo format:
+.. tab-set::
 
-.. code-block:: bash
+    .. tab-item:: NeMo-Aligner
+        :sync: key1
 
-   mkdir -p /models/llama70b/
-   python /opt/NeMo/scripts/nlp_language_modeling/convert_hf_llama_to_nemo.py --in-file /path/to/llama --out-file /models/llama70b/llama70b.nemo
+         Then convert the Llama 2 LLM into .nemo format:
 
-Download and convert to .nemo format for the 13B model <https://huggingface.co/meta-llama/Llama-2-13b-hf> as well, which is needed for the Attribute Prediction Modelling step.
+         .. code-block:: bash 
+            
+            mkdir -p /models/llama70b/
+            python /opt/NeMo/scripts/nlp_language_modeling/convert_hf_llama_to_nemo.py --in-file /path/to/llama --out-file /models/llama70b/llama70b.nemo
+         
+         Download and convert to .nemo format for the 13B model <https://huggingface.co/meta-llama/Llama-2-13b-hf> as well, which is needed for the Attribute Prediction Modelling step.
+         Untar the .nemo file to obtain the tokenizer in NeMo format (only for the 70B model):
 
-Untar the .nemo file to obtain the tokenizer in NeMo format (only for the 70B model):
+         .. code-block:: bash
 
-.. code-block:: bash
+            cd /models/llama70b
+            tar xvf llama70b.nemo .
+            rm llama70b.nemo
 
-   cd /models/llama70b
-   tar xvf llama70b.nemo .
-   rm llama70b.nemo
+            mv <random_prefix>_tokenizer.model tokenizer.model
 
-   mv <random_prefix>_tokenizer.model tokenizer.model
+         The prefix for the tokenizer would be different when extracted. Ensure that the correct tokenizer file is used when running the preceding command.
 
-The prefix for the tokenizer would be different when extracted. Ensure that the correct tokenizer file is used when running the preceding command.
+    .. tab-item:: NeMo-Megatron-Launcher
+        :sync: key2
 
+         Follow the `instruction from step 1-3 <https://docs.nvidia.com/nemo-framework/user-guide/latest/playbooks/pretraining.html#nemo-tools-and-resources>`_ to prepare the cluster environment before executing the code below.
+
+         .. code-block:: bash
+
+            python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[conversion_hf2nemo]
+  
 Step 2: Download and Preprocess data for Attribute Prediction Modelling
 #######################################################################
 
-First, download and convert both datasets into a common format.
+.. tab-set::
 
-.. code-block:: bash
+    .. tab-item:: NeMo-Aligner
+        :sync: key3
 
-   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_openassistant_data.py --output_directory=data/oasst
-      
-   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_helpsteer_data.py --output_directory=data/helpsteer
+         First, download and convert both datasets into a common format.
+
+         .. code-block:: bash
+
+            python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_openassistant_data.py --output_directory=data/oasst
+               
+            python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_helpsteer_data.py --output_directory=data/helpsteer
+
+
+    .. tab-item:: NeMo-Megatron-Launcher
+        :sync: key4
+
+         Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep1 <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/config.yaml#L5>`_ to activate steerLM data preparation.
+   
+         There are currently 2 datasets supported : openassistant or helpsteer
+
+         If you wish to prepare both dataset, then run the below twice but change `steerlm_data_prep1.yaml line 10 and fill in either openassistant or helpsteer <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep1.yaml#L10>`_ to prepare the dataset of your choice.
+   
+
+         .. code-block:: bash
+
+            python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR/data/ stages=[data_preparation]
 
 Then, merge the two datasets for the train and val subset respectively.
 
@@ -93,17 +133,38 @@ Then, merge the two datasets for the train and val subset respectively.
 
    cat data/oasst/val.jsonl data/helpsteer/val.jsonl > data/merge_val.jsonl
 
-Finally, preprocess the data into regression reward model training format.
 
-.. code-block:: bash
+.. tab-set::
 
-   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
-      --input-file=data/merge_train.jsonl \
-      --output-file=data/merge_train_reg.jsonl
+    .. tab-item:: NeMo-Aligner
+        :sync: key5
 
-   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
-      --input-file=data/merge_val.jsonl \
-      --output-file=data/merge_val_reg.jsonl
+                  Finally, preprocess the data into regression reward model training format.
+
+         .. code-block:: bash
+
+            python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
+               --input-file=data/merge_train.jsonl \
+               --output-file=data/merge_train_reg.jsonl
+
+            python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
+               --input-file=data/merge_val.jsonl \
+               --output-file=data/merge_val_reg.jsonl
+
+
+    .. tab-item:: NeMo-Megatron-Launcher
+        :sync: key6
+
+         Ensure modifying `config.yaml line 5 to steerlm/steerlm_data_prep2_reg <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/config.yaml#L5>`_ to process steerLM data to regression format.
+   
+         There are currently 2 datasets supported : openassistant or helpsteer
+
+         Prepare train and val dataset via running the below twice but change `steerlm_data_prep2_reg.yaml line 10-11 and change the dataset name to train/val accordingly <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/data_preparation/steerlm/steerlm_data_prep2_reg.yaml#L10-11>`_ to prepare the dataset of your choice.
+   
+
+         .. code-block:: bash
+
+            python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR/data/ stages=[data_preparation]
 
 
 Step 3: Train the regression reward model on OASST+HelpSteer data
@@ -111,35 +172,49 @@ Step 3: Train the regression reward model on OASST+HelpSteer data
 
 For this tutorial, train the regression reward model for 800 steps. 
 
-Note that you would need to set up multi-node training in your cluster env, depending on the type of cluster you use. For details, please refer to https://lightning.ai/docs/pytorch/stable/clouds/cluster.html
+.. tab-set::
 
-.. code-block:: bash
+   .. tab-item:: NeMo-Aligner
+        :sync: key9
+
+         Note that you would need to set up multi-node training in your cluster env, depending on the type of cluster you use. For details, please refer to https://lightning.ai/docs/pytorch/stable/clouds/cluster.html
+
+         .. code-block:: bash
+         
+            python /opt/NeMo-Aligner/examples/nlp/gpt/train_reward_model.py \
+                  trainer.num_nodes=32 \
+                  trainer.devices=8 \
+                  ++model.micro_batch_size=2 \
+                  ++model.global_batch_size=512 \
+                  ++model.data.data_impl=jsonl \
+                  pretrained_checkpoint.restore_from_path=/models/llama13b/llama13b.nemo \
+                  "model.data.data_prefix={train: ["data/merge_train_reg.jsonl"], validation: ["data/merge_val_reg.jsonl"], test: ["data/merge_val_reg.jsonl"]}" \
+                  exp_manager.explicit_log_dir=/results/reward_model_13b \
+                  trainer.rm.val_check_interval=10 \
+                  exp_manager.create_wandb_logger=True \
+                  exp_manager.wandb_logger_kwargs.project=steerlm \
+                  exp_manager.wandb_logger_kwargs.name=rm_training \
+                  trainer.rm.save_interval=10 \
+                  trainer.rm.max_steps=800 \
+                  ++model.tensor_model_parallel_size=4 \
+                  ++model.pipeline_model_parallel_size=1 \
+                  ++model.activations_checkpoint_granularity="selective" \
+                  ++model.activations_checkpoint_method="uniform" \
+                  model.global_batch_size=512 \
+                  model.optim.sched.constant_steps=0 \
+                  model.reward_model_type="regression" \
+                  model.regression.num_attributes=9
+
+
+   .. tab-item:: NeMo-Megatron-Launcher
+      :sync: key10
+ 
+         Ensure modifying `config.yaml line 18 to rw_sft/training_rm <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/config.yaml#L18>`_ to activate reward model training procedure.
+
+         .. code-block:: bash
+
+            python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[steerlm_reg]
    
-   python /opt/NeMo-Aligner/examples/nlp/gpt/train_reward_model.py \
-         trainer.num_nodes=32 \
-         trainer.devices=8 \
-         ++model.micro_batch_size=2 \
-         ++model.global_batch_size=512 \
-         ++model.data.data_impl=jsonl \
-         pretrained_checkpoint.restore_from_path=/models/llama13b/llama13b.nemo \
-         "model.data.data_prefix={train: ["data/merge_train_reg.jsonl"], validation: ["data/merge_val_reg.jsonl"], test: ["data/merge_val_reg.jsonl"]}" \
-         exp_manager.explicit_log_dir=/results/reward_model_13b \
-         trainer.rm.val_check_interval=10 \
-         exp_manager.create_wandb_logger=True \
-         exp_manager.wandb_logger_kwargs.project=steerlm \
-         exp_manager.wandb_logger_kwargs.name=rm_training \
-         trainer.rm.save_interval=10 \
-         trainer.rm.max_steps=800 \
-         ++model.tensor_model_parallel_size=4 \
-         ++model.pipeline_model_parallel_size=1 \
-         ++model.activations_checkpoint_granularity="selective" \
-         ++model.activations_checkpoint_method="uniform" \
-         model.global_batch_size=512 \
-         model.optim.sched.constant_steps=0 \
-         model.reward_model_type="regression" \
-         model.regression.num_attributes=9
-
-
 Step 4: Generate annotations
 ############################
 To generate annotations, run the following command in the background to launch an inference server:
@@ -176,59 +251,71 @@ Now execute:
 Step 5: Train the Attribute-Conditioned SFT model
 #################################################
 
-For the purposes of this tutorial, the Attribute-Conditioned SFT model is trained for 800 steps.
+.. tab-set::
 
-.. code-block:: bash
-   
-   python examples/nlp/gpt/train_gpt_sft.py \
-        trainer.num_nodes=32 \
-        trainer.devices=8 \
-        trainer.precision=bf16 \
-        trainer.sft.limit_val_batches=40 \
-        trainer.sft.max_epochs=1 \
-        trainer.sft.max_steps=800 \
-        trainer.sft.val_check_interval=800 \
-        trainer.sft.save_interval=800 \
-        model.megatron_amp_O2=True \
-        model.restore_from_path=/models/llama70b \
-        model.tensor_model_parallel_size=8 \
-        model.pipeline_model_parallel_size=2 \
-        model.optim.lr=6e-6 \
-        model.optim.name=distributed_fused_adam \
-        model.optim.weight_decay=0.01 \
-        model.optim.sched.constant_steps=200 \
-        model.optim.sched.warmup_steps=1 \
-        model.optim.sched.min_lr=5e-6 \
-        model.answer_only_loss=True \
-        model.activations_checkpoint_granularity=selective \
-        model.activations_checkpoint_method=uniform \
-        model.data.chat=True \
-        model.data.num_workers=0 \
-        model.data.chat_prompt_tokens.system_turn_start=\'\<extra_id_0\>\' \
-        model.data.chat_prompt_tokens.turn_start=\'\<extra_id_1\>\' \
-        model.data.chat_prompt_tokens.label_start=\'\<extra_id_2\>\' \
-        model.data.train_ds.max_seq_length=4096 \
-        model.data.train_ds.micro_batch_size=1 \
-        model.data.train_ds.global_batch_size=128 \
-        model.data.train_ds.file_path=data/oasst/train_labeled_2ep.jsonl \
-        model.data.train_ds.index_mapping_dir=/indexmap_dir \
-        model.data.train_ds.add_eos=False \
-        model.data.train_ds.hf_dataset=True \
-        model.data.validation_ds.max_seq_length=4096 \
-        model.data.validation_ds.file_path=data/oasst/val_labeled.jsonl \
-        model.data.validation_ds.micro_batch_size=1 \
-        model.data.validation_ds.global_batch_size=128 \
-        model.data.validation_ds.index_mapping_dir=/indexmap_dir \
-        model.data.validation_ds.add_eos=False \
-        model.data.validation_ds.hf_dataset=True \
-        exp_manager.create_wandb_logger=True \
-        exp_manager.wandb_logger_kwargs.project=steerlm \
-        exp_manager.wandb_logger_kwargs.name=acsft_training \
-        exp_manager.explicit_log_dir=/results/acsft_70b \
-        exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True 
+   .. tab-item:: NeMo-Aligner
+        :sync: key9
 
-        
+         For the purposes of this tutorial, the Attribute-Conditioned SFT model is trained for 800 steps.
 
+         .. code-block:: bash
+            
+            python examples/nlp/gpt/train_gpt_sft.py \
+               trainer.num_nodes=32 \
+               trainer.devices=8 \
+               trainer.precision=bf16 \
+               trainer.sft.limit_val_batches=40 \
+               trainer.sft.max_epochs=1 \
+               trainer.sft.max_steps=800 \
+               trainer.sft.val_check_interval=800 \
+               trainer.sft.save_interval=800 \
+               model.megatron_amp_O2=True \
+               model.restore_from_path=/models/llama70b \
+               model.tensor_model_parallel_size=8 \
+               model.pipeline_model_parallel_size=2 \
+               model.optim.lr=6e-6 \
+               model.optim.name=distributed_fused_adam \
+               model.optim.weight_decay=0.01 \
+               model.optim.sched.constant_steps=200 \
+               model.optim.sched.warmup_steps=1 \
+               model.optim.sched.min_lr=5e-6 \
+               model.answer_only_loss=True \
+               model.activations_checkpoint_granularity=selective \
+               model.activations_checkpoint_method=uniform \
+               model.data.chat=True \
+               model.data.num_workers=0 \
+               model.data.chat_prompt_tokens.system_turn_start=\'\<extra_id_0\>\' \
+               model.data.chat_prompt_tokens.turn_start=\'\<extra_id_1\>\' \
+               model.data.chat_prompt_tokens.label_start=\'\<extra_id_2\>\' \
+               model.data.train_ds.max_seq_length=4096 \
+               model.data.train_ds.micro_batch_size=1 \
+               model.data.train_ds.global_batch_size=128 \
+               model.data.train_ds.file_path=data/oasst/train_labeled_2ep.jsonl \
+               model.data.train_ds.index_mapping_dir=/indexmap_dir \
+               model.data.train_ds.add_eos=False \
+               model.data.train_ds.hf_dataset=True \
+               model.data.validation_ds.max_seq_length=4096 \
+               model.data.validation_ds.file_path=data/oasst/val_labeled.jsonl \
+               model.data.validation_ds.micro_batch_size=1 \
+               model.data.validation_ds.global_batch_size=128 \
+               model.data.validation_ds.index_mapping_dir=/indexmap_dir \
+               model.data.validation_ds.add_eos=False \
+               model.data.validation_ds.hf_dataset=True \
+               exp_manager.create_wandb_logger=True \
+               exp_manager.wandb_logger_kwargs.project=steerlm \
+               exp_manager.wandb_logger_kwargs.name=acsft_training \
+               exp_manager.explicit_log_dir=/results/acsft_70b \
+               exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True 
+
+
+   .. tab-item:: NeMo-Megatron-Launcher
+      :sync: key10
+ 
+         Ensure modifying `config.yaml line 18 to ac_sft/gpt_sft <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/2d917c4325f984426561f29bda1f2efc4aabeaff/launcher_scripts/conf/config.yaml#L18>`_ to activate Attribute-Conditioned SFT model training procedure.
+
+         .. code-block:: bash
+
+            python main.py launcher_scripts_path=PATH_TO/NeMo-Megatron-Launcher/launcher_scripts data_dir=PATH_TO_DATA_DIR stages=[steerlm_reg]
 
 Step 6: Inference
 ##################
