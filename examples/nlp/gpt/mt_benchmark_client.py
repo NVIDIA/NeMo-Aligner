@@ -250,7 +250,7 @@ def main(cfg):
                     args = [i["data_id"] for i in output]
                     for item in output:
                         finished[item["data_id"]] = item
-                    
+
                     # start to submit the next turn job
                     second_turn_inputs = {}
                     with open(eval.data_file, "r", encoding="utf-8") as f:
