@@ -209,6 +209,17 @@ def get_answer(data):
     return ans.strip()
 
 
+class FakeResult:
+    def __init__(self, obj) -> None:
+        self.obj = obj
+
+    def get(self):
+        return [[self.obj]]
+
+    def ready(self):
+        return True
+
+
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg):
     data_path = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
@@ -238,6 +249,8 @@ def main(cfg):
     ]
     chunked_data_points = chunks(data_points, cfg.model.mcts.rollout_micro_batch_size)
     results = [search_for_batch.delay(data) for data in chunked_data_points]
+    finished_reuslts = [FakeResult(finished[k]) for k, v in first_turn_inputs.items() if k in finished]
+    results.extend(finished_reuslts)
 
     turn_2_offset = 1000
     global_pbar = tqdm(total=len(data_points) * 2, desc="Search Global Progress")
