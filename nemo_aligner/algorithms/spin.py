@@ -109,7 +109,7 @@ class SPINTrainer:
 
         # compute `max_steps`
         self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
-        if (limit_train_batches := self.cfg.get("limit_train_batches", -1)) > 0:
+        if (limit_train_batches := self.cfg.get("limit_train_batches")) is not None and limit_train_batches > 0:
             self.num_steps_per_epoch = min(self.num_steps_per_epoch, limit_train_batches)
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)

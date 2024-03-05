@@ -372,10 +372,12 @@ def convert_to_amp_o2_format(state_dict):
 
 
 # this function uses dataclasses.replace to create ShardedTensors/ShardedObjects from torch.Tensor and IOBytes objects
-# based on the TP/PP/DP axis information taken from already existing ShardedTensors/Objects belonging to some reference model
+# based on the TP/PP/DP axis information taken from already existing ShardedTensors/Objects belonging to some input reference parameter
 # this is useful for creating TP/PP/DP compliant ShardedDicts where the TP/PP/DP of each sharded tensor can be copied from some
-# reference model, like in the case of a reference policy which has a 1:1 architecture as some actor policy. We use this in SPIN
-# to ensure the ref policy is sharded along the correct axis during saving of the checkpoint
+# other model which acts as a reference for providing this TP/PP/DP information. We use this in SPIN
+# to ensure that the reference policy inside SPIN is sharded along the correct axis during saving of the checkpoint by reading
+# the TP/PP/DP information from the actor policy. The reference_param in the function below refers to the parameter which acts as
+# the reference for what the TP/PP/DP information should be. This is not the same thing as the "reference policy" in SPIN/DPO
 # NOTE: dataclasses.replace is out-of-place so this is safe
 def make_sharded_tensors_from_reference(reference_param, model_param, prefix: str):
     if isinstance(reference_param, ShardedTensorFactory):
