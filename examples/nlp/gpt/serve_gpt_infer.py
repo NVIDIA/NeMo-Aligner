@@ -248,5 +248,4 @@ def main(cfg) -> None:
 
 
 if __name__ == "__main__":
-    with torch.no_grad():
-        main()  # noqa pylint: disable=no-value-for-parameter
+    main()  # noqa pylint: disable=no-value-for-parameter

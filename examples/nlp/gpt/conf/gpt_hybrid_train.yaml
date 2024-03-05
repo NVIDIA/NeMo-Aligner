@@ -29,6 +29,7 @@ trainer:
 pretrained_checkpoint:
   restore_from_path: null
   from_mcts_trained: False
+  has_value_head: True  # whehter the pretrained model has value head
 
 mcts_data_file: null
 

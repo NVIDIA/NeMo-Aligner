@@ -107,7 +107,7 @@ class Node:
 
     def get_ucb(self, child, C):
         if child.visit_count == 0:
-            q_value = 0.0  #
+            q_value = child.prior  # # use prior as initial value
         else:
             q_value = child.value_sum / child.visit_count  # assume the q_value is probability of winning
         return q_value + C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
@@ -137,7 +137,14 @@ class Node:
 
 class MCTSParallel:
     def __init__(
-        self, args, tokenizer, session_info="session", score_fn=None, terminate_fns=None, client_fun: Callable = None
+        self,
+        args,
+        tokenizer,
+        session_info="session",
+        score_fn=None,
+        terminate_fns=None,
+        client_fun: Callable = None,
+        has_value=True,
     ):
         self.args = args
         self.tokenizer = tokenizer
@@ -146,6 +153,7 @@ class MCTSParallel:
         self.terminate_fns = terminate_fns
         self.client_fun = client_fun
         self.cache = {}
+        self.has_value = has_value
 
     def decode_text(self, state):
         decoded_text = self.tokenizer.decode(state)
@@ -335,14 +343,20 @@ class MCTSParallel:
 
                 actions = result_dict["action"]
                 policy = result_dict["policy"]  # [batch, top_k]
-                value = result_dict["value"]  # [batch]
+                if self.has_value:
+                    value = result_dict["value"]  # [batch]
+                else:
+                    value = [None] * len(policy)
 
             for i, mappingIdx in enumerate(expandable_search):
                 # node to expand
                 node = ps[mappingIdx].node
                 # corresponding policy and value
                 spg_policy, spg_value, spg_action = policy[i], value[i], actions[i]
-                value_head_output = spg_value.item()
+                if spg_value is not None:
+                    value_head_output = spg_value.item()
+                else:
+                    value_head_output = node.prior
                 if self.args["turn_off_value"]:
                     value_head_output = 0.0
 

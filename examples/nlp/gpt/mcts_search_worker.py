@@ -32,6 +32,7 @@ from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf
 from tqdm import tqdm
 
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -290,7 +291,8 @@ def main(cfg) -> None:
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
-    cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
+    if cfg.pretrained_checkpoint.has_value_head:
+        cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
@@ -300,7 +302,10 @@ def main(cfg) -> None:
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
-    hybrid_model_cls = MegatronGPTHybridModel
+    if cfg.pretrained_checkpoint.has_value_head:
+        hybrid_model_cls = MegatronGPTHybridModel
+    else:
+        hybrid_model_cls = MegatronGPTModel
 
     ptl_model = load_from_nemo(
         hybrid_model_cls,
@@ -313,7 +318,13 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    ptl_model.prepare_for_inference()
+    if cfg.pretrained_checkpoint.has_value_head:
+        ptl_model.prepare_for_inference()
+    else:
+        ptl_model._reset_activation_checkpointing_args()
+        ptl_model._reset_sequence_parallelism_args()
+        ptl_model.eval()
+
     ptl_model.freeze()
 
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
@@ -329,7 +340,13 @@ def main(cfg) -> None:
         {"dataset_length": len(ds)}, step=0, prefix="data/",
     )
 
-    search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
+    search_func = partial(
+        run_mcts,
+        ptl_model=ptl_model,
+        score_fn=score_fn,
+        inference_only=False,
+        has_value=cfg.pretrained_checkpoint.has_value_head,
+    )
 
     # start the worker on the rank
     start_worker(search_func, collate_func, save_dir, ds, cfg, cfg.server_url, cfg.backend_url)

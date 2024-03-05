@@ -4,13 +4,19 @@ from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedback
 from nemo_aligner.utils.deep_search.mcts.mcts import DeepSearch, MCTSParallel, ParallelSearch
 from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
 from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
-from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
+from nemo_aligner.utils.deep_search.text_generation_strategy import (
+    GPTSearchTextGenerationStrategy,
+    HybridGPTSearchTextGenerationStrategy,
+)
 
 
-def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False):
+def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_value=True):
     mcts_cfg = ptl_model.cfg.mcts
 
-    strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
+    if has_value:
+        strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
+    else:
+        strategy = GPTSearchTextGenerationStrategy(ptl_model)
     strategy_args = {"strategy": strategy}
 
     def get_client_fun(model, top_k, max_depth, **strategy_args):
@@ -38,6 +44,7 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False):
         score_fn=score_fn,
         terminate_fns=[termination_condition],
         client_fun=get_client_fun(ptl_model, mcts_cfg.top_k, mcts_cfg.max_depth, **strategy_args),
+        has_value=has_value,
     )
 
     ds = DeepSearch(
@@ -47,7 +54,7 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False):
         strategy,
         mcts_cfg.save_timer,
         mcts_cfg.cache_dir,
-        inference_only,
+        inference_only=inference_only,
     )
 
     ps = []
