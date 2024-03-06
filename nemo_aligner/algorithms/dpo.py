@@ -104,7 +104,7 @@ class DPOTrainer:
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
-            int(self.cfg.val_check_interval * self._train_dataloader_len)
+            int(self.cfg.val_check_interval * len(self.train_dataloader))
             if isinstance(self.cfg.val_check_interval, float)
             else self.cfg.val_check_interval
         )

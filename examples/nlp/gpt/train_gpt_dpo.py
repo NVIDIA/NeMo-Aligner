@@ -123,6 +123,7 @@ def main(cfg) -> None:
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
         ),
+        use_random_sampler=False,
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)

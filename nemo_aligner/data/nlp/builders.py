@@ -31,7 +31,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils imp
 )
 from nemo.collections.nlp.data.language_modeling.megatron.blendable_dataset import BlendableDataset
 
-# from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingSampler
+from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingSampler
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset
@@ -321,29 +321,33 @@ def build_dataloader(
     pad_samples_to_global_batch_size=False,
     collate_fn=None,
     load_gbs=True,
+    use_random_sampler=True,
 ):
     """Buld dataloader given an input dataset."""
 
     logging.info(f"Building dataloader with consumed samples: {consumed_samples}")
+    # Common parameters for batch sampler creation
+    common_params = {
+        "total_samples": len(dataset),
+        "consumed_samples": consumed_samples,
+        "micro_batch_size": mbs,
+        "data_parallel_rank": parallel_state.get_data_parallel_rank(),
+        "data_parallel_size": parallel_state.get_data_parallel_world_size(),
+        "drop_last": drop_last,
+        "global_batch_size": gbs,
+        "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
+    }
+
     # Megatron sampler
-    if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type is not None:
-        if cfg.model.data.dataloader_type == "single":
+    if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type == "single":
+        if use_random_sampler:
             cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
-            batch_sampler = cls(
-                total_samples=len(dataset),
-                consumed_samples=consumed_samples,
-                micro_batch_size=mbs,
-                data_parallel_rank=parallel_state.get_data_parallel_rank(),
-                data_parallel_size=parallel_state.get_data_parallel_world_size(),
-                drop_last=drop_last,
-                global_batch_size=gbs,
-                pad_samples_to_global_batch_size=pad_samples_to_global_batch_size,
-                seed=cfg.model.seed,
-            )
+            common_params["seed"] = cfg.model.seed
         else:
-            raise ValueError('cfg.data.dataloader_type must be "single"')
+            cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+        batch_sampler = cls(**common_params)
     else:
-        raise ValueError('cfg.data.dataloader_type not found. Must be "single"')
+        raise ValueError('`cfg.model.data.dataloader_type` must be set to "single"')
 
     return torch.utils.data.DataLoader(
         dataset,
