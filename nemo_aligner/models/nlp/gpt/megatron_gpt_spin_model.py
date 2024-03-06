@@ -79,7 +79,9 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         elif isinstance(self.spin_config["ref_policy_kl_penalty"], list):
             self.ref_policy_kl_penalty = 0.0
         else:
-            raise TypeError(f"`ref_policy_kl_penalty` must be a scalar or list, but got {type(self.spin_config['ref_policy_kl_penalty'])}")
+            raise TypeError(
+                f"`ref_policy_kl_penalty` must be a scalar or list, but got {type(self.spin_config['ref_policy_kl_penalty'])}"
+            )
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, masks):
