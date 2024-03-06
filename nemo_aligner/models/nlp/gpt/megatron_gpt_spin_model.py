@@ -434,7 +434,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         sharded_state_dict_new = {}
         with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             module_prefix = f"{prefix}ref_policy_model."
-            for index, module in enumerate(self.get_gpt_module_list()):
+            for index, module in enumerate(self.get_model_module_list()):
                 if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
                     # virtual pipline rank must be set so that GPTModel returns the correct sharded state dict
                     parallel_state.set_virtual_pipeline_model_parallel_rank(index)
@@ -480,7 +480,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         if self.mcore_gpt:
             # checkpoint keys: ['epoch', 'global_step', 'pytorch-lightning_version', 'state_dict', 'loops', 'callbacks', 'optimizer_states', 'lr_schedulers', 'hparams_name', 'hyper_parameters']
             if "state_dict" in checkpoint and checkpoint["state_dict"]:
-                for index, module in enumerate(self.get_gpt_module_list()):
+                for index, module in enumerate(self.get_model_module_list()):
                     if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
                         checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
                         checkpoint_state_dict.update(checkpoint["state_dict"][f"ref_policy_model_{index}"])
@@ -525,7 +525,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         if self.mcore_gpt:
             # checkpoint keys: ['epoch', 'global_step', 'pytorch-lightning_version', 'state_dict', 'loops', 'callbacks', 'optimizer_states', 'lr_schedulers', 'hparams_name', 'hyper_parameters']
             if "state_dict" in checkpoint and checkpoint["state_dict"]:
-                for index, module in enumerate(self.get_gpt_module_list()):
+                for index, module in enumerate(self.get_model_module_list()):
                     if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
                         checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
                     else:
