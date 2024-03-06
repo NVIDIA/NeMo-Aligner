@@ -266,7 +266,7 @@ class SPINTrainer:
             if len(epoch_iter) <= 0:
                 # epoch done
                 return
-            
+
             # call this in case the model is using a KL scheduler based on iteration number
             self.model.set_KL_penalty_by_iteration(self.iteration)
 
@@ -289,8 +289,6 @@ class SPINTrainer:
 
                 for _, global_batch in zip(loop_iter, global_pbar):
                     self.model.prepare_for_training()
-
-                    
 
                     self.timer.start("train_step_time")
                     loss, metrics = self.train_single_step(global_batch)
