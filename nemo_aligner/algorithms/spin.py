@@ -286,7 +286,7 @@ class SPINTrainer:
 
                 for _, global_batch in zip(loop_iter, global_pbar):
                     self.model.prepare_for_training()
-                    
+
                     # call this in case we're changing the KL penalty by iteration number
                     self.model.set_KL_penalty_by_iteration(self.iteration)
 

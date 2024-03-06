@@ -14,12 +14,12 @@
 
 import warnings
 from contextlib import nullcontext
-from omegaconf import OmegaConf
 
 import torch
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -72,10 +72,10 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         self.distributed_adam_offload_manager = None
         self.to_offload_adam_states = self.cfg.spin.offload_adam_states
 
-        #self.ref_policy_kl_penalty = self.cfg.spin.get("ref_policy_kl_penalty", 0.0)
+        # self.ref_policy_kl_penalty = self.cfg.spin.get("ref_policy_kl_penalty", 0.0)
         self.spin_config = OmegaConf.to_container(self.cfg.spin, resolve=True)
-        if isinstance(self.spin_config['ref_policy_kl_penalty'], float):
-            self.ref_policy_kl_penalty = self.spin_config['ref_policy_kl_penalty']
+        if isinstance(self.spin_config["ref_policy_kl_penalty"], float):
+            self.ref_policy_kl_penalty = self.spin_config["ref_policy_kl_penalty"]
         else:
             self.ref_policy_kl_penalty = 0.0
 
@@ -620,11 +620,13 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         # return in GPU, trainer needs to move to cpu
         return ref_log_probs
-    
+
     def set_KL_penalty_by_iteration(self, iteration):
-        if isinstance(self.spin_config['ref_policy_kl_penalty'], float):
+        if isinstance(self.spin_config["ref_policy_kl_penalty"], float):
             return
-        elif isinstance(self.spin_config['ref_policy_kl_penalty'], list):
-            assert iteration < len(self.spin_config['ref_policy_kl_penalty']), f"iteration [ {iteration} ] is out of bounds for KL schedule {self.spin_config['ref_policy_kl_penalty']}"
-            
-            self.ref_policy_kl_penalty = self.spin_config['ref_policy_kl_penalty'][iteration]
+        elif isinstance(self.spin_config["ref_policy_kl_penalty"], list):
+            assert iteration < len(
+                self.spin_config["ref_policy_kl_penalty"]
+            ), f"iteration [ {iteration} ] is out of bounds for KL schedule {self.spin_config['ref_policy_kl_penalty']}"
+
+            self.ref_policy_kl_penalty = self.spin_config["ref_policy_kl_penalty"][iteration]
