@@ -74,10 +74,12 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         # self.ref_policy_kl_penalty = self.cfg.spin.get("ref_policy_kl_penalty", 0.0)
         self.spin_config = OmegaConf.to_container(self.cfg.spin, resolve=True)
-        if isinstance(self.spin_config["ref_policy_kl_penalty"], float):
+        if isinstance(self.spin_config["ref_policy_kl_penalty"], (float, int)):
             self.ref_policy_kl_penalty = self.spin_config["ref_policy_kl_penalty"]
-        else:
+        elif isinstance(self.spin_config["ref_policy_kl_penalty"], list):
             self.ref_policy_kl_penalty = 0.0
+        else:
+            raise TypeError(f"`ref_policy_kl_penalty` must be a scalar or list, but got {type(self.spin_config['ref_policy_kl_penalty'])}")
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, masks):
@@ -622,7 +624,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         return ref_log_probs
 
     def set_KL_penalty_by_iteration(self, iteration):
-        if isinstance(self.spin_config["ref_policy_kl_penalty"], float):
+        if isinstance(self.spin_config["ref_policy_kl_penalty"], (float, int)):
             return
         elif isinstance(self.spin_config["ref_policy_kl_penalty"], list):
             assert iteration < len(
