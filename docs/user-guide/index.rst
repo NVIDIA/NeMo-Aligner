@@ -8,7 +8,7 @@
 :ref:`Model Alignment by Supervised Fine-Tuning (SFT) <sft>`
    In this section, we walk you through the most straightforward alignment method, using a supervised dataset in the prompt-response pairs format, to fine-tune the base model to the desired behavior.
 
-:ref:`Model Alignment by RLHF <model-aligner-sft>`
+:ref:`Model Alignment by RLHF <model-aligner-rlhf>`
    RLHF is the next step up in alignment and is still responsible for most state-of-the-art chat models. In this section, we walk you through the process of RLHF alignment, including training a reward model and the RLHF training with the  PPO algorithm.
  
 :ref:`Model Alignment by SteerLM Method <model-aligner-steerlm>`
