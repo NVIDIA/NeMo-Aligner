@@ -457,7 +457,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         if self.ref_policy_state_dict is not None:
             # Link ref_policy keys with sharded_state_dict to reuse sharding information
             ref_policy_sharded_state_dict = {}
-            for k,v in self.ref_policy_state_dict.items():
+            for k, v in self.ref_policy_state_dict.items():
                 if v is None:
                     continue
                 key = k.replace("model.module.", "model.", 1) if self.megatron_amp_O2 else k
