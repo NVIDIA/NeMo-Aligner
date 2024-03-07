@@ -1,5 +1,7 @@
 .. include:: /content/nemo.rsts
 
+.. _model-aligner-sft:
+
 Model Alignment by RLHF
 @@@@@@@@@@@@@@@@@@@@@@@
 
