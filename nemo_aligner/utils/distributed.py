@@ -14,8 +14,10 @@
 
 """distributed utils for communicating between different ranks"""
 
+import time
 import warnings
 from collections import defaultdict
+from contextlib import contextmanager
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
@@ -320,3 +322,17 @@ class SyncTimer(NamedTimer):
         yield from output_list
 
         del self.stored_results[name]
+
+@contextmanager
+def print_timer(name=""):
+    torch.cuda.synchronize()
+
+    try:
+        print("### RANK {} {} START".format(torch.distributed.get_rank(), name))
+        start = time.time()
+        yield
+
+    finally:
+        torch.cuda.synchronize()
+        end = time.time()
+        print("### RANK {} TOOK TIME {} in FUNCTION {} END".format(torch.distributed.get_rank(), end - start, name))

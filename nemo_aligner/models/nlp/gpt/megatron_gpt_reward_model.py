@@ -36,7 +36,7 @@ from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import AppState, logging
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor
+from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor, print_timer
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
@@ -398,15 +398,31 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         attention_mask_repeat = torch.concat([attention_mask for _ in range(input_batch_size)])
 
         inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat]
+        divisible_batch_size = (input_batch_size // self.forward_mbs) * self.forward_mbs
 
-        num_microbatches = divide(input_batch_size, self.forward_mbs)
-        data_iter = get_iterator_k_split(inputs, num_microbatches)
+        rewards = None
+        if divisible_batch_size > 0:
+            inputs_divisible = [item[:divisible_batch_size] for item in inputs]
+            num_microbatches = divide(divisible_batch_size, self.forward_mbs)
+            data_iter = get_iterator_k_split(inputs_divisible, num_microbatches)
 
-        with print_timer("forward step"):
-            rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches,)
+            with print_timer("forward step"):
+                rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches,)
+
+        remainder_rewards = None
+        if divisible_batch_size != input_batch_size:
+            remainder_batch = [item[divisible_batch_size:] for item in inputs]
+            data_iter = get_iterator_k_split(remainder_batch, 1)
+            with print_timer("forward step"):
+                remainder_rewards = self.forward_step(data_iter, input_batch_size - divisible_batch_size, sequence_length, 1,)
 
         if parallel_state.is_pipeline_last_stage():
-            rewards = torch.cat(rewards)
+            if rewards:
+                if remainder_rewards:
+                    rewards += remainder_rewards
+                rewards = torch.cat(rewards)
+            else:
+                rewards = torch.cat(remainder_rewards)
 
             # Standardize values to subtract a bias.
             if self.enable_standardization:
