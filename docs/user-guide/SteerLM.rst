@@ -1,5 +1,7 @@
 .. include:: /content/nemo.rsts
 
+.. _model-aligner-steerlm:
+
 Model Alignment by SteerLM Method
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
