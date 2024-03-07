@@ -457,13 +457,15 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         if self.ref_policy_state_dict is not None:
             # Link ref_policy keys with sharded_state_dict to reuse sharding information
             ref_policy_sharded_state_dict = {}
-            for k in self.ref_policy_state_dict:
+            for k,v in self.ref_policy_state_dict.items():
+                if v is None:
+                    continue
                 key = k.replace("model.module.", "model.", 1) if self.megatron_amp_O2 else k
                 assert (
                     key in sharded_state_dict_orig
                 ), f"key [ {key} ] exists in ref_policy but not in sharded_state_dict_orig"  # may fail due to nesting?
                 ref_policy_sharded_state_dict[k] = make_sharded_tensors_from_reference(
-                    sharded_state_dict_orig[key], self.ref_policy_state_dict[k], "reference_policy"
+                    sharded_state_dict_orig[key], v, "reference_policy"
                 )
             sharded_state_dict_orig["reference_policy"] = ref_policy_sharded_state_dict
 
