@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import random
+import numpy as np
 from collections import defaultdict
 from enum import IntEnum, auto
 from functools import partial
@@ -60,6 +61,11 @@ def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, floa
 
     return limit_batches
 
+def get_mean_and_std(list_of_losses, last_k=10):
+    if len(list_of_losses) == 0 or len(list_of_losses) < last_k:
+        return 0, 1
+
+    return np.mean(list_of_losses[-last_k:]), np.std(list_of_losses[-last_k:])
 
 class DeepSearchTrainer:
     def __init__(
@@ -106,6 +112,10 @@ class DeepSearchTrainer:
         self.num_to_log_to_table = 5
         self.val_df = pd.DataFrame(columns=["step", "response", "reward", "ground_truth_answer"])
         self.train_df = pd.DataFrame(columns=["step", "response", "reward", "ground_truth_answer"])
+
+        # not preemptable yet
+        self.all_policy_losses = []
+        self.all_value_losses = []
 
     @torch.no_grad()
     def run_inference(self, dataloader):
@@ -182,8 +192,11 @@ class DeepSearchTrainer:
             for batch in policy_batches:
                 # at least if we do this the lr are not synced between the 2 stages of training
                 batch["amount_of_batches"] = len(policy_batches)
+                batch["mean"], batch["std"] = get_mean_and_std(self.all_policy_losses)
+
                 policy_metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
                 policy_losses.append(policy_metrics["loss"])
+                self.all_policy_losses.append(policy_metrics["unnormalized_loss"])
 
                 self.consumed_samples += batch["tokens"].size(0) * dp_size
 
@@ -195,8 +208,11 @@ class DeepSearchTrainer:
             for batch in value_batches:
                 # at least if we do this the lr are not synced between the 2 stages of training
                 batch["amount_of_batches"] = len(value_batches)
+                batch["mean"], batch["std"] = get_mean_and_std(self.all_value_losses)
+
                 value_metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
                 value_losses.append(value_metrics["loss"])
+                self.all_value_losses.append(value_metrics["unnormalized_loss"])
 
                 self.consumed_samples_values += self.model.cfg.critic_global_batch_size
 

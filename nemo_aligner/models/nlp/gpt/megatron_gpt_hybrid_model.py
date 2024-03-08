@@ -244,15 +244,22 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 # num_micro_batches = batch["num_micro_batches"]
                 amount_of_batches = batch["amount_of_batches"]
                 divisor = amount_of_batches[0]
+                mean = batch["mean"][0]
+                std = batch["std"][0]
 
                 logits = parallel_logits
 
                 policy_loss = self.compute_policy_loss(batch, logits)
                 value_loss = self.compute_value_loss(batch, values)
 
-                loss = (value_loss - policy_loss) / divisor
-                reduced_loss, reduced_value_loss, reduced_policy_loss = average_losses_across_data_parallel_group(
-                    [loss, value_loss / divisor, policy_loss / divisor]
+                unnormalized_loss = value_loss - policy_loss
+
+                loss = (unnormalized_loss - mean) / std
+                print("### LOSS", torch.distributed.get_rank(), loss)
+                loss = loss / divisor
+
+                reduced_loss, reduced_value_loss, reduced_policy_loss, reduced_unnormalized_loss = average_losses_across_data_parallel_group(
+                    [loss, value_loss / divisor, policy_loss / divisor, unnormalized_loss]
                 )
 
                 return (
@@ -261,6 +268,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                         "loss": reduced_loss.detach(),
                         "value_loss": reduced_value_loss.detach(),
                         "policy_loss": -reduced_policy_loss.detach(),
+                        "unnormalized_loss": reduced_unnormalized_loss.detach(),
                     },
                 )
 
@@ -292,6 +300,8 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         batch["train_mode"] = torch.as_tensor([batch["train_mode"]] * gbs_by_dp)
         batch["amount_of_batches"] = torch.as_tensor([batch["amount_of_batches"]] * gbs_by_dp)
         batch["num_micro_batches"] = torch.as_tensor([num_micro_batches] * gbs_by_dp)
+        batch["mean"] = torch.as_tensor([batch["mean"]] * gbs_by_dp)
+        batch["std"] = torch.as_tensor([batch["std"]] * gbs_by_dp)
 
         batch = {k: v[: num_micro_batches * self.cfg.micro_batch_size] for k, v in batch.items()}
 
@@ -312,7 +322,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
         metrics = {}
 
-        for key in ["loss", "value_loss", "policy_loss"]:
+        for key in ["loss", "value_loss", "policy_loss", "unnormalized_loss"]:
             if losses_reduced_per_micro_batch:
                 metric_mean = torch.stack(
                     [loss_reduced[key] for loss_reduced in losses_reduced_per_micro_batch]
