@@ -351,12 +351,13 @@ class PPOTrainer:
         if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomSampler)) and (
             self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
         ):
-            # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
+            # if you use MegatronPretrainingSampler as the sampler passed to your train dataloader (in builders.py)
             # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
             # to fix this, you should use MegatronPretrainingRandomSampler instead, which alleviates this issue and allows
             # random shuffling for each epoch.
             raise ValueError(
-                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomSampler` as the batch_sampler for your train dataloader"
+                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomSampler` as the sampler "
+                "for your train dataloader"
             )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
