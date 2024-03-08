@@ -255,7 +255,6 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 unnormalized_loss = value_loss - policy_loss
 
                 loss = (unnormalized_loss - mean) / std
-                print("### LOSS", torch.distributed.get_rank(), loss)
                 loss = loss / divisor
 
                 reduced_loss, reduced_value_loss, reduced_policy_loss, reduced_unnormalized_loss = average_losses_across_data_parallel_group(
