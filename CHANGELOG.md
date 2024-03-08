@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Breaking changes
 
 ### Bug Fixes
-- Fixed issue where random sampler keeps state when resetting for validation, leading to a different validation batch each validation step. Fixed by using a deterministic sampler
+- Fixed issue where random sampler keeps state when resetting for validation, leading to different validation data each validation step (when not going over the full validation set, which is the case by default in PPO for instance)
 - Fixed crash with float val check interval in DPOTrainer
 
 ## [0.2.0] - 2024-02
