@@ -59,6 +59,7 @@ class MegatronPretrainingRandomSampler(BaseMegatronSampler):
         self.last_batch_size = self.total_samples % self.micro_batch_times_data_parallel_size
         self.seed = seed
         self.auto_update_consumed_samples = auto_update_consumed_samples
+        self._last_iter_consumed_samples = 0
 
     def __len__(self):
         active_total_samples = self.total_samples - (self.last_batch_size if self.drop_last else 0)
@@ -75,6 +76,17 @@ class MegatronPretrainingRandomSampler(BaseMegatronSampler):
                 return (num_available_samples - 1) // self.micro_batch_times_data_parallel_size
 
     def __iter__(self):
+        if (
+            not self.auto_update_consumed_samples
+            and self.consumed_samples == self._last_iter_consumed_samples
+            and self.consumed_samples > 0
+        ):
+            raise RuntimeError(
+                f"Tried to iterate twice with `{self.consumed_samples=}`. Did you forget to call "
+                "`set_consumed_samples(dataloader, updated_consumed_samples)` before iterating again?"
+            )
+        self._last_iter_consumed_samples = self.consumed_samples
+
         active_total_samples = self.total_samples - self.last_batch_size
         self.epoch = self.consumed_samples // active_total_samples
         current_epoch_samples = self.consumed_samples % active_total_samples
@@ -110,9 +122,21 @@ class MegatronPretrainingRandomBatchSampler(megatron_batch_samplers.MegatronPret
     def __init__(self, *args, auto_update_consumed_samples: bool = True, **kw):
         super().__init__(*args, **kw)
         self.auto_update_consumed_samples = auto_update_consumed_samples
+        self._last_iter_consumed_samples = 0
 
     # This is just a copy of the parent class' `__iter__()` method, but also handling `auto_update_consumed_samples`.
     def __iter__(self):
+        if (
+            not self.auto_update_consumed_samples
+            and self.consumed_samples == self._last_iter_consumed_samples
+            and self.consumed_samples > 0
+        ):
+            raise RuntimeError(
+                f"Tried to iterate twice with `{self.consumed_samples=}`. Did you forget to call "
+                "`set_consumed_samples(dataloader, updated_consumed_samples)` before iterating again?"
+            )
+        self._last_iter_consumed_samples = self.consumed_samples
+
         active_total_samples = self.total_samples - self.last_batch_size
         self.epoch = self.consumed_samples // active_total_samples
         current_epoch_samples = self.consumed_samples % active_total_samples

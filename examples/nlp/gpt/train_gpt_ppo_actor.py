@@ -130,7 +130,6 @@ def main(cfg) -> None:
         gbs=cfg.model.ppo.num_val_samples,
         collate_fn=collate_fn,
         load_gbs=False,
-        auto_update_consumed_samples=False,
     )
 
     # nemo uses the train dataloader to figure out

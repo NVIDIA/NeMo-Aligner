@@ -29,7 +29,12 @@ from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
 from nemo_aligner.utils.train_utils import clip_gradients
-from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
+from nemo_aligner.utils.trainer_utils import (
+    check_progress,
+    compute_limit_batches,
+    compute_num_steps_per_epoch,
+    set_consumed_samples,
+)
 from nemo_aligner.utils.utils import (
     batch_pad_to_fixed_len,
     clear_memory,
@@ -108,7 +113,7 @@ class SPINTrainer:
         self.ckpt_callback = ckpt_callback
 
         # compute `max_steps`
-        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader)
         if (limit_train_batches := self.cfg.get("limit_train_batches")) is not None and limit_train_batches >= 0:
             self.num_steps_per_epoch = min(self.num_steps_per_epoch, limit_train_batches)
 
@@ -279,6 +284,7 @@ class SPINTrainer:
                 if not loop_iter:
                     return  # training ended
 
+                set_consumed_samples(self.train_dataloader, self.consumed_samples)
                 global_pbar = tqdm(
                     self.augment_dataloader(self.train_dataloader),
                     initial=self.step,

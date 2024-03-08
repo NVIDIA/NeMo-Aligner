@@ -26,7 +26,12 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_an
 from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
-from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
+from nemo_aligner.utils.trainer_utils import (
+    check_progress,
+    compute_limit_batches,
+    compute_num_steps_per_epoch,
+    set_consumed_samples,
+)
 from nemo_aligner.utils.utils import clear_memory
 
 
@@ -100,7 +105,7 @@ class DPOTrainer:
         self.ckpt_callback = ckpt_callback
 
         # compute `max_steps`
-        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader)
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
@@ -204,6 +209,7 @@ class DPOTrainer:
             if not loop_iter:
                 return  # training ended
 
+            set_consumed_samples(self.train_dataloader, self.consumed_samples)
             global_pbar = tqdm(
                 self.augment_dataloader(self.train_dataloader),
                 initial=self.step,

@@ -319,7 +319,6 @@ def build_dataloader(
     pad_samples_to_global_batch_size=False,
     collate_fn=None,
     load_gbs=True,
-    auto_update_consumed_samples=True,
 ):
     """Buld dataloader given an input dataset."""
 
@@ -328,7 +327,7 @@ def build_dataloader(
     sampler_params = {
         "total_samples": len(dataset),
         "consumed_samples": consumed_samples,
-        "auto_update_consumed_samples": auto_update_consumed_samples,
+        "auto_update_consumed_samples": False,
         "micro_batch_size": mbs,
         "data_parallel_rank": parallel_state.get_data_parallel_rank(),
         "data_parallel_size": parallel_state.get_data_parallel_world_size(),
