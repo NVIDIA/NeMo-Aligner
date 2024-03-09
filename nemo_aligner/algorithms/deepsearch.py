@@ -13,13 +13,13 @@
 # limitations under the License.
 
 import random
-import numpy as np
 from collections import defaultdict
 from enum import IntEnum, auto
 from functools import partial
 from math import ceil
 from typing import Union
 
+import numpy as np
 import pandas as pd
 import torch
 from megatron.core import parallel_state
@@ -61,11 +61,14 @@ def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, floa
 
     return limit_batches
 
+
 def get_mean_and_std(list_of_losses, last_k=10):
     if len(list_of_losses) == 0 or len(list_of_losses) < last_k:
         return 0, 1
 
-    return np.mean(list_of_losses[-last_k:]), np.std(list_of_losses[-last_k:])
+    # return np.mean(list_of_losses[-last_k:]), np.std(list_of_losses[-last_k:])
+    return 0, np.std(list_of_losses[-last_k:])
+
 
 class DeepSearchTrainer:
     def __init__(
@@ -185,6 +188,7 @@ class DeepSearchTrainer:
         run_value = self.value_steps.pop()
         run_policy = self.policy_steps.pop()
         value_losses, policy_losses = [], []
+        value_losses_unnormalized, policy_losses_unnormalized = [], []
 
         if run_policy:
             policy_batches = [output[1] for output in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter)]
@@ -197,6 +201,7 @@ class DeepSearchTrainer:
                 policy_metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
                 policy_losses.append(policy_metrics["loss"])
                 self.all_policy_losses.append(policy_metrics["unnormalized_loss"])
+                policy_losses_unnormalized.append(policy_metrics["unnormalized_loss"])
 
                 self.consumed_samples += batch["tokens"].size(0) * dp_size
 
@@ -213,6 +218,7 @@ class DeepSearchTrainer:
                 value_metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
                 value_losses.append(value_metrics["loss"])
                 self.all_value_losses.append(value_metrics["unnormalized_loss"])
+                value_losses_unnormalized.append(value_metrics["unnormalized_loss"])
 
                 self.consumed_samples_values += self.model.cfg.critic_global_batch_size
 
@@ -233,6 +239,23 @@ class DeepSearchTrainer:
         metrics.update({"consumed_samples": self.consumed_samples})
         metrics.update({"value_loss": sum(value_losses)})
         metrics.update({"policy_loss": sum(policy_losses)})
+
+        metrics.update({"value_policy_sum": sum(value_losses) + sum(policy_losses)})
+
+        metrics.update(
+            {
+                "value_loss_unnormalized": np.mean(value_losses_unnormalized)
+                if len(value_losses_unnormalized) > 0
+                else 0
+            }
+        )
+        metrics.update(
+            {
+                "policy_loss_unnormalized": np.mean(policy_losses_unnormalized)
+                if len(policy_losses_unnormalized) > 0
+                else 0
+            }
+        )
         metrics.update({"lr": lr})
 
         self.logger.log_metrics(

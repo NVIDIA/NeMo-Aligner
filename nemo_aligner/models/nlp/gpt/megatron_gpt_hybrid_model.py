@@ -257,7 +257,12 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 loss = (unnormalized_loss - mean) / std
                 loss = loss / divisor
 
-                reduced_loss, reduced_value_loss, reduced_policy_loss, reduced_unnormalized_loss = average_losses_across_data_parallel_group(
+                (
+                    reduced_loss,
+                    reduced_value_loss,
+                    reduced_policy_loss,
+                    reduced_unnormalized_loss,
+                ) = average_losses_across_data_parallel_group(
                     [loss, value_loss / divisor, policy_loss / divisor, unnormalized_loss]
                 )
 
