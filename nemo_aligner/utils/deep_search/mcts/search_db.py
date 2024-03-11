@@ -102,10 +102,10 @@ class SearchDB:
         del self.position_ids[session_id]
 
 
-def _get_trailing_padding(tokens):
+def _get_trailing_padding(tokens, pad_id):
     counts = 0
     for token in tokens[::-1]:
-        if token == 0:
+        if token == pad_id:
             counts += 1
         else:
             break
@@ -155,7 +155,7 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
         batched_kv_cache.append(new_kv_cache)
         batched_tokens.append(np.array(tokens))
     # get number of trailing padding
-    trailing_padding = [_get_trailing_padding(tokens) for tokens in batched_tokens]
+    trailing_padding = [_get_trailing_padding(tokens, pad_id) for tokens in batched_tokens]
     tokens_nums = [len(tokens) for tokens in batched_tokens]
     no_padding_length = [i - j for i, j in zip(tokens_nums, trailing_padding)]
 
