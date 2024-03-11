@@ -432,7 +432,9 @@ def sample_sequence_batch(
                     break
             update_pos.append(last_pos)
         update_pos = torch.cuda.IntTensor(update_pos)
-        if init:
+#        if init:
+        if True:
+
             batch, tensor_shape = inference_strategy.prepare_batch(
                 tokens, micro_batch_size, init, session_info, true_context_length
             )

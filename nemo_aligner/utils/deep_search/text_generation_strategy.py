@@ -380,7 +380,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             tokens2use = tokens
             positions2use = self.search_db.get_position_ids(session_info)[..., :maxlen]
         else:
-            maxlen = 1
+            maxlen = maxlen - 1
             minlen = true_context_lengths.min().item()  # the last token is not yet computed,
             attention_mask_3d = self.search_db.get_attention_mask(session_info)[
                 ..., : minlen + maxlen, : minlen + maxlen
