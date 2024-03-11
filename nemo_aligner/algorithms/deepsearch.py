@@ -185,7 +185,8 @@ class DeepSearchTrainer:
 
         value_losses, policy_losses = [], []
 
-        policy_batches = [output for output in self.val_policy_dataloader]
+        num_policy_batches = min(self.cfg.num_policy_batches, len(self.val_policy_dataloader))
+        policy_batches = [output[1] for output in zip(range(num_policy_batches), self.val_policy_dataloader)]
 
         for batch in policy_batches:
             # at least if we do this the lr are not synced between the 2 stages of training
@@ -193,7 +194,8 @@ class DeepSearchTrainer:
             policy_metrics = self.val_single_step(batch, TrainMode.POLICY_ONLY)
             policy_losses.append(policy_metrics["loss"])
 
-        value_batches = [output for output in self.val_value_dataloader]
+        num_value_batches = min(self.cfg.num_value_batches, len(self.val_value_dataloader))
+        value_batches = [output[1] for output in zip(range(num_value_batches), self.val_value_dataloader)]
 
         for batch in value_batches:
             # at least if we do this the lr are not synced between the 2 stages of training
