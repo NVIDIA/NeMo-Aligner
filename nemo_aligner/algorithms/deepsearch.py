@@ -70,6 +70,8 @@ class DeepSearchTrainer:
         scheduler,
         train_policy_dataloader,
         train_value_dataloader,
+        val_policy_dataloader,
+        val_value_dataloader,
         val_dataloader_builder_func,
         train_dataloader_builder_func,
         feedback,
@@ -85,6 +87,10 @@ class DeepSearchTrainer:
         self.train_value_dataloader = train_value_dataloader
         self.val_dataloader_builder_func = val_dataloader_builder_func
         self.train_dataloader_builder_func = train_dataloader_builder_func
+
+        self.val_policy_dataloader = val_policy_dataloader
+        self.val_value_dataloader = val_value_dataloader
+
         self.feedback = feedback
         self.logger = logger
         self.ckpt_callback = ckpt_callback
@@ -155,6 +161,13 @@ class DeepSearchTrainer:
             "table": tables,
         }
 
+    def val_single_step(self, batch, train_mode):
+        batch["train_mode"] = train_mode
+        loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=True)
+        metrics.update({"loss": loss_mean})
+
+        return metrics
+
     def train_single_step(self, batch, train_mode):
         batch["train_mode"] = train_mode
 
@@ -164,6 +177,44 @@ class DeepSearchTrainer:
 
         metrics.update({"loss": loss_mean})
 
+        return metrics
+
+    @torch.no_grad()
+    def run_loss_val(self):
+        self.model.prepare_for_inference()
+
+        value_losses, policy_losses = [], []
+
+        policy_batches = [output for output in self.val_policy_dataloader]
+
+        for batch in policy_batches:
+            # at least if we do this the lr are not synced between the 2 stages of training
+            batch["amount_of_batches"] = len(policy_batches)
+            policy_metrics = self.val_single_step(batch, TrainMode.POLICY_ONLY)
+            policy_losses.append(policy_metrics["loss"])
+
+        value_batches = [output for output in self.val_value_dataloader]
+
+        for batch in value_batches:
+            # at least if we do this the lr are not synced between the 2 stages of training
+            batch["amount_of_batches"] = len(value_batches)
+            value_metrics = self.val_single_step(batch, TrainMode.VALUE_ONLY)
+            value_losses.append(value_metrics["loss"])
+
+        metrics = {}
+
+        value_loss = sum(value_losses)
+        policy_loss = sum(policy_losses)
+
+        metrics.update({"value_loss": value_loss})
+        metrics.update({"policy_loss": policy_loss})
+        metrics.update({"total_loss": value_loss + policy_loss})
+
+        self.logger.log_metrics(
+            metrics, step=self.step, prefix="val_loss/",
+        )
+
+        self.model.finish_inference()
         return metrics
 
     def run_training(self, policy_dataloader_iter, value_dataloader_iter):
@@ -332,6 +383,9 @@ class DeepSearchTrainer:
 
                     train_eval_metrics = self.run_train_evaluation()
                     step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
+
+                    loss_eval_metrics = self.run_loss_val()
+                    step_metrics.update({f"loss_eval_{k}": v for k, v in loss_eval_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch

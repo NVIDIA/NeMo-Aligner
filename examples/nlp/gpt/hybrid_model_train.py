@@ -25,6 +25,7 @@ from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
+from sklearn.model_selection import train_test_split
 
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
@@ -247,8 +248,12 @@ def main(cfg) -> None:
     assert os.path.exists(cfg.mcts_data_file)
     train_data = torch.load(cfg.mcts_data_file)
 
-    # TODO(geshen): should we shuffle the data?
-    policy_data, value_data = train_data["policies"], train_data["values"]
+    policy_train_data, policy_val_data = train_test_split(
+        train_data["policies"], test_size=0.1, random_state=6, shuffle=True
+    )
+    value_train_data, value_val_data = train_test_split(
+        train_data["values"], test_size=0.1, random_state=7, shuffle=True
+    )
 
     data_ids = []
 
@@ -256,7 +261,7 @@ def main(cfg) -> None:
         len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches
     )
 
-    for _, p in zip(range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_data):
+    for _, p in zip(range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_train_data):
         data_ids.append(p["data_id"])
 
     train_ds = TrainDSDatasetWrapper(train_ds, data_ids)
@@ -264,22 +269,22 @@ def main(cfg) -> None:
 
     num_questions_correct = 0
 
-    for p in policy_data:
+    for p in train_data["policies"]:
         if all(x > 0 for x in p["reward"]):
             num_questions_correct += 1
 
     value_correct = 0
     value_total = 0
 
-    for v in value_data:
+    for v in train_data["values"]:
         rewards = v["reward"]
         value_correct += sum(r > 0 for r in rewards)
         value_total += len(rewards)
 
     data_metrics = {
         "num_questions_correct": num_questions_correct,
-        "num_questions": len(policy_data),
-        "accuracy": num_questions_correct / len(policy_data),
+        "num_questions": len(train_data["policies"]),
+        "accuracy": num_questions_correct / len(train_data["policies"]),
         "value_correct": value_correct,
         "value_total": value_total,
         "value_accuracy": value_correct / value_total,
@@ -293,7 +298,7 @@ def main(cfg) -> None:
     # TODO(geshen): support multiple epochs
     train_policy_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=policy_data,
+        dataset=policy_train_data,
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
@@ -305,7 +310,7 @@ def main(cfg) -> None:
     # TODO(geshen): can have different mbs
     train_value_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=value_data,
+        dataset=value_train_data,
         consumed_samples=consumed_samples_values,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.critic_global_batch_size,
@@ -344,6 +349,29 @@ def main(cfg) -> None:
 
     assert cfg.trainer.deep_search.max_epochs > 0
 
+    val_policy_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset=policy_val_data,
+        consumed_samples=consumed_samples,
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.global_batch_size,
+        load_gbs=True,
+        collate_fn=partial(mcts_collate_fn, eos_id),
+        shuffle=True,
+    )
+
+    # TODO(geshen): can have different mbs
+    val_value_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset=value_val_data,
+        consumed_samples=consumed_samples_values,
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.critic_global_batch_size,
+        load_gbs=True,
+        collate_fn=partial(mcts_value_collate_fn, eos_id),
+        shuffle=True,
+    )
+
     # on the first time we ever save a checkpoint
     # these steps will be set correctly and subsequent resumes
     # we rely on PTL keeping the max step in the state dict
@@ -374,6 +402,8 @@ def main(cfg) -> None:
         scheduler=scheduler,
         train_policy_dataloader=train_policy_dataloader,
         train_value_dataloader=train_value_dataloader,
+        val_policy_dataloader=val_policy_dataloader,
+        val_value_dataloader=val_value_dataloader,
         val_dataloader_builder_func=val_dataloader_builder_func,
         train_dataloader_builder_func=train_dataloader_builder_func,
         feedback=feedback,
