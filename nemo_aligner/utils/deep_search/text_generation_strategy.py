@@ -448,10 +448,14 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         action_value: torch.Tensor,
         children_action: torch.Tensor,
         context_tokens: torch.Tensor = None,
+        update_pos: torch.Tensor = None,
+        beg_pos: torch.Tensor = None,
     ):
         for bid in range(batch_size):
             context_length = context_lengths[bid].item()
             context_id = context_ids[bid]
+            update_position = update_pos[bid].item()
+            beg_position = beg_pos[bid].item()
             infer_params = self.search_db.get_inference_params(session_info)
             # self.search_db.add_kv_cache(session_id, depth, tokens, kv_cache)
             parent_node = parent_nodes[bid]
@@ -460,30 +464,39 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             # children_action_array = children_action[bid].cpu().numpy()
             # prior_data = (children_prob_array, children_action_array)
             prior_data = None
-            state = get_state(infer_params, action_taken == -1, context_length, bid)
             value = None
-            if action_value is not None:
-                value = action_value[bid].item()
+            # if action_value is not None:
+            #     value = action_value[bid].item()
             # here prior visit_count and C are not used, set to any numbers
             if action_taken == -1:
+                state = get_state(infer_params, action_taken == -1, context_length, bid)
                 # root node, need to add all context tokens
                 tokens = context_tokens[bid, :context_length].cpu().numpy().tolist()
                 node = Node(
                     state=state, parent=parent_node, action=tokens, prior=prior_data, visit_count=0, value_sum=value,
                 )
                 self.search_db.add_root(session_info, context_id, node)
+                # add child node to the parent node
+                if parent_node is not None:
+                    parent_node.children[action_taken] = node
             else:
-                node = Node(
-                    state=state,
-                    parent=parent_node,
-                    action=action_taken,
-                    prior=prior_data,
-                    visit_count=0,
-                    value_sum=value,
-                )
-            # add child node to the parent node
-            if parent_node is not None:
-                parent_node.children[action_taken] = node
+                beg_id = beg_position
+                end_id = update_position
+
+                for token_id in range(beg_id, end_id + 1):
+                    state = get_state(infer_params, action_taken == -1, context_length + token_id - beg_id, bid)
+                    node = Node(
+                        state=state,
+                        parent=parent_node,
+                        action=action_taken,
+                        prior=prior_data,
+                        visit_count=0,
+                        value_sum=value,
+                    )
+                    # add child node to the parent node
+                    if parent_node is not None:
+                        parent_node.children[action_taken] = node
+                    parent_node = node
 
     def get_node(self, session_info: str, context_id: str):
         return self.search_db.get(session_info, context_id)

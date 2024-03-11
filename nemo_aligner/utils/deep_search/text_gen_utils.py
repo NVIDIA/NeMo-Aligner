@@ -529,6 +529,8 @@ def sample_sequence_batch(
                 output_values,
                 output_actions,
                 context_tokens,
+                update_pos,
+                context_lengths,
             )
         else:
             # construct and save the next level nodes
@@ -550,5 +552,7 @@ def sample_sequence_batch(
                 output_values,
                 output_actions,
                 context_tokens,
+                update_pos,
+                context_lengths,
             )
         return output_actions, output_policy, output_values
