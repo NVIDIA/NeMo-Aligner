@@ -54,8 +54,8 @@ from nemo.collections.nlp.modules.common.text_generation_strategy import GPTMode
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.classes.modelPT import ModelPT
 from nemo.core.optim import MainParamsOptimizerWrapper, prepare_lr_scheduler
-from nemo.utils.dtype import str_to_dtype
 from nemo.utils import logging
+from nemo.utils.dtype import str_to_dtype
 from nemo_aligner.algorithms.deepsearch import TrainMode
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
 from nemo_aligner.utils.train_script_utils import FakeScheduler
