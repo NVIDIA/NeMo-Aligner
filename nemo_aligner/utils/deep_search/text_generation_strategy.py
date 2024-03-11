@@ -485,6 +485,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
 
                 for token_id in range(beg_id, end_id + 1):
                     state = get_state(infer_params, action_taken == -1, context_length + token_id - beg_id, bid)
+                    action_taken = context_tokens[bid, token_id].item()
                     node = Node(
                         state=state,
                         parent=parent_node,
