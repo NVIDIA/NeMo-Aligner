@@ -314,7 +314,61 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         context_length: int,
         init: bool = False,
         session_info: str = None,
-        maxlen: int = 0,
+        step: int = 0,
+        true_context_lengths: torch.Tensor = None,
+    ) -> Tuple[List[torch.Tensor], List[int]]:
+        """
+        generate the batch used in inference for each of the steps
+        """
+        if init:
+            attention_mask_3d = self.search_db.get_attention_mask(session_info)[..., :context_length, :context_length]
+            if step == 0:
+                tokens2use = tokens[:, :context_length]
+                positions2use = self.search_db.get_position_ids(session_info)[..., :context_length]
+            else:
+                tokens2use = tokens[:, context_length - 1].view(micro_batch_size, -1)
+                positions2use = self.search_db.get_position_ids(session_info)[..., :context_length]
+                positions2use = positions2use[:, context_length - 1].view(micro_batch_size, -1)
+                inference_params = self.get_inference_params(session_info)
+                # update the sequence length offset
+                if step == 1:
+                    inference_params.sequence_len_offset = context_length - 1
+                else:
+                    inference_params.sequence_len_offset += 1
+        else:
+            minlen = true_context_lengths.min().item()  # the last token is not yet computed,
+            # we are going to compute the last token first in the first step
+            # context [0, 1, ..., minlen - 2] minlen -1,
+            # tokens                           [tokens0,   tokens1, ... ]
+            #                                       | compute the token0 first
+            # need attention mask of length minlen + step
+            # need position ids of length minlen + step
+            # sequence_len_offset should start with minlen - 1
+            attention_mask_3d = self.search_db.get_attention_mask(session_info)[..., : minlen + step, : minlen + step]
+            attention_mask_3d = attention_mask_3d[0:1]  # only need one copy
+            tokens2use = tokens[:, step].view(micro_batch_size, -1)
+            positions2use = self.search_db.get_position_ids(session_info)[..., : minlen + step]
+            if positions2use.shape[0] != micro_batch_size:
+                # repeate the position ids
+                positions2use = positions2use[0:1, ...].repeat(micro_batch_size, 1)
+            positions2use = positions2use.view(micro_batch_size, -1)
+            inference_params = self.get_inference_params(session_info)
+            if step == 0:
+                assert inference_params.sequence_len_offset == minlen - 1
+            else:
+                assert step > 0
+                inference_params.sequence_len_offset += 1
+
+        batch = [tokens2use, attention_mask_3d, positions2use]
+        tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
+        return batch, tensor_shape
+
+    def prepare_batch(
+        self,
+        tokens: torch.Tensor,
+        micro_batch_size: int,
+        init: bool = False,
+        session_info: str = None,
         true_context_lengths: torch.Tensor = None,
     ) -> Tuple[List[torch.Tensor], List[int]]:
         """
@@ -326,19 +380,13 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             tokens2use = tokens
             positions2use = self.search_db.get_position_ids(session_info)[..., :maxlen]
         else:
+            maxlen = 1
             minlen = true_context_lengths.min().item()  # the last token is not yet computed,
-            # we are going to compute the last token first in the first step
-            # context [0, 1, ..., minlen - 2] minlen -1,
-            # tokens                           [tokens0,   tokens1, ... ]
-            #                                       | compute the token0 first
-            # need attention mask of length minlen + step
-            # need position ids of length minlen + step
-            # sequence_len_offset should start with minlen - 1
             attention_mask_3d = self.search_db.get_attention_mask(session_info)[
                 ..., : minlen + maxlen, : minlen + maxlen
             ]
             attention_mask_3d = attention_mask_3d[0:1]  # only need one copy
-            tokens2use = tokens.view(micro_batch_size, -1)
+            tokens2use = tokens[:, : maxlen + 1].contiguous()
             positions2use = self.search_db.get_position_ids(session_info)[..., : minlen + maxlen]
             if positions2use.shape[0] != micro_batch_size:
                 # repeate the position ids
@@ -346,7 +394,6 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             positions2use = positions2use.view(micro_batch_size, -1)
             inference_params = self.get_inference_params(session_info)
             assert inference_params.sequence_len_offset == minlen - 1
-
         batch = [tokens2use, attention_mask_3d, positions2use]
         tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
         return batch, tensor_shape
