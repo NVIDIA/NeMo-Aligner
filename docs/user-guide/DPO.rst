@@ -1,5 +1,7 @@
 .. include:: /content/nemo.rsts
 
+.. _model-aligner-dpo:
+
 Model Alignment by Direct Preference Optimisation (DPO)
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
