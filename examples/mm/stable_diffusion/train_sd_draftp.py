@@ -38,6 +38,7 @@ from nemo_aligner.utils.train_script_utils import (
     init_using_ptl,
     retrieve_custom_trainer_state_dict,
 )
+from nemo_aligner.utils.utils import load_from_nemo
 
 mp.set_start_method("spawn", force=True)
 
@@ -56,7 +57,8 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
     # TODO: @geshen: For the Stable Diffusion, I am currently getting the vae and unet separately
     # TODO: @ataghibakhsh: Redo with aligner style and find out the reason
-    ptl_model = MegatronLatentDiffusion(cfg.model, trainer).to(torch.cuda.current_device())
+
+    ptl_model = load_from_nemo(MegatronSDDRaFTPModel, cfg.model, trainer).to(torch.cuda.current_device())
     # TODO: @geshen: Check why we have PEFT init here
     if cfg.model.get("peft", None):
         if cfg.model.peft.enable:
@@ -123,17 +125,18 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     reward_model = get_reward_model(cfg.RM, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
-
-    alignable_model = MegatronSDDRaFTPModel(
-        ptl_model, reward_model, ptl_model.tokenizer, optimizer, cfg.model, logger=logger
-    )
+    ptl_model.reward_model = reward_model
+    ptl_model.wandb_logger = logger
+    # alignable_model = MegatronSDDRaFTPModel(
+    #     ptl_model, reward_model, ptl_model.tokenizer, optimizer, cfg.model, logger=logger
+    # )
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:4:00:00"))
+    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:12:00:00"))
 
     draft_p_trainer = SupervisedTrainer(
         cfg=cfg.model,
-        model=alignable_model,
+        model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
         train_dataloader=train_dataloader,

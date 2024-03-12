@@ -22,7 +22,7 @@ from PIL import Image
 from tqdm import tqdm
 
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
@@ -40,45 +40,38 @@ except (ImportError, ModuleNotFoundError):
 BatchType = Mapping[str, torch.tensor]
 
 
-class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
-    def __init__(
-        self, model, reward_model, tokenizer, optimizer, config: DictConfig, logger,
-    ):
-        self.model = model
-        self.init_model = LatentDiffusion(config, None).to(torch.cuda.current_device()).eval()
-        self.reward_model = reward_model
-        self.tokenizer = tokenizer
-        self.optimizer = optimizer
-        self.cfg = config
-        self.logger = logger
-        self.with_distributed_adam = self.model.with_distributed_adam
-        self.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
-        self.model.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
-        self.model.model.first_stage_model.requires_grad_(False)
+class MegatronSDDRaFTPModel(MegatronLatentDiffusion, AlignableGenerativeInterface):
+    def __init__(self, cfg, trainer):  
         
+        super().__init__(cfg, trainer=trainer)
+        
+        self.init_model = LatentDiffusion(cfg, None).to(torch.cuda.current_device()).eval()
+        self.cfg = cfg
+        self.with_distributed_adam = self.with_distributed_adam
+        # self.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
+        # self.model.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
+        self.model.first_stage_model.requires_grad_(False)
         self.distributed_adam_offload_manager = None
         self.vae_batch_size = self.cfg.infer.get("vae_batch_size", 8)
         self.height = self.cfg.infer.get("height", 512)
         self.width = self.cfg.infer.get("width", 512)
         self.downsampling_factor = self.cfg.infer.get("down_factor", 8)
-        self.in_channels = self.model.model.model.diffusion_model.in_channels
+        self.in_channels = self.model.model.diffusion_model.in_channels
         self.unconditional_guidance_scale = self.cfg.infer.get("unconditional_guidance_scale", 7.5)
         self.sampler_type = self.cfg.infer.get("sampler_type", "DDIM")
         self.inference_steps = self.cfg.infer.get("inference_steps", 50)
         self.eta = self.cfg.infer.get("eta", 0)
 
-        self.model.model.initialize_ub = False
-        self.model.model.rampup_batch_size = False
-        self.model.model.with_distributed_adam = False
-
-    def get_parameters_with_grad(self):
-        return self.model.get_parameters_with_grad()
+        # Required by nemo_aligner/utils/train_utils
+        self.model.initialize_ub = False
+        self.model.rampup_batch_size = False
+        self.model.with_distributed_adam = False
 
     def finish_inference(self):
         return
 
     def finish_training_step(self):
-        grad_reductions(self.model)
+        grad_reductions(self)
 
     def infer(self):
         return
@@ -88,7 +81,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
-        prepare_for_training_step(self.model.model, zero_grad=False)
+        prepare_for_training_step(self.model, zero_grad=False)
 
     def generate_rollout_batch(self):
         return
@@ -158,7 +151,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             idx_denoised_imgs = [self.inference_steps + (self.inference_steps + 1) * i for i in range(batch_size)]
 
             for i in range(0, batch_size, self.vae_batch_size):
-                image = self.model.model.differentiable_decode_first_stage(
+                image = self.model.differentiable_decode_first_stage(
                     trajectories_predx0[idx_denoised_imgs[i : i + self.vae_batch_size]]
                 )
 
@@ -193,7 +186,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             generator=None,
         ).to(torch.cuda.current_device())
 
-        image_draft_p, reward_draft_p = self.generate_log_images(latents, prompts, self.model.model)
+        image_draft_p, reward_draft_p = self.generate_log_images(latents, prompts, self.model)
         image_init, reward_init = self.generate_log_images(latents, prompts, self.init_model)
 
         images = []
@@ -204,15 +197,13 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             captions.append("draft_p: " + prompts[i] + ", Reward = " + str(reward_draft_p[i]))
             captions.append("SD: " + prompts[i] + ", Reward = " + str(reward_init[i]))
 
-        self.logger.loggers[1].log_image(
+        self.wandb_logger.loggers[1].log_image(
             key="Inference Images",
             images=[wandb.Image(Image.fromarray(img.round().astype("uint8"))) for img in images],
             caption=captions,
         )
 
-    def generate(
-        self, batch, x_T,
-    ):
+    def generate(self, batch, x_T,):
 
         # get autocast_dtype
         if self.cfg.precision == "bf16":
@@ -231,13 +222,13 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             batch_size = len(batch)
             prev_img_draft_p = x_T
 
-            device_draft_p = self.model.model.betas.device
+            device_draft_p = self.model.betas.device
 
-            sampler_draft_p = sampling_utils.initialize_sampler(self.model.model, self.sampler_type.upper())
+            sampler_draft_p = sampling_utils.initialize_sampler(self.model, self.sampler_type.upper())
             sampler_init = sampling_utils.initialize_sampler(self.init_model, self.sampler_type.upper())
 
             cond, u_cond = sampling_utils.encode_prompt(
-                self.model.model.cond_stage_model, batch, self.unconditional_guidance_scale
+                self.model.cond_stage_model, batch, self.unconditional_guidance_scale
             )
 
             sampler_draft_p.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
@@ -255,50 +246,28 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
             list_eps_init = []
             truncation_steps = self.cfg.truncation_steps
 
+            denoise_step_kwargs = {"unconditional_guidance_scale":self.unconditional_guidance_scale, "unconditional_conditioning":u_cond}
             for i, step in enumerate(iterator):
+
+                denoise_step_args = [total_steps, i, batch_size, device_draft_p, step, cond]
 
                 if i < total_steps - truncation_steps:
                     with torch.no_grad():
                         img_draft_p, pred_x0_draft_p, eps_t_draft_p = sampler_draft_p.single_ddim_denoise_step(
-                            prev_img_draft_p,
-                            total_steps,
-                            i,
-                            batch_size,
-                            device_draft_p,
-                            step,
-                            cond,
-                            unconditional_guidance_scale=self.unconditional_guidance_scale,
-                            unconditional_conditioning=u_cond,
-                        )
+                            prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs)
 
                         prev_img_draft_p = img_draft_p
                 else:
 
                     img_draft_p, pred_x0_draft_p, eps_t_draft_p = sampler_draft_p.single_ddim_denoise_step(
-                        prev_img_draft_p,
-                        total_steps,
-                        i,
-                        batch_size,
-                        device_draft_p,
-                        step,
-                        cond,
-                        unconditional_guidance_scale=self.unconditional_guidance_scale,
-                        unconditional_conditioning=u_cond,
-                    )
+                        prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs)
                     list_eps_draft_p.append(eps_t_draft_p)
+
                     with torch.no_grad():
                         _, _, eps_t_init = sampler_init.single_ddim_denoise_step(
-                            prev_img_draft_p,
-                            total_steps,
-                            i,
-                            batch_size,
-                            device_draft_p,
-                            step,
-                            cond,
-                            unconditional_guidance_scale=self.unconditional_guidance_scale,
-                            unconditional_conditioning=u_cond,
-                        )
+                            prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs)
                         list_eps_init.append(eps_t_init)
+
                     prev_img_draft_p = img_draft_p
 
             last_states = [pred_x0_draft_p]
@@ -311,7 +280,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
 
             vae_decoder_output = []
             for i in range(0, batch_size, self.vae_batch_size):
-                image = self.model.model.differentiable_decode_first_stage(
+                image = self.model.differentiable_decode_first_stage(
                     trajectories_predx0[i : i + self.vae_batch_size]
                 )
                 vae_decoder_output.append(image)
@@ -405,7 +374,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
                 fwd_bwd_function(
                     forward_step_func=self.get_forward_output_and_loss_func(),
                     data_iterator=[data_item],  # 4
-                    model=self.model.model,
+                    model=self.model,
                     num_microbatches=self.cfg.micro_batch_size,  # 4
                     forward_only=forward_only,
                     seq_length=None,
@@ -413,10 +382,10 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
                 )[0]
             )
 
-        if torch.distributed.get_rank() == 0 and len(self.logger.loggers) > 1:
+        if torch.distributed.get_rank() == 0 and len(self.wandb_logger.loggers) > 1:
             self.log_visualization(batch[0:1])
 
-        if self.model.with_distributed_adam:
+        if self.with_distributed_adam:
             # synchronize asynchronous grad reductions
             # note: not necessary, but reduces performance degradation
             # from multiple simultaneous NCCL calls
@@ -424,7 +393,7 @@ class MegatronSDDRaFTPModel(AlignableGenerativeInterface):
         else:
             # async grad allreduce is not currently implemented for O1/autocasting mixed precision training
             # so we all-reduce gradients after the pipeline
-            self.model.allreduce_gradients()
+            self.allreduce_gradients()
 
         metrics = {}
 
