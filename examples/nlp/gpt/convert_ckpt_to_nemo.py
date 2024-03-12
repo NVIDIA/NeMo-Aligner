@@ -24,6 +24,7 @@ from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPSt
 from nemo.core.config import hydra_runner
 from nemo.utils import AppState, logging
 from nemo.utils.model_utils import inject_model_parallel_rank
+from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 
 """Inference server for NeMo-RLHF Initial Policy model.
 """
@@ -105,7 +106,7 @@ def main(cfg) -> None:
             "megatron_amp_O2": cfg.get("megatron_amp_O2", False),
             "tokenizer": cfg.tokenizer,
         }
-        model = MegatronGPTModel.load_from_checkpoint(
+        model = MegatronGPTRewardModel.load_from_checkpoint(
             checkpoint_path, hparams_file=None, trainer=trainer, **overwrite_cfg
         )
     else:
