@@ -46,7 +46,7 @@ After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Align
       export NVTE_FLASH_ATTN=0
       export NVTE_FUSED_ATTN=0
 
-.. _sft:
+.. _model-aligner-sft:
 
 Model Alignment by Supervised Fine-Tuning (SFT)
 ############################################################
