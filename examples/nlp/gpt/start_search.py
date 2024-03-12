@@ -138,9 +138,14 @@ def main(cfg):
                     results.remove(subtask)
                     # results.children.remove(subtask)  # Remove the subtask from the list
             except TimeoutError:
-                pass
+                global_pbar.write("Timeout")
+                results.remove(subtask)
             except amqp.exceptions.PreconditionFailed:
                 global_pbar.write("RabbitMQ connection failed")
+                results.remove(subtask)
+            except Exception as e:
+                global_pbar.write(f"Exception: {e}")
+                results.remove(subtask)
 
 
 if __name__ == "__main__":

@@ -113,11 +113,12 @@ def dp_search(
         if init:
             inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_info)
         else:
+            tokenizer = model.tokenizer
             (
                 context_tokens_tensor,
                 context_length_tensor,
                 true_context_length,
-            ) = inference_strategy.compute_inference_params(session_info, context_ids, action)
+            ) = inference_strategy.compute_inference_params(session_info, context_ids, action, tokenizer.pad_id)
 
         output_actions, output_policys, output_values = sample_sequence_batch(
             model,
@@ -177,8 +178,6 @@ def search(
         inference_strategy = strategy_args["strategy"]
     else:
         raise ValueError("strategy is not specified")
-    # init the objects for inference
-    init = inputs is not None
     if torch.distributed.get_rank() == 0:
         if inputs is None:
             # not the first node
@@ -205,7 +204,14 @@ def search(
             action[:] = 0
 
         send_generate_info(
-            context_tokens_tensor, context_length_tensor, action, tokens_to_generate, top_k, context_ids, session_info,
+            context_tokens_tensor,
+            context_length_tensor,
+            action,
+            tokens_to_generate,
+            top_k,
+            context_ids,
+            session_info,
+            inputs,
         )
     else:
         (
@@ -216,7 +222,10 @@ def search(
             top_k,
             context_ids,
             session_info,
+            inputs,
         ) = receive_generate_info()
+    # init the objects for inference
+    init = inputs is not None
 
     # distributed batch to data parallel groups
     # Select subset of data needed for this rank.
@@ -254,11 +263,12 @@ def search(
         if init:
             inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_info)
         else:
+            tokenizer = model.tokenizer
             (
                 context_tokens_tensor,
                 context_length_tensor,
                 true_context_length,
-            ) = inference_strategy.compute_inference_params(session_info, context_ids, action)
+            ) = inference_strategy.compute_inference_params(session_info, context_ids, action, tokenizer.pad_id)
 
         output_actions, output_policys, output_values = sample_sequence_batch(
             model,
@@ -370,15 +380,16 @@ def sample_sequence_batch(
     # initialize the batch
     with torch.no_grad():
         # get min context length
-        context_length = context_lengths.min().item()
-
-        counter = 0
-
-        batch_size = context_tokens.size(0)
+        batch_size, token_len = context_tokens.shape
 
         tokens = context_tokens
 
-        maxlen = 1 + context_lengths.max().item()
+        token_to_generate = 1
+        if true_context_length is not None:
+            new_context_lengths = true_context_length - true_context_length.min()
+            token_to_generate = (token_len - new_context_lengths).min().item()
+
+        maxlen = token_to_generate + context_lengths.max().item()
 
         maxlen = inference_strategy.clip_max_len(maxlen)
 
@@ -386,44 +397,39 @@ def sample_sequence_batch(
         output_policy = torch.cuda.FloatTensor(batch_size, top_k)
         output_values = torch.cuda.FloatTensor(batch_size)
 
-        while context_length < maxlen:
-            batch, tensor_shape = inference_strategy.prepare_batch_at_step(
-                tokens, micro_batch_size, context_length, init, session_info, counter, true_context_length
-            )
+        update_pos = []
+        for batch_id in range(batch_size):
+            batch_token = tokens[batch_id]
+            for last_pos in range(token_len - 1, -1, -1):
+                if batch_token[last_pos] == tokenizer.pad_id:
+                    pass
+                else:
+                    break
+            update_pos.append(last_pos)
+        update_pos = torch.cuda.IntTensor(update_pos)
 
-            batch_update_indicator = context_lengths == context_length
+        batch, tensor_shape = inference_strategy.prepare_batch(
+            tokens, micro_batch_size, init, session_info, true_context_length
+        )
+        output = inference_strategy.forward_step(batch, tensor_shape, session_info)
 
-            if (not init) and (not batch_update_indicator.any()):
-                # if there is nothing to update, skip the computation
-                # only works for depths > 0 nodes
-                context_length += 1
-                counter += 1
-                continue
+        # batch_update_indicator = context_lengths == context_length
 
-            output = inference_strategy.forward_step(batch, tensor_shape, session_info)
-            if parallel_state.is_pipeline_last_stage():
-                # get last rank
-                logits = output[0]["logits"][
-                    :, -1
-                ].contiguous()  # output[0]["logits"] shape[batch_size, length, partial vocab_size]
-                logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
-                assert logits is not None
-                logits = logits.view(batch_size, -1)
+        if parallel_state.is_pipeline_last_stage():
+            logits = output[0]["logits"]
+            logits = logits[torch.arange(batch_size), update_pos].contiguous()
+            logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
+            # make sure it won't sample outside the vocab_size range
+            logits[:, tokenizer.vocab_size :] = -float("Inf")
 
-                # make sure it won't sample outside the vocab_size range
-                logits[:, tokenizer.vocab_size :] = -float("Inf")
+            updated_logits, actions = torch.topk(logits, top_k)
+            probs = F.softmax(updated_logits, dim=-1)
 
-                updated_logits, actions = torch.topk(logits, top_k)
-                probs = F.softmax(updated_logits, dim=-1)
-
-                output_actions[batch_update_indicator] = actions[batch_update_indicator].type(torch.int32)
-                output_policy[batch_update_indicator] = probs[batch_update_indicator]
-                if "value" in output[0]:
-                    value = output[0]["value"][:, -1]
-                    output_values[batch_update_indicator] = value[batch_update_indicator]
-
-            context_length += 1
-            counter += 1
+            output_actions = actions.type(torch.int32)
+            output_policy = probs
+            if "value" in output[0]:
+                value = output[0]["value"]
+                output_values = value[torch.arange(batch_size), update_pos].contiguous()
         # sync from last pipeline stage to src rank, so that it can be returned
         if parallel_state.is_pipeline_last_stage():
             src = parallel_state.get_pipeline_model_parallel_last_rank()
@@ -455,6 +461,8 @@ def sample_sequence_batch(
                 output_values,
                 output_actions,
                 context_tokens,
+                update_pos,
+                context_lengths,
             )
         else:
             # construct and save the next level nodes
@@ -476,5 +484,7 @@ def sample_sequence_batch(
                 output_values,
                 output_actions,
                 context_tokens,
+                update_pos,
+                context_lengths,
             )
         return output_actions, output_policy, output_values
