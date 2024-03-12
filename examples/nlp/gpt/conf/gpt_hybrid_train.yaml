@@ -34,7 +34,9 @@ mcts_data_file: null
 
 dataset:
   name: gsm8k
-  split: train
+  data_prefix:
+      train: null
+      validation: null
   prompt_template_name: ''
  
 model:

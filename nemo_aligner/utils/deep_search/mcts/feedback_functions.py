@@ -21,7 +21,6 @@ class GSK8KFeedbackDataset(Feedback):
         score the response
         """
         response = response.lower()
-        answer = answer.lower().split("####")[1].strip().replace(",", "")
 
         # predicted answer matches the answer pattern
         numbers = re.findall(r"\{{([\d,]+)\}}", response)

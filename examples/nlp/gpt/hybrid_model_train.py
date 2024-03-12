@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import re
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -32,6 +33,7 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.deepsearch import DeepSearchTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader
+from nemo_aligner.data.nlp.datasets import MCTSDataset
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.customized_nlpdpstrategy import CustomMegatronTrainerBuilder
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset
@@ -47,6 +49,7 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
     temp_pop_from_config,
 )
+from nemo_aligner.utils.trainer_utils import compute_limit_batches
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
 """Script to start Reward Model training"""
@@ -57,29 +60,6 @@ OmegaConf.register_new_resolver("not", lambda x: not x)
 
 mp.set_start_method("spawn", force=True)
 
-steerlm_template = """<extra_id_0>System
-A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-<extra_id_1>User
-{prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-<extra_id_1>Assistant
-<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
-"""
-
-
-def compute_limit_batches(number_of_batches: int, limit_batches):
-    if limit_batches is None:
-        limit_batches = 1.0
-
-    if isinstance(limit_batches, float):
-        limit_batches = int(number_of_batches * limit_batches)
-    elif isinstance(limit_batches, int):
-        limit_batches = min(number_of_batches, limit_batches)
-    else:
-        raise TypeError(f"Invalid data type of {type(limit_batches)} cannot compute limit batches")
-
-    return limit_batches
-
 
 def collate_fn(batch):
     # applies the steerlm format and
@@ -87,36 +67,10 @@ def collate_fn(batch):
     new_dict = defaultdict(list)
 
     for b in batch:
-        new_dict["question"].append(steerlm_template.format(prompt=b["question"]))
-        new_dict["answer"].append(b["answer"])
-        new_dict["data_id"].append(b["data_id"])
+        new_dict["question"].append(b["question"])
+        new_dict["answer"].append(b["expected_answer"])
 
     return new_dict
-
-
-class DatasetWrapper:
-    def __init__(self, ds):
-        self.ds = ds
-
-    # just like a dataset but return idx
-    def __getitem__(self, idx):
-        return {**self.ds[idx], "data_id": idx}
-
-    def __len__(self):
-        return len(self.ds)
-
-
-class TrainDSDatasetWrapper:
-    def __init__(self, ds, data_ids):
-        self.ds = ds
-        self.data_ids = data_ids
-
-    # just like a dataset but return idx
-    def __getitem__(self, idx):
-        return {**self.ds[self.data_ids[idx]], "data_id": idx}
-
-    def __len__(self):
-        return len(self.data_ids)
 
 
 def fill_padded_tensor_with_data(batches, max_seqlen, lengths, response_lengths, pad_value):
@@ -203,10 +157,8 @@ def mcts_value_collate_fn(eos_id, batches):
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    val_ds = DatasetWrapper(load_dataset("gsm8k", "main")["test"])
-
-    # train_ds = DatasetWrapper(load_dataset("gsm8k", "main")["train"])
-    train_ds = load_dataset("gsm8k", "main")["train"]
+    train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
+    val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
     feedback = GSK8KFeedbackDataset()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
@@ -255,17 +207,25 @@ def main(cfg) -> None:
         train_data["values"], test_size=0.1, random_state=7, shuffle=True
     )
 
-    data_ids = []
-
     num_samples = compute_limit_batches(
         len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches
     )
 
+    train_ds = []
     for _, p in zip(range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_train_data):
-        data_ids.append(p["data_id"])
+        tokens = p["tokens"][: p["context_length"]]
+        response_text = ptl_model.tokenizer.ids_to_text(p["tokens"][p["context_length"] :])
 
-    train_ds = TrainDSDatasetWrapper(train_ds, data_ids)
-    # train_ds = DatasetWrapper(train_ds)
+        question = ptl_model.tokenizer.ids_to_text(tokens)
+        answer = re.findall(r"\{{([\d,]+)\}}", response_text)
+
+        if len(answer) == 0:
+            # hack for debugging only
+            answer = "NOT FOUND"
+        else:
+            answer = answer[-1]
+
+        train_ds.append({"question": question, "expected_answer": answer})
 
     num_questions_correct = 0
 
