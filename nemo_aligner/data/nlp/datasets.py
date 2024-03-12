@@ -455,7 +455,7 @@ steerlm_template = """<extra_id_0>System
 A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
 <extra_id_1>User
 {question}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
+Please show the calculation steps and lastly make sure to put the answer (and only answer) inside \\boxed{{}}.
 <extra_id_1>Assistant
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """

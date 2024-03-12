@@ -26,6 +26,7 @@ import torch
 import torch.multiprocessing as mp
 from datasets import load_dataset
 from megatron.core import parallel_state
+from nemo_skills.code_execution.math_grader import extract_answer
 from omegaconf.omegaconf import OmegaConf
 from tqdm import tqdm
 
@@ -34,13 +35,14 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.data.nlp.builders import build_dataloader
+from nemo_aligner.data.nlp.datasets import MCTSDataset
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, GSK8KFeedbackHF
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
+from nemo_aligner.utils.trainer_utils import compute_limit_batches
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, preemptable_save
-from pathlib import Path
 
 """Script to start Reward Model training"""
 
@@ -50,36 +52,7 @@ OmegaConf.register_new_resolver("not", lambda x: not x)
 
 mp.set_start_method("spawn", force=True)
 
-prompt_template = """\x00System
-
-\x11User
-{prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-\x11Assistant
-"""
-
-steerlm_template = """<extra_id_0>System
-A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-<extra_id_1>User
-{prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-<extra_id_1>Assistant
-<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
-"""
-
-
-def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, float, None]):
-    if limit_batches is None:
-        limit_batches = 1.0
-
-    if isinstance(limit_batches, float):
-        limit_batches = int(number_of_batches * limit_batches)
-    elif isinstance(limit_batches, int):
-        limit_batches = min(number_of_batches, limit_batches)
-    else:
-        raise TypeError(f"Invalid data type of {type(limit_batches)} cannot compute limit batches")
-
-    return limit_batches
+# Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
 
 
 def run_inference(model, feedback, dataloader, limit_batches=1.0, num_to_log_to_table=10, desc="inference"):
@@ -143,23 +116,8 @@ def run_inference(model, feedback, dataloader, limit_batches=1.0, num_to_log_to_
             "global_accuracy": num_correct / total if total > 0 else 0,
         },
         df,
-        data_ids_that_are_incorrect
+        data_ids_that_are_incorrect,
     )
-
-
-@dataclass
-class DatasetWrapper:
-    ds: torch.utils.data.Dataset
-    template: str
-
-    # just like a dataset but return idx
-    def __getitem__(self, idx):
-        data_item = self.ds[idx]
-        data_item["question"] = self.template.format(prompt=data_item["question"])
-        return {**data_item, "data_id": idx}
-
-    def __len__(self):
-        return len(self.ds)
 
 
 def collate_fn(batch):
@@ -169,28 +127,15 @@ def collate_fn(batch):
 
     for b in batch:
         new_dict["question"].append(b["question"])
-        new_dict["answer"].append(b["answer"])
-        new_dict["data_id"].append(b["data_id"])
+        new_dict["answer"].append(b["expected_answer"])
 
     return new_dict
 
 
-def get_prompt_template(template_name):
-    if template_name == "steerlm":
-        template = steerlm_template
-    elif template_name == "mistral":
-        template = prompt_template
-    else:
-        raise NotImplementedError(f"template {template_name} is not supported")
-
-    return template
-
-
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    template = get_prompt_template(cfg.dataset.prompt_template_name)
-    val_ds = DatasetWrapper(load_dataset("gsm8k", "main")["test"], template)
-    train_ds = DatasetWrapper(load_dataset("gsm8k", "main")["train"], template)
+    train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
+    val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
     feedback = GSK8KFeedbackDataset()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
@@ -258,7 +203,9 @@ def main(cfg) -> None:
     logger.log_metrics(val_metrics, step=0, prefix="val/")
     logger.log_table("table/val", dataframe=val_table, step=0)
 
-    train_metrics, train_table, train_wrong = run_inference(ptl_model, feedback, train_dataloader, desc="train inference")
+    train_metrics, train_table, train_wrong = run_inference(
+        ptl_model, feedback, train_dataloader, desc="train inference"
+    )
     logger.log_metrics(train_metrics, step=0, prefix="train/")
     logger.log_table("table/train", dataframe=train_table, step=0)
 
@@ -267,6 +214,7 @@ def main(cfg) -> None:
 
     torch.save(train_wrong, save_dir / "train_wrong_{}.pt".format(parallel_state.get_data_parallel_rank()))
     torch.save(val_wrong, save_dir / "val_wrong_{}.pt".format(parallel_state.get_data_parallel_rank()))
+
 
 if __name__ == "__main__":
     main()
