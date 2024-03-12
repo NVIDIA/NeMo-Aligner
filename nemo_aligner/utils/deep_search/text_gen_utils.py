@@ -113,11 +113,12 @@ def dp_search(
         if init:
             inference_strategy.init(context_tokens_tensor, tokens_to_generate, session_info)
         else:
+            tokenizer = model.tokenizer
             (
                 context_tokens_tensor,
                 context_length_tensor,
                 true_context_length,
-            ) = inference_strategy.compute_inference_params(session_info, context_ids, action)
+            ) = inference_strategy.compute_inference_params(session_info, context_ids, action, tokenizer.pad_id)
 
         output_actions, output_policys, output_values = sample_sequence_batch(
             model,
@@ -177,8 +178,6 @@ def search(
         inference_strategy = strategy_args["strategy"]
     else:
         raise ValueError("strategy is not specified")
-    # init the objects for inference
-    init = inputs is not None
     if torch.distributed.get_rank() == 0:
         if inputs is None:
             # not the first node
@@ -205,7 +204,14 @@ def search(
             action[:] = 0
 
         send_generate_info(
-            context_tokens_tensor, context_length_tensor, action, tokens_to_generate, top_k, context_ids, session_info,
+            context_tokens_tensor,
+            context_length_tensor,
+            action,
+            tokens_to_generate,
+            top_k,
+            context_ids,
+            session_info,
+            inputs,
         )
     else:
         (
@@ -216,7 +222,10 @@ def search(
             top_k,
             context_ids,
             session_info,
+            inputs,
         ) = receive_generate_info()
+    # init the objects for inference
+    init = inputs is not None
 
     # distributed batch to data parallel groups
     # Select subset of data needed for this rank.
