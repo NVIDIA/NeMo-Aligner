@@ -24,7 +24,7 @@ class GSK8KFeedbackDataset(Feedback):
         # this needs to be on a seperate server for anything
         # complicated but for GSM8K this is fine
         response = extract_answer(response)
-        return math_equal(response, answer)
+        return float(math_equal(response, answer))
 
 
 class GSK8KFeedback(Feedback):
