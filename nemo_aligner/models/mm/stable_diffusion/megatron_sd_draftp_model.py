@@ -22,7 +22,10 @@ from PIL import Image
 from tqdm import tqdm
 
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
+    LatentDiffusion,
+    MegatronLatentDiffusion,
+)
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
@@ -41,10 +44,10 @@ BatchType = Mapping[str, torch.tensor]
 
 
 class MegatronSDDRaFTPModel(MegatronLatentDiffusion, AlignableGenerativeInterface):
-    def __init__(self, cfg, trainer):  
-        
+    def __init__(self, cfg, trainer):
+
         super().__init__(cfg, trainer=trainer)
-        
+
         self.init_model = LatentDiffusion(cfg, None).to(torch.cuda.current_device()).eval()
         self.cfg = cfg
         self.with_distributed_adam = self.with_distributed_adam
@@ -203,7 +206,9 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, AlignableGenerativeInterfac
             caption=captions,
         )
 
-    def generate(self, batch, x_T,):
+    def generate(
+        self, batch, x_T,
+    ):
 
         # get autocast_dtype
         if self.cfg.precision == "bf16":
@@ -246,7 +251,10 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, AlignableGenerativeInterfac
             list_eps_init = []
             truncation_steps = self.cfg.truncation_steps
 
-            denoise_step_kwargs = {"unconditional_guidance_scale":self.unconditional_guidance_scale, "unconditional_conditioning":u_cond}
+            denoise_step_kwargs = {
+                "unconditional_guidance_scale": self.unconditional_guidance_scale,
+                "unconditional_conditioning": u_cond,
+            }
             for i, step in enumerate(iterator):
 
                 denoise_step_args = [total_steps, i, batch_size, device_draft_p, step, cond]
@@ -254,18 +262,21 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, AlignableGenerativeInterfac
                 if i < total_steps - truncation_steps:
                     with torch.no_grad():
                         img_draft_p, pred_x0_draft_p, eps_t_draft_p = sampler_draft_p.single_ddim_denoise_step(
-                            prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs)
+                            prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs
+                        )
 
                         prev_img_draft_p = img_draft_p
                 else:
 
                     img_draft_p, pred_x0_draft_p, eps_t_draft_p = sampler_draft_p.single_ddim_denoise_step(
-                        prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs)
+                        prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs
+                    )
                     list_eps_draft_p.append(eps_t_draft_p)
 
                     with torch.no_grad():
                         _, _, eps_t_init = sampler_init.single_ddim_denoise_step(
-                            prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs)
+                            prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs
+                        )
                         list_eps_init.append(eps_t_init)
 
                     prev_img_draft_p = img_draft_p
@@ -280,9 +291,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, AlignableGenerativeInterfac
 
             vae_decoder_output = []
             for i in range(0, batch_size, self.vae_batch_size):
-                image = self.model.differentiable_decode_first_stage(
-                    trajectories_predx0[i : i + self.vae_batch_size]
-                )
+                image = self.model.differentiable_decode_first_stage(trajectories_predx0[i : i + self.vae_batch_size])
                 vae_decoder_output.append(image)
 
             vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
