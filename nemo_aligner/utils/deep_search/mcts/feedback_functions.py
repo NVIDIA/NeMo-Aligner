@@ -28,7 +28,7 @@ class GSK8KFeedbackDataset(Feedback):
         last_number = numbers[-1] if numbers else None
         if last_number is None:
             return 0.0
-        if float(last_number) == float(answer):
+        if last_number == str(answer):
             return 1.0
         else:
             return 0.0
