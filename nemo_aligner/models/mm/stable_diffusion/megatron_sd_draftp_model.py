@@ -26,7 +26,7 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm 
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
-from nemo_aligner.utils.train_utils import prepare_for_training_step, grad_reductions
+from nemo_aligner.utils.train_utils import grad_reductions, prepare_for_training_step
 from nemo_aligner.utils.utils import configure_batch_sizes
 
 try:
@@ -410,4 +410,3 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, AlignableGenerativeInterfac
             metrics[key] = metric_mean.cpu().item()
 
         return metrics["loss"], metrics
-
