@@ -17,11 +17,14 @@ from unittest.mock import patch
 
 import torch
 from megatron.core import parallel_state
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.dist_checkpointing.utils import replace_prefix_for_sharding
 from megatron.core.models.gpt import GPTModel
 from megatron.core.transformer.custom_layers.transformer_engine import TENorm
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.utils import sharded_state_dict_default
 from megatron.core.utils import make_sharded_tensor_for_checkpoint, make_tp_sharded_tensor_for_checkpoint
 from torch import Tensor
 
@@ -85,54 +88,31 @@ class ValueHead(TransformerBlock):
                 config=self.config, hidden_size=self.config.hidden_size, eps=self.config.layernorm_epsilon,
             )
 
-    def layer_sharded_state_dict(self, layer, prefix=""):
-        """need to override this method to change the layer number offset which is based on the layer number.
-        Otherwise the sharded_pp_offset will be wrong.
-        The right behavior of shard_pp_offset should be (0, layer_number, num_layers), where layer number is the 
-        layer number in the value head, and num_layers are the total number of layers in the value head.
-        """
-        offset = 0
-        num_layers = layer.config.num_layers
-
-        global_layer_offset = layer.layer_number - 1  # layer.layer_number starts at 1
-        state_dict_prefix = f"{prefix}{global_layer_offset - offset}."  # module list index in TransformerBlock
-        offset = layer.layer_number - self.layer_number_offset - 1
-        sharded_pp_offset = [(0, offset, num_layers)]  # PP sharding offset for ShardedTensors
-
-        attn_state_dict = layer.self_attention.sharded_state_dict(
-            prefix=f"{state_dict_prefix}self_attention.",
-            sharded_key_prefix=f"{prefix}self_attention.",
-            sharded_offsets=sharded_pp_offset,
-        )
-
-        mlp_state_dict = layer.mlp.sharded_state_dict(
-            prefix=f"{state_dict_prefix}mlp.", sharded_key_prefix=f"{prefix}mlp.", sharded_offsets=sharded_pp_offset,
-        )
-
-        sharded_state_dict = {**mlp_state_dict, **attn_state_dict}
-
-        return sharded_state_dict
-
-    def sharded_state_dict(self, prefix: str = ""):
-
+    def sharded_state_dict(self, prefix: str = "", sharded_offsets: tuple = ()) -> ShardedStateDict:
+        assert not sharded_offsets, "Unexpected sharded offsets"
         sharded_state_dict = {}
 
         layer_prefix = f"{prefix}layers."
+        num_layers = self.config.num_layers
         for layer in self.layers:
-            sharded_state_dict.update(self.layer_sharded_state_dict(layer, layer_prefix))
+            offset = 0
 
-        if self.post_process and self.post_layer_norm:
-            state_dict = self.state_dict(keep_vars=True)
+            global_layer_offset = layer.layer_number - 1  # self.layer_number starts at 1
+            state_dict_prefix = (
+                f"{layer_prefix}{global_layer_offset - offset}."  # module list index in TransformerBlock
+            )
+            offset = layer.layer_number - self.layer_number_offset - 1
+            sharded_pp_offset = [(0, offset, num_layers)]  # PP sharding offset for ShardedTensors
+            layer_sharded_state_dict = layer.sharded_state_dict(
+                prefix=state_dict_prefix, sharded_offsets=sharded_pp_offset
+            )
+            replace_prefix_for_sharding(layer_sharded_state_dict, state_dict_prefix, layer_prefix)
+            sharded_state_dict.update(layer_sharded_state_dict)
 
-            tensor = state_dict["final_layernorm.weight"]
-            layer_name = f"{prefix}final_layernorm.weight"
-            sharded_state_dict[layer_name] = make_sharded_tensor_for_checkpoint(tensor, layer_name)
-
-            # RMSNorm doesn't have bias.
-            if "final_layernorm.bias" in state_dict.keys():
-                tensor = state_dict["final_layernorm.bias"]
-                layer_name = f"{prefix}final_layernorm.bias"
-                sharded_state_dict[layer_name] = make_sharded_tensor_for_checkpoint(tensor, layer_name)
+        # Add modules other than self.layers
+        for name, module in self.named_children():
+            if not module is self.layers:
+                sharded_state_dict.update(sharded_state_dict_default(module, f"{prefix}{name}.", sharded_offsets))
 
         return sharded_state_dict
 
