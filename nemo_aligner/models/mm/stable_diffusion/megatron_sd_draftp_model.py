@@ -25,7 +25,7 @@ import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_u
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import LatentDiffusion, MegatronLatentDiffusion
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
-from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
+from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import grad_reductions, prepare_for_training_step
 from nemo_aligner.utils.utils import configure_batch_sizes
 
@@ -40,7 +40,7 @@ except (ImportError, ModuleNotFoundError):
 BatchType = Mapping[str, torch.tensor]
 
 
-class MegatronSDDRaFTPModel(MegatronLatentDiffusion, AlignableGenerativeInterface):
+class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def __init__(self, cfg, trainer):  
         
         super().__init__(cfg, trainer=trainer)
@@ -194,7 +194,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, AlignableGenerativeInterfac
         for i in range(len(image_draft_p)):
             images.append(image_draft_p[i])
             images.append(image_init[i])
-            captions.append("draft_p: " + prompts[i] + ", Reward = " + str(reward_draft_p[i]))
+            captions.append("DRaFT+: " + prompts[i] + ", Reward = " + str(reward_draft_p[i]))
             captions.append("SD: " + prompts[i] + ", Reward = " + str(reward_init[i]))
 
         self.wandb_logger.loggers[1].log_image(

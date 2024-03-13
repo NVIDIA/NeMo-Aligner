@@ -17,8 +17,6 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
-
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import MegatronLatentDiffusion
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.core.config import hydra_runner
@@ -55,9 +53,6 @@ def main(cfg) -> None:
     trainer = MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
-    # TODO: @geshen: For the Stable Diffusion, I am currently getting the vae and unet separately
-    # TODO: @ataghibakhsh: Redo with aligner style and find out the reason
-
     ptl_model = load_from_nemo(MegatronSDDRaFTPModel, cfg.model, trainer).to(torch.cuda.current_device())
     # TODO: @geshen: Check why we have PEFT init here
     if cfg.model.get("peft", None):
@@ -127,9 +122,6 @@ def main(cfg) -> None:
     reward_model = get_reward_model(cfg.RM, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
     ptl_model.reward_model = reward_model
     ptl_model.wandb_logger = logger
-    # alignable_model = MegatronSDDRaFTPModel(
-    #     ptl_model, reward_model, ptl_model.tokenizer, optimizer, cfg.model, logger=logger
-    # )
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
     timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:12:00:00"))
