@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Bug Fixes
 - Fixed issue where random sampler keeps state when resetting for validation, leading to a different validation batch each validation step. Fixed by using a deterministic sampler
 - Fixed crash with float val check interval in DPOTrainer
+- Fixed crash with float val check interval when checking progress in DPOTrainer
 
 ## [0.2.0] - 2024-02
 ### New features and optimizations
