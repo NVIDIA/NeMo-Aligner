@@ -323,6 +323,7 @@ class SyncTimer(NamedTimer):
 
         del self.stored_results[name]
 
+
 @contextmanager
 def print_timer(name=""):
     torch.cuda.synchronize()

@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from contextlib import nullcontext
 
 import torch
-import time
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
@@ -44,6 +44,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import (
     calculate_dialogue_response_lengths,
     configure_batch_sizes,
@@ -52,11 +53,10 @@ from nemo_aligner.utils.utils import (
     offload_distributed_adam,
 )
 
-from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 
 def print_mem(prefix):
-    pyt = torch.cuda.memory_allocated() / (1024**3)
-    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024**3)
+    pyt = torch.cuda.memory_allocated() / (1024 ** 3)
+    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
     print(f"Mem Usage | {prefix} | {pyt} {el} | {el-pyt}")
 
 
@@ -77,13 +77,12 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self.entropy_bonus = self.cfg.ppo.entropy_bonus
         self.ratio_eps = self.cfg.ppo.ratio_eps
         self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
-        
+
         self.use_trtllm_generation = self.cfg.ppo.use_trtllm
         self.orig_dp_rank = parallel_state.get_data_parallel_rank()
 
         if self.use_trtllm_generation:
             self.trtllm_generate = GPTGenerateTRTLLM(self.cfg, self.tokenizer)
-
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
@@ -282,7 +281,6 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
         if self.use_trtllm_generation:
             self.trtllm_generate.refit(self.model)
-
 
     @torch.no_grad()
     def infer(self, inference_batch):

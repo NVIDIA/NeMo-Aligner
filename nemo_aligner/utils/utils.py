@@ -99,7 +99,7 @@ def load_checkpoint_model_config(restore_path):
     config_name_in_ckpt = NLPSaveRestoreConnector()._model_config_yaml
 
     if os.path.isdir(restore_path):
-            return OmegaConf.load(os.path.join(restore_path, config_name_in_ckpt))
+        return OmegaConf.load(os.path.join(restore_path, config_name_in_ckpt))
 
     with tempfile.TemporaryDirectory() as tmpdir:
         NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, extract_config_only=True)
@@ -176,7 +176,6 @@ def calculate_dialogue_response_lengths(
         length_with_extra_id_1 = torch.where(
             length_with_extra_id_1 >= prompt_lengths, length_with_extra_id_1, torch.iinfo(torch.int32).max
         )
-
 
         # either terminated using eos id or extra id 1
         lengths = torch.minimum(eos_length, length_with_extra_id_1)

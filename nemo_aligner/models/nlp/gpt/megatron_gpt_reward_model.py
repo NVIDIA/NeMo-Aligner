@@ -414,7 +414,9 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             remainder_batch = [item[divisible_batch_size:] for item in inputs]
             data_iter = get_iterator_k_split(remainder_batch, 1)
             with print_timer("forward step"):
-                remainder_rewards = self.forward_step(data_iter, input_batch_size - divisible_batch_size, sequence_length, 1,)
+                remainder_rewards = self.forward_step(
+                    data_iter, input_batch_size - divisible_batch_size, sequence_length, 1,
+                )
 
         if parallel_state.is_pipeline_last_stage():
             if rewards:

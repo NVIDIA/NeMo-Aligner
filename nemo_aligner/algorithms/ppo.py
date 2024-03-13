@@ -42,9 +42,12 @@ from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 def get_custom_data_parallel_world_size(trtllm_reshard=False):
     data_parallel_size = parallel_state.get_data_parallel_world_size()
     if trtllm_reshard:
-        data_parallel_size = divide(torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size())
+        data_parallel_size = divide(
+            torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size()
+        )
 
     return data_parallel_size
+
 
 def compute_num_rollout_microbatches(dataloader, trtllm_reshard=False):
     return divide(
@@ -52,23 +55,23 @@ def compute_num_rollout_microbatches(dataloader, trtllm_reshard=False):
         get_custom_data_parallel_world_size(trtllm_reshard=trtllm_reshard),
     )
 
+
 def shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id):
     if len(rollout_batches) < 1:
         return rollout_batches
-    
+
     pp_group_size = parallel_state.get_pipeline_model_parallel_world_size()
     num_rollout_batches = len(rollout_batches) * pp_group_size
 
     group = parallel_state.get_pipeline_model_parallel_group()
     new_rollout_batch = {}
 
-    #save the response lengths to unpad
-    resp_lengths = [rb['response_tokens'].shape[-1] for rb in rollout_batches]
+    # save the response lengths to unpad
+    resp_lengths = [rb["response_tokens"].shape[-1] for rb in rollout_batches]
     resp_lengths = torch.tensor(resp_lengths, dtype=torch.int).cuda()
     global_resp_lengths = torch.empty(
-        len(rollout_batches)*pp_group_size,
-        dtype=torch.int,
-        device=torch.cuda.current_device())
+        len(rollout_batches) * pp_group_size, dtype=torch.int, device=torch.cuda.current_device()
+    )
     torch.distributed.all_gather_into_tensor(global_resp_lengths, resp_lengths, group=group)
 
     for key in rollout_batches[0].keys():
@@ -99,10 +102,11 @@ def shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id):
         new_rollout_batch[key] = output_tensor
     rollout_batches = list(get_iterator_k_split(new_rollout_batch, num_rollout_batches))
 
-    #unpad
+    # unpad
     for idx, rb in enumerate(rollout_batches):
-        rb['response_tokens'] = rb['response_tokens'][..., :global_resp_lengths[idx]]
+        rb["response_tokens"] = rb["response_tokens"][..., : global_resp_lengths[idx]]
     return rollout_batches
+
 
 class PPOTrainer:
     """Trainer to coordinate PPO training
@@ -271,17 +275,15 @@ class PPOTrainer:
             rollout_batches.append(rollout_batch)
 
         if self.use_trtllm_reshard:
-            rollout_batches = shard_rollout_batch_from_dp_to_pp(
-                rollout_batches, pad_id=self.model.tokenizer.eos_id
-            )
+            rollout_batches = shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id=self.model.tokenizer.eos_id)
 
         for rollout_batch in rollout_batches:
             futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
 
         for rollout_batch in rollout_batches:
-            rollout_batch["logprobs"] = self.model.get_logprobs(rollout_batch['response_tokens'])        
+            rollout_batch["logprobs"] = self.model.get_logprobs(rollout_batch["response_tokens"])
             if not is_validation and self.compute_init_policy_kl:
-                rollout_batch["init_logprobs"] = self.model.get_init_policy_logprobs(rollout_batch['response_tokens'])
+                rollout_batch["init_logprobs"] = self.model.get_init_policy_logprobs(rollout_batch["response_tokens"])
 
         for future, rollout_batch in zip(futures, rollout_batches, strict=True):
             rewards, values = future.result() if isinstance(future, FutureResult) else future
@@ -427,7 +429,9 @@ class PPOTrainer:
 
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
 
-            num_rollout_micro_batches = compute_num_rollout_microbatches(self.train_dataloader, self.use_trtllm_reshard)
+            num_rollout_micro_batches = compute_num_rollout_microbatches(
+                self.train_dataloader, self.use_trtllm_reshard
+            )
             dp_size = parallel_state.get_data_parallel_world_size()
 
             num_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)

@@ -319,18 +319,23 @@ def build_dataloader(
 ):
     """Buld dataloader given an input dataset."""
 
-    #TRTLLM resharding
+    # TRTLLM resharding
     if cfg.model.ppo.use_trtllm and parallel_state.get_pipeline_model_parallel_world_size() > 1:
         from nemo.utils import AppState
+
         app_state = AppState()
 
-        data_parallel_size = divide(torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size())
+        data_parallel_size = divide(
+            torch.distributed.get_world_size(), parallel_state.get_tensor_model_parallel_world_size()
+        )
         data_parallel_rank = app_state.global_rank // parallel_state.get_tensor_model_parallel_world_size()
-        print(f"adjusting dataloader for TRTLLM PP resharding to DP {data_parallel_size}; rank {app_state.global_rank} mapped to dprank: {data_parallel_rank} ")
+        print(
+            f"adjusting dataloader for TRTLLM PP resharding to DP {data_parallel_size}; rank {app_state.global_rank} mapped to dprank: {data_parallel_rank} "
+        )
 
     else:
-        data_parallel_rank=parallel_state.get_data_parallel_rank()
-        data_parallel_size=parallel_state.get_data_parallel_world_size()
+        data_parallel_rank = parallel_state.get_data_parallel_rank()
+        data_parallel_size = parallel_state.get_data_parallel_world_size()
 
     logging.info(f"Building dataloader with consumed samples: {consumed_samples}")
     # Megatron sampler
