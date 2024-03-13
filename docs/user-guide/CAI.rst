@@ -43,7 +43,7 @@ This section is a step-by-step tutorial that walks you through how to run a full
 
 3. Finetune Llama2 70B with SFT on the revised responses to create a Llama2-70B-SL-CAI model.
 
-4. Use Llama2-70B-SL-CAI to generate a pair of responses to each prompt in a dataset of harmful prompts. Formulate each prompt and pair into a multiple choice question, where we ask which response is best according to a constitutional principle.
+4. Use Llama2-70B-SL-CAI to generate a set of responses to each prompt in a dataset of harmful prompts. Formulate each prompt and pair into a multiple choice question, where we ask which response is best according to the constitution.
 
 5. Mix the AI feedback preference dataset (prompts and pairs) with human feedback helpfulness dataset and use it to train a RM.
 
