@@ -189,7 +189,6 @@ class DeepSearchTrainer:
         policy_batches = [output[1] for output in zip(range(num_policy_batches), self.val_policy_dataloader)]
 
         for batch in policy_batches:
-            # at least if we do this the lr are not synced between the 2 stages of training
             batch["amount_of_batches"] = len(policy_batches)
             policy_metrics = self.val_single_step(batch, TrainMode.POLICY_ONLY)
             policy_losses.append(policy_metrics["loss"])
@@ -198,7 +197,6 @@ class DeepSearchTrainer:
         value_batches = [output[1] for output in zip(range(num_value_batches), self.val_value_dataloader)]
 
         for batch in value_batches:
-            # at least if we do this the lr are not synced between the 2 stages of training
             batch["amount_of_batches"] = len(value_batches)
             value_metrics = self.val_single_step(batch, TrainMode.VALUE_ONLY)
             value_losses.append(value_metrics["loss"])
@@ -213,7 +211,7 @@ class DeepSearchTrainer:
         metrics.update({"total_loss": value_loss + policy_loss})
 
         self.logger.log_metrics(
-            metrics, step=self.step, prefix="val_loss/",
+            metrics, step=self.step, prefix="search_eval/",
         )
 
         self.model.finish_inference()
@@ -387,7 +385,7 @@ class DeepSearchTrainer:
                     step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
                     loss_eval_metrics = self.run_loss_val()
-                    step_metrics.update({f"loss_eval_{k}": v for k, v in loss_eval_metrics.items()})
+                    step_metrics.update({f"search_eval_{k}": v for k, v in loss_eval_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch

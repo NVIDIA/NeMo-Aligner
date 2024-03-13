@@ -167,9 +167,9 @@ exp_manager:
   resume_ignore_no_checkpoint: True
   create_checkpoint_callback: False
   checkpoint_callback_params:
-    monitor: val_global_accuracy
+    monitor: search_eval_total_loss
     save_top_k: 3
-    mode: max
+    mode: min
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
     filename: 'megatron_gpt-{step}-{consumed_samples}-{consumed_samples_values}-{policy_optimization_step}-{value_optimization_step}-{epoch}-{val_global_accuracy:.3f}'
