@@ -237,7 +237,7 @@ class DPOTrainer:
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
-                    self.cfg.val_check_interval,
+                    self.val_check_interval,
                     self.cfg.save_interval,
                     self.limit_val_batches,
                     run_time_exceeded=run_time_exceeded,
