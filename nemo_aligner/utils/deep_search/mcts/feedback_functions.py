@@ -25,11 +25,11 @@ class GSK8KFeedbackDataset(Feedback):
         score the response
         """
         response = response.lower()
-        answer = self.ds[data_id]["answer"].lower().split("####")[1].strip()
+        answer = self.ds[data_id]["answer"].lower().split("####")[1].strip().replace(",", "")
         # this needs to be on a seperate server for anything
         # complicated but for GSM8K this is fine
         response = extract_answer(response)
-        return float(math_equal(response, answer))
+        return float(answer == response)
 
 
 class GSK8KFeedback(Feedback):
