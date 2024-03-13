@@ -300,10 +300,12 @@ class PPOTrainer:
             rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens).split(batch_shapes)
 
         for i, rollout_batch in enumerate(rollout_batches):
-            rollout_batch["logprobs"] = rollout_logprobs[i]
+            total_length = rollout_batch["response_tokens"].size(1)
+
+            rollout_batch["logprobs"] = rollout_logprobs[i][..., : total_length - 1]
 
             if compute_init_policy_kl:
-                rollout_batch["init_logprobs"] = rollout_init_logprobs[i]
+                rollout_batch["init_logprobs"] = rollout_init_logprobs[i][..., : total_length - 1]
 
         for future, rollout_batch in zip(futures, rollout_batches, strict=True):
             rewards, values = future.result() if isinstance(future, FutureResult) else future
