@@ -69,18 +69,18 @@ def run_inference(model, feedback, dataloader, limit_batches=1.0, num_to_log_to_
     loop_iter = zip(range(limit_batches), dataloader)
     inference_pbar = tqdm(loop_iter, total=min(len(dataloader), limit_batches), leave=True, desc=desc)
 
-    data_ids_that_are_incorrect = set()
+    incorrect_samples = []
 
     for _, batch in inference_pbar:
         output = model.generate(batch["question"])
 
-        for response, answer, data_id in zip(output["sentences"], batch["answer"], batch["data_id"], strict=True):
+        for question, response, answer in zip(batch["question"], output["sentences"], batch["answer"], strict=True):
             score = feedback.score(response, answer)
 
             if score > 0:
                 num_correct += 1
             else:
-                data_ids_that_are_incorrect.add(data_id)
+                incorrect_samples.append({"question": question, "expected_answer": answer})
 
             if logged < num_to_log_to_table:
                 table = {}
@@ -116,7 +116,7 @@ def run_inference(model, feedback, dataloader, limit_batches=1.0, num_to_log_to_
             "global_accuracy": num_correct / total if total > 0 else 0,
         },
         df,
-        data_ids_that_are_incorrect,
+        incorrect_samples,
     )
 
 
@@ -209,7 +209,7 @@ def main(cfg) -> None:
     logger.log_metrics(train_metrics, step=0, prefix="train/")
     logger.log_table("table/train", dataframe=train_table, step=0)
 
-    save_dir = Path(cfg.exp_manager.explicit_log_dir) / "sets"
+    save_dir = Path(cfg.exp_manager.explicit_log_dir) / "samples"
     save_dir.mkdir(exist_ok=True)
 
     torch.save(train_wrong, save_dir / "train_wrong_{}.pt".format(parallel_state.get_data_parallel_rank()))
