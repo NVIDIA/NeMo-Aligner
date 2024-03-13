@@ -2,6 +2,7 @@ import re
 
 import pandas as pd
 from datasets import load_dataset
+from nemo_skills.code_execution.math_grader import extract_answer, math_equal
 
 
 class Feedback(object):
@@ -16,23 +17,19 @@ class Feedback(object):
 
 
 class GSK8KFeedbackDataset(Feedback):
-    def score(self, response, answer):
+    def __init__(self, ds):
+        self.ds = ds
+
+    def score(self, response, data_id):
         """
         score the response
         """
         response = response.lower()
-        answer = answer.lower().split("####")[1].strip().replace(",", "")
-
-        # predicted answer matches the answer pattern
-        numbers = re.findall(r"\{{([\d,]+)\}}", response)
-        # Extract the last number
-        last_number = numbers[-1] if numbers else None
-        if last_number is None:
-            return 0.0
-        if last_number == answer:
-            return 1.0
-        else:
-            return 0.0
+        answer = self.ds[data_id]["answer"].lower().split("####")[1].strip()
+        # this needs to be on a seperate server for anything
+        # complicated but for GSM8K this is fine
+        response = extract_answer(response)
+        return float(math_equal(response, answer))
 
 
 class GSK8KFeedback(Feedback):

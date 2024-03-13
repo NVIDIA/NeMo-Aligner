@@ -38,7 +38,7 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, GSK8KFeedbackHF
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
@@ -63,7 +63,7 @@ steerlm_template = """<extra_id_0>System
 A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
 <extra_id_1>User
 {prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
+Please show the calculation steps and lastly make sure to put the answer (and only answer) inside \\boxed{{}}.
 <extra_id_1>Assistant
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
@@ -279,8 +279,7 @@ def get_dataset(dataset_name, split, template_name):
     else:
         template = prompt_template
     ds = DatasetWrapper(dataset[split], template)
-    score_fn = GSK8KFeedbackHF(split=split)
-
+    score_fn = GSK8KFeedbackDataset(ds)
     return ds, score_fn
 
 
