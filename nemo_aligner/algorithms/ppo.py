@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import itertools
 from collections import defaultdict
 
 import pandas as pd
@@ -280,10 +281,29 @@ class PPOTrainer:
         for rollout_batch in rollout_batches:
             futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
 
-        for rollout_batch in rollout_batches:
-            rollout_batch["logprobs"] = self.model.get_logprobs(rollout_batch["response_tokens"])
-            if not is_validation and self.compute_init_policy_kl:
-                rollout_batch["init_logprobs"] = self.model.get_init_policy_logprobs(rollout_batch["response_tokens"])
+        response_tokens_list = list(
+            itertools.chain(
+                *(map(lambda x: x.flatten(), item["response_tokens"].split(1, dim=0)) for item in rollout_batches)
+            )
+        )
+
+        batched_response_tokens = torch.nn.utils.rnn.pad_sequence(
+            response_tokens_list, batch_first=True, padding_value=self.model.tokenizer.eos_id,
+        )
+
+        batch_shapes = [item["response_tokens"].size(0) for item in rollout_batches]
+
+        rollout_logprobs = self.model.get_logprobs(batched_response_tokens).split(batch_shapes)
+
+        compute_init_policy_kl = not is_validation and self.compute_init_policy_kl
+        if compute_init_policy_kl:
+            rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens).split(batch_shapes)
+
+        for i, rollout_batch in enumerate(rollout_batches):
+            rollout_batch["logprobs"] = rollout_logprobs[i]
+
+            if compute_init_policy_kl:
+                rollout_batch["init_logprobs"] = rollout_init_logprobs[i]
 
         for future, rollout_batch in zip(futures, rollout_batches, strict=True):
             rewards, values = future.result() if isinstance(future, FutureResult) else future
