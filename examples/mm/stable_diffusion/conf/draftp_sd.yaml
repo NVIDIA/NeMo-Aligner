@@ -228,7 +228,7 @@ model:
       position_embedding_strategy: null 
       network_alpha: null
 
-RM:
+rm:
   trainer:
     devices: 1
     num_nodes: 1

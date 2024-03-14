@@ -16,13 +16,10 @@ from nemo.collections.multimodal.data.common.webdataset import WebDatasetCommon
 
 
 def build_train_valid_datasets(
-    model_cfg, consumed_samples,
+    data_cfg, consumed_samples,
 ):
-    data_cfg = model_cfg.data
-
     # This function maps data that are tuples to dictionary.
     def tuple_to_dict(inp):
-        print(inp)
         for input in inp:
             out_dict = dict()
             out_dict["captions"] = input

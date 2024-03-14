@@ -32,13 +32,11 @@ from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import grad_reductions, prepare_for_training_step
 from nemo_aligner.utils.utils import configure_batch_sizes
 
-try:
-    from megatron.core import parallel_state
-    from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core import parallel_state
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
-    HAVE_MEGATRON_CORE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_MEGATRON_CORE = False
+HAVE_MEGATRON_CORE = True
+
 
 BatchType = Mapping[str, torch.tensor]
 
@@ -51,8 +49,6 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         self.init_model = LatentDiffusion(cfg, None).to(torch.cuda.current_device()).eval()
         self.cfg = cfg
         self.with_distributed_adam = self.with_distributed_adam
-        # self.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
-        # self.model.megatron_amp_O2 = self.cfg.get("megatron_amp_O2", False)
         self.model.first_stage_model.requires_grad_(False)
         self.distributed_adam_offload_manager = None
         self.vae_batch_size = self.cfg.infer.get("vae_batch_size", 8)
@@ -86,21 +82,6 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         # custom trainers will always zero grad for us
         prepare_for_training_step(self.model, zero_grad=False)
 
-    def generate_rollout_batch(self):
-        return
-
-    def prepare_for_generation(self):
-
-        self.model._reset_activation_checkpointing_args()
-        self.model._reset_sequence_parallelism_args()
-        return
-
-    def finished_generation(self):
-
-        self.model._restore_activation_checkpointing_args()
-        self.model._restore_sequence_parallelism_args()
-        return
-
     @torch.no_grad()
     def generate_log_images(self, latents, batch, model):
 
@@ -115,7 +96,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         else:
             raise ValueError('precision must be in [32, 16, "bf16"]')
 
-        with torch.no_grad(), torch.cuda.amp.autocast(
+        with torch.cuda.amp.autocast(
             enabled=autocast_dtype in (torch.half, torch.bfloat16), dtype=autocast_dtype,
         ):
 
@@ -165,12 +146,12 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
             log_reward = [
                 self.reward_model.get_reward(
-                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch
+                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch # Shape [3, dim, dim] -> [1, dim, dim, 3]
                 ).item()
                 for i in range(batch_size)
             ]
             log_img = [
-                np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0))
+                np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0)) # Shape [3, dim, dim] -> [dim, dim, 3]
                 for i in range(batch_size)
             ]
             return log_img, log_reward

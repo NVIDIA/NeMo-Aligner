@@ -29,12 +29,9 @@ from nemo.collections.nlp.modules.common.megatron.module import MegatronModule
 
 try:
     from torchvision.transforms import InterpolationMode
-
     BICUBIC = InterpolationMode.BICUBIC
 except ImportError:
     BICUBIC = Image.BICUBIC
-
-torch.backends.cuda.matmul.allow_tf32 = True
 
 OPENAI_DATASET_MEAN = (0.48145466, 0.4578275, 0.40821073)
 OPENAI_DATASET_STD = (0.26862954, 0.26130258, 0.27577711)
@@ -111,7 +108,7 @@ class MegatronCLIPRewardModel(MegatronCLIPModel):
 
         captions_list = [text_transform(captions[i]) for i in range(images.shape[0])]
 
-        captions = torch.stack(captions_list).cuda()
+        captions = torch.stack(captions_list).to(torch.cuda.current_device())
 
         return images, captions
 

@@ -71,9 +71,6 @@ def main(cfg) -> None:
             else:
                 logging.info(f"Running full finetuning since no peft scheme is given.\n{ptl_model.summarize()}")
 
-    with open_dict(cfg):
-        cfg.model.precision = cfg.trainer.precision
-
     trainer_restore_path = trainer.ckpt_path
 
     if trainer_restore_path is not None:
@@ -85,7 +82,7 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_dataset, _ = text_webdataset.build_train_valid_datasets(cfg.model, consumed_samples=consumed_samples)
+    train_dataset, _ = text_webdataset.build_train_valid_datasets(cfg.model.data, consumed_samples=consumed_samples)
     train_dataset = [d["captions"] for d in list(train_dataset)]
 
     train_dataloader = build_dataloader(
@@ -97,21 +94,7 @@ def main(cfg) -> None:
         load_gbs=True,
     )
 
-    if cfg.model.get("transformer_engine", False):
-        ptl_model.setup_transformer_engine_tp_groups()
-
-    ptl_model.setup()
-    trainer.strategy._lightning_module = ptl_model
-
-    dummy_train_dataloader = torch.utils.data.DataLoader(
-        dataset=train_dataset,
-        batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size()),
-    )
-
-    init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_dataset)
-    # make sure the dummy train dataloader is never used
-    del ptl_model._train_dl
-    del dummy_train_dataloader
+    init_using_ptl(trainer, ptl_model, train_dataloader, train_dataset)
 
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
@@ -119,7 +102,7 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
-    reward_model = get_reward_model(cfg.RM, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
+    reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
     ptl_model.reward_model = reward_model
     ptl_model.wandb_logger = logger
 
