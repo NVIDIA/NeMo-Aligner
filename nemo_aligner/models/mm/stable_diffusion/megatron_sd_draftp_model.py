@@ -17,6 +17,8 @@ from typing import Mapping
 import numpy as np
 import torch
 import wandb
+from megatron.core import parallel_state
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from PIL import Image
 from tqdm import tqdm
@@ -31,9 +33,6 @@ from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import grad_reductions, prepare_for_training_step
 from nemo_aligner.utils.utils import configure_batch_sizes
-
-from megatron.core import parallel_state
-from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
 HAVE_MEGATRON_CORE = True
 
@@ -146,12 +145,15 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
             log_reward = [
                 self.reward_model.get_reward(
-                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch # Shape [3, dim, dim] -> [1, dim, dim, 3]
+                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1),
+                    batch,  # Shape [3, dim, dim] -> [1, dim, dim, 3]
                 ).item()
                 for i in range(batch_size)
             ]
             log_img = [
-                np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0)) # Shape [3, dim, dim] -> [dim, dim, 3]
+                np.transpose(
+                    vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0)
+                )  # Shape [3, dim, dim] -> [dim, dim, 3]
                 for i in range(batch_size)
             ]
             return log_img, log_reward
