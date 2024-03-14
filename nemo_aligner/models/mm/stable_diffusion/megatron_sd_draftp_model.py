@@ -42,8 +42,8 @@ BatchType = Mapping[str, torch.tensor]
 
 
 class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
-    def __init__(self, cfg, trainer):  
-        
+    def __init__(self, cfg, trainer):
+
         super().__init__(cfg, trainer=trainer)
 
         self.init_model = LatentDiffusion(cfg, None).to(torch.cuda.current_device()).eval()
