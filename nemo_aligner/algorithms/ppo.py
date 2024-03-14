@@ -278,14 +278,34 @@ class PPOTrainer:
         if self.use_trtllm_reshard:
             rollout_batches = shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id=self.model.tokenizer.eos_id)
 
-        for rollout_batch in rollout_batches:
-            futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+        if not self.cfg.batch_critic_send:
+            for rollout_batch in rollout_batches:
+                futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
 
         response_tokens_list = list(
             itertools.chain(
                 *(map(lambda x: x.flatten(), item["response_tokens"].split(1, dim=0)) for item in rollout_batches)
             )
         )
+
+        if self.cfg.batch_critic_send:
+            response_lengths_list = list(
+                itertools.chain(
+                    *(map(lambda x: x.flatten(), item["response_lengths"].split(1, dim=0)) for item in rollout_batches)
+                )
+            )
+            response_tokens_for_critic = pad_tensors_to_max_global_seq_len(
+                response_tokens_list, self.model.tokenizer.eos_id, parallel_state.get_data_parallel_group()
+            )
+            # does this batch?
+            futures.append(
+                self.rm_critic.infer_rm_critic(
+                    {
+                        "response_tokens": response_tokens_for_critic,
+                        "response_lengths": torch.as_tensor(response_lengths_list),
+                    }
+                )
+            )
 
         batched_response_tokens = torch.nn.utils.rnn.pad_sequence(
             response_tokens_list, batch_first=True, padding_value=self.model.tokenizer.eos_id,
@@ -307,10 +327,22 @@ class PPOTrainer:
             if compute_init_policy_kl:
                 rollout_batch["init_logprobs"] = rollout_init_logprobs[i][..., : total_length - 1]
 
-        for future, rollout_batch in zip(futures, rollout_batches, strict=True):
-            rewards, values = future.result() if isinstance(future, FutureResult) else future
-            rollout_batch["rewards"] = rewards
-            rollout_batch["values"] = values
+        if self.cfg.batch_critic_send:
+            rewards, values = futures[0].resolt()
+
+            rewards = rewards.split(batch_shapes)
+            values = values.split(batch_shapes)
+
+            for i, rollout_batch in enumerate(rollout_batches):
+                total_length = rollout_batch["response_tokens"].size(1)
+                rollout_batch["rewards"] = rewards[i]
+                # TODO: is this total length correct?
+                rollout_batch["values"] = values[i][..., : total_length - 1]
+        else:
+            for future, rollout_batch in zip(futures, rollout_batches, strict=True):
+                rewards, values = future.result() if isinstance(future, FutureResult) else future
+                rollout_batch["rewards"] = rewards
+                rollout_batch["values"] = values
 
         return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
 

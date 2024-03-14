@@ -33,6 +33,9 @@ trainer:
     # to a constant size
     rollout_batch_seq_length: null
 
+    # if this is true, we send everything to the critic at once
+    batch_critic_send: True
+
   # no need to change these
   logger: False # logger provided by exp_manager
   enable_checkpointing: False
@@ -44,7 +47,8 @@ trainer:
 remote_critic_rm:
   # what to batch the inputs to
   # set to None if no batching when sending inference to the critic
-  pad_to_length: ${model.encoder_seq_length}
+# pad_to_length: ${model.encoder_seq_length}
+  pad_to_length: null
 
   # must match the same flag in the critic config
   combine_rm_and_critic_server: True
