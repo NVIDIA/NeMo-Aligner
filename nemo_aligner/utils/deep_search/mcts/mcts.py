@@ -494,6 +494,10 @@ class DeepSearch:
                                 "context": self.mcts.decode_text(backup_root_states[i]),
                             }
                         )
+                        # need to clean up the mcts cache starting from backup root states
+                        if self.strategy is not None:
+                            # clean up the cache
+                            self.strategy.clean_up_cache_for_context(self.mcts.session, backup_root_states[i])
                         # we can remove the search instance
                         del parallel_searches[i]
                         del backup_root_states[i]
@@ -525,9 +529,13 @@ class DeepSearch:
                         }
                     )
 
+                    # need to clean up the mcts cache starting from backup root states
+                    if self.strategy is not None:
+                        # clean up the cache
+                        self.strategy.clean_up_cache_for_context(self.mcts.session, backup_root_states[i])
+
                     del parallel_searches[i]
                     del backup_root_states[i]
-
             if self.save_flag:
                 if self.strategy is not None:
                     pb.write(f"saving the search to disk {filename}")
