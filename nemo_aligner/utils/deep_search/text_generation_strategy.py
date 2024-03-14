@@ -512,6 +512,9 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             output[key] = output[key].cpu().numpy()
         return output
 
+    def clean_up_cache_for_context(self, session_info: str, context_id: str):
+        self.search_db.clean_up_cache_for_context(session_info, context_id)
+
 
 class HybridGPTSearchTextGenerationStrategy(GPTSearchTextGenerationStrategy):
     def forward_step(self, batch, tensor_shape, session_info):

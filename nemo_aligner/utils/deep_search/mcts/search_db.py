@@ -82,6 +82,17 @@ class SearchDB:
         output["value"] = np.array(node.value_sum)
         return output
 
+    def clean_up_cache_for_context(self, session_info, context_id):
+        if session_info not in self.db:
+            raise ValueError(f"{session_info} not in db")
+        db = self.db[session_info]
+        for token in context_id:
+            if token not in db:
+                raise ValueError(f"{context_id} not in db")
+            db = db[token].children
+        # clean up the cache
+        db.clear()
+
     def get_attention_mask(self, session_id):
         return self.attention_mask[session_id]
 
