@@ -78,8 +78,6 @@ def load_from_nemo(
     """load a model using nemo checkpoint
     """
     connector = CustomSaveRestoreConnector(load_base_model_only=load_base_model_only)
-    if not restore_path:
-        return cls(model_cfg, trainer)
     assert os.path.exists(restore_path), f"tried to load from {restore_path=} but it does not exist"
 
     # if we gave it a directory, then load as if it was extracted already

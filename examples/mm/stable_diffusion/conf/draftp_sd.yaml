@@ -215,7 +215,6 @@ model:
           local_root_path:  null 
   
   peft:
-    enable: False
     peft_scheme: "sdlora"
     restore_from_path: null
     lora_tuning:

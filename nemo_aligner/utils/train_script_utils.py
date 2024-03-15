@@ -154,7 +154,7 @@ def extract_optimizer_scheduler_from_ptl_model(ptl_model):
 def init_peft(ptl_model, updated_cfg):
     """initialize peft weights"""
 
-    assert updated_cfg.peft.peft_scheme in ["lora", "none"], "Only support LoRA or Full finetuning"
+    assert updated_cfg.peft.peft_scheme in ["lora", "none", "sdlora"], "Only support LoRA or Full finetuning"
 
     peft_cfg_cls = PEFT_CONFIG_MAP[updated_cfg.peft.peft_scheme]
     if updated_cfg.peft.restore_from_path is not None:

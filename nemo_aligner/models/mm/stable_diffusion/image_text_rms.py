@@ -33,16 +33,12 @@ try:
 except ImportError:
     BICUBIC = Image.BICUBIC
 
-OPENAI_DATASET_MEAN = (0.48145466, 0.4578275, 0.40821073)
-OPENAI_DATASET_STD = (0.26862954, 0.26130258, 0.27577711)
-
 
 class PickscoreRewardModel(MegatronModule):
     """CLIP-Based Model"""
 
     def __init__(self, model_cfg, model_parallel_config, padded_vocab_size, pre_process=True, post_process=True):
         super(PickscoreRewardModel, self).__init__()
-
         self.config = model_parallel_config
         self.pre_process = pre_process
         self.post_process = post_process
@@ -80,21 +76,25 @@ class PickscoreRewardModel(MegatronModule):
 class MegatronCLIPRewardModel(MegatronCLIPModel):
     def __init__(self, cfg, trainer):
         super().__init__(cfg, trainer)
+        self.openai_dataset_mean = (0.48145466, 0.4578275, 0.40821073)
+        self.openai_dataset_std = (0.26862954, 0.26130258, 0.27577711)
+        self.transform_size = 224
+        self.rescale_param = 0.00392156862745098
         self.differentiable_preprocess = self.diff_preprocess()
 
     def diff_preprocess(self):
 
         return Compose(
             [
-                Resize(224, interpolation=BICUBIC, antialias=True),
-                CenterCrop(224),
+                Resize(self.transform_size, interpolation=BICUBIC, antialias=True),
+                CenterCrop(self.transform_size),
                 self.rescale,
-                Normalize(OPENAI_DATASET_MEAN, OPENAI_DATASET_STD),
+                Normalize(self.openai_dataset_mean, self.openai_dataset_std),
             ]
         )
 
     def rescale(self, image):
-        return image * 0.00392156862745098
+        return image * self.rescale_param
 
     def preprocess(self, images, captions):
 

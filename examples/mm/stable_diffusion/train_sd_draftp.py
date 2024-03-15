@@ -33,10 +33,10 @@ from nemo_aligner.utils.train_script_utils import (
     add_custom_checkpoint_callback,
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
+    init_peft,
     init_using_ptl,
     retrieve_custom_trainer_state_dict,
 )
-from nemo_aligner.utils.utils import load_from_nemo
 
 mp.set_start_method("spawn", force=True)
 
@@ -53,23 +53,9 @@ def main(cfg) -> None:
     trainer = MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
-    ptl_model = load_from_nemo(MegatronSDDRaFTPModel, cfg.model, trainer).to(torch.cuda.current_device())
-    # TODO: @geshen: Check why we have PEFT init here
-    if cfg.model.get("peft", None):
-        if cfg.model.peft.enable:
-            peft_cfg_cls = PEFT_CONFIG_MAP[cfg.model.peft.peft_scheme]
-
-            if cfg.model.peft.restore_from_path is not None:
-                # initialize peft weights from a checkpoint instead of randomly
-                # This is not the same as resume training because optimizer states are not restored.
-                logging.info("PEFT Weights will be loaded from", cfg.model.peft.restore_from_path)
-                ptl_model.load_adapters(cfg.model.peft.restore_from_path, peft_cfg_cls(cfg.model))
-
-            elif peft_cfg_cls is not None:
-                logging.info("Adding adapter weights to the model for PEFT")
-                ptl_model.add_adapter(peft_cfg_cls(cfg.model))
-            else:
-                logging.info(f"Running full finetuning since no peft scheme is given.\n{ptl_model.summarize()}")
+    # Instatiating the model here
+    ptl_model = MegatronSDDRaFTPModel(cfg.model, trainer).to(torch.cuda.current_device())
+    init_peft(ptl_model, cfg.model)
 
     trainer_restore_path = trainer.ckpt_path
 

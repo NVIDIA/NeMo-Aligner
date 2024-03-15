@@ -20,18 +20,18 @@ import wandb
 from omegaconf.dictconfig import DictConfig
 from PIL import Image
 from tqdm import tqdm
-
+from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
     LatentDiffusion,
     MegatronLatentDiffusion,
 )
+from megatron.core.tensor_parallel.random import get_data_parallel_rng_tracker_name, get_cuda_rng_tracker
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import grad_reductions, prepare_for_training_step
 from nemo_aligner.utils.utils import configure_batch_sizes
-
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
@@ -40,6 +40,23 @@ HAVE_MEGATRON_CORE = True
 
 BatchType = Mapping[str, torch.tensor]
 
+def _get_autocast_dtype(precision: str):
+    if precision in ["bf16", "bf16-mixed"]:
+        return torch.bfloat16
+    if precision in [32, "32", "32-true"]:
+        return torch.float
+    if precision in [16, "16", "16-mixed"]:
+        return torch.half
+    raise ValueError('precision must be in ["32-true", "16-mixed", "bf16-mixed"]')
+
+def calculate_gaussian_kl_penalty_shared_var(curr_eps, init_eps):
+
+        diff = curr_eps - init_eps
+        kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()
+        dimensionality = torch.numel(curr_eps[0])
+        kl /= dimensionality
+
+        return kl
 
 class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def __init__(self, cfg, trainer):
@@ -60,7 +77,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         self.sampler_type = self.cfg.infer.get("sampler_type", "DDIM")
         self.inference_steps = self.cfg.infer.get("inference_steps", 50)
         self.eta = self.cfg.infer.get("eta", 0)
-
+        self.autocast_dtype = _get_autocast_dtype(self.cfg.precision)
         # Required by nemo_aligner/utils/train_utils
         self.model.initialize_ub = False
         self.model.rampup_batch_size = False
@@ -85,19 +102,8 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     @torch.no_grad()
     def generate_log_images(self, latents, batch, model):
 
-        # setup default values for inference configs
-        # get autocast_dtype
-        if self.cfg.precision == "bf16":
-            autocast_dtype = torch.bfloat16
-        elif int(self.cfg.precision) == 32:
-            autocast_dtype = torch.float
-        elif int(self.cfg.precision) == 16:
-            autocast_dtype = torch.half
-        else:
-            raise ValueError('precision must be in [32, 16, "bf16"]')
-
         with torch.cuda.amp.autocast(
-            enabled=autocast_dtype in (torch.half, torch.bfloat16), dtype=autocast_dtype,
+            enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
         ):
 
             sampler = sampling_utils.initialize_sampler(model, self.sampler_type.upper())
@@ -146,12 +152,12 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
             log_reward = [
                 self.reward_model.get_reward(
-                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch # Shape [3, dim, dim] -> [1, dim, dim, 3]
+                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch # (C, H, W) -> (1, H, W, C)
                 ).item()
                 for i in range(batch_size)
             ]
             log_img = [
-                np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0)) # Shape [3, dim, dim] -> [dim, dim, 3]
+                np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0)) # (C, H, W) -> (H, W, C)
                 for i in range(batch_size)
             ]
             return log_img, log_reward
@@ -160,15 +166,17 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def log_visualization(self, prompts):
 
         batch_size = len(prompts)
-        latents = torch.randn(
-            [
-                batch_size,
-                self.in_channels,
-                self.height // self.downsampling_factor,
-                self.width // self.downsampling_factor,
-            ],
-            generator=None,
-        ).to(torch.cuda.current_device())
+        # Get different seeds for different dp rank
+        with get_cuda_rng_tracker().fork(get_data_parallel_rng_tracker_name()):
+            latents = torch.randn(
+                [
+                    batch_size,
+                    self.in_channels,
+                    self.height // self.downsampling_factor,
+                    self.width // self.downsampling_factor,
+                ],
+                generator=None,
+            ).to(torch.cuda.current_device())
 
         image_draft_p, reward_draft_p = self.generate_log_images(latents, prompts, self.model)
         image_init, reward_init = self.generate_log_images(latents, prompts, self.init_model)
@@ -191,18 +199,8 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         self, batch, x_T,
     ):
 
-        # get autocast_dtype
-        if self.cfg.precision == "bf16":
-            autocast_dtype = torch.bfloat16
-        elif int(self.cfg.precision) == 32:
-            autocast_dtype = torch.float
-        elif int(self.cfg.precision) == 16:
-            autocast_dtype = torch.half
-        else:
-            raise ValueError('precision must be in [32, 16, "bf16"]')
-
         with torch.cuda.amp.autocast(
-            enabled=autocast_dtype in (torch.half, torch.bfloat16), dtype=autocast_dtype,
+            enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
         ):
 
             batch_size = len(batch)
@@ -300,10 +298,11 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         """
 
     def get_forward_output_and_loss_func(self, validation_step=False):
-        def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
+        def fwd_output_and_loss_func(batch, model):
 
-            batch_size = len(dataloader_iter)
-
+            batch_size = len(batch)
+            torch.cuda.manual_seed(torch.distributed.get_rank())
+            torch.manual_seed(torch.distributed.get_rank())
             latents = torch.randn(
                 [
                     batch_size,
@@ -314,7 +313,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-            output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(dataloader_iter, latents)
+            output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(batch, latents)
 
             # in this nemo version the model and autocast dtypes are not synced
             # so we need to explicitly cast it
@@ -326,64 +325,37 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                 if self.cfg.kl_coeff == 0.0:
                     kl_penalty = torch.tensor([0.0]).to(torch.cuda.current_device())
                 else:
-                    kl_penalty = self.calculate_gaussian_kl_penalty_shared_var(epsilons_draft_p, epsilons_init).mean()
-                rewards = self.reward_model.get_reward(output_tensor_draft_p.permute(0, 2, 3, 1), dataloader_iter)
+                    kl_penalty = calculate_gaussian_kl_penalty_shared_var(epsilons_draft_p, epsilons_init).mean()
+                rewards = self.reward_model.get_reward(output_tensor_draft_p.permute(0, 2, 3, 1), batch) #(ub, H, W, C) -> (ub, C, H, W)
                 loss = -rewards.mean() + kl_penalty * self.cfg.kl_coeff
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
+                reduced_kl_penalty = average_losses_across_data_parallel_group([kl_penalty])
 
                 return (
                     loss,
-                    {"loss": reduced_loss, "kl_penalty": kl_penalty},
+                    {"loss": reduced_loss, "kl_penalty": reduced_kl_penalty},
                 )
 
             return output_tensor_draft_p, loss_func
 
         return fwd_output_and_loss_func
 
-    def calculate_gaussian_kl_penalty_shared_var(self, curr_eps, init_eps):
-
-        diff = curr_eps - init_eps
-        kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()
-        dimensionality = torch.numel(curr_eps[0])
-        kl /= dimensionality
-
-        return kl
-
     def get_loss_and_metrics(self, batch, forward_only=False):
 
         fwd_bwd_function = get_forward_backward_func()
-
-        losses_reduced_per_micro_batch = []
-
-        # TODO @ataghibakhsh: input num_microbatch manually
-        for i in range(0, len(batch), self.cfg.micro_batch_size):
-            data_item = batch[i : i + self.cfg.micro_batch_size]
-
-            losses_reduced_per_micro_batch.append(
-                fwd_bwd_function(
+        losses_reduced_per_micro_batch = fwd_bwd_function(
                     forward_step_func=self.get_forward_output_and_loss_func(),
-                    data_iterator=[data_item],  # 4
+                    data_iterator=[batch], 
                     model=self.model,
-                    num_microbatches=self.cfg.micro_batch_size,  # 4
+                    num_microbatches=get_num_microbatches(), 
                     forward_only=forward_only,
                     seq_length=None,
-                    micro_batch_size=self.cfg.micro_batch_size,  # 1
-                )[0]
-            )
+                    micro_batch_size=get_micro_batch_size(), 
+        )
 
         if torch.distributed.get_rank() == 0 and len(self.wandb_logger.loggers) > 1:
             self.log_visualization(batch[0:1])
-
-        if self.with_distributed_adam:
-            # synchronize asynchronous grad reductions
-            # note: not necessary, but reduces performance degradation
-            # from multiple simultaneous NCCL calls
-            self._optimizer._finish_bucket_grad_sync()
-        else:
-            # async grad allreduce is not currently implemented for O1/autocasting mixed precision training
-            # so we all-reduce gradients after the pipeline
-            self.allreduce_gradients()
 
         metrics = {}
 
