@@ -67,7 +67,7 @@ def get_mean_and_std(list_of_losses, last_k=10):
         return 0, 1
 
     # return np.mean(list_of_losses[-last_k:]), np.std(list_of_losses[-last_k:])
-    return 0, np.std(list_of_losses[-last_k:])
+    return 0, 1
 
 
 class DeepSearchTrainer:
@@ -237,25 +237,16 @@ class DeepSearchTrainer:
         metrics.update({"value_optimization_step": self.value_optimization_step})
         metrics.update({"consumed_samples_values": self.consumed_samples_values})
         metrics.update({"consumed_samples": self.consumed_samples})
-        metrics.update({"value_loss": sum(value_losses)})
-        metrics.update({"policy_loss": sum(policy_losses)})
+
+        if run_value:
+            metrics.update({"value_loss": sum(value_losses)})
+            metrics.update({"value_loss_unnormalized": np.mean(value_losses_unnormalized)})
+
+        if run_policy:
+            metrics.update({"policy_loss": sum(policy_losses)})
+            metrics.update({"policy_loss_unnormalized": np.mean(policy_losses_unnormalized)})
 
         metrics.update({"value_policy_sum": sum(value_losses) + sum(policy_losses)})
-
-        metrics.update(
-            {
-                "value_loss_unnormalized": np.mean(value_losses_unnormalized)
-                if len(value_losses_unnormalized) > 0
-                else 0
-            }
-        )
-        metrics.update(
-            {
-                "policy_loss_unnormalized": np.mean(policy_losses_unnormalized)
-                if len(policy_losses_unnormalized) > 0
-                else 0
-            }
-        )
         metrics.update({"lr": lr})
 
         self.logger.log_metrics(
