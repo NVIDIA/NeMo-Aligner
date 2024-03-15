@@ -24,6 +24,7 @@ import torch.multiprocessing as mp
 from datasets import load_dataset
 from megatron.core import parallel_state
 from megatron.core.utils import divide
+from nemo_skills.code_execution.math_grader import extract_answer
 from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 from sklearn.model_selection import train_test_split
@@ -217,13 +218,7 @@ def main(cfg) -> None:
         response_text = ptl_model.tokenizer.ids_to_text(p["tokens"][p["context_length"] :])
 
         question = ptl_model.tokenizer.ids_to_text(tokens)
-        answer = re.findall(r"\{{([\d,]+)\}}", response_text)
-
-        if len(answer) == 0:
-            # hack for debugging only
-            answer = "NOT FOUND"
-        else:
-            answer = answer[-1]
+        answer = float(extract_answer(response_text))
 
         train_ds.append({"question": question, "expected_answer": answer})
 

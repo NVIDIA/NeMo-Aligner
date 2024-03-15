@@ -206,8 +206,12 @@ class DeepSearchTrainer:
         value_loss = sum(value_losses)
         policy_loss = sum(policy_losses)
 
-        metrics.update({"value_loss": value_loss})
-        metrics.update({"policy_loss": policy_loss})
+        if len(value_losses) > 0:
+            metrics.update({"value_loss": value_loss})
+
+        if len(policy_losses) > 0:
+            metrics.update({"policy_loss": policy_loss})
+
         metrics.update({"total_loss": value_loss + policy_loss})
 
         self.logger.log_metrics(
@@ -266,8 +270,13 @@ class DeepSearchTrainer:
         metrics.update({"value_optimization_step": self.value_optimization_step})
         metrics.update({"consumed_samples_values": self.consumed_samples_values})
         metrics.update({"consumed_samples": self.consumed_samples})
-        metrics.update({"value_loss": sum(value_losses)})
-        metrics.update({"policy_loss": sum(policy_losses)})
+
+        if len(value_losses) > 0:
+            metrics.update({"value_loss": sum(value_losses)})
+
+        if len(policy_losses) > 0:
+            metrics.update({"policy_loss": sum(policy_losses)})
+
         metrics.update({"lr": lr})
 
         self.logger.log_metrics(
@@ -361,8 +370,11 @@ class DeepSearchTrainer:
                 self.step += 1
                 inner_step += 1
 
-                if inner_step == self.max_steps:
+                forced_run_val = False
+
+                if inner_step == self.max_steps and self.cfg.val_check_interval > 0:
                     self.epoch += 1
+                    forced_run_val = True
 
                 run_time_exceeded = self.run_timer.is_finished()
 
@@ -377,7 +389,7 @@ class DeepSearchTrainer:
                     run_time_exceeded=run_time_exceeded,
                 )
 
-                if run_val:
+                if run_val or forced_run_val:
                     val_metrics = self.run_validation()
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
