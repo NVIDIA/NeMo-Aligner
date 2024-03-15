@@ -371,10 +371,12 @@ class DeepSearchTrainer:
                 inner_step += 1
 
                 forced_run_val = False
+                forced_save_model = False
 
-                if inner_step == self.max_steps and self.cfg.val_check_interval > 0:
+                if inner_step == self.max_steps:
                     self.epoch += 1
-                    forced_run_val = True
+                    forced_run_val = self.cfg.val_check_interval > 0
+                    forced_save_model = self.cfg.save_interval > 0
 
                 run_time_exceeded = self.run_timer.is_finished()
 
@@ -405,7 +407,7 @@ class DeepSearchTrainer:
 
                 global_pbar.set_postfix(step_metrics)
 
-                if save_model:
+                if save_model or forced_save_model:
                     step_metrics = {k: torch.as_tensor(v) for k, v in step_metrics.items()}
                     self.save(step_metrics, is_train_end=is_train_end)
 
