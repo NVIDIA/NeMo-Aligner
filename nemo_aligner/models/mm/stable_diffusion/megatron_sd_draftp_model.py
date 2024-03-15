@@ -17,6 +17,8 @@ from typing import Mapping
 import numpy as np
 import torch
 import wandb
+from megatron.core import parallel_state
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from PIL import Image
 from tqdm import tqdm

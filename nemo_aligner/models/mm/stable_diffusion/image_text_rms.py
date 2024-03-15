@@ -29,6 +29,7 @@ from nemo.collections.nlp.modules.common.megatron.module import MegatronModule
 
 try:
     from torchvision.transforms import InterpolationMode
+
     BICUBIC = InterpolationMode.BICUBIC
 except ImportError:
     BICUBIC = Image.BICUBIC
