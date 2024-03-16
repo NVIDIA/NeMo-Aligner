@@ -66,8 +66,8 @@ def get_mean_and_std(list_of_losses, last_k=10):
     if len(list_of_losses) == 0 or len(list_of_losses) < last_k:
         return 0, 1
 
-    # return np.mean(list_of_losses[-last_k:]), np.std(list_of_losses[-last_k:])
-    return 0, 1
+    return 0, np.std(list_of_losses[-last_k:])
+# return 0, 1
 
 
 class DeepSearchTrainer:
