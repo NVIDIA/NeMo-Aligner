@@ -19,7 +19,6 @@ import torch
 import wandb
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from omegaconf.dictconfig import DictConfig
 from PIL import Image
 from tqdm import tqdm
 from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
@@ -33,12 +32,9 @@ from nemo.collections.nlp.modules.common.megatron.utils import average_losses_ac
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import grad_reductions, prepare_for_training_step
-from nemo_aligner.utils.utils import configure_batch_sizes
-from megatron.core import parallel_state
-from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from nemo_aligner.utils.utils import configure_batch_sizes, get_iterator_k_split_list
 
 HAVE_MEGATRON_CORE = True
-
 
 BatchType = Mapping[str, torch.tensor]
 
@@ -300,8 +296,9 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         """
 
     def get_forward_output_and_loss_func(self, validation_step=False):
-        def fwd_output_and_loss_func(batch, model):
-
+        def fwd_output_and_loss_func(data_iterator, model):
+            
+            batch = next(data_iterator)
             batch_size = len(batch)
             torch.cuda.manual_seed(torch.distributed.get_rank())
             torch.manual_seed(torch.distributed.get_rank())
@@ -344,11 +341,13 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         return fwd_output_and_loss_func
 
     def get_loss_and_metrics(self, batch, forward_only=False):
+        
+        data_iter = get_iterator_k_split_list(batch, get_num_microbatches())
 
         fwd_bwd_function = get_forward_backward_func()
         losses_reduced_per_micro_batch = fwd_bwd_function(
-                    forward_step_func=self.get_forward_output_and_loss_func(),
-                    data_iterator=[batch], 
+                    forward_step_func=self.get_forward_output_and_loss_func(forward_only),
+                    data_iterator=[data_iter], 
                     model=self.model,
                     num_microbatches=get_num_microbatches(), 
                     forward_only=forward_only,
