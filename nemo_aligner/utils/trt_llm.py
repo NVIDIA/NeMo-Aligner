@@ -71,7 +71,6 @@ class GPTGenerateTRTLLM:
                 max_output_token=self.max_generation_length,
                 max_batch_size=self.cfg.ppo.get("rollout_micro_batch_size"),
                 use_refit=True,
-                model_type="llama",
             )
             self._trtllm_model_compiled = True
         else:
