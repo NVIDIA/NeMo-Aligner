@@ -60,6 +60,7 @@ model:
 
     top_k: 50
     end_strings: ["<extra_id_1>", "\x11"]  # generation will stop when one of these tokens is generated
+    add_bos_token: False # add the bos token at the beginning of the prompt
 
     oracle: True  # whether to use the oracle value for the search results, Default True, so it uses ground truth value when it reaches the terminal state
     turn_off_value: ${not:${pretrained_checkpoint.from_mcts_trained}}

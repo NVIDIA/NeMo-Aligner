@@ -51,7 +51,9 @@ Please show the calculation steps and lastly the final answer in format {{{{answ
 # """
 
 
-termination_condition = TerminationCondition(args["max_depth"], end_strings=["<extra_id_1>"])
+termination_condition = TerminationCondition(
+    args["max_depth"], end_strings=["<extra_id_1>"], end_tokens=[tokenizer.eos_id()]
+)
 score_fun = GSK8KFeedbackHF("train")
 offset = 1765
 ps = [

@@ -174,10 +174,10 @@ class MCTSParallel:
         text = self.decode_text(all_tokens)
         return text
 
-    def get_value_and_terminated(self, text, data_id, depth):
+    def get_value_and_terminated(self, text, data_id, depth, tokens):
         terminate = False
         for fun in self.terminate_fns:
-            if fun(text, depth):
+            if fun(text, depth, tokens):
                 terminate = True
                 break
 
@@ -187,7 +187,7 @@ class MCTSParallel:
         # check if the text ends properly
         end_properly = False
         for fun in self.terminate_fns:
-            if fun.ends_by_end_strings(text):
+            if fun.ends_by_end_strings(text, tokens):
                 end_properly = True
                 break
         has_answer = False
@@ -305,8 +305,11 @@ class MCTSParallel:
                     depth += 1
 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
-                text = self.get_text(node)
-                value, is_terminal, ends_properly, has_answer = self.get_value_and_terminated(text, spg.data_id, depth)
+                all_tokens = node.get_all_tokens()
+                text = self.decode_text(all_tokens)
+                value, is_terminal, ends_properly, has_answer = self.get_value_and_terminated(
+                    text, spg.data_id, depth, all_tokens
+                )
 
                 if is_terminal:
                     if not self.args["oracle"]:
@@ -487,7 +490,7 @@ class DeepSearch:
                 text = self.mcts.decode_text(spg.state)
                 pb.write(text)
                 value, is_terminal, ends_properly, has_answer = self.mcts.get_value_and_terminated(
-                    text, spg.data_id, count
+                    text, spg.data_id, count, spg.state
                 )
 
                 if is_terminal:

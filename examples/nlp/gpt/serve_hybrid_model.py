@@ -106,7 +106,7 @@ def main(cfg) -> None:
     strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
     strategy_args = {"strategy": strategy}
 
-    def get_infer_fn(model, top_k, max_depth, **strategy_args):
+    def get_infer_fn(model, top_k, max_depth, add_bos_token, **strategy_args):
         # one token at a time
         def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
             return search(
@@ -117,12 +117,15 @@ def main(cfg) -> None:
                 session_info,
                 tokens_to_generate=max_depth,  # max search depth
                 top_k=top_k,
+                add_bos_token=add_bos_token,
                 **strategy_args,
             )
 
         return infer_fn
 
-    infer_fn = get_infer_fn(ptl_model, cfg.inference.top_k, cfg.inference.tokens_to_generate, **strategy_args)
+    infer_fn = get_infer_fn(
+        ptl_model, cfg.inference.top_k, cfg.inference.tokens_to_generate, cfg.inference.add_bos_token, **strategy_args
+    )
     # infer_fn = lambda : None
     # r = infer_fn(["hello", "ok"], context_ids=['context1', 'context2'], session_info='session')
     # print(r)

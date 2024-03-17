@@ -37,7 +37,7 @@ input_text = ["how are you?", "how large is the universe?"]
 # ### sub sequent evaluation to construct the children node
 
 max_depth = 500
-termination_condition = TerminationCondition(max_depth, end_strings=["<extra_id_1>"])
+termination_condition = TerminationCondition(max_depth, end_strings=["<extra_id_1>"], end_tokens=[tokenizer.eos_id()])
 score_fun = GSK8KFeedbackHF()
 total_data = 500
 

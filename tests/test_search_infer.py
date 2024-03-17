@@ -85,6 +85,7 @@ class TestSearch:
                 session_info,
                 tokens_to_generate=tokens_to_generate,  # max search depth
                 top_k=top_k,
+                add_bos_token=False,
                 **strategy_args,
             )
 

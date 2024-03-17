@@ -55,6 +55,7 @@ def dp_search(
     session_info=None,
     tokens_to_generate=1,  # max search depth
     top_k=0,
+    add_bos_token=False,  # add bos token at the beginning of the input text
     **strategy_args,
 ) -> OutputType:
     """
@@ -86,7 +87,7 @@ def dp_search(
         if isinstance(inputs, tuple):  # tuple of (context_tokens_tensor, context_length_tensor)
             context_tokens_tensor, context_length_tensor = inputs
         else:
-            context_tokens_tensor, context_length_tensor = inference_strategy.tokenize_batch(inputs, 0, False)
+            context_tokens_tensor, context_length_tensor = inference_strategy.tokenize_batch(inputs, 0, add_bos_token)
         batch_size = context_tokens_tensor.size(0)
         action = torch.cuda.IntTensor(batch_size, 1)
         action[:] = 0
@@ -170,6 +171,7 @@ def search(
     session_info=None,
     tokens_to_generate=1,  # max search depth
     top_k=0,
+    add_bos_token=False,  # add bos token at the beginning of the input text
     **strategy_args,
 ) -> OutputType:
     """
@@ -198,7 +200,9 @@ def search(
             if isinstance(inputs, tuple):  # tuple of (context_tokens_tensor, context_length_tensor)
                 context_tokens_tensor, context_length_tensor = inputs
             else:
-                context_tokens_tensor, context_length_tensor = inference_strategy.tokenize_batch(inputs, 0, False)
+                context_tokens_tensor, context_length_tensor = inference_strategy.tokenize_batch(
+                    inputs, 0, add_bos_token
+                )
             batch_size = context_tokens_tensor.size(0)
             action = torch.cuda.IntTensor(batch_size, 1)
             action[:] = 0

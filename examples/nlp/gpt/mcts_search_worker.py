@@ -68,6 +68,10 @@ Please show the calculation steps and lastly make sure to put the answer (and on
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
 
+mistral_template = """[INST] {prompt}
+Please show the calculation steps and lastly make sure to put the answer (and only answer) inside \\boxed{{}}.
+[/INST]"""
+
 
 def groupby(key, output):
     grouped = defaultdict(list)
@@ -276,6 +280,8 @@ def get_dataset(dataset_name, split, template_name):
     dataset = load_dataset("gsm8k", "main")
     if template_name == "steerlm":
         template = steerlm_template
+    elif template_name == "mistral":
+        template = mistral_template
     else:
         template = prompt_template
     ds = DatasetWrapper(dataset[split], template)
