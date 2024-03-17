@@ -17,17 +17,18 @@ from typing import Mapping
 import numpy as np
 import torch
 import wandb
+from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
 from PIL import Image
 from tqdm import tqdm
-from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
+
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
     LatentDiffusion,
     MegatronLatentDiffusion,
 )
-from megatron.core.tensor_parallel.random import get_data_parallel_rng_tracker_name, get_cuda_rng_tracker
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
@@ -38,6 +39,7 @@ HAVE_MEGATRON_CORE = True
 
 BatchType = Mapping[str, torch.tensor]
 
+
 def _get_autocast_dtype(precision: str):
     if precision in ["bf16", "bf16-mixed"]:
         return torch.bfloat16
@@ -47,14 +49,16 @@ def _get_autocast_dtype(precision: str):
         return torch.half
     raise ValueError('precision must be in ["32-true", "16-mixed", "bf16-mixed"]')
 
+
 def calculate_gaussian_kl_penalty_shared_var(curr_eps, init_eps):
 
-        diff = curr_eps - init_eps
-        kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()
-        dimensionality = torch.numel(curr_eps[0])
-        kl /= dimensionality
+    diff = curr_eps - init_eps
+    kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()
+    dimensionality = torch.numel(curr_eps[0])
+    kl /= dimensionality
 
-        return kl
+    return kl
+
 
 class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def __init__(self, cfg, trainer):
@@ -150,12 +154,12 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
             log_reward = [
                 self.reward_model.get_reward(
-                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch # (C, H, W) -> (1, H, W, C)
+                    vae_decoder_output[i].unsqueeze(0).detach().permute(0, 2, 3, 1), batch  # (C, H, W) -> (1, H, W, C)
                 ).item()
                 for i in range(batch_size)
             ]
             log_img = [
-                np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0)) # (C, H, W) -> (H, W, C)
+                np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0))  # (C, H, W) -> (H, W, C)
                 for i in range(batch_size)
             ]
             return log_img, log_reward
@@ -325,7 +329,9 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                     kl_penalty = torch.tensor([0.0]).to(torch.cuda.current_device())
                 else:
                     kl_penalty = calculate_gaussian_kl_penalty_shared_var(epsilons_draft_p, epsilons_init).mean()
-                rewards = self.reward_model.get_reward(output_tensor_draft_p.permute(0, 2, 3, 1), batch) #(ub, H, W, C) -> (ub, C, H, W)
+                rewards = self.reward_model.get_reward(
+                    output_tensor_draft_p.permute(0, 2, 3, 1), batch
+                )  # (ub, H, W, C) -> (ub, C, H, W)
                 loss = -rewards.mean() + kl_penalty * self.cfg.kl_coeff
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
