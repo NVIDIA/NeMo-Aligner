@@ -27,7 +27,6 @@ from megatron.core.utils import divide
 from nemo_skills.code_execution.math_grader import extract_answer
 from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
-from sklearn.model_selection import train_test_split
 
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
@@ -160,6 +159,8 @@ def mcts_value_collate_fn(eos_id, batches):
 def main(cfg) -> None:
     train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
     val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
+    val_ids = {item["data_id"] for item in val_ds}
+
     feedback = GSK8KFeedbackDataset()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
@@ -201,12 +202,11 @@ def main(cfg) -> None:
     assert os.path.exists(cfg.mcts_data_file)
     train_data = torch.load(cfg.mcts_data_file)
 
-    policy_train_data, policy_val_data = train_test_split(
-        train_data["policies"], test_size=0.1, random_state=6, shuffle=True
-    )
-    value_train_data, value_val_data = train_test_split(
-        train_data["values"], test_size=0.1, random_state=7, shuffle=True
-    )
+    policy_train_data = [item for item in train_data["policies"] if item['data_id'] not in val_ids]
+    policy_val_data = [item for item in train_data["policies"] if item['data_id'] in val_ids]
+
+    value_train_data = [item for item in train_data["values"] if item['data_id'] not in val_ids]
+    value_val_data = [item for item in train_data["values"] if item['data_id'] in val_ids]
 
     num_samples = compute_limit_batches(
         len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches
