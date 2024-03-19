@@ -272,16 +272,20 @@ class PPOTrainer:
 
         print(f"num_microbatches {num_microbatches}")
 
+        start = time.time()
         for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
             rollout_batch = self.model.infer(inference_batch)
             rollout_batches.append(rollout_batch)
+        end = time.time()
+        print("### GENERATE ONLY", end - start)
 
         if self.use_trtllm_reshard:
             rollout_batches = shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id=self.model.tokenizer.eos_id)
 
         if not self.cfg.batch_critic_send:
             for rollout_batch in rollout_batches:
-                futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+# futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+                futures.append(None)
 
         start_time = time.time()
         response_tokens_list = list(
@@ -345,7 +349,9 @@ class PPOTrainer:
 
         start_time = time.time()
         if self.cfg.batch_critic_send:
-            rewards, values = futures[0].result()
+# rewards, values = futures[0].result()
+            rewards = torch.randn(response_tokens_for_critic.size(0)).cuda()
+            values = torch.randn(response_tokens_for_critic.size(0), response_tokens_for_critic.size(1)-1).cuda()
 
             rewards = rewards.split(batch_shapes)
             values = values.split(batch_shapes)
@@ -522,7 +528,7 @@ class PPOTrainer:
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
                 # send critic train
-                self.rm_critic.train(ppo_rollout_data)
+# self.rm_critic.train(ppo_rollout_data)
                 # logging
                 table_metrics = metrics.pop("table")
                 self.train_df.loc[len(self.train_df)] = [
@@ -623,11 +629,11 @@ class PPOTrainer:
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
-        future = self.rm_critic.save()
+# future = self.rm_critic.save()
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
-        future.result()
+# future.result()
 
         self.model.finish_training()
 
