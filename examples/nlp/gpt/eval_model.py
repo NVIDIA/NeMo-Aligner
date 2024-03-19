@@ -37,7 +37,7 @@ from nemo.utils.timers import NamedTimer
 from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.data.nlp.datasets import MCTSDataset
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, GSK8KFeedbackHF
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, MathSandBoxedFeedBack
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
@@ -136,7 +136,7 @@ def collate_fn(batch):
 def main(cfg) -> None:
     train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
     val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
-    feedback = GSK8KFeedbackDataset()
+    feedback = MathSandBoxedFeedBack(host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT"))
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 

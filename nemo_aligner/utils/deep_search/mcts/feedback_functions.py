@@ -3,6 +3,7 @@ import re
 import pandas as pd
 from datasets import load_dataset
 from nemo_skills.code_execution.math_grader import extract_answer, math_equal
+from nemo_skills.code_execution.sandbox import LocalSandbox
 
 
 class Feedback(object):
@@ -90,3 +91,17 @@ class GSK8KFeedbackHF(Feedback):
             return 1.0
         else:
             return 0.0
+
+class MathSandBoxedFeedBack:
+
+    def __init__(self, host, port, test_on_init=True):
+        self.sandbox = LocalSandbox(host=host, port=port)
+
+        if test_on_init:
+            assert self.sandbox.is_output_correct("123", 123), "sandbox output should be correct!"
+
+    def score(self, response, answer):
+        # NOTE: response must be in boxed format
+        response = extract_answer(response)
+
+        return self.sandbox.is_output_correct(response, answer)
