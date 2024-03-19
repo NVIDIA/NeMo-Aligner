@@ -152,8 +152,8 @@ class SupervisedTrainer:
         if hasattr(model_ref, "embeddings") and hasattr(model_ref.embedding, "noise_scheduler"):
             noise_scheduler = model_ref.embedding.noise_scheduler
             if noise_scheduler is not None:
-                trainer_metrics["noise_value"] = noise_scheduler.current_value
-                trainer_metrics["noise_step"] = noise_scheduler.current_step
+                metrics["noise_value"] = noise_scheduler.current_value
+                metrics["noise_step"] = noise_scheduler.current_step
         return loss_mean, trainer_metrics | metrics
 
     @torch.no_grad()
