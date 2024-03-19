@@ -352,7 +352,94 @@ class DPOModelDataset(Dataset):
         }
         return output
 
+class KTOModelDataset(Dataset):
+    """This class works only with jsonl files. It assumes each line of the json file is a dictionary
+       with the prompt, along with the response (response only, no prompt), and the status denoting whether the response is chosen or rejected. This Dataset will combine the prompt with the corresponding chosen or 
+       rejected response, and then tokenize it. It will also create a score field that has 1 if the sample is chosen and 0 if rejected. It also returns the labels for each, which is the response tokens
+       with -100 for the prompt part.
+       
+       WARNING: This class will tokenize the text, but it will raise an exception on model max seq len violations!
+                Meaning it will not truncate tokens to fit to model max seq len, because of special prefix/suffix
+                strings such as <extra_id_1>, it would not know where it is safe to truncate for each model. Therefore,
+                the user must do all truncation logic in their preprocessing step when generating the jsonl
+                used by this class. Put all special truncation logic there specific to your model.
+    """
 
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.name = name
+        self.data = data.copy()
+        self.drop_last = drop_last
+        self.seq_length = seq_length
+        self.tokenizer = tokenizer
+
+        self.reset_position_ids = cfg.data.get("reset_position_ids", False)
+        self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
+        self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
+        self.eos_id = tokenizer.eos_id
+
+        np_rng = np.random.default_rng(seed=seed)
+        np_rng.shuffle(self.data)
+
+        # Checks
+        assert np.min(documents) >= 0
+        assert np.max(documents) < len(self.data)
+
+    def __len__(self):
+        return len(self.data)
+
+    def encode(self, text, append_eod=False):
+        if self.cfg.data.get("apply_ftfy", False):
+            import ftfy
+
+            text = ftfy.fix_text(text)
+
+        text_ids = self.tokenizer.text_to_ids(text)
+
+        if len(text_ids) > 0 and append_eod:
+            text_ids.append(self.tokenizer.eos_id)
+
+        return text_ids, len(text_ids)
+
+    def __getitem__(self, idx):
+        """Returns a sample = prompt + response, their respective lengths, and labels.
+        """
+        payload = self.data[idx]
+        prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
+        sample, sample_len = self.encode(
+            payload["prompt"] + payload["response"], append_eod=self.cfg.data.get("append_eod", False)
+        )
+        status = payload["status"]
+
+        # chosen_response_only, chosen_response_len = self.encode(payload['chosen_response'])
+        # reject_response_only, reject_response_len = self.encode(payload['rejected_response'])
+        labels = ([-100] * prompt_len) + sample[prompt_len:]
+
+        assert sample[0:prompt_len] == prompt, "the tokenizer for KTO has merged tokens between prompt and response"        
+
+        max_curr_seq_len = sample_len
+        assert (
+            max_curr_seq_len <= self.seq_length
+        ), "tokenized text exceeds max seq len! truncate your data in preprocessing prior to DPO training"
+
+        tokens = torch.nn.functional.pad(
+            torch.LongTensor(sample), (0, max_curr_seq_len - sample_len), mode="constant", value=self.eos_id
+        )
+        labels_tokens = torch.nn.functional.pad(
+            torch.LongTensor(labels), (0, max_curr_seq_len - len(labels)), mode="constant", value=-100
+        )
+
+        output = {
+            "sample": tokens,
+            "sample_length": sample_len,
+            "sample_labels": labels_tokens,
+            "status": status,
+        }
+        return output
+    
 class RegressionRewardModelDataset(RewardModelDataset):
     """This class assumes each line of the dataset file is a dictionary with "text" and "label" field, 
         where "text" is a string representing the input prompt, and "label" is a list of float or int values. 
