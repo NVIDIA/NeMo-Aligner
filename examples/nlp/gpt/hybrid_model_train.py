@@ -202,11 +202,11 @@ def main(cfg) -> None:
     assert os.path.exists(cfg.mcts_data_file)
     train_data = torch.load(cfg.mcts_data_file)
 
-    policy_train_data = [item for item in train_data["policies"] if item['data_id'] not in val_ids]
-    policy_val_data = [item for item in train_data["policies"] if item['data_id'] in val_ids]
+    policy_train_data = [item for item in train_data["policies"] if item["data_id"] not in val_ids]
+    policy_val_data = [item for item in train_data["policies"] if item["data_id"] in val_ids]
 
-    value_train_data = [item for item in train_data["values"] if item['data_id'] not in val_ids]
-    value_val_data = [item for item in train_data["values"] if item['data_id'] in val_ids]
+    value_train_data = [item for item in train_data["values"] if item["data_id"] not in val_ids]
+    value_val_data = [item for item in train_data["values"] if item["data_id"] in val_ids]
 
     num_samples = compute_limit_batches(
         len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches

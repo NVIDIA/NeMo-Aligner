@@ -136,7 +136,9 @@ def collate_fn(batch):
 def main(cfg) -> None:
     train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
     val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
-    feedback = MathSandBoxedFeedBack(host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT"))
+    feedback = MathSandBoxedFeedBack(
+        host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT")
+    )
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
