@@ -24,6 +24,7 @@ from pytriton.model_config import ModelConfig, Tensor
 from pytriton.model_config.common import DynamicBatcher
 from pytriton.triton import Triton, TritonConfig
 from tqdm import tqdm
+import time
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
@@ -242,13 +243,25 @@ class CriticServerTrainer:
             "prev_values": prev_values,
             "mask": mask,
         }
+
+        start_time = time.time()
+
         batch["tokens"] = broadcast_2d_tensor(batch["tokens"], src=0, group=None, dtype=torch.int64)
         batch["returns"] = broadcast_2d_tensor(batch["returns"], src=0, group=None, dtype=torch.float32)
         batch["prev_values"] = broadcast_2d_tensor(batch["prev_values"], src=0, group=None, dtype=torch.float32)
         batch["mask"] = broadcast_2d_tensor(batch["mask"], src=0, group=None, dtype=torch.float32)
         input_size = batch["tokens"].size(0)
 
+        end_time = time.time()
+        print("#### BROADCAST TRAIN TENSORS", end_time - start_time)
+
+
+        start_time = time.time()
+
         self.model.prepare_for_training()
+
+        end_time = time.time()
+        print("#### PREPARE FOR TRAINING", end_time - start_time)
 
         num_gbs = divide(input_size, self.gbs)
 
@@ -295,8 +308,14 @@ class CriticServerTrainer:
 
         self.model.finish_training()
 
+        start_time = time.time()
+
         torch.cuda.synchronize()
         torch.distributed.barrier()
+
+        end_time = time.time()
+        print("#### SYNC", end_time - start_time)
+
         return loss_mean
 
     def save(self, extra_candidates=None, is_train_end=False, save_top_only=False):

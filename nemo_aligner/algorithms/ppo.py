@@ -272,9 +272,13 @@ class PPOTrainer:
 
         print(f"num_microbatches {num_microbatches}")
 
+        start = time.time()
         for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
             rollout_batch = self.model.infer(inference_batch)
             rollout_batches.append(rollout_batch)
+
+        end = time.time()
+        print("#### TIME FOR JUST GENERATE", end - start)
 
         if self.use_trtllm_reshard:
             rollout_batches = shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id=self.model.tokenizer.eos_id)
