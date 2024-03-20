@@ -136,6 +136,8 @@ def collate_fn(batch):
 def main(cfg) -> None:
     train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
     val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
+    test_ds = MCTSDataset(cfg.dataset.data_prefix["test"], cfg.dataset.prompt_template_name)
+
     feedback = MathSandBoxedFeedBack(
         host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT")
     )
@@ -185,6 +187,19 @@ def main(cfg) -> None:
         shuffle=False,
     )
 
+    test_dataloader_builder_func = partial(
+        build_dataloader,
+        cfg=cfg,
+        dataset=test_ds,
+        consumed_samples=0,
+        mbs=cfg.model.inference.micro_batch_size,
+        gbs=cfg.model.inference.micro_batch_size * dp_size,
+        load_gbs=False,
+        collate_fn=collate_fn,
+        drop_last=True,
+        shuffle=False,
+    )
+
     train_dataloader_builder_func = partial(
         build_dataloader,
         cfg=cfg,
@@ -200,10 +215,15 @@ def main(cfg) -> None:
 
     val_dataloader = val_dataloader_builder_func()
     train_dataloader = train_dataloader_builder_func()
+    test_dataloader = test_dataloader_builder_func()
 
     val_metrics, val_table, val_wrong = run_inference(ptl_model, feedback, val_dataloader, desc="val inference")
     logger.log_metrics(val_metrics, step=0, prefix="val/")
     logger.log_table("table/val", dataframe=val_table, step=0)
+
+    test_metrics, test_table, test_wrong = run_inference(ptl_model, feedback, test_dataloader, desc="test inference")
+    logger.log_metrics(test_metrics, step=0, prefix="test/")
+    logger.log_table("table/test", dataframe=test_table, step=0)
 
     train_metrics, train_table, train_wrong = run_inference(
         ptl_model, feedback, train_dataloader, desc="train inference"
@@ -216,6 +236,7 @@ def main(cfg) -> None:
 
     torch.save(train_wrong, save_dir / "train_wrong_{}.pt".format(parallel_state.get_data_parallel_rank()))
     torch.save(val_wrong, save_dir / "val_wrong_{}.pt".format(parallel_state.get_data_parallel_rank()))
+    torch.save(test_wrong, save_dir / "test_wrong_{}.pt".format(parallel_state.get_data_parallel_rank()))
 
 
 if __name__ == "__main__":
