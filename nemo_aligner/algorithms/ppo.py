@@ -109,6 +109,63 @@ def shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id):
         rb["response_tokens"] = rb["response_tokens"][..., : global_resp_lengths[idx]]
     return rollout_batches
 
+def critic_shard_from_dp_to_pp(batches, pad_id):
+    """
+    Reshard batches from DP to PP. All batches must have identical sizes and each rank must 
+    have the same number of batches.
+    """
+    if len(batches) < 1:
+        return batches
+
+    pp_group_size = parallel_state.get_pipeline_model_parallel_world_size()
+    num_batches = len(batches) * pp_group_size
+
+    group = parallel_state.get_pipeline_model_parallel_group()
+    new_rollout_batch = {}
+
+    # save the response lengths to unpad
+    resp_lengths = [rb["values"].shape[-1] for rb in batches]
+    resp_lengths = torch.tensor(resp_lengths, dtype=torch.int).cuda()
+    global_resp_lengths = torch.empty(
+        len(batches) * pp_group_size, dtype=torch.int, device=torch.cuda.current_device()
+    )
+    torch.distributed.all_gather_into_tensor(global_resp_lengths, resp_lengths, group=group)
+
+    keys = sorted(list(batches[0].keys()))
+    for key in keys:
+        if key == "values":
+            list_of_things = []
+            for item in batches:
+                list_of_things.extend(item[key])
+
+            local_output = pad_tensors_to_max_global_seq_len(list_of_things, pad_id, group).cuda()
+            assert local_output.ndim == 2
+            output_tensor = torch.empty(
+                local_output.size(0) * pp_group_size,
+                local_output.size(-1),
+                dtype=local_output.dtype,
+                device=torch.cuda.current_device(),
+            )
+        else:
+            list_of_things = [r[key] for r in batches]
+            local_output = torch.cat(list_of_things).cuda()
+            output_tensor = torch.empty(local_output.size(0) * pp_group_size,
+                *local_output.shape[1:],
+                dtype=local_output.dtype,
+                device=torch.cuda.current_device(),
+            )
+
+        torch.distributed.all_gather_into_tensor(output_tensor, local_output, group=group)
+        new_rollout_batch[key] = output_tensor
+    batches = list(get_iterator_k_split(new_rollout_batch, num_batches))
+
+    # unpad
+    for idx, rb in enumerate(batches):
+        rb["values"] = rb["values"][..., : global_resp_lengths[idx]]
+
+    return batches
+
+    
 
 class PPOTrainer:
     """Trainer to coordinate PPO training
@@ -274,14 +331,21 @@ class PPOTrainer:
 
         for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
             rollout_batch = self.model.infer(inference_batch)
+
+            #if self.use_trtllm_reshard:
+            #    rollout_batch = shard_rollout_batch_from_dp_to_pp(rollout_batch, pad_id=self.model.tokenizer.eos_id)
+
+            if not self.cfg.batch_critic_send:
+                futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+
             rollout_batches.append(rollout_batch)
 
         if self.use_trtllm_reshard:
             rollout_batches = shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id=self.model.tokenizer.eos_id)
 
-        if not self.cfg.batch_critic_send:
-            for rollout_batch in rollout_batches:
-                futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+        #if not self.cfg.batch_critic_send:
+        #    for rollout_batch in rollout_batches:
+        #        futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
 
         start_time = time.time()
         response_tokens_list = list(
@@ -356,10 +420,17 @@ class PPOTrainer:
                 # TODO: is this total length correct?
                 rollout_batch["values"] = values[i][..., : total_length - 1]
         else:
-            for future, rollout_batch in zip(futures, rollout_batches, strict=True):
+            critic_batches = []
+            for future in futures:
                 rewards, values = future.result() if isinstance(future, FutureResult) else future
-                rollout_batch["rewards"] = rewards
-                rollout_batch["values"] = values
+                critic_batches.append({'rewards': rewards, 'values': values})
+
+            if self.use_trtllm_reshard:
+                critic_batches = critic_shard_from_dp_to_pp(critic_batches, pad_id=self.model.tokenizer.eos_id)
+
+            for critic_batch, rollout_batch in zip(critic_batches, rollout_batches, strict=True):
+                rollout_batch["rewards"] = critic_batch["rewards"]
+                rollout_batch["values"] = critic_batch["values"]
 
         end_time = time.time()
         print("#### TIME SPEND WAITING ON THE CRITIC", end_time - start_time)
