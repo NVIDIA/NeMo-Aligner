@@ -60,7 +60,7 @@ Then convert the Llama 2 LLM into .nemo format:
 .. code-block:: bash
 
    mkdir -p /models/llama70b/
-   python /opt/NeMo/scripts/nlp_language_modeling/convert_hf_llama_to_nemo.py --in-file /path/to/llama --out-file /models/llama70b/llama70b.nemo
+   python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py --input_name_or_path /path/to/llama --output_path /models/llama70b/llama70b.nemo
 
 Download and convert to .nemo format for the 13B model <https://huggingface.co/meta-llama/Llama-2-13b-hf> as well, which is needed for the Attribute Prediction Modelling step.
 

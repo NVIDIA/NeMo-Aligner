@@ -34,8 +34,8 @@ To start, we must first get a pretrained model to align. There are 2 models we r
         #. Convert the LLaMa2 LLM into ``.nemo`` format
             .. code-block:: bash 
 
-               python NeMo/scripts/nlp_language_modeling/convert_hf_llama_to_nemo.py \
-                   --in-file /path/to/llama --out-file /output_path/mcore_gpt.nemo
+               python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py \
+                   --input_name_or_path /path/to/llama --output_path /output_path/mcore_gpt.nemo
 
 After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Aligner.
 
