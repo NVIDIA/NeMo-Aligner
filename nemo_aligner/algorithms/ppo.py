@@ -435,6 +435,8 @@ class PPOTrainer:
             rollout_batch = self.model.infer(batch)
             rollout_batches.append(rollout_batch)
 
+            futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+
             request_time = time.time()
             idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
             request_end_time = time.time()
@@ -479,12 +481,16 @@ class PPOTrainer:
             print("#### TIME FOR INIT LOG PROB", end_time - start_time)
 
         start_time = time.time()
-        # rewards, values = futures[0].result()
-        rewards = torch.randn(batched_response_tokens.size(0)).cuda()
-        values = torch.randn(batched_response_tokens.size(0), batched_response_tokens.size(1) - 1).cuda()
 
-        local_rollout_batch["rewards"] = rewards
-        local_rollout_batch["values"] = values
+        rm_value_rollout_batches = []
+        for future in futures:
+            rewards, values = future.result() if isinstance(future, FutureResult) else future
+            rm_value_rollout_batches.append({"rewards": rewards, "values": values})
+
+        rm_value_rollout_batches = self.stack_rollout_batches(rm_value_rollout_batches)
+        # TODO: does this reshard into the same stuff?
+        rm_value_rollout_batches = rebalance_dp(rm_value_rollout_batches, self.step, self.use_trtllm_reshard)
+        local_rollout_batch.update(rm_value_rollout_batches)
 
         end_time = time.time()
         print("#### TIME SPEND WAITING ON THE CRITIC", end_time - start_time)
@@ -649,7 +655,11 @@ class PPOTrainer:
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
                 # send critic train
-                # self.rm_critic.train(ppo_rollout_data)
+                start_time = time.time()
+                self.rm_critic.train(ppo_rollout_data)
+                end_time = time.time()
+                print("### CRITIC TRAIN TIME", end_time - start_time)
+
                 # logging
                 table_metrics = metrics.pop("table")
                 self.train_df.loc[len(self.train_df)] = [
@@ -750,11 +760,11 @@ class PPOTrainer:
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
-        # future = self.rm_critic.save()
+        future = self.rm_critic.save()
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
-        # future.result()
+        future.result()
 
         self.model.finish_training()
 
