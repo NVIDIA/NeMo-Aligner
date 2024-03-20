@@ -46,6 +46,64 @@ from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 
 
+def pad_to_seq_length(list_of_tensors, seq_length, pad_value=0):
+    tensors_padded = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
+
+    return torch.nn.functional.pad(tensors_padded, (0, seq_length - tensors_padded.size(-1)), value=pad_value)
+
+
+def rebalance_nd_tensor(tensor, group):
+    """
+    """
+    num_samples = torch.as_tensor(tensor.size(0), dtype=torch.int64, device=torch.cuda.current_device())
+    batch_num_per_rank = torch.zeros(
+        torch.distributed.get_world_size(group), dtype=torch.int64, device=torch.cuda.current_device()
+    )
+    torch.distributed.all_gather_into_tensor(batch_num_per_rank, num_samples, group=group)
+
+    B = batch_num_per_rank.sum()
+    other_dims = tensor.shape[1:]
+
+    indices = batch_num_per_rank.cumsum(dim=0)
+    output_tensor = torch.zeros(B, *other_dims, dtype=tensor.dtype, device=torch.cuda.current_device())
+
+    # tensor_split is a view we can copy into
+    output_tensor.tensor_split(indices.cpu())[torch.distributed.get_rank(group=group)].copy_(tensor)
+    torch.distributed.all_reduce(output_tensor, group=group)
+
+    return output_tensor
+
+
+def rebalance_dp(rollout_batch, shuffle_seed, use_trtllm_reshard=False):
+    # assumes it's all padded
+    rebalanced_rollout_batch = dict()
+
+    for k, tensor in rollout_batch.items():
+        print("### RANK BEFORE REBALANCE SIZE", torch.distributed.get_rank(), tensor.size())
+
+        if use_trtllm_reshard:
+            tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_pipeline_model_parallel_group())
+
+        tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_data_parallel_group())
+
+        rebalanced_rollout_batch[k] = tensor
+        B = tensor.size(0)
+        print("### RANK GLOBAL SIZE", torch.distributed.get_rank(), tensor.size())
+
+    g_cpu = torch.Generator()
+    g_cpu.manual_seed(shuffle_seed)
+    indices = torch.randperm(B, generator=g_cpu).tensor_split(parallel_state.get_data_parallel_world_size())[
+        parallel_state.get_data_parallel_rank()
+    ]
+
+    for k in rebalanced_rollout_batch:
+        # anti alias the underlying tensor
+        rebalanced_rollout_batch[k] = rebalanced_rollout_batch[k][indices].clone()
+        print("### RANK LOCAL SIZE", torch.distributed.get_rank(), rebalanced_rollout_batch[k].size())
+
+    return rebalanced_rollout_batch
+
+
 def send_request(host, port, endpoint="/get_idx", batch_size=1, use_trtllm_reshard=False):
     src_rank = (
         parallel_state.get_tensor_model_parallel_src_rank() if use_trtllm_reshard else get_model_parallel_src_rank()
@@ -305,6 +363,43 @@ class PPOTrainer:
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
 
+    def stack_rollout_batches(self, rollout_batches):
+        stacked_dict = dict()
+
+        if len(rollout_batches) == 0:
+            return stacked_dict
+
+        keys = rollout_batches[0].keys()
+
+        for k in keys:
+            pad_value = 0
+            rollout_batch_seq_length = self.rollout_batch_seq_length
+
+            if k == "response_tokens":
+                pad_value = self.model.tokenizer.eos_id
+
+                if rollout_batch_seq_length is not None:
+                    rollout_batch_seq_length -= 1
+
+            if k == "values":
+                if rollout_batch_seq_length is not None:
+                    rollout_batch_seq_length -= 1
+
+            list_of_tensors = [item[k] for item in rollout_batches]
+
+            if all(map(lambda x: x.ndim == 1, list_of_tensors)):
+                tensor = torch.cat(list_of_tensors)
+            else:
+                list_of_tensors = list(
+                    itertools.chain(*(map(lambda x: x.flatten(), item.split(1, dim=0)) for item in list_of_tensors))
+                )
+
+                tensor = pad_to_seq_length(list_of_tensors, rollout_batch_seq_length, pad_value)
+
+            stacked_dict[k] = tensor
+
+        return stacked_dict
+
     def _run_inference(self, dataloader_iter, num_microbatches, is_validation):
         """this function is run per DP so the metrics need to be computed globally
         """
@@ -323,11 +418,15 @@ class PPOTrainer:
         torch.distributed.barrier()
 
         start = time.time()
+
+        request_time = time.time()
         idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
+        request_end_time = time.time()
+        print("### REQUEST TOOK", request_end_time - request_time)
+
         print("## idx pre RANK IDX", torch.distributed.get_rank(), idx)
         while len(idx) > 0:
             idx = idx[0]
-            # assume mbs = 1
             batch = dataloader_iter._dataset[idx]
             batch = collate_with_pad_to_max_batch(
                 self.model.cfg.ppo.length_params.max_length, self.model.tokenizer.eos_id, self.model.cfg
@@ -335,61 +434,35 @@ class PPOTrainer:
 
             rollout_batch = self.model.infer(batch)
             rollout_batches.append(rollout_batch)
+
+            request_time = time.time()
             idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
+            request_end_time = time.time()
+
+            print("### REQUEST TOOK", request_end_time - request_time)
             print("## idx pre RANK IDX", torch.distributed.get_rank(), idx)
 
         end = time.time()
         print("### GENERATE ONLY", end - start)
 
-        if self.use_trtllm_reshard:
-            start = time.time()
-            rollout_batches = shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id=self.model.tokenizer.eos_id)
-            end = time.time()
-            print("#### RESHARD DP TO PP TIME", end - start)
+        start = time.time()
+        torch.distributed.barrier()
+        end = time.time()
+        print("### DP SYNC TOOK", end - start)
 
-        if not self.cfg.batch_critic_send:
-            for rollout_batch in rollout_batches:
-                # futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
-                futures.append(None)
+        stacked_rollout_batch = self.stack_rollout_batches(rollout_batches)
 
-        start_time = time.time()
-        response_tokens_list = list(
-            itertools.chain(
-                *(map(lambda x: x.flatten(), item["response_tokens"].split(1, dim=0)) for item in rollout_batches)
-            )
-        )
+        start = time.time()
+        local_rollout_batch = rebalance_dp(stacked_rollout_batch, self.step, self.use_trtllm_reshard)
+        del stacked_rollout_batch
+        end = time.time()
+        print("### REBALANCE DP TOOK", end - start)
 
-        if self.cfg.batch_critic_send:
-            response_lengths_list = list(
-                itertools.chain(
-                    *(map(lambda x: x.flatten(), item["response_lengths"].split(1, dim=0)) for item in rollout_batches)
-                )
-            )
-            response_tokens_for_critic = pad_tensors_to_max_global_seq_len(
-                response_tokens_list, self.model.tokenizer.eos_id, parallel_state.get_data_parallel_group()
-            )
-            # does this batch?
-            futures.append(
-                self.rm_critic.infer_rm_critic(
-                    {
-                        "response_tokens": response_tokens_for_critic,
-                        "response_lengths": torch.as_tensor(response_lengths_list),
-                    }
-                )
-            )
-
-        batched_response_tokens = torch.nn.utils.rnn.pad_sequence(
-            response_tokens_list, batch_first=True, padding_value=self.model.tokenizer.eos_id,
-        )
-
-        batch_shapes = [item["response_tokens"].size(0) for item in rollout_batches]
-
-        torch.cuda.synchronize()
-        end_time = time.time()
-        print("#### TIME FOR BATCHING", end_time - start_time)
+        batched_response_tokens = local_rollout_batch["response_tokens"]
 
         start_time = time.time()
-        rollout_logprobs = self.model.get_logprobs(batched_response_tokens).split(batch_shapes)
+        rollout_logprobs = self.model.get_logprobs(batched_response_tokens)
+        local_rollout_batch["logprobs"] = rollout_logprobs
         torch.cuda.synchronize()
         end_time = time.time()
         print("#### TIME FOR JUST LOG PROB", end_time - start_time)
@@ -398,43 +471,26 @@ class PPOTrainer:
         if compute_init_policy_kl:
             start_time = time.time()
 
-            rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens).split(batch_shapes)
+            rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens)
+            local_rollout_batch["init_logprobs"] = rollout_init_logprobs
 
             torch.cuda.synchronize()
             end_time = time.time()
             print("#### TIME FOR INIT LOG PROB", end_time - start_time)
 
-        for i, rollout_batch in enumerate(rollout_batches):
-            total_length = rollout_batch["response_tokens"].size(1)
-
-            rollout_batch["logprobs"] = rollout_logprobs[i][..., : total_length - 1]
-
-            if compute_init_policy_kl:
-                rollout_batch["init_logprobs"] = rollout_init_logprobs[i][..., : total_length - 1]
-
         start_time = time.time()
-        if self.cfg.batch_critic_send:
-            # rewards, values = futures[0].result()
-            rewards = torch.randn(response_tokens_for_critic.size(0)).cuda()
-            values = torch.randn(response_tokens_for_critic.size(0), response_tokens_for_critic.size(1) - 1).cuda()
+        # rewards, values = futures[0].result()
+        rewards = torch.randn(batched_response_tokens.size(0)).cuda()
+        values = torch.randn(batched_response_tokens.size(0), batched_response_tokens.size(1) - 1).cuda()
 
-            rewards = rewards.split(batch_shapes)
-            values = values.split(batch_shapes)
-
-            for i, rollout_batch in enumerate(rollout_batches):
-                total_length = rollout_batch["response_tokens"].size(1)
-                rollout_batch["rewards"] = rewards[i]
-                # TODO: is this total length correct?
-                rollout_batch["values"] = values[i][..., : total_length - 1]
-        else:
-            for future, rollout_batch in zip(futures, rollout_batches, strict=True):
-                rewards, values = future.result() if isinstance(future, FutureResult) else future
-                rollout_batch["rewards"] = rewards
-                rollout_batch["values"] = values
+        local_rollout_batch["rewards"] = rewards
+        local_rollout_batch["values"] = values
 
         end_time = time.time()
         print("#### TIME SPEND WAITING ON THE CRITIC", end_time - start_time)
 
+        # TODO: can rewrite the compute metrics
+        rollout_batches = [local_rollout_batch]
         return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
 
     def compute_global_rollout_metrics(self, rollout_batches):
