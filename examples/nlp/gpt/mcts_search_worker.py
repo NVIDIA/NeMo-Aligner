@@ -14,6 +14,8 @@
 
 import torch.multiprocessing as mp
 
+from nemo_aligner.data.nlp.datasets import MCTSDataset
+
 mp.set_start_method("spawn", force=True)
 import os
 import random
@@ -38,7 +40,11 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, GSK8KFeedbackHF
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import (
+    GSK8KFeedbackDataset,
+    GSK8KFeedbackHF,
+    InstructionVerificationDataset,
+)
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
@@ -109,7 +115,6 @@ def collate_func(batch):
 
     for b in batch:
         new_dict["question"].append(b["question"])
-        new_dict["answer"].append(b["answer"])
         new_dict["data_id"].append(b["data_id"])
 
     return new_dict
@@ -275,23 +280,16 @@ class DatasetWrapper:
         return len(self.ds)
 
 
-def get_dataset(dataset_name, split, template_name):
-    assert dataset_name == "gsm8k"
-    dataset = load_dataset("gsm8k", "main")
-    if template_name == "steerlm":
-        template = steerlm_template
-    elif template_name == "mistral":
-        template = mistral_template
-    else:
-        template = prompt_template
-    ds = DatasetWrapper(dataset[split], template)
-    score_fn = GSK8KFeedbackDataset(ds)
-    return ds, score_fn
+def get_dataset(cfg):
+    train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
+    ds = train_ds.ds
+    score_fn = InstructionVerificationDataset(ds)
+    return train_ds, score_fn
 
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split, cfg.dataset.prompt_template_name)
+    ds, score_fn = get_dataset(cfg)
     logging.info(f"loaded {ds}")
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)

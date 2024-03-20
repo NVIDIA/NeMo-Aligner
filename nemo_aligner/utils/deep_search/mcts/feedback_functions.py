@@ -1,10 +1,15 @@
+import json
+import os
 import re
 
 import pandas as pd
+import requests
 from datasets import load_dataset
 from nemo_skills.code_execution.math_grader import extract_answer
 from nemo_skills.code_execution.sandbox import LocalSandbox
-import os
+
+# Define the headers
+headers = {"Content-Type": "application/json"}
 
 
 class Feedback(object):
@@ -16,6 +21,28 @@ class Feedback(object):
         score the response
         """
         raise NotImplementedError
+
+
+class InstructionVerificationDataset(Feedback):
+    def __init__(self, ds):
+        self.ds = ds
+        # local_rank = os.getenv("local_rank", "0")
+        host = os.getenv("NEMO_SKILLS_SANDBOX_HOST", "localhost")
+        port = os.getenv("NEMO_SKILLS_SANDBOX_PORT", "6000")
+        self.sandbox = LocalSandbox(host=host, port=port)
+        self.url = f"http://{host}:{port}/verify"
+
+    def score(self, response, data_id):
+        """
+        score the response
+        """
+        response = "\n".join(response.split("<extra_id_2>")[1].split("\n")[1:])
+        if response.endswith("<extra_id_1>"):
+            response = response[: -len("<extra_id_1>")]
+        inputs_obj = self.ds[data_id]
+        data = {"input": inputs_obj, "response": response}
+        response = requests.put(self.url, headers=headers, data=json.dumps(data))
+        return response.json()["score"]
 
 
 class GSK8KFeedbackDataset(Feedback):

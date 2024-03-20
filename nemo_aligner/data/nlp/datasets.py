@@ -15,7 +15,10 @@
 """Custom datasets for RLHF training"""
 
 import os
+from copy import deepcopy
+from dataclasses import dataclass
 
+import jsonlines
 import numpy as np
 import torch
 
@@ -445,3 +448,43 @@ class RegressionRewardModelDataset(RewardModelDataset):
             "labels": label_tensor,
         }
         return output
+
+
+steerlm_template = """<extra_id_0>System
+A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
+<extra_id_1>User
+{question}
+<extra_id_1>Assistant
+<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
+"""
+
+TEMPLATES = {
+    "steerlm": steerlm_template,
+}
+
+
+@dataclass
+class MCTSDataset:
+    jsonl_file_path: str
+    prompt_template: str
+
+    def __post_init__(self):
+        assert self.prompt_template in TEMPLATES, "{} is not in templates. templates has these {}".format(
+            self.prompt_template, TEMPLATES.keys()
+        )
+        assert self.jsonl_file_path, "jsonl_file_path={} path must exist".format(self.jsonl_file_path)
+
+        with jsonlines.open(self.jsonl_file_path) as reader:
+            ds = [obj for obj in reader]
+
+        self.template = TEMPLATES[self.prompt_template]
+        self.ds = ds
+
+    def __getitem__(self, idx):
+        item = deepcopy(self.ds[idx])
+        item["question"] = self.template.format(question=item["prompt"])
+        item["data_id"] = idx
+        return item
+
+    def __len__(self):
+        return len(self.ds)
