@@ -6,11 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [Next Version]
 
 ### New features and optimizations
+
+### Breaking changes
+
+### Bug Fixes
+- Fixed issue where random sampler keeps state when resetting for validation, leading to a different validation batch each validation step. Fixed by using a deterministic sampler
+- Fixed crash with float val check interval in DPOTrainer
+- Fixed crash with float val check interval when checking progress in DPOTrainer
+
+## [0.2.0] - 2024-02
+### New features and optimizations
 - Added public-facing official Dockerfile for NeMo-Aligner.
 - PPO: memory optimization to help avoid OOM in the actor when sending training data to the critic.
 - PPO: it is now possible to use a custom end string in `sampling_params.end_strings` that is different from `<extra_id_1>`.
 - SFT: added support for custom validation metrics based on model generations.
 - Added the ability to do multi-epoch (cfg.max_epochs > 1) training for reward models, DPO, PPO, and SFT
+- Added the SPIN (Self-Play Fine Tuning) algorithm (https://arxiv.org/abs/2401.01335) which allows SPIN SFT training using SFT-format dataset files
 - SFT/SteerLM: added LoRA tuning as an option besides full fine-tuning, only attention_qkv layer is supported
 
 ### Breaking changes

@@ -1,0 +1,179 @@
+defaults:
+  - optional tp_overlap@model.ub_tp_comm_overlap_cfg:
+
+trainer:
+  num_nodes: 8
+  devices: 8
+  accelerator: gpu
+  precision: bf16-mixed
+  
+  # spin specific args
+  spin:
+    max_iterations: 3   # the number of iterations (rounds) for which the SPIN "game" is played. This is T in the original paper
+    max_epochs: 1       # the number of epochs to use per iteration. In the paper, they do 3 iterations with 2 epochs per iteration
+    max_steps: -1
+    val_check_interval: 0.1
+    save_interval: 100
+    limit_train_batches: null
+
+    # how many GBS we loop over
+    limit_val_batches: 1.0
+    gradient_clip_val: 1.0
+
+  # do not change these
+  logger: False # logger provided by exp_manager
+  enable_checkpointing: False
+  use_distributed_sampler: False
+  max_time: null
+  max_epochs: ${.spin.max_epochs}
+  max_steps: ${.spin.max_steps}
+
+exp_manager:
+  explicit_log_dir: /results
+  exp_dir: null
+  name: megatron_gpt
+  max_time_per_run: ${trainer.max_time}
+  create_wandb_logger: False
+  wandb_logger_kwargs:
+    project: nemo_aligner_dpo
+    name: rlhf_gpt3_dpo
+  resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
+  resume_if_exists: True
+  resume_ignore_no_checkpoint: True
+  create_checkpoint_callback: True
+  checkpoint_callback_params:
+    monitor: val_loss
+    save_top_k: 3
+    mode: min
+    always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
+    save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
+    filename: 'megatron_gpt--{${.monitor}:.3f}-{step}-{consumed_samples}-{iteration}-{epoch}'
+    model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
+
+pretrained_checkpoint:
+  restore_from_path: null
+
+model:  
+  mcore_gpt: True
+  micro_batch_size: 1
+  global_batch_size: 64
+  megatron_amp_O2: True
+
+  spin:
+    log_prob_forward_micro_batch_size: 1
+    ref_policy_kl_penalty: 0.2   # Can also be a list of elements == max_iterations, where each element will be the KL penalty used for that iteration
+    offload_adam_states: True
+
+    # params for generation
+    sampling_params:
+      use_greedy: False
+      temperature: 1.0
+      top_k: 0
+      top_p: 1.0
+      repetition_penalty: 1.0
+      add_BOS: False
+      all_probs: False
+      compute_logprob: False
+      end_strings: ["<|endoftext|>", "<extra_id_1>"]
+
+    # length argument for autoregressive sampling
+    # max length means max amount of tokens to generate
+    length_params:
+      max_length: ${int_div:${model.encoder_seq_length}, 2}
+      min_length: 1
+  
+  #encoder_seq_length: 4096
+  #max_position_embeddings: ${model.encoder_seq_length}
+
+  # miscellaneous
+  seed: 1234
+
+  optim:
+    name: distributed_fused_adam
+    bucket_cap_mb: 200
+    overlap_grad_sync: False
+    contiguous_grad_buffer: True
+    lr: 9e-6
+    weight_decay: 0.1 
+    betas: 
+    - 0.9
+    - 0.98
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 10
+      constant_steps: 1000
+      min_lr: 9e-7
+
+  data:
+    chat: True # whether use chatbot data or not
+    chat_prompt_tokens:  # special tokens for the chat prompts, a dictionary of {token_type: token}. note that some tokenizer may combine the characters at the junction between {end_of_turn}{turn_start}. e.g. '<im end><im start>', the '><' sometimes is merged to be a single token. This is not supported, try to avoid
+      system_turn_start: "<extra_id_0>"
+      turn_start: "<extra_id_1>"
+      label_start: "<extra_id_2>"
+      end_of_turn: "\x0A"  # \0x0A is '\n'
+      end_of_name: "\x0A"  # \0x0A is '\n'
+
+    sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
+    num_workers: 1
+    dataloader_type: single  # only supports single
+    reset_position_ids: False # Reset position ids after end-of-document token
+    reset_attention_mask: False # Reset attention mask after end-of-document token
+    eod_mask_loss: False # Mask loss for the end of document tokens
+    train_ds:
+      # Example of how to specify paths to multiple datasets
+      # file_names:
+      #   - /path/to/squad.jsonl
+      #   - /path/to/mnli.jsonl
+      #   - /path/to/boolq.jsonl
+      # Example of how each dataset is formatted
+      # {'input': 'John von Neumann\nVon Neumann made fundamental contributions .... Q: What did the math of artificial viscosity do?', 'output': 'smoothed the shock transition without sacrificing basic physics'}
+      file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
+      shuffle: True
+      memmap_workers: null
+      max_seq_length: 4096
+      min_seq_length: 1
+      drop_last: True
+      # Example of how to specify concat_sampling_probabilities
+      # concat_sampling_probabilities:
+      #   - 0.5
+      #   - 0.25
+      #   - 0.25
+      label_key: 'output'
+      add_eos: True
+      add_sep: False
+      add_bos: False
+      truncation_field: "input" # # Can be multiple keys separated with ',' Options: keys in prompt_template
+      index_mapping_dir: null # Path to a directory to write index mapping files.
+      prompt_template: null # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
+      hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
+      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
+
+    validation_ds:
+      file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
+      global_batch_size: ${model.global_batch_size}
+      micro_batch_size: ${model.micro_batch_size}
+      shuffle: False
+      memmap_workers: ${model.data.train_ds.memmap_workers}
+      max_seq_length: ${model.data.train_ds.max_seq_length}
+      min_seq_length: 1
+      drop_last: True
+      label_key: ${model.data.train_ds.label_key}
+      add_eos: ${model.data.train_ds.add_eos}
+      add_sep: ${model.data.train_ds.add_sep}
+      add_bos: ${model.data.train_ds.add_bos}
+      truncation_field: ${model.data.train_ds.truncation_field} # Options: keys in prompt_template
+      index_mapping_dir: null # Path to a directory to write index mapping files.
+      prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
+      hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
+      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
+      output_original_text: True  # needed for the proper metrics support
+
+  # define fields from the base model's config that should be ignored when merging with this config.
+  overwrite_base_config:
+    data:
+      train_ds:
+        file_path: True
+      validation_ds:
+        file_path: True
+
+precision: ${trainer.precision}

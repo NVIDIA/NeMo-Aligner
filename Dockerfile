@@ -1,11 +1,11 @@
-# CUDA 12.2
-FROM nvcr.io/nvidia/pytorch:23.10-py3
+# CUDA 12.3
+FROM nvcr.io/nvidia/pytorch:24.01-py3
 
 ### config tags
 ARG APEX_TAG=master
-ARG TE_TAG=release_v1.1
-ARG MLM_TAG=core_r0.4.0
-ARG NEMO_TAG=r1.22.0
+ARG TE_TAG=release_v1.4
+ARG MLM_TAG=core_r0.5.0
+ARG NEMO_TAG=r1.23.0
 ARG PYTRITON_VERSION=0.4.1
 ARG PROTOBUF_VERSION=4.24.4
 ARG ALIGNER_COMMIT=main
@@ -54,12 +54,7 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     fi && \
     pip uninstall -y nemo_toolkit sacrebleu && \
     git cherry-pick --no-commit -X theirs \
-        fa8d416793d850f4ce56bea65e1fe28cc0d092c0 \
-        a7f0bc1903493888c31436efc2452ff721fa5a67 \
-        52d50e9e09a3e636d60535fd9882f3b3f32f92ad \
-        9940ec60058f644662809a6787ba1b7c464567ad \
-        7d3d9ac3b1aecf5786b5978a0c1e574701473c62 && \
-    sed -i 's/shutil.rmtree(ckpt_to_dir(filepath))/shutil.rmtree(ckpt_to_dir(filepath), ignore_errors=True)/g' nemo/collections/nlp/parts/nlp_overrides.py && \
+        9940ec60058f644662809a6787ba1b7c464567ad && \
     rm -rf .git && pip install -e ".[nlp]" && \
     cd nemo/collections/nlp/data/language_modeling/megatron && make
 
