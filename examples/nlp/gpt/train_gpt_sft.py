@@ -51,6 +51,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
     OmegaConf.set_struct(gpt_cfg, True)
     OmegaConf.resolve(cfg)
     with open_dict(gpt_cfg):
+        gpt_cfg.neft_reimplement = cfg.model.get("neft_reimplement", False)
         gpt_cfg.cre_adversarial_training = cfg.model.get("cre_adversarial_training", False)
         gpt_cfg.creat_init_var = cfg.model.get("creat_init_var", 1e-2)
         gpt_cfg.creat_num_adv_steps = cfg.model.get("creat_num_adv_steps", 2)
