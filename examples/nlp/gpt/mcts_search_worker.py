@@ -14,6 +14,8 @@
 
 import torch.multiprocessing as mp
 
+from nemo_aligner.data.nlp.datasets import MCTSDataset
+
 mp.set_start_method("spawn", force=True)
 import os
 import random
@@ -49,28 +51,6 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 OmegaConf.register_new_resolver("not", lambda x: not x)
-
-
-prompt_template = """\x00System
-
-\x11User
-{prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-\x11Assistant
-"""
-
-steerlm_template = """<extra_id_0>System
-A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-<extra_id_1>User
-{prompt}
-Please show the calculation steps and lastly make sure to put the answer (and only answer) inside \\boxed{{}}.
-<extra_id_1>Assistant
-<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
-"""
-
-mistral_template = """[INST] {prompt}
-Please show the calculation steps and lastly make sure to put the answer (and only answer) inside \\boxed{{}}.
-[/INST]"""
 
 
 def groupby(key, output):
@@ -109,7 +89,6 @@ def collate_func(batch):
 
     for b in batch:
         new_dict["question"].append(b["question"])
-        new_dict["answer"].append(b["answer"])
         new_dict["data_id"].append(b["data_id"])
 
     return new_dict
@@ -275,23 +254,16 @@ class DatasetWrapper:
         return len(self.ds)
 
 
-def get_dataset(dataset_name, split, template_name):
-    assert dataset_name == "gsm8k"
-    dataset = load_dataset("gsm8k", "main")
-    if template_name == "steerlm":
-        template = steerlm_template
-    elif template_name == "mistral":
-        template = mistral_template
-    else:
-        template = prompt_template
-    ds = DatasetWrapper(dataset[split], template)
+def get_dataset(cfg):
+    train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
+    ds = train_ds.data_lookup
     score_fn = GSK8KFeedbackDataset(ds)
-    return ds, score_fn
+    return train_ds, score_fn
 
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split, cfg.dataset.prompt_template_name)
+    ds, score_fn = get_dataset(cfg)
     logging.info(f"loaded {ds}")
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
