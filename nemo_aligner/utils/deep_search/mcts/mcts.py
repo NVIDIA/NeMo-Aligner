@@ -361,7 +361,7 @@ class MCTSParallel:
                 else:
                     value_head_output = node.prior
                 if self.args["turn_off_value"]:
-                    value_head_output = 0.0
+                    value_head_output = node.prior
 
                 if isinstance(node, tuple):
                     # if the node is a tuple, then it means the node is terminal
