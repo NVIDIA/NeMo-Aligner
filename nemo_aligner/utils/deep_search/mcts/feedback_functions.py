@@ -1,10 +1,10 @@
-import os
 import re
 
 import pandas as pd
 from datasets import load_dataset
 from nemo_skills.code_execution.math_grader import extract_answer
 from nemo_skills.code_execution.sandbox import LocalSandbox
+import os
 
 
 class Feedback(object):
@@ -30,6 +30,7 @@ class GSK8KFeedbackDataset(Feedback):
         """
         score the response
         """
+        assert self.ds[data_id]["data_id"] == data_id
         response = response.lower()
         answer = self.ds[data_id]["expected_answer"]
         # this needs to be on a seperate server for anything
