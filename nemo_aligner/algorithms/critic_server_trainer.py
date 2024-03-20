@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import threading
+import time
 from typing import Dict
 
 import numpy as np
@@ -24,7 +25,6 @@ from pytriton.model_config import ModelConfig, Tensor
 from pytriton.model_config.common import DynamicBatcher
 from pytriton.triton import Triton, TritonConfig
 from tqdm import tqdm
-import time
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
@@ -254,7 +254,6 @@ class CriticServerTrainer:
 
         end_time = time.time()
         print("#### BROADCAST TRAIN TENSORS", end_time - start_time)
-
 
         start_time = time.time()
 

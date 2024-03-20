@@ -36,6 +36,10 @@ trainer:
     # if this is true, we send everything to the critic at once
     batch_critic_send: True
 
+    # flask server port
+    port: 12345
+    host: localhost
+
   # no need to change these
   logger: False # logger provided by exp_manager
   enable_checkpointing: False

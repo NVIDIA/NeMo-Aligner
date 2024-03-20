@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import itertools
-from collections import defaultdict
+import json
 import time
+from collections import defaultdict
 
 import pandas as pd
+import requests
 import torch
 from megatron.core import parallel_state
 from megatron.core.utils import divide
@@ -24,8 +26,11 @@ from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
+from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
+from nemo_aligner.data.nlp.builders import collate_with_pad_to_max_batch
 from nemo_aligner.utils.distributed import (
     SyncTimer,
+    broadcast_2d_tensor,
     masked_global_mean_var,
     normalize_tensor,
     pad_tensors_to_max_global_seq_len,
@@ -36,9 +41,42 @@ from nemo_aligner.utils.ppo_utils import (
     calculate_ppo_rewards,
     create_mask,
 )
-from nemo_aligner.utils.server_utils import FutureResult
+from nemo_aligner.utils.server_utils import FutureResult, get_idx, set_idx
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
+
+
+def send_request(host, port, endpoint="/get_idx", batch_size=1, use_trtllm_reshard=False):
+    src_rank = (
+        parallel_state.get_tensor_model_parallel_src_rank() if use_trtllm_reshard else get_model_parallel_src_rank()
+    )
+    group = (
+        parallel_state.get_tensor_model_parallel_group()
+        if use_trtllm_reshard
+        else parallel_state.get_model_parallel_group()
+    )
+
+    output = None
+
+    if torch.distributed.get_rank() == src_rank:
+        output = requests.put(
+            url=f"http://{host}:{port}/{endpoint}",
+            data=json.dumps({"batch_size": batch_size}),
+            headers={"Content-Type": "application/json"},
+        ).json()
+
+        output = torch.as_tensor(output).view(1, -1)
+
+    output = broadcast_2d_tensor(output, src_rank, group, dtype=torch.int64)
+    return output.flatten().tolist()
+
+
+def get_global_set(local_data_ids):
+    output = [None for _ in range(torch.distributed.get_world_size())]
+    torch.distributed.all_gather_object(output, local_data_ids)
+    global_set = set().union(*output)
+
+    return global_set
 
 
 def get_custom_data_parallel_world_size(trtllm_reshard=False):
@@ -160,6 +198,9 @@ class PPOTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
+        self.host = cfg.host
+        self.port = cfg.port
+
         assert (
             self.cfg.save_interval % self.cfg.val_check_interval == 0
         ), f"{self.cfg.save_interval=} must be divisible by {self.cfg.val_check_interval=}"
@@ -271,20 +312,44 @@ class PPOTrainer:
         futures = []
 
         print(f"num_microbatches {num_microbatches}")
+        ids = [item[1]["idx"] for item in zip(range(num_microbatches), dataloader_iter)]
+        local_ids = set(itertools.chain.from_iterable(ids))
+        global_ids = get_global_set(local_ids)
+
+        if torch.distributed.get_rank() == 0:
+            set_idx(global_ids)
+            print("### ALL IDS", global_ids)
+
+        torch.distributed.barrier()
 
         start = time.time()
-        for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
-            rollout_batch = self.model.infer(inference_batch)
+        idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
+        print("## idx pre RANK IDX", torch.distributed.get_rank(), idx)
+        while len(idx) > 0:
+            idx = idx[0]
+            # assume mbs = 1
+            batch = dataloader_iter._dataset[idx]
+            batch = collate_with_pad_to_max_batch(
+                self.model.cfg.ppo.length_params.max_length, self.model.tokenizer.eos_id, self.model.cfg
+            )([batch])
+
+            rollout_batch = self.model.infer(batch)
             rollout_batches.append(rollout_batch)
+            idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
+            print("## idx pre RANK IDX", torch.distributed.get_rank(), idx)
+
         end = time.time()
         print("### GENERATE ONLY", end - start)
 
         if self.use_trtllm_reshard:
+            start = time.time()
             rollout_batches = shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id=self.model.tokenizer.eos_id)
+            end = time.time()
+            print("#### RESHARD DP TO PP TIME", end - start)
 
         if not self.cfg.batch_critic_send:
             for rollout_batch in rollout_batches:
-# futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+                # futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
                 futures.append(None)
 
         start_time = time.time()
@@ -349,9 +414,9 @@ class PPOTrainer:
 
         start_time = time.time()
         if self.cfg.batch_critic_send:
-# rewards, values = futures[0].result()
+            # rewards, values = futures[0].result()
             rewards = torch.randn(response_tokens_for_critic.size(0)).cuda()
-            values = torch.randn(response_tokens_for_critic.size(0), response_tokens_for_critic.size(1)-1).cuda()
+            values = torch.randn(response_tokens_for_critic.size(0), response_tokens_for_critic.size(1) - 1).cuda()
 
             rewards = rewards.split(batch_shapes)
             values = values.split(batch_shapes)
@@ -528,7 +593,7 @@ class PPOTrainer:
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
                 # send critic train
-# self.rm_critic.train(ppo_rollout_data)
+                # self.rm_critic.train(ppo_rollout_data)
                 # logging
                 table_metrics = metrics.pop("table")
                 self.train_df.loc[len(self.train_df)] = [
@@ -629,11 +694,11 @@ class PPOTrainer:
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
-# future = self.rm_critic.save()
+        # future = self.rm_critic.save()
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
-# future.result()
+        # future.result()
 
         self.model.finish_training()
 

@@ -11,8 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import threading
+
 import torch
 import torch.multiprocessing as mp
+from flask import Flask
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf
@@ -29,6 +32,7 @@ from nemo_aligner.data.nlp.builders import (
 )
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMCriticClient
+from nemo_aligner.utils.server_utils import FutureResult, get_idx, set_idx, set_lock
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -168,6 +172,21 @@ def main(cfg) -> None:
 
     if custom_trainer_state_dict is not None:
         ppo_trainer.load_state_dict(custom_trainer_state_dict)
+
+    # rank 0 setup flask server
+    flask_host = cfg.trainer.ppo.host
+    flask_port = cfg.trainer.ppo.port
+
+    if torch.distributed.get_rank() == 0:
+        app = Flask(__name__)
+
+        @app.route("/get_idx", methods=["PUT"])
+        def get_http_idx():
+            return get_idx()
+
+        set_lock(threading.Lock())
+
+        threading.Thread(target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False)).start()
 
     ppo_trainer.fit()
 

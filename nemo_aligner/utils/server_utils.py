@@ -17,6 +17,9 @@ from typing import Optional
 
 import numpy as np
 
+GLOBAL_IDS = set()
+LOCK = None
+
 
 def decode_bytes_ndarray(str_ndarray: np.ndarray) -> np.ndarray:
     str_ndarray = str_ndarray.astype("bytes")
@@ -81,3 +84,27 @@ class FutureResult(ABC):
     def result(self):
         """called by the trainer to get the result must be broadcasted to all ranks
         """
+
+
+def set_lock(lock):
+    global LOCK
+    LOCK = lock
+
+
+def get_lock():
+    return LOCK
+
+
+def set_idx(global_ids):
+    global GLOBAL_IDS
+
+    with get_lock():
+        GLOBAL_IDS = global_ids
+
+
+def get_idx(batch_size=1):
+    global GLOBAL_IDS
+
+    with get_lock():
+        to_ret = [GLOBAL_IDS.pop() for _ in range(batch_size) if len(GLOBAL_IDS) > 0]
+        return to_ret
