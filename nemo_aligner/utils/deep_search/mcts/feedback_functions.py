@@ -41,8 +41,15 @@ class InstructionVerificationDataset(Feedback):
             response = response[: -len("<extra_id_1>")]
         inputs_obj = self.ds[data_id]
         data = {"input": inputs_obj, "response": response}
-        response = requests.put(self.url, headers=headers, data=json.dumps(data))
-        return response.json()["score"]
+        try:
+            response = requests.put(self.url, headers=headers, data=json.dumps(data))
+            score = response.json()["score"]
+        except Exception as e:
+            print("############ Inference failed ############")
+            print(data)
+            print(e)
+            score = 0.0
+        return score
 
 
 class GSK8KFeedbackDataset(Feedback):
