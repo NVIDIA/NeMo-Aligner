@@ -301,7 +301,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(data_iterator, model):
-            
+
             batch = next(data_iterator)
             batch_size = len(batch)
             torch.cuda.manual_seed(torch.distributed.get_rank())
@@ -347,18 +347,18 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         return fwd_output_and_loss_func
 
     def get_loss_and_metrics(self, batch, forward_only=False):
-        
+
         data_iter = get_iterator_k_split_list(batch, get_num_microbatches())
 
         fwd_bwd_function = get_forward_backward_func()
         losses_reduced_per_micro_batch = fwd_bwd_function(
-                    forward_step_func=self.get_forward_output_and_loss_func(forward_only),
-                    data_iterator=[data_iter], 
-                    model=self.model,
-                    num_microbatches=get_num_microbatches(), 
-                    forward_only=forward_only,
-                    seq_length=None,
-                    micro_batch_size=get_micro_batch_size(), 
+            forward_step_func=self.get_forward_output_and_loss_func(forward_only),
+            data_iterator=[data_iter],
+            model=self.model,
+            num_microbatches=get_num_microbatches(),
+            forward_only=forward_only,
+            seq_length=None,
+            micro_batch_size=get_micro_batch_size(),
         )
 
         if torch.distributed.get_rank() == 0 and len(self.wandb_logger.loggers) > 1:
