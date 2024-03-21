@@ -61,8 +61,6 @@ def pad_to_seq_length(list_of_tensors, seq_length, pad_value=0):
 
 
 def rebalance_nd_tensor(tensor, group):
-    """
-    """
     num_samples = torch.as_tensor(tensor.size(0), dtype=torch.int64, device=torch.cuda.current_device())
     batch_num_per_rank = torch.zeros(
         torch.distributed.get_world_size(group), dtype=torch.int64, device=torch.cuda.current_device()
@@ -154,58 +152,6 @@ def compute_num_rollout_microbatches(dataloader, trtllm_reshard=False):
         divide(dataloader.batch_sampler.global_batch_size, dataloader.batch_sampler.micro_batch_size),
         get_custom_data_parallel_world_size(trtllm_reshard=trtllm_reshard),
     )
-
-
-def shard_rollout_batch_from_dp_to_pp(rollout_batches, pad_id):
-    if len(rollout_batches) < 1:
-        return rollout_batches
-
-    pp_group_size = parallel_state.get_pipeline_model_parallel_world_size()
-    num_rollout_batches = len(rollout_batches) * pp_group_size
-
-    group = parallel_state.get_pipeline_model_parallel_group()
-    new_rollout_batch = {}
-
-    # save the response lengths to unpad
-    resp_lengths = [rb["response_tokens"].shape[-1] for rb in rollout_batches]
-    resp_lengths = torch.tensor(resp_lengths, dtype=torch.int).cuda()
-    global_resp_lengths = torch.empty(
-        len(rollout_batches) * pp_group_size, dtype=torch.int, device=torch.cuda.current_device()
-    )
-    torch.distributed.all_gather_into_tensor(global_resp_lengths, resp_lengths, group=group)
-
-    for key in rollout_batches[0].keys():
-        if key == "response_tokens":
-            list_of_things = []
-            for item in rollout_batches:
-                list_of_things.extend(item[key])
-
-            local_output = pad_tensors_to_max_global_seq_len(list_of_things, pad_id, group).cuda()
-            assert local_output.ndim == 2
-            output_tensor = torch.empty(
-                local_output.size(0) * pp_group_size,
-                local_output.size(-1),
-                dtype=local_output.dtype,
-                device=torch.cuda.current_device(),
-            )
-
-        else:
-            list_of_things = [r[key] for r in rollout_batches]
-            local_output = torch.cat(list_of_things).cuda()
-            output_tensor = torch.empty(
-                local_output.size(0) * parallel_state.get_pipeline_model_parallel_world_size(),
-                dtype=local_output.dtype,
-                device=torch.cuda.current_device(),
-            )
-
-        torch.distributed.all_gather_into_tensor(output_tensor, local_output, group=group)
-        new_rollout_batch[key] = output_tensor
-    rollout_batches = list(get_iterator_k_split(new_rollout_batch, num_rollout_batches))
-
-    # unpad
-    for idx, rb in enumerate(rollout_batches):
-        rb["response_tokens"] = rb["response_tokens"][..., : global_resp_lengths[idx]]
-    return rollout_batches
 
 
 class PPOTrainer:
