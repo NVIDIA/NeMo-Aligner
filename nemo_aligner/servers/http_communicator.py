@@ -17,6 +17,15 @@ from pytriton.client import FuturesModelClient
 from nemo.utils import logging
 
 
+_global_communicators = {}
+
+def close_all_communicators(*args, **kwargs):
+    logging.info("Cleaning up all registered communicators")
+    for server_name, (ip, port, client) in _global_communicators.items():
+        logging.info(f'Cleaning up communicator: {server_name=!r} {ip=!r} {port=!r}')
+        client.close(*args, **kwargs)
+
+
 class HTTPCommunicator:
     """Communicator class for the actor to send async requests to the remote servers
     """
@@ -40,6 +49,7 @@ class HTTPCommunicator:
         url = f"http://{ip}:{port}"
         client = FuturesModelClient(url, server_name, init_timeout_s=self.init_timeout_s, inference_timeout_s=600000)
         self.connections[server_name] = (ip, port, client)
+        _global_communicators[server_name] = (ip, port, client)
 
     def print_server_dict(self):
         logging.info("====== Server connections: ======")
