@@ -483,7 +483,7 @@ class PPOTrainer:
 
         rm_value_rollout_batches = []
         for future in futures:
-            rewards, values = future.result() if isinstance(future, FutureResult) else future
+            rewards, values = future.result(self.use_trtllm_reshard) if isinstance(future, FutureResult) else future
             rm_value_rollout_batches.append({"rewards": rewards, "values": values})
 
         rm_value_rollout_batches = self.stack_rollout_batches(rm_value_rollout_batches)
