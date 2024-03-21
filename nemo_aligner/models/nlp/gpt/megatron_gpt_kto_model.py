@@ -40,6 +40,7 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import cpu_weight_swap
 
+
 class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
     """
     Megatron GPT KTO Model Training.
@@ -95,21 +96,16 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
                     required_keys.update(("sample", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(
-                        (
-                            "ref_policy_log_probs",
-                            "sample_labels",
-                        )
-                    )
+                    required_keys.update(("ref_policy_log_probs", "sample_labels",))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
             tokens, labels, ref_logprobs = None, None, None
             if batch["sample"] is not None:
-                tokens = batch['sample']
+                tokens = batch["sample"]
 
             if batch["sample_labels"] is not None:
-                labels = batch['sample_labels']
+                labels = batch["sample_labels"]
 
             if batch["ref_policy_log_probs"] is not None:
                 ref_logprobs = batch["ref_policy_log_probs"]
@@ -197,8 +193,14 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         chosen_kl, reject_kl = self.split_output_tensor(rewards_kl)
         loss = (
-            (1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0)))).sum()
-          + (1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards))).sum()
+            (
+                1.0
+                - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0)))
+            ).sum()
+            + (
+                1.0
+                - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards))
+            ).sum()
         ) / (chosen_rewards.numel() + reject_rewards.numel())
 
         with torch.no_grad():
