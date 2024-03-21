@@ -57,11 +57,9 @@ def rebalance_nd_tensor(tensor, group):
     """
     """
     num_samples = torch.as_tensor(tensor.size(0), dtype=torch.int64, device=torch.cuda.current_device())
-    print("### NUM SAMPLES", num_samples)
     batch_num_per_rank = torch.zeros(
         torch.distributed.get_world_size(group), dtype=torch.int64, device=torch.cuda.current_device()
     )
-    print("### BATCH NUM PER RANK", batch_num_per_rank, batch_num_per_rank.shape)
     torch.distributed.all_gather_into_tensor(batch_num_per_rank, num_samples, group=group)
 
     B = batch_num_per_rank.sum()
@@ -69,13 +67,10 @@ def rebalance_nd_tensor(tensor, group):
 
     indices = batch_num_per_rank.cumsum(dim=0)
     output_tensor = torch.zeros(B, *other_dims, dtype=tensor.dtype, device=torch.cuda.current_device())
-    print("### OUTPUT TENSOR", output_tensor.shape, output_tensor.dtype, tensor.dtype)
 
     # tensor_split is a view we can copy into
     output_tensor.tensor_split(indices.cpu())[torch.distributed.get_rank(group=group)].copy_(tensor)
-    print("## BEFORE REDUCE")
     torch.distributed.all_reduce(output_tensor, group=group)
-    print("## AFTER REDUCE")
     return output_tensor
 
 
@@ -84,14 +79,12 @@ def rebalance_dp(rollout_batch, shuffle_seed, use_trtllm_reshard=False):
     rebalanced_rollout_batch = dict()
 
     for k, tensor in rollout_batch.items():
-        print("### RANK BEFORE REBALANCE SIZE", k, torch.distributed.get_rank(), tensor.size())
         if use_trtllm_reshard:
             tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_pipeline_model_parallel_group())
 
         tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_data_parallel_group())
         rebalanced_rollout_batch[k] = tensor
         B = tensor.size(0)
-        print("### RANK GLOBAL SIZE", torch.distributed.get_rank(), tensor.size())
 
     g_cpu = torch.Generator()
     g_cpu.manual_seed(shuffle_seed)
@@ -102,7 +95,6 @@ def rebalance_dp(rollout_batch, shuffle_seed, use_trtllm_reshard=False):
     for k in rebalanced_rollout_batch:
         # anti alias the underlying tensor
         rebalanced_rollout_batch[k] = rebalanced_rollout_batch[k][indices].clone()
-        print("### RANK LOCAL SIZE", torch.distributed.get_rank(), rebalanced_rollout_batch[k].size())
 
     return rebalanced_rollout_batch
 
@@ -416,7 +408,6 @@ class PPOTrainer:
         rollout_batches = []
         futures = []
 
-        print(f"num_microbatches {num_microbatches}")
         ids = [item[1]["idx"] for item in zip(range(num_microbatches), dataloader_iter)]
         local_ids = set(itertools.chain.from_iterable(ids))
         global_ids = get_global_set(local_ids)
