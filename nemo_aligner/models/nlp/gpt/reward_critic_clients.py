@@ -20,17 +20,41 @@ import torch
 from megatron.core import parallel_state
 from omegaconf import DictConfig
 
+from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
-from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
+from nemo_aligner.utils.distributed import (
+    broadcast_2d_tensor,
+    broadcast_2d_tensor_within_mp,
+    gather_tensor,
+    run_if_model_parallel_src,
+)
 from nemo_aligner.utils.server_utils import FutureResult
-
 
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
     over to the remote PyTrition server
 """
 
 
-def get_future_result(future, *keys):
+def broadcast_2d_tensor_with_reshard(tensor, use_trtllm_reshard=False):
+    """helper function to broadcast within the model parallel group
+    """
+    src_rank = (
+        parallel_state.get_tensor_model_parallel_src_rank() if use_trtllm_reshard else get_model_parallel_src_rank()
+    )
+
+    group = (
+        parallel_state.get_tensor_model_parallel_group()
+        if use_trtllm_reshard
+        else parallel_state.get_model_parallel_group()
+    )
+
+    if torch.distributed.get_world_size(group) > 1:
+        return broadcast_2d_tensor(tensor, src_rank, group)
+
+    return tensor
+
+
+def get_future_result(future, use_trtllm_reshard, *keys):
     """It waits for the result of the future to be ready, gets the value with the given key,
     and broadcasts it to the model parallel group. Then it returns it as output.
     """
@@ -44,7 +68,7 @@ def get_future_result(future, *keys):
         if output is not None:
             result = torch.tensor(output[key], device=torch.cuda.current_device())
 
-        results.append(broadcast_2d_tensor_within_mp(result))
+            results.append(broadcast_2d_tensor_with_reshard(result, use_trtllm_reshard))
 
     if len(results) == 1:
         return results[0]
@@ -60,12 +84,12 @@ class RMCriticFutureResult(FutureResult):
 
         self.og_seq_length = og_seq_length
 
-    def result(self):
+    def result(self, use_trtllm_reshard=False):
         if self.combine_rm_and_critic_server:
-            rewards, values = get_future_result(self.critic_future, "rewards", "values")
+            rewards, values = get_future_result(self.critic_future, use_trtllm_reshard, "rewards", "values")
         else:
-            rewards = get_future_result(self.rm_future, "rewards")
-            values = get_future_result(self.critic_future, "values")
+            rewards = get_future_result(self.rm_future, use_trtllm_reshard, "rewards")
+            values = get_future_result(self.critic_future, use_trtllm_reshard, "values")
 
         values = values[:, : self.og_seq_length - 1].contiguous()
 
