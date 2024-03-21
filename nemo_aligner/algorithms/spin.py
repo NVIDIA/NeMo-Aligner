@@ -217,7 +217,7 @@ class SPINTrainer:
         )
         generations = self.model.generate(
             inputs=(prompt_tokens, prompt_lengths),
-            length_params=self.length_params | {'max_length': adj_generation_length},
+            length_params=self.length_params | {"max_length": adj_generation_length},
             sampling_params=self.sampling_params,
             strategy=strategy,
         )
