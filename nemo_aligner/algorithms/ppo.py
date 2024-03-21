@@ -380,9 +380,6 @@ class PPOTrainer:
             if k == "response_tokens":
                 pad_value = self.model.tokenizer.eos_id
 
-                if rollout_batch_seq_length is not None:
-                    rollout_batch_seq_length -= 1
-
             if k == "values":
                 if rollout_batch_seq_length is not None:
                     rollout_batch_seq_length -= 1
@@ -499,6 +496,7 @@ class PPOTrainer:
 
         # TODO: can rewrite the compute metrics
         rollout_batches = [local_rollout_batch]
+
         return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
 
     def compute_global_rollout_metrics(self, rollout_batches):
