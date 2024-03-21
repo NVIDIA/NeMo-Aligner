@@ -215,15 +215,9 @@ def main(cfg) -> None:
         len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches
     )
 
-    train_ds = []
+    train_eval_ds = []
     for _, p in zip(range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_train_data):
-        tokens = p["tokens"][: p["context_length"]]
-        response_text = ptl_model.tokenizer.ids_to_text(p["tokens"][p["context_length"] :])
-
-        question = ptl_model.tokenizer.ids_to_text(tokens)
-        answer = float(extract_answer(response_text))
-
-        train_ds.append({"question": question, "expected_answer": answer})
+        train_eval_ds.append(train_ds[p["data_id"]])
 
     num_questions_correct = 0
 
@@ -295,7 +289,7 @@ def main(cfg) -> None:
     train_dataloader_builder_func = partial(
         build_dataloader,
         cfg=cfg,
-        dataset=train_ds,
+        dataset=train_eval_ds,
         consumed_samples=0,
         mbs=cfg.model.inference.micro_batch_size,
         gbs=cfg.model.inference.micro_batch_size * dp_size,
