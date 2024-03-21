@@ -56,8 +56,8 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         self.automatic_optimization = False
         self.ref_policy_state_dict = None
 
-        self.ref_policy_kl_penalty = self.cfg.dpo.get("ref_policy_kl_penalty", 0.0)
-        self.avg_log_probs = self.cfg.dpo.get("average_log_probs", False)
+        self.ref_policy_kl_penalty = self.cfg.kto.get("ref_policy_kl_penalty", 0.0)
+        self.avg_log_probs = self.cfg.kto.get("average_log_probs", False)
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels):
