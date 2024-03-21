@@ -36,9 +36,8 @@ from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.data.nlp.datasets import MCTSDataset
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.customized_nlpdpstrategy import CustomMegatronTrainerBuilder
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset
-from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, MathSandBoxedFeedBack
+from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     FakeScheduler,
@@ -215,9 +214,11 @@ def main(cfg) -> None:
         len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches
     )
 
+    train_ds_id_mapping = {item["data_id"]: i for i, item in enumerate(train_ds)}
     train_eval_ds = []
     for _, p in zip(range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_train_data):
-        train_eval_ds.append(train_ds[p["data_id"]])
+        idx = train_ds_id_mapping[p["data_id"]]
+        train_eval_ds.append(train_ds[idx])
 
     num_questions_correct = 0
 
