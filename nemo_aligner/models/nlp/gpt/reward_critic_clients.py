@@ -22,17 +22,27 @@ from omegaconf import DictConfig
 
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
-from nemo_aligner.utils.distributed import (
-    broadcast_2d_tensor,
-    broadcast_2d_tensor_within_mp,
-    gather_tensor,
-    run_if_model_parallel_src,
-)
+from nemo_aligner.utils.distributed import broadcast_2d_tensor, broadcast_2d_tensor_within_mp, gather_tensor
 from nemo_aligner.utils.server_utils import FutureResult
 
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
     over to the remote PyTrition server
 """
+
+
+def run_if_model_parallel_src(fn, use_trtllm_reshard, *fn_args, **fn_kwargs):
+    """This function is meant to wrap an arbitary function to only call the function
+    if it's the model parallel src. So if we have DP=2, this function will be called
+    only twice."""
+    src_rank = (
+        parallel_state.get_tensor_model_parallel_src_rank() if use_trtllm_reshard else get_model_parallel_src_rank()
+    )
+
+    output = None
+    if torch.distributed.get_rank() == src_rank:
+        output = fn(*fn_args, **fn_kwargs)
+
+    return output
 
 
 def broadcast_2d_tensor_with_reshard(tensor, use_trtllm_reshard=False):
@@ -132,7 +142,7 @@ class RemoteGPTRMCriticClient:
         self.combine_rm_and_critic_server = self.cfg.combine_rm_and_critic_server
         self.pad_to_length = self.cfg.pad_to_length
 
-    def infer_rm_critic(self, rollout_batch):
+    def infer_rm_critic(self, rollout_batch, use_trtllm_reshard=False):
         response_tokens = rollout_batch["response_tokens"].cpu()
         og_seq_length = response_tokens.size(-1)
 
@@ -150,13 +160,19 @@ class RemoteGPTRMCriticClient:
         }
 
         critic_future = run_if_model_parallel_src(
-            self.communicator.send_data_to_server, server_name=self.cfg.critic.name.infer, data=send_data
+            self.communicator.send_data_to_server,
+            use_trtllm_reshard,
+            server_name=self.cfg.critic.name.infer,
+            data=send_data,
         )
 
         rm_future = None
         if not self.combine_rm_and_critic_server:
             rm_future = run_if_model_parallel_src(
-                self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data
+                self.communicator.send_data_to_server,
+                use_trtllm_reshard,
+                server_name=self.cfg.reward_model.name,
+                data=send_data,
             )
 
         return RMCriticFutureResult(critic_future, rm_future, self.combine_rm_and_critic_server, og_seq_length)

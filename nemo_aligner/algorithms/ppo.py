@@ -434,7 +434,7 @@ class PPOTrainer:
             rollout_batch = self.model.infer(batch)
             rollout_batches.append(rollout_batch)
 
-            futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+            futures.append(self.rm_critic.infer_rm_critic(rollout_batch, use_trtllm_reshard=self.use_trtllm_reshard))
 
             request_time = time.time()
             idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
