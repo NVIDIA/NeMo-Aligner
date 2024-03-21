@@ -16,6 +16,7 @@ import itertools
 import json
 import time
 from collections import defaultdict
+from functools import partial
 
 import pandas as pd
 import requests
@@ -272,8 +273,15 @@ class PPOTrainer:
         ppo_rollout_metrics = defaultdict(lambda: 0)
         num_samples = 0
 
-        def post_process_tensor(tensor):
-            return map(lambda x: x.flatten(), tensor.cpu().split(1, dim=0))
+        def post_process_tensor(max_response_length, tensor):
+            return map(lambda x: x.flatten(), tensor[..., :max_response_length].cpu().split(1, dim=0))
+
+        assert len(rollout_batches) == 1
+
+        max_response_length = rollout_batches[0]["response_lengths"].max().cuda()
+        torch.distributed.all_reduce(
+            max_response_length, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
+        )
 
         for rollout_batch in rollout_batches:
             # NOTE: all items in rollout batch or out of this computation
@@ -310,14 +318,17 @@ class PPOTrainer:
                 mask=mask,
             )
 
+            func = partial(post_process_tensor, max_response_length.item() - 1)
+            func2 = partial(post_process_tensor, max_response_length.item())
+
             # collect everything we need to train PPO
-            ppo_rollout_data["mask"].extend(post_process_tensor(mask))
-            ppo_rollout_data["advantages"].extend(post_process_tensor(advantages))
-            ppo_rollout_data["prev_logprobs"].extend(post_process_tensor(logprobs))
-            ppo_rollout_data["response_tokens"].extend(post_process_tensor(response_tokens))
+            ppo_rollout_data["mask"].extend(func(mask))
+            ppo_rollout_data["advantages"].extend(func(advantages))
+            ppo_rollout_data["prev_logprobs"].extend(func(logprobs))
+            ppo_rollout_data["response_tokens"].extend(func2(response_tokens))
             # for the critic
-            ppo_rollout_data["values"].extend(post_process_tensor(values))
-            ppo_rollout_data["returns"].extend(post_process_tensor(returns))
+            ppo_rollout_data["values"].extend(func(values))
+            ppo_rollout_data["returns"].extend(func(returns))
 
             # compute metrics
             # NOTE: this metric is not accumulated globally so it will differ between DP ranks
@@ -329,7 +340,7 @@ class PPOTrainer:
         ppo_rollout_metrics = {k: v / num_samples for k, v in ppo_rollout_metrics.items()}
 
         for k in ppo_rollout_data:
-            rollout_batch_seq_length = self.rollout_batch_seq_length
+            rollout_batch_seq_length = 2048  # TODO: fix
             pad_value = self.model.tokenizer.eos_id
 
             # all other tensors in the rollout batch
