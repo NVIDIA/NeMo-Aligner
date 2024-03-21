@@ -101,7 +101,16 @@ class CriticServerTrainer:
         choice = ServerSignal.FORWARD.cuda()
         torch.distributed.broadcast(choice, 0)
 
+        print(
+            "### RUNNING INFERENCE ON BATCH SIZE on step: {} batch size {}".format(
+                self.step, inputs["tokens"].shape[0]
+            )
+        )
+        start_time = time.time()
         rewards, values, exceeded = self.run_inference(inputs=inputs)
+        end_time = time.time()
+        print("#### INFER TOOK", end_time - start_time)
+
         return {
             "values": values,
             "rewards": rewards,
