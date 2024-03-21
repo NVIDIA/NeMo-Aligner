@@ -367,7 +367,7 @@ class KTOModelDataset(Dataset):
         super().__init__()
         self.cfg = cfg
         self.name = name
-        self.data = data.copy()
+        self.data = data
         self.drop_last = drop_last
         self.seq_length = seq_length
         self.tokenizer = tokenizer
@@ -408,10 +408,8 @@ class KTOModelDataset(Dataset):
         sample, sample_len = self.encode(
             payload["prompt"] + payload["response"], append_eod=self.cfg.data.get("append_eod", False)
         )
-        status = payload["status"]
+        preference = payload["preference"]
 
-        # chosen_response_only, chosen_response_len = self.encode(payload['chosen_response'])
-        # reject_response_only, reject_response_len = self.encode(payload['rejected_response'])
         labels = ([-100] * prompt_len) + sample[prompt_len:]
 
         assert sample[0:prompt_len] == prompt, "the tokenizer for KTO has merged tokens between prompt and response"        
@@ -432,7 +430,7 @@ class KTOModelDataset(Dataset):
             "sample": tokens,
             "sample_length": sample_len,
             "sample_labels": labels_tokens,
-            "status": status,
+            "preference": preference,
         }
         return output
     
