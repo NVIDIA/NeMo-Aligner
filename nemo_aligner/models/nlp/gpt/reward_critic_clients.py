@@ -80,11 +80,10 @@ def get_future_result(future, use_trtllm_reshard, *keys):
         if output is not None:
             result = torch.tensor(output[key], device=torch.cuda.current_device())
 
-        print("#### PRE OUTPUT RESHARD", output.dtype, output.shape)
-        output = broadcast_2d_tensor_with_reshard(result, use_trtllm_reshard)
-        print("#### OUTPUT BROADCASTED", output.dtype, output.shape)
+        ten = broadcast_2d_tensor_with_reshard(result, use_trtllm_reshard)
+        print("#### OUTPUT BROADCASTED", ten.dtype, ten.shape)
 
-        results.append(output)
+        results.append(ten)
 
     if len(results) == 1:
         return results[0]
