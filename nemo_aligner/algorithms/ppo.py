@@ -79,13 +79,11 @@ def rebalance_dp(rollout_batch, shuffle_seed, use_trtllm_reshard=False):
     rebalanced_rollout_batch = dict()
 
     for k, tensor in rollout_batch.items():
-        print("### RANK BEFORE REBALANCE SIZE", torch.distributed.get_rank(), tensor.size())
-
+        print("### RANK BEFORE REBALANCE SIZE", k, torch.distributed.get_rank(), tensor.size())
         if use_trtllm_reshard:
             tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_pipeline_model_parallel_group())
 
         tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_data_parallel_group())
-
         rebalanced_rollout_batch[k] = tensor
         B = tensor.size(0)
         print("### RANK GLOBAL SIZE", torch.distributed.get_rank(), tensor.size())

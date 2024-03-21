@@ -71,8 +71,7 @@ class RMCriticFutureResult(FutureResult):
 
         self.critic_future = None
         self.rm_future = None
-
-        return rewards, values
+        return rewards.flatten(), values
 
 
 class SaveFuture(FutureResult):
