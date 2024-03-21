@@ -38,6 +38,7 @@ from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHyb
 from nemo_aligner.utils.customized_nlpdpstrategy import CustomMegatronTrainerBuilder
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset
 from nemo_aligner.utils.distributed import Timer
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, MathSandBoxedFeedBack
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     FakeScheduler,
@@ -161,7 +162,9 @@ def main(cfg) -> None:
     val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
     val_ids = {item["data_id"] for item in val_ds}
 
-    feedback = GSK8KFeedbackDataset()
+    feedback = MathSandBoxedFeedBack(
+        host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT")
+    )
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
     cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
