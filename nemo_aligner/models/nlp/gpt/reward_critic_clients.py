@@ -69,19 +69,16 @@ def get_future_result(future, use_trtllm_reshard, *keys):
     and broadcasts it to the model parallel group. Then it returns it as output.
     """
     output = None if future is None else future.result()
-    print("### OUTPUT", torch.distributed.get_rank(), output)
 
     results = []
 
     for key in keys:
-        print("#### KEY", torch.distributed.get_rank(), key)
 
         result = None
         if output is not None:
             result = torch.tensor(output[key], device=torch.cuda.current_device())
 
         ten = broadcast_2d_tensor_with_reshard(result, use_trtllm_reshard)
-        print("#### OUTPUT BROADCASTED", ten.dtype, ten.shape)
 
         results.append(ten)
 

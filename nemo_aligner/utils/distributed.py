@@ -303,6 +303,10 @@ class SyncTimer(NamedTimer):
         # sync the time
         return self.sync_time([output]).item()
 
+    def stop_and_get_time(self, name=""):
+        self.stop(name=name)
+        return self.get(name=name)
+
     def store(self, name=""):
         """instead of immediately syncing the timing, we'll store it
             for a sync later on

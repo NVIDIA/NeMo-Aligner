@@ -47,6 +47,13 @@ from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 
 
+def global_max_timer_metrics(timer_metrics):
+    keys = sorted(timer_metrics)
+    tensor = torch.as_tensor([timer_metrics[k] for k in keys], dtype=torch.float32, device=torch.cuda.current_device())
+    torch.distributed.all_reduce(tensor, op=torch.distributed.ReduceOp.MAX)
+    return dict(zip(keys, tensor.tolist()))
+
+
 def pad_to_seq_length(list_of_tensors, seq_length, pad_value=0):
     tensors_padded = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
 
@@ -407,25 +414,24 @@ class PPOTrainer:
         """
         rollout_batches = []
         futures = []
+        timer_metrics = {}
 
+        self.timer.start("rollout_init")
         ids = [item[1]["idx"] for item in zip(range(num_microbatches), dataloader_iter)]
         local_ids = set(itertools.chain.from_iterable(ids))
         global_ids = get_global_set(local_ids)
 
         if torch.distributed.get_rank() == 0:
             set_idx(global_ids)
-            print("### ALL IDS", global_ids)
 
         torch.distributed.barrier()
+        timer_metrics["rollout_init"] = self.timer.stop_and_get_time("rollout_init")
 
-        start = time.time()
-
-        request_time = time.time()
+        self.timer.start("first_request")
         idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
-        request_end_time = time.time()
-        print("### REQUEST TOOK", request_end_time - request_time)
+        timer_metrics["first_request"] = self.timer.stop_and_get_time("first_request")
 
-        print("## idx pre RANK IDX", torch.distributed.get_rank(), idx)
+        self.timer.start("generate")
         while len(idx) > 0:
             idx = idx[0]
             batch = dataloader_iter._dataset[idx]
@@ -438,68 +444,47 @@ class PPOTrainer:
 
             futures.append(self.rm_critic.infer_rm_critic(rollout_batch, use_trtllm_reshard=self.use_trtllm_reshard))
 
-            request_time = time.time()
+            start_time = time.time()
             idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
-            request_end_time = time.time()
+            end_time = time.time()
+            print("### REQUEST TOOK", end_time - start_time)
 
-            print("### REQUEST TOOK", request_end_time - request_time)
-            print("## idx pre RANK IDX", torch.distributed.get_rank(), idx)
-
-        end = time.time()
-        print("### GENERATE ONLY", end - start)
-
-        start = time.time()
-        torch.distributed.barrier()
-        end = time.time()
-        print("### DP SYNC TOOK", end - start)
+        timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
         stacked_rollout_batch = self.stack_rollout_batches(rollout_batches)
-
-        start = time.time()
         local_rollout_batch = rebalance_dp(stacked_rollout_batch, self.step, self.use_trtllm_reshard)
         del stacked_rollout_batch
-        end = time.time()
-        print("### REBALANCE DP TOOK", end - start)
 
         batched_response_tokens = local_rollout_batch["response_tokens"]
 
-        start_time = time.time()
+        self.timer.start("logprobs")
         rollout_logprobs = self.model.get_logprobs(batched_response_tokens)
         local_rollout_batch["logprobs"] = rollout_logprobs
-        torch.cuda.synchronize()
-        end_time = time.time()
-        print("#### TIME FOR JUST LOG PROB", end_time - start_time)
+        timer_metrics["logprobs"] = self.timer.stop_and_get_time("logprobs")
 
         compute_init_policy_kl = not is_validation and self.compute_init_policy_kl
         if compute_init_policy_kl:
-            start_time = time.time()
-
+            self.timer.start("init_logprobs")
             rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens)
             local_rollout_batch["init_logprobs"] = rollout_init_logprobs
+            timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
-            torch.cuda.synchronize()
-            end_time = time.time()
-            print("#### TIME FOR INIT LOG PROB", end_time - start_time)
-
-        start_time = time.time()
-
+        self.timer.start("critic_wait")
         rm_value_rollout_batches = []
         for future in futures:
             rewards, values = future.result(self.use_trtllm_reshard) if isinstance(future, FutureResult) else future
             rm_value_rollout_batches.append({"rewards": rewards, "values": values})
+        timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
 
         rm_value_rollout_batches = self.stack_rollout_batches(rm_value_rollout_batches)
         # TODO: does this reshard into the same stuff?
         rm_value_rollout_batches = rebalance_dp(rm_value_rollout_batches, self.step, self.use_trtllm_reshard)
         local_rollout_batch.update(rm_value_rollout_batches)
 
-        end_time = time.time()
-        print("#### TIME SPEND WAITING ON THE CRITIC", end_time - start_time)
-
         # TODO: can rewrite the compute metrics
         rollout_batches = [local_rollout_batch]
 
-        return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
+        return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches)), timer_metrics
 
     def compute_global_rollout_metrics(self, rollout_batches):
         metrics = defaultdict(lambda: 0)
@@ -560,23 +545,38 @@ class PPOTrainer:
         num_val_micro_batches = compute_num_rollout_microbatches(self.val_dataloader, self.use_trtllm_reshard)
         val_dataloader = iter(self.val_dataloader)
 
-        _, rollout_metrics = self._run_inference(val_dataloader, num_val_micro_batches, is_validation=True)
+        _, rollout_metrics, _ = self._run_inference(val_dataloader, num_val_micro_batches, is_validation=True)
         self.model.finish_inference()
         return rollout_metrics
 
     @torch.no_grad()
     def generate_rollouts(self, dataloader_iter, num_microbatches):
-        self.model.prepare_for_inference()
+        timing_metrics = {}
 
-        rollout_batches, rollout_metrics = self._run_inference(dataloader_iter, num_microbatches, is_validation=False)
+        self.timer.start("prepare_for_inference")
+        self.model.prepare_for_inference()
+        timing_metrics["prepare_for_inference"] = self.timer.stop_and_get_time("prepare_for_inference")
+
+        rollout_batches, rollout_metrics, timer_metrics = self._run_inference(
+            dataloader_iter, num_microbatches, is_validation=False
+        )
         ppo_rollout_data, ppo_rollout_metrics = map(cpu_dict, self.generate_ppo_data(rollout_batches))
 
+        self.timer.start("finish_inference")
         self.model.finish_inference()
+        timing_metrics["finish_inference"] = self.timer.stop_and_get_time("finish_inference")
 
         self.consumed_samples += (
             ppo_rollout_data["response_tokens"].size(0) * parallel_state.get_data_parallel_world_size()
         )
-        return ppo_rollout_data, rollout_metrics | ppo_rollout_metrics | {"consumed_samples": self.consumed_samples}
+
+        timing_metrics.update(timer_metrics)
+
+        return (
+            ppo_rollout_data,
+            rollout_metrics | ppo_rollout_metrics | {"consumed_samples": self.consumed_samples},
+            timing_metrics,
+        )
 
     def run_training(self, dataloader_iter):
         self.model.prepare_for_training()
@@ -647,12 +647,13 @@ class PPOTrainer:
 
             for _ in global_pbar:
                 print(f"***STEP {self.step}")
-
                 step_metrics = {}
                 timing_metrics = {}
 
                 self.timer.start("rollout_time")
-                ppo_rollout_data, metrics = self.generate_rollouts(dataloader_iter, num_rollout_micro_batches)
+                ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts(
+                    dataloader_iter, num_rollout_micro_batches
+                )
                 self.timer.stop("rollout_time")
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
@@ -661,6 +662,9 @@ class PPOTrainer:
                 self.rm_critic.train(ppo_rollout_data)
                 end_time = time.time()
                 print("### CRITIC TRAIN TIME", end_time - start_time)
+
+                timer_metrics = global_max_timer_metrics(timer_metrics)
+                timing_metrics.update(timer_metrics)
 
                 # logging
                 table_metrics = metrics.pop("table")
