@@ -285,7 +285,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(data_iterator, model):
-            
+
             batch = next(data_iterator)
             batch_size = len(batch)
             # Get different seeds for different dp rank
@@ -331,7 +331,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         return fwd_output_and_loss_func
 
     def get_loss_and_metrics(self, batch, forward_only=False):
-        
+
         data_iter = get_iterator_k_split_list(batch, get_num_microbatches())
 
         fwd_bwd_function = get_forward_backward_func()

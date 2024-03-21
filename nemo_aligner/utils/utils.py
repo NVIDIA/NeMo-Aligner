@@ -14,15 +14,15 @@
 
 """Misc helper functions"""
 import gc
+import itertools
 import os
 import re
 import tempfile
 from contextlib import contextmanager
 from dataclasses import replace
 from functools import partial
+from typing import Iterator, List
 from unittest.mock import patch
-from typing import List, Iterator
-import itertools
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
@@ -372,7 +372,8 @@ def convert_to_amp_o2_format(state_dict):
 
     return new_state_dict
 
-def get_iterator_k_split_list(batch:  List[str], num_microbatches: int) -> Iterator:
+
+def get_iterator_k_split_list(batch: List[str], num_microbatches: int) -> Iterator:
     """
     Generate an iterator to split a list into microbatches of equal size.
     
@@ -386,7 +387,7 @@ def get_iterator_k_split_list(batch:  List[str], num_microbatches: int) -> Itera
     assert len(batch) % num_microbatches == 0, "Issue with batch size configuration!"
     batch_size_per_microbatch = len(batch) // num_microbatches
     microbatches = [
-        batch[i * batch_size_per_microbatch: (i + 1) * batch_size_per_microbatch] for i in range(num_microbatches)
+        batch[i * batch_size_per_microbatch : (i + 1) * batch_size_per_microbatch] for i in range(num_microbatches)
     ]
     return itertools.chain(microbatches)
 
