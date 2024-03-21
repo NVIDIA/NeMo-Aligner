@@ -24,11 +24,12 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
+from nemo_aligner.algorithms.dpo import DPOTrainer
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
 from nemo_aligner.utils.utils import clear_memory
-from nemo_aligner.algorithms.dpo import DPOTrainer
+
 
 def kto_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
     sample_tokens = [item["sample"] for item in batch]
@@ -76,7 +77,18 @@ class KTOTrainer(DPOTrainer):
         ckpt_callback,
         run_timer,
     ):
-        super().__init__(cfg, model, optimizer, scheduler, train_dataloader, val_dataloader, test_dataloader, logger, ckpt_callback, run_timer)
+        super().__init__(
+            cfg,
+            model,
+            optimizer,
+            scheduler,
+            train_dataloader,
+            val_dataloader,
+            test_dataloader,
+            logger,
+            ckpt_callback,
+            run_timer,
+        )
 
     def augment_dataloader(self, dataloader):
         """Augment dataloader with ref policy log prob"""
