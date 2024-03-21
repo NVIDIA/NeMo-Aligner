@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from typing import Mapping
-
 import numpy as np
 import torch
 import wandb
@@ -23,7 +22,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
 from PIL import Image
 from tqdm import tqdm
-
+from nemo_aligner.utils.utils import _get_autocast_dtype
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
     LatentDiffusion,
@@ -35,20 +34,7 @@ from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import grad_reductions, prepare_for_training_step
 from nemo_aligner.utils.utils import configure_batch_sizes, get_iterator_k_split_list
 
-HAVE_MEGATRON_CORE = True
-
 BatchType = Mapping[str, torch.tensor]
-
-
-def _get_autocast_dtype(precision: str):
-    if precision in ["bf16", "bf16-mixed"]:
-        return torch.bfloat16
-    if precision in [32, "32", "32-true"]:
-        return torch.float
-    if precision in [16, "16", "16-mixed"]:
-        return torch.half
-    raise ValueError('precision must be in ["32-true", "16-mixed", "bf16-mixed"]')
-
 
 def calculate_gaussian_kl_penalty_shared_var(curr_eps, init_eps):
 
@@ -159,7 +145,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                 for i in range(batch_size)
             ]
             log_img = [
-                np.transpose(vae_decoder_output[i].float().detach().cpu().numpy(), (1, 2, 0))  # (C, H, W) -> (H, W, C)
+                vae_decoder_output[i].float().detach().permute(1,2,0).cpu().numpy() # (C, H, W) -> (H, W, C)
                 for i in range(batch_size)
             ]
             return log_img, log_reward
@@ -225,7 +211,6 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
             time_range = np.flip(timesteps)
             total_steps = timesteps.shape[0]
 
-            print(f"Running {sampler_draft_p.sampler.name} Sampling with {total_steps} timesteps")
             iterator = tqdm(time_range, desc=f"{sampler_draft_p.sampler.name} Sampler", total=total_steps)
 
             list_eps_draft_p = []
@@ -286,7 +271,6 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
             gbs=self.cfg.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
-        self.onload_adam_states()
 
     def onload_adam_states(self):
         if self.distributed_adam_offload_manager is not None:
@@ -304,17 +288,17 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
             
             batch = next(data_iterator)
             batch_size = len(batch)
-            torch.cuda.manual_seed(torch.distributed.get_rank())
-            torch.manual_seed(torch.distributed.get_rank())
-            latents = torch.randn(
-                [
-                    batch_size,
-                    self.in_channels,
-                    self.height // self.downsampling_factor,
-                    self.width // self.downsampling_factor,
-                ],
-                generator=None,
-            ).to(torch.cuda.current_device())
+            # Get different seeds for different dp rank
+            with get_cuda_rng_tracker().fork(get_data_parallel_rng_tracker_name()):
+                latents = torch.randn(
+                    [
+                        batch_size,
+                        self.in_channels,
+                        self.height // self.downsampling_factor,
+                        self.width // self.downsampling_factor,
+                    ],
+                    generator=None,
+                ).to(torch.cuda.current_device())
 
             output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(batch, latents)
 
@@ -353,7 +337,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         fwd_bwd_function = get_forward_backward_func()
         losses_reduced_per_micro_batch = fwd_bwd_function(
                     forward_step_func=self.get_forward_output_and_loss_func(forward_only),
-                    data_iterator=[data_iter], 
+                    data_iterator=data_iter, 
                     model=self.model,
                     num_microbatches=get_num_microbatches(), 
                     forward_only=forward_only,

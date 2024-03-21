@@ -1,10 +1,12 @@
 .. include:: /content/nemo.rsts
 
+.. _model-aligner-draftp:
+
 Fine-tuning Stable Diffusion with DRaFT+
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 In this tutorial, we will go through the step-by-step guide for fine-tuning Stable Diffusion model using DRaFT+ algorithm by NVIDIA. 
-DRaFT+ is an improvement over the `DRaFT <https://arxiv.org/pdf/2309.17400.pdf>`__ algorithm by aleviating the mode collapse and imporving diversity throught regularization. 
+DRaFT+ is an improvement over the `DRaFT <https://arxiv.org/pdf/2309.17400.pdf>`__ algorithm by alleviating the mode collapse and improving diversity through regularization. 
 For more technical details on the DRaFT+ algorithm, check out our technical blog.
 
 
@@ -19,6 +21,19 @@ file containing the prompts separated by new lines, such as following format::
     prompt3
     prompt4
     ...
+
+Use the following script to download and save the prompts from the `Pick a pic <https://huggingface.co/datasets/yuvalkirstain/pickapic_v1_no_images>`__ dataset:
+
+    .. code-block:: bash 
+
+        from datasets import load_dataset
+
+        dataset = load_dataset("yuvalkirstain/pickapic_v1_no_images")
+        captions = dataset['train']['caption']  
+        file_path = # path to save as a .txt file
+        with open(file_path, 'w') as file:
+            for caption in captions:
+                file.write(caption + '\n')
 
 You can then run the following snipet to convert it to a ``.tar`` file:
 
@@ -43,7 +58,7 @@ You can then run the following snipet to convert it to a ``.tar`` file:
 Reward Model
 ############
 
-Currently, we only have supoort for `Pickscore <https://arxiv.org/pdf/2305.01569.pdf>`__ reward model. Since Pickscore is a CLIP-based model, 
+Currently, we only have support for `Pickscore <https://arxiv.org/pdf/2305.01569.pdf>`__ reward model. Since Pickscore is a CLIP-based model, 
 you can use the `conversion script <https://github.com/NVIDIA/NeMo/blob/main/examples/multimodal/vision_language_foundation/clip/convert_external_clip_to_nemo.py>`__ from NeMo to convert it from huggingface to NeMo.
 
 DRaFT+ Training
@@ -55,7 +70,7 @@ and a checkpoint for the Reward Model.
 .. tab-set::
 
     .. tab-item:: Terminal
-        :sync: key3
+        :sync: key1
 
          To run DRaFT+ on the terminal directly:
 
@@ -153,4 +168,5 @@ DRaFT+ Results
 %%%%%%%%%%%%%%
 
 Once you have completed fine-tuning Stable Diffusion with DRaFT+, you can run inference on your saved model using the `sd_infer.py <https://github.com/NVIDIA/NeMo/blob/main/examples/multimodal/text_to_image/stable_diffusion/sd_infer.py>`__ 
-and `sd_lora_infer.py <https://github.com/NVIDIA/NeMo/blob/main/examples/multimodal/text_to_image/stable_diffusion/sd_lora_infer.py>`__  scripts from the NeMo codebase.
+and `sd_lora_infer.py <https://github.com/NVIDIA/NeMo/blob/main/examples/multimodal/text_to_image/stable_diffusion/sd_lora_infer.py>`__  scripts from the NeMo codebase. The generated images with the fine-tuned model should have 
+better prompt alignment and aesthetic quality.

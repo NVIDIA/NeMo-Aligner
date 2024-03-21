@@ -238,4 +238,3 @@ rm:
   model:
     restore_from_path:  # Path to a trained ViT .nemo file
     precision: ${trainer.precision}
-  

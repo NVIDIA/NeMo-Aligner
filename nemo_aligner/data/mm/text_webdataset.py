@@ -27,7 +27,6 @@ def build_train_valid_datasets(
 
     def transform_fn(sample):
         text = sample["txt"]
-        # TODO : If no agumentations just return the image ?
         return text
 
     train_data = WebDatasetCommon(
