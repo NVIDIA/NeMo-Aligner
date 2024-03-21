@@ -352,6 +352,7 @@ class DPOModelDataset(Dataset):
         }
         return output
 
+
 class KTOModelDataset(Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
        with the prompt, along with the response (response only, no prompt), and the status denoting whether the response is chosen or rejected. This Dataset will combine the prompt with the corresponding chosen or 
@@ -416,7 +417,7 @@ class KTOModelDataset(Dataset):
 
         labels = ([-100] * prompt_len) + sample[prompt_len:]
 
-        assert sample[0:prompt_len] == prompt, "the tokenizer for KTO has merged tokens between prompt and response"        
+        assert sample[0:prompt_len] == prompt, "the tokenizer for KTO has merged tokens between prompt and response"
 
         max_curr_seq_len = sample_len
         assert (
@@ -437,7 +438,8 @@ class KTOModelDataset(Dataset):
             "preference": preference,
         }
         return output
-    
+
+
 class RegressionRewardModelDataset(RewardModelDataset):
     """This class assumes each line of the dataset file is a dictionary with "text" and "label" field, 
         where "text" is a string representing the input prompt, and "label" is a list of float or int values. 
