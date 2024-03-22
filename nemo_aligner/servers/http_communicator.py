@@ -19,10 +19,11 @@ from nemo.utils import logging
 
 _global_communicators = {}
 
+
 def close_all_communicators(*args, **kwargs):
     logging.info("Cleaning up all registered communicators")
     for server_name, (ip, port, client) in _global_communicators.items():
-        logging.info(f'Cleaning up communicator: {server_name=!r} {ip=!r} {port=!r}')
+        logging.info(f"Cleaning up communicator: {server_name=!r} {ip=!r} {port=!r}")
         client.close(*args, **kwargs)
 
 

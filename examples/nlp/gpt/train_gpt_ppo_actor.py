@@ -174,7 +174,7 @@ def main(cfg) -> None:
         ppo_trainer.load_state_dict(custom_trainer_state_dict)
 
     ppo_trainer.fit()
-    
+
     # Note: The main loop creates multiple HTTPCommunicators which own a
     # pytriton.client.FuturesModelClients. At the end of the loop, we manually
     # close all FuturesModelClients since we do not use the context manager
