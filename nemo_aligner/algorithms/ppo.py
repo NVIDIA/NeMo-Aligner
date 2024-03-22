@@ -38,7 +38,7 @@ from nemo_aligner.utils.ppo_utils import (
 )
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
-from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
+from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch, set_consumed_samples
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 
 
@@ -86,7 +86,7 @@ class PPOTrainer:
         self.ppo_optimization_step = 0
 
         # compute `max_steps`
-        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader)
         self.set_max_steps()
 
         self.compute_init_policy_kl = self.cfg.initial_policy_kl_penalty > 0
@@ -351,12 +351,13 @@ class PPOTrainer:
         if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomSampler)) and (
             self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
         ):
-            # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
+            # if you use MegatronPretrainingSampler as the sampler passed to your train dataloader (in builders.py)
             # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
             # to fix this, you should use MegatronPretrainingRandomSampler instead, which alleviates this issue and allows
             # random shuffling for each epoch.
             raise ValueError(
-                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomSampler` as the batch_sampler for your train dataloader"
+                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomSampler` as the sampler "
+                "for your train dataloader"
             )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
@@ -373,6 +374,7 @@ class PPOTrainer:
             if not loop_iter:
                 return  # training ended
 
+            set_consumed_samples(self.train_dataloader, self.consumed_samples)
             dataloader_iter = iter(self.train_dataloader)
 
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")

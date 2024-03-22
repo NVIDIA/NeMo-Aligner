@@ -30,14 +30,12 @@ from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils imp
     get_train_valid_test_split_,
 )
 from nemo.collections.nlp.data.language_modeling.megatron.blendable_dataset import BlendableDataset
-
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingSampler
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
-    MegatronPretrainingRandomBatchSampler,
 )
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
@@ -46,7 +44,7 @@ from nemo_aligner.data.nlp.datasets import (
     RewardModelDataset,
     RLHFDataset,
 )
-from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
+from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomBatchSampler, MegatronPretrainingRandomSampler
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
@@ -321,31 +319,28 @@ def build_dataloader(
     pad_samples_to_global_batch_size=False,
     collate_fn=None,
     load_gbs=True,
-    use_random_sampler=True,
 ):
     """Buld dataloader given an input dataset."""
 
     logging.info(f"Building dataloader with consumed samples: {consumed_samples}")
-    # Common parameters for batch sampler creation
-    common_params = {
+
+    sampler_params = {
         "total_samples": len(dataset),
         "consumed_samples": consumed_samples,
+        "auto_update_consumed_samples": False,
         "micro_batch_size": mbs,
         "data_parallel_rank": parallel_state.get_data_parallel_rank(),
         "data_parallel_size": parallel_state.get_data_parallel_world_size(),
         "drop_last": drop_last,
         "global_batch_size": gbs,
         "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
+        "seed": cfg.model.seed,
     }
 
     # Megatron sampler
     if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type == "single":
-        if use_random_sampler:
-            cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
-            common_params["seed"] = cfg.model.seed
-        else:
-            cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
-        batch_sampler = cls(**common_params)
+        cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
+        batch_sampler = cls(**sampler_params)
     else:
         raise ValueError('`cfg.model.data.dataloader_type` must be set to "single"')
 
