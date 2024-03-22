@@ -40,6 +40,7 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
+from nemo_aligner.servers.http_communicator import close_all_communicators
 
 """Script to start PPO training"""
 
