@@ -33,10 +33,10 @@ from nemo.collections.nlp.modules.common.megatron.utils import average_losses_ac
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import (
-    grad_reductions, 
-    prepare_for_training_step, 
-    finish_validation_step, 
-    prepare_for_validation_step
+    finish_validation_step,
+    grad_reductions,
+    prepare_for_training_step,
+    prepare_for_validation_step,
 )
 from nemo_aligner.utils.utils import configure_batch_sizes, get_iterator_k_split_list
 
@@ -94,13 +94,13 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
         prepare_for_training_step(self.model, zero_grad=False)
-    
+
     def prepare_for_validation_step(self):
         """things to call to prepare for validation
         """
         prepare_for_validation_step(self)
-        gbs = int(self.cfg.global_batch_size) #int(self.cfg.data.validation_ds.global_batch_size)
-        mbs = int(self.cfg.micro_batch_size) #int(self.cfg.data.validation_ds.micro_batch_size)
+        gbs = int(self.cfg.global_batch_size)  # int(self.cfg.data.validation_ds.global_batch_size)
+        mbs = int(self.cfg.micro_batch_size)  # int(self.cfg.data.validation_ds.micro_batch_size)
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
@@ -109,8 +109,8 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         """
         finish_validation_step(self)
         # restore the batch sizes for training
-        gbs = int(self.cfg.global_batch_size) #int(self.cfg.data.train_ds.global_batch_size)
-        mbs = int(self.cfg.micro_batch_size) #int(self.cfg.data.train_ds.micro_batch_size)
+        gbs = int(self.cfg.global_batch_size)  # int(self.cfg.data.train_ds.global_batch_size)
+        mbs = int(self.cfg.micro_batch_size)  # int(self.cfg.data.train_ds.micro_batch_size)
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
@@ -193,7 +193,9 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(latents, prompts, self.model)
+        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(
+            latents, prompts, self.model
+        )
         image_init, reward_init, _ = self.generate_log_images(latents, prompts, self.init_model)
 
         images = []
@@ -327,7 +329,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                     ],
                     generator=None,
                 ).to(torch.cuda.current_device())
-            
+
             if validation_step:
                 output_tensor_draft_p, images, captions = self.log_visualization(batch)
             else:
@@ -351,13 +353,13 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
                 reduced_kl_penalty = average_losses_across_data_parallel_group([kl_penalty])
-                
+
                 metrics = {"loss": reduced_loss, "kl_penalty": reduced_kl_penalty}
 
                 if validation_step:
                     metrics["images"] = images
                     metrics["captions"] = captions
-                    
+
                 return (
                     loss,
                     metrics,
