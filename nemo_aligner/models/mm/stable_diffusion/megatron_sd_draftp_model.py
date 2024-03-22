@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from typing import Mapping
+
 import numpy as np
 import torch
 import wandb
@@ -22,7 +23,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
 from PIL import Image
 from tqdm import tqdm
-from nemo_aligner.utils.utils import _get_autocast_dtype
+
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
     LatentDiffusion,
@@ -40,6 +41,7 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import configure_batch_sizes, get_iterator_k_split_list
 
 BatchType = Mapping[str, torch.tensor]
+
 
 def calculate_gaussian_kl_penalty_shared_var(curr_eps, init_eps):
 
@@ -170,7 +172,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                 for i in range(batch_size)
             ]
             log_img = [
-                vae_decoder_output[i].float().detach().permute(1,2,0).cpu().numpy() # (C, H, W) -> (H, W, C)
+                vae_decoder_output[i].float().detach().permute(1, 2, 0).cpu().numpy()  # (C, H, W) -> (H, W, C)
                 for i in range(batch_size)
             ]
             return log_img, log_reward, vae_decoder_output
@@ -371,13 +373,13 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
         fwd_bwd_function = get_forward_backward_func()
         losses_reduced_per_micro_batch = fwd_bwd_function(
-                    forward_step_func=self.get_forward_output_and_loss_func(forward_only),
-                    data_iterator=data_iter, 
-                    model=self.model,
-                    num_microbatches=get_num_microbatches(), 
-                    forward_only=forward_only,
-                    seq_length=None,
-                    micro_batch_size=get_micro_batch_size(), 
+            forward_step_func=self.get_forward_output_and_loss_func(forward_only),
+            data_iterator=data_iter,
+            model=self.model,
+            num_microbatches=get_num_microbatches(),
+            forward_only=forward_only,
+            seq_length=None,
+            micro_batch_size=get_micro_batch_size(),
         )
 
         metrics = losses_reduced_per_micro_batch[0]

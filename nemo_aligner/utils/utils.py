@@ -391,6 +391,7 @@ def get_iterator_k_split_list(batch: List[str], num_microbatches: int) -> Iterat
     ]
     return itertools.chain(microbatches)
 
+
 def _get_autocast_dtype(precision: str):
     if precision in ["bf16", "bf16-mixed"]:
         return torch.bfloat16
@@ -399,6 +400,7 @@ def _get_autocast_dtype(precision: str):
     if precision in [16, "16", "16-mixed"]:
         return torch.half
     raise ValueError('precision must be in ["32-true", "16-mixed", "bf16-mixed"]')
+
 
 # this function uses dataclasses.replace to create ShardedTensors/ShardedObjects from torch.Tensor and IOBytes objects
 # based on the TP/PP/DP axis information taken from already existing ShardedTensors/Objects belonging to some input reference parameter
