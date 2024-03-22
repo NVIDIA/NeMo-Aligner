@@ -68,19 +68,29 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_dataset, _ = text_webdataset.build_train_valid_datasets(cfg.model.data, consumed_samples=consumed_samples)
-    train_dataset = [d["captions"] for d in list(train_dataset)]
+    train_ds, _ = text_webdataset.build_train_valid_datasets(cfg.model.data, consumed_samples=consumed_samples)
+    train_ds = [d["captions"] for d in list(train_ds)]
+    validation_ds = train_ds[0:100]
 
     train_dataloader = build_dataloader(
         cfg,
-        dataset=train_dataset,
+        dataset=train_ds,
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
     )
 
-    init_using_ptl(trainer, ptl_model, train_dataloader, train_dataset)
+    val_dataloader = build_dataloader(
+        cfg,
+        dataset=validation_ds,
+        consumed_samples=consumed_samples,
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.global_batch_size,
+        load_gbs=True,
+    )
+
+    init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
 
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
@@ -101,7 +111,7 @@ def main(cfg) -> None:
         optimizer=optimizer,
         scheduler=scheduler,
         train_dataloader=train_dataloader,
-        val_dataloader=[],
+        val_dataloader=val_dataloader,
         test_dataloader=[],
         logger=logger,
         ckpt_callback=ckpt_callback,

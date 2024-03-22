@@ -31,7 +31,12 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm 
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
-from nemo_aligner.utils.train_utils import grad_reductions, prepare_for_training_step
+from nemo_aligner.utils.train_utils import (
+    grad_reductions, 
+    prepare_for_training_step, 
+    finish_validation_step, 
+    prepare_for_validation_step
+)
 from nemo_aligner.utils.utils import configure_batch_sizes, get_iterator_k_split_list
 
 BatchType = Mapping[str, torch.tensor]
@@ -67,6 +72,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         self.eta = self.cfg.infer.get("eta", 0)
         self.autocast_dtype = _get_autocast_dtype(self.cfg.precision)
         # Required by nemo_aligner/utils/train_utils
+        self.initialize_ub = False
         self.model.initialize_ub = False
         self.model.rampup_batch_size = False
         self.model.with_distributed_adam = False
@@ -86,6 +92,25 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
         prepare_for_training_step(self.model, zero_grad=False)
+    
+    def prepare_for_validation_step(self):
+        """things to call to prepare for validation
+        """
+        prepare_for_validation_step(self)
+        gbs = int(self.cfg.global_batch_size) #int(self.cfg.data.validation_ds.global_batch_size)
+        mbs = int(self.cfg.micro_batch_size) #int(self.cfg.data.validation_ds.micro_batch_size)
+        dp_size = int(parallel_state.get_data_parallel_world_size())
+        configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
+
+    def finish_validation_step(self):
+        """things to call to prepare for validation
+        """
+        finish_validation_step(self)
+        # restore the batch sizes for training
+        gbs = int(self.cfg.global_batch_size) #int(self.cfg.data.train_ds.global_batch_size)
+        mbs = int(self.cfg.micro_batch_size) #int(self.cfg.data.train_ds.micro_batch_size)
+        dp_size = int(parallel_state.get_data_parallel_world_size())
+        configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
     @torch.no_grad()
     def generate_log_images(self, latents, batch, model):
@@ -148,7 +173,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                 vae_decoder_output[i].float().detach().permute(1,2,0).cpu().numpy() # (C, H, W) -> (H, W, C)
                 for i in range(batch_size)
             ]
-            return log_img, log_reward
+            return log_img, log_reward, vae_decoder_output
 
     @torch.no_grad()
     def log_visualization(self, prompts):
@@ -166,8 +191,8 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-        image_draft_p, reward_draft_p = self.generate_log_images(latents, prompts, self.model)
-        image_init, reward_init = self.generate_log_images(latents, prompts, self.init_model)
+        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(latents, prompts, self.model)
+        image_init, reward_init, _ = self.generate_log_images(latents, prompts, self.init_model)
 
         images = []
         captions = []
@@ -177,6 +202,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
             captions.append("DRaFT+: " + prompts[i] + ", Reward = " + str(reward_draft_p[i]))
             captions.append("SD: " + prompts[i] + ", Reward = " + str(reward_init[i]))
 
+        return vae_decoder_output_draft_p, images, captions
         self.wandb_logger.loggers[1].log_image(
             key="Inference Images",
             images=[wandb.Image(Image.fromarray(img.round().astype("uint8"))) for img in images],
@@ -299,8 +325,11 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                     ],
                     generator=None,
                 ).to(torch.cuda.current_device())
-
-            output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(batch, latents)
+            
+            if validation_step:
+                output_tensor_draft_p, images, captions = self.log_visualization(batch)
+            else:
+                output_tensor_draft_p, epsilons_draft_p, epsilons_init = self.generate(batch, latents)
 
             # in this nemo version the model and autocast dtypes are not synced
             # so we need to explicitly cast it
@@ -309,7 +338,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
             def loss_func(output_tensor_draft_p):
                 # Loss per micro batch (ub).
-                if self.cfg.kl_coeff == 0.0:
+                if self.cfg.kl_coeff == 0.0 or validation_step:
                     kl_penalty = torch.tensor([0.0]).to(torch.cuda.current_device())
                 else:
                     kl_penalty = calculate_gaussian_kl_penalty_shared_var(epsilons_draft_p, epsilons_init).mean()
@@ -320,10 +349,16 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
                 reduced_kl_penalty = average_losses_across_data_parallel_group([kl_penalty])
+                
+                metrics = {"loss": reduced_loss, "kl_penalty": reduced_kl_penalty}
 
+                if validation_step:
+                    metrics["images"] = images
+                    metrics["captions"] = captions
+                    
                 return (
                     loss,
-                    {"loss": reduced_loss, "kl_penalty": reduced_kl_penalty},
+                    metrics,
                 )
 
             return output_tensor_draft_p, loss_func
@@ -345,11 +380,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                     micro_batch_size=get_micro_batch_size(), 
         )
 
-        if torch.distributed.get_rank() == 0 and len(self.wandb_logger.loggers) > 1:
-            self.log_visualization(batch[0:1])
-
-        metrics = {}
-
+        metrics = losses_reduced_per_micro_batch[0]
         for key in ["loss", "kl_penalty"]:
             if losses_reduced_per_micro_batch:
                 metric_mean = torch.stack(

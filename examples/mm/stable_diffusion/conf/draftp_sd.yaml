@@ -49,8 +49,8 @@ pretrained_checkpoint:
   restore_from_path: null
 
 model:
-  val_check_interval: 0
-  limit_val_batches: 0
+  val_check_interval: 1
+  limit_val_batches: 1
   save_interval: 500
   kl_coeff: 10
   truncation_steps: 1
