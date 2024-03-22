@@ -33,8 +33,9 @@ pretrained_checkpoint:
 
 mcts_data_file: null
 
-server_url: ??  # the rabbitmq server url, e.g. pyamqp://guest@localhost:5672//
-backend_url: rpc://  # the backend server url, e.g. rpc://
+server:
+  host: ??
+  port: ??
 
 dataset:
   name: gsm8k
@@ -55,7 +56,7 @@ model:
     dirichlet_alpha: 0.3 # parameter for dirichlet noise, the piror probability of the action happens 
     max_depth: 500  # maxium depth of the search tree
 
-    save_timer: 13500 # save the intermediate search results at 3 hours and 45 minutes
+    save_timer: 99999999
     cache_dir: null  # cache dir for the search results
 
     top_k: 50

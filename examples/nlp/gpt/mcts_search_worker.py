@@ -17,6 +17,7 @@ import torch.multiprocessing as mp
 from nemo_aligner.data.nlp.datasets import MCTSDataset
 
 mp.set_start_method("spawn", force=True)
+import json
 import os
 import random
 import tempfile
@@ -27,8 +28,8 @@ from pathlib import Path
 from typing import List, Union
 
 import pandas as pd
+import requests
 import torch
-from celery import Celery
 from datasets import load_dataset
 from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf
@@ -94,65 +95,6 @@ def collate_func(batch):
     return new_dict
 
 
-def get_cached_outputs(cache_dir, global_set):
-    """get the cached outputs that we didn't finish, need to make sure the rank actually completes it
-    """
-    dp_rank = parallel_state.get_data_parallel_rank()
-
-    local_batches_to_load = []
-    global_batch_ids = set()
-
-    if cache_dir is None:
-        return local_batches_to_load, global_batch_ids
-
-    to_delete = []
-
-    for p in sorted(Path(cache_dir).glob("*.pt")):
-        batches = list(map(int, p.name.split("_")[0].split("-")))
-        fs_dp_rank = int(p.name.split("_")[2])
-
-        if all(b in global_set for b in batches):
-            to_delete.append(p)
-        elif dp_rank == fs_dp_rank:
-            local_batches_to_load.extend(batches)
-
-        global_batch_ids.update(batches)
-
-    if torch.distributed.get_rank() == 0:
-        print("### DELETING FILES", to_delete)
-        for p in to_delete:
-            p.unlink()
-
-    torch.distributed.barrier()
-
-    return local_batches_to_load, global_batch_ids
-
-
-def get_global_set(local_data_ids):
-    output = [None for _ in range(parallel_state.get_data_parallel_world_size())]
-    torch.distributed.all_gather_object(output, local_data_ids, group=parallel_state.get_data_parallel_group())
-    global_set = set().union(*output)
-
-    return global_set
-
-
-def get_local_iterator(global_set, num_to_load, extra_filters=None):
-    indices = [i for i in range(num_to_load) if i not in global_set]
-
-    if extra_filters is not None:
-        indices = list(filter(lambda x: x not in extra_filters, indices))
-
-    rng = random.Random(len(indices))
-    rng.shuffle(indices)
-
-    # rollout_micro_batch_size
-    indices = torch.as_tensor(indices).tensor_split(parallel_state.get_data_parallel_world_size())[
-        parallel_state.get_data_parallel_rank()
-    ]
-
-    return indices
-
-
 class MCTSSearchOneBatch:
     def __init__(
         self, search_func, collate_func, save_path, dataset, cache_dir,
@@ -178,6 +120,10 @@ class MCTSSearchOneBatch:
         print("###### START", batch_idx)
         batch_file_name = "-".join([str(b) for b in batch_idx])
         batch = self.collate_func([self.dataset[idx] for idx in batch_idx])
+        save_path = os.path.join(self.save_path, f"{batch_file_name}_.pt")
+
+        if os.path.exists(save_path):
+            return
 
         metrics = {}
         self.timer.start("mcts_search_time")
@@ -202,7 +148,6 @@ class MCTSSearchOneBatch:
         print("###### DONE", batch_idx)
 
         print("### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx, "at step", self.step)
-        save_path = os.path.join(self.save_path, f"{batch_file_name}_.pt")
         self.save(save_path)
 
     def save(self, save_path):
@@ -223,35 +168,6 @@ class MCTSSearchOneBatch:
     def load_state_dict(self, state_dict):
         self.data_ids = state_dict["data_ids"]
         self.outputs = state_dict["mcts_outputs"]
-
-
-def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, float, None]):
-    if limit_batches is None:
-        limit_batches = 1.0
-
-    if isinstance(limit_batches, float):
-        limit_batches = int(number_of_batches * limit_batches)
-    elif isinstance(limit_batches, int):
-        limit_batches = min(number_of_batches, limit_batches)
-    else:
-        raise TypeError(f"Invalid data type of {type(limit_batches)} cannot compute limit batches")
-
-    return limit_batches
-
-
-@dataclass
-class DatasetWrapper:
-    ds: torch.utils.data.Dataset
-    template: str
-
-    # just like a dataset but return idx
-    def __getitem__(self, idx):
-        data_item = self.ds[idx]
-        data_item["question"] = self.template.format(prompt=data_item["question"])
-        return {**data_item, "data_id": idx}
-
-    def __len__(self):
-        return len(self.ds)
 
 
 def get_dataset(cfg):
@@ -325,66 +241,37 @@ def main(cfg) -> None:
         has_value=cfg.pretrained_checkpoint.has_value_head,
     )
 
-    # start the worker on the rank
-    start_worker(search_func, collate_func, save_dir, ds, cfg, cfg.server_url, cfg.backend_url)
+    request_obj = json.dumps({"batch_size": cfg.model.mcts.rollout_micro_batch_size})
 
+    while True:
+        broadcast_list = [None]
 
-def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url):
-    if torch.distributed.get_rank() == 0:
-        app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
+        if torch.distributed.get_rank() == 0:
+            batch_idx = requests.put(
+                url=f"http://{cfg.server.host}:{cfg.server.port}/get_idx",
+                data=request_obj,
+                headers={"Content-Type": "application/json"},
+            ).json()
 
-        app.conf.task_acks_late = True
-        app.conf.worker_deduplicate_successful_tasks = True
-        app.conf.worker_prefetch_multiplier = 1
+            broadcast_list = [batch_idx]
 
-        # 5 hrs timeout
-        app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
+        torch.distributed.broadcast_object_list(broadcast_list, 0, device=torch.cuda.current_device())
 
-        @app.task
-        def search_for_batch(batch_idx):
-            batch_size = torch.tensor([len(batch_idx)], dtype=torch.int64).cuda()
-            torch.distributed.broadcast(batch_size, 0)
-            batch_idx = torch.tensor(batch_idx, dtype=torch.int64).cuda()
-            torch.distributed.broadcast(batch_idx, 0)
-            batch_idx = batch_idx.tolist()
-            # braodcast the
-            searcher = MCTSSearchOneBatch(
-                search_func=search_func,
-                collate_func=collate_func,
-                save_path=save_path,
-                dataset=ds,
-                cache_dir=cfg.model.mcts.cache_dir,
-            )
-            searcher.search(batch_idx)
-            return batch_idx
+        batch_idx = broadcast_list[0]
 
-        RAND_ID = os.environ.get("local_rank", random.randint(0, 10000))
-        app.worker_main(
-            [
-                "worker",
-                "--loglevel=INFO",
-                "--concurrency=1",
-                "--pool=threads",
-                "-Ofair",
-                f"--hostname=worker-{RAND_ID}@%%h",
-            ]
+        if len(batch_idx) == 0:
+            print("### NO MORE BATCHES!")
+            return
+
+        searcher = MCTSSearchOneBatch(
+            search_func=search_func,
+            collate_func=collate_func,
+            save_path=save_dir,
+            dataset=ds,
+            cache_dir=cfg.model.mcts.cache_dir,
         )
-    else:
-        while True:
-            batch_size = torch.tensor([0], dtype=torch.int64).cuda()
-            torch.distributed.broadcast(batch_size, 0)
-            batch_size = batch_size.tolist()[0]
-            batch_idx = torch.tensor([0] * batch_size, dtype=torch.int64).cuda()
-            torch.distributed.broadcast(batch_idx, 0)
-            batch_idx = batch_idx.tolist()
-            searcher = MCTSSearchOneBatch(
-                search_func=search_func,
-                collate_func=collate_func,
-                save_path=save_path,
-                dataset=ds,
-                cache_dir=cfg.model.mcts.cache_dir,
-            )
-            searcher.search(batch_idx)
+
+        searcher.search(batch_idx)
 
 
 if __name__ == "__main__":
