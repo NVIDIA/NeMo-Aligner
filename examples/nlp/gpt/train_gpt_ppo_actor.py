@@ -29,6 +29,7 @@ from nemo_aligner.data.nlp.builders import (
 )
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMCriticClient
+from nemo_aligner.servers.http_communicator import close_all_communicators
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -40,7 +41,6 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
-from nemo_aligner.servers.http_communicator import close_all_communicators
 
 """Script to start PPO training"""
 
