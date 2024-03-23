@@ -16,7 +16,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from torchvision.transforms import CenterCrop, Compose, Normalize, Resize
+from torchvision.transforms import CenterCrop, Compose, InterpolationMode, Normalize, Resize
+
 from nemo.collections.multimodal.data.clip.clip_dataset import get_preprocess_fns
 from nemo.collections.multimodal.models.vision_language_foundation.clip.megatron_clip_models import (
     CLIPTextTransformer,
@@ -25,10 +26,8 @@ from nemo.collections.multimodal.models.vision_language_foundation.clip.megatron
 )
 from nemo.collections.multimodal.parts.utils import setup_trainer_and_model_for_inference
 from nemo.collections.nlp.modules.common.megatron.module import MegatronModule
-from torchvision.transforms import InterpolationMode
 
 BICUBIC = InterpolationMode.BICUBIC
-
 
 
 class PickscoreRewardModel(MegatronModule):

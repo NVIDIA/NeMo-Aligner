@@ -17,6 +17,7 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
+
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.core.config import hydra_runner
@@ -36,10 +37,12 @@ from nemo_aligner.utils.train_script_utils import (
     init_peft,
     init_using_ptl,
     retrieve_custom_trainer_state_dict,
-    temp_pop_from_config
+    temp_pop_from_config,
 )
 
 mp.set_start_method("spawn", force=True)
+
+
 def resolve_and_create_trainer(cfg, pop_trainer_key):
     """resolve the cfg, remove the key before constructing the PTL trainer
         and then restore it after
@@ -47,6 +50,7 @@ def resolve_and_create_trainer(cfg, pop_trainer_key):
     OmegaConf.resolve(cfg)
     with temp_pop_from_config(cfg.trainer, pop_trainer_key):
         return MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
+
 
 @hydra_runner(config_path="conf", config_name="draftp_sd")
 def main(cfg) -> None:
@@ -57,8 +61,10 @@ def main(cfg) -> None:
     # TODO: has to be set true for PyTorch 1.12 and later.
     torch.backends.cuda.matmul.allow_tf32 = True
     cfg.model.data.train.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)]
-    cfg.model.data.validation.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)]
-    
+    cfg.model.data.validation.dataset_path = [
+        cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)
+    ]
+
     trainer = resolve_and_create_trainer(cfg, "draftp_sd")
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
@@ -77,7 +83,9 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_ds, validation_ds = text_webdataset.build_train_valid_datasets(cfg.model.data, consumed_samples=consumed_samples)
+    train_ds, validation_ds = text_webdataset.build_train_valid_datasets(
+        cfg.model.data, consumed_samples=consumed_samples
+    )
     train_ds = [d["captions"] for d in list(train_ds)]
     validation_ds = [d["captions"] for d in list(validation_ds)]
 
