@@ -36,7 +36,15 @@ class GSK8KFeedbackDataset(Feedback):
         # this needs to be on a seperate server for anything
         # complicated but for GSM8K this is fine
         response = extract_answer(response)
-        return float(self.sandbox.is_output_correct(response, answer))
+        try:
+            score = float(self.sandbox.is_output_correct(response, answer))
+        except Exception as e:
+            print("############ Inference failed ############")
+            print(answer, response)
+            print(e)
+            score = 0.0
+        finally:
+            return score
 
 
 class GSK8KFeedback(Feedback):
