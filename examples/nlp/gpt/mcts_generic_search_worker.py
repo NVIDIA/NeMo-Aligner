@@ -246,6 +246,7 @@ def main(cfg) -> None:
         score_fn=score_fn,
         inference_only=True,
         has_value=cfg.pretrained_checkpoint.has_value_head,
+        use_cpu=cfg.model.mcts.kv_cache_in_cpu,
     )
 
     # start the worker on the rank

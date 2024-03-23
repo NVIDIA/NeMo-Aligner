@@ -21,8 +21,6 @@ from nemo_aligner.utils.deep_search.mcts.mcts import Node
 class SearchDB:
     def __init__(self):
         self.db = {}
-        # node_id
-        self.node_ids = {}
         self.inference_params = {}
         self.attention_mask = {}
         self.position_ids = {}
@@ -90,6 +88,9 @@ class SearchDB:
             if token not in db:
                 raise ValueError(f"{context_id} not in db")
             db = db[token].children
+        # set parent to None
+        for token in db:
+            db[token].parent = None
         # clean up the cache
         db.clear()
 
@@ -107,7 +108,6 @@ class SearchDB:
 
     def delete(self, session_id):
         del self.db[session_id]
-        self.node_id = 0
         del self.inference_params[session_id]
         del self.attention_mask[session_id]
         del self.position_ids[session_id]
@@ -124,18 +124,32 @@ def _get_trailing_padding(tokens, pad_id):
 
 
 def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchDB, pad_id: int = 0):
-    batched_kv_cache = []
     batched_tokens = []
-    for action, context_id in zip(selected_actions, context_ids):
+    node = search_db.get(session_info, context_ids[0])
+    num_keys = len(node.state.keys())
+    num_batch = len(selected_actions)
+    lengths = [len(action) + len(context_id) for action, context_id in zip(selected_actions, context_ids)]
+    max_length = max(lengths)
+    dtype = node.state[1][0].dtype
+    _, shape1, shape2 = node.state[1][0].shape
+    # create kv cache gpu tensor
+    key_cache_gpu_tensor = torch.zeros(
+        max_length + 1, num_keys, num_batch, shape1, shape2, dtype=dtype, device=torch.cuda.current_device()
+    )
+    value_cache_gpu_tensor = torch.zeros(
+        max_length + 1, num_keys, num_batch, shape1, shape2, dtype=dtype, device=torch.cuda.current_device()
+    )
+    for batch_id, (action, context_id) in enumerate(zip(selected_actions, context_ids)):
         action = action.tolist()
         # reverse the order
         action.reverse()
         node = search_db.get(session_info, context_id)
-        # assert node.action == action
         tokens = []
         tokens.extend(action)
+
         new_kv_cache = {key: [] for key in node.state.keys()}
-        #         while node.parent is not None:
+
+        length = lengths[batch_id] - len(action)
         while True:
             # if node.action is List
             if isinstance(node.action, list):
@@ -146,13 +160,17 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
                 tokens.extend(context_tokens)
             else:
                 tokens.append(node.action)
+
+            # TODO remove it
             for key in node.state.keys():
                 new_kv_cache[key].append(node.state[key])
+
             if node.parent is None:
                 break
             node = node.parent
-        # reverse the tokens order
         tokens.reverse()
+        assert len(tokens) == len(context_id) + len(action)
+
         for key in new_kv_cache.keys():
             list_kv = new_kv_cache[key]
             keys = [item[0] for item in list_kv]
@@ -162,8 +180,10 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
             vals.reverse()
             keys = torch.concatenate(keys, axis=0)
             vals = torch.concatenate(vals, axis=0)
-            new_kv_cache[key] = (keys, vals)
-        batched_kv_cache.append(new_kv_cache)
+            length = keys.shape[0]
+            key_cache_gpu_tensor[:length, key - 1, batch_id] = keys
+            value_cache_gpu_tensor[:length, key - 1, batch_id] = vals
+
         batched_tokens.append(np.array(tokens))
     # get number of trailing padding
     trailing_padding = [_get_trailing_padding(tokens, pad_id) for tokens in batched_tokens]
@@ -187,22 +207,9 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
     min_depth = context_length.min()
     # the minimum tokens that need to be passed in for inference
     tokens = tokens[:, min_depth:]
-    # kv cache padding
-    paddings = max_length - context_length
-    # concat kv cache
+
     output_kv_cache = {}
-    for key in batched_kv_cache[0].keys():
-        keys = []
-        vals = []
-        for item, padding in zip(batched_kv_cache, paddings):
-            padding = padding.item()
-            key_item = item[key][0][:, None, ...]
-            key_item = F.pad(key_item, (0, 0, 0, 0, 0, 0, 0, padding + 1), "constant", 0)
-            keys.append(key_item)
-            value_item = item[key][1][:, None, ...]
-            value_item = F.pad(value_item, (0, 0, 0, 0, 0, 0, 0, padding + 1), "constant", 0)
-            vals.append(value_item)
-        keys = torch.concatenate(keys, axis=1)
-        vals = torch.concatenate(vals, axis=1)
-        output_kv_cache[key] = (keys, vals)
+
+    for key in node.state.keys():
+        output_kv_cache[key] = (key_cache_gpu_tensor[:, key - 1], value_cache_gpu_tensor[:, key - 1])
     return output_kv_cache, tokens
