@@ -392,7 +392,7 @@ class KTOModelDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def encode(self, text, append_eod=False):
+    def encode(self, text, append_eod=False, add_dummy_prefix=True):
         if self.cfg.data.get("apply_ftfy", False):
             import ftfy
 
@@ -413,7 +413,10 @@ class KTOModelDataset(Dataset):
         sample, sample_len = self.encode(
             payload["prompt"] + payload["response"], append_eod=self.cfg.data.get("append_eod", False)
         )
-        preference = payload["preference"]
+        response = sample[prompt_len:]
+        response_len = len(response)
+
+        preference = 1 if payload["preference"] == "chosen" else 0
 
         labels = ([-100] * prompt_len) + sample[prompt_len:]
 
@@ -422,19 +425,20 @@ class KTOModelDataset(Dataset):
         max_curr_seq_len = sample_len
         assert (
             max_curr_seq_len <= self.seq_length
-        ), "tokenized text exceeds max seq len! truncate your data in preprocessing prior to DPO training"
+        ), "tokenized text exceeds max seq len! truncate your data in preprocessing prior to KTO training"
 
-        tokens = torch.nn.functional.pad(
-            torch.LongTensor(sample), (0, max_curr_seq_len - sample_len), mode="constant", value=self.eos_id
-        )
-        labels_tokens = torch.nn.functional.pad(
-            torch.LongTensor(labels), (0, max_curr_seq_len - len(labels)), mode="constant", value=-100
-        )
+        #tokens = torch.nn.functional.pad(
+        #    torch.LongTensor(sample), (0, max_curr_seq_len - sample_len), mode="constant", value=self.eos_id
+        #)
+        #labels_tokens = torch.nn.functional.pad(
+        #    torch.LongTensor(labels), (0, max_curr_seq_len - len(labels)), mode="constant", value=-100
+        #)
 
         output = {
-            "sample": tokens,
+            "prompt_tokens": torch.LongTensor(prompt),
+            "response_tokens": torch.LongTensor(response),
             "sample_length": sample_len,
-            "sample_labels": labels_tokens,
+            "sample_labels": torch.LongTensor(labels),
             "preference": preference,
         }
         return output

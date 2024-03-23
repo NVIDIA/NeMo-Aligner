@@ -332,16 +332,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         chosen_kl, reject_kl = self.split_output_tensor(rewards_kl)
         loss = (
-            (
-                1.0
-                - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0)))
-            ).sum()
-            + (
-                1.0
-                - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards))
-            ).sum()
+            (1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0)))).sum()
+          + (1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards))).sum()
         ) / (chosen_rewards.numel() + reject_rewards.numel())
-
+        
         return loss, chosen_rewards, reject_rewards
 
     def get_loss_and_metrics(self, batch, forward_only):
