@@ -110,7 +110,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             if batch["ref_policy_log_probs"] is not None:
                 ref_logprobs = batch["ref_policy_log_probs"]
 
-            if batch["status"] is not None:
+            if batch["preference"] is not None:
                 preferences = batch["preference"]
 
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
@@ -151,7 +151,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
                 )
 
                 loss, acc_chosen = self.loss_func(
-                    per_token_logps, ref_logprobs, labels[:, 1:], average_log_probs=self.avg_log_probs
+                    per_token_logps, ref_logprobs, labels[:, 1:], preferences, average_log_probs=self.avg_log_probs
                 )
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
@@ -168,8 +168,13 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         return fwd_output_and_loss_func
 
-    def split_output_tensor(self, output_tensor):
+    def split_output_tensor(self, output_tensor, preferences):
+        chosen_idx = torch.where(preferences == 1)[0]
+        rejected_idx = torch.where(preferences == 0)[0]
+        
         chosen_logps, reject_logps = torch.split(output_tensor.float(), len(output_tensor) // 2, dim=0)
+        print(f'{chosen_logps.shape = }\t\t\t{reject_logps.shape = }')
+        asd
         return chosen_logps, reject_logps
 
     def get_reduced_masked_logps(self, logps, labels, average_log_probs=False):
@@ -183,11 +188,11 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         else:
             return (logps * loss_mask).sum(-1)
 
-    def loss_func(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
+    def loss_func(self, pi_logprobs, ref_logprobs, labels, preferences, average_log_probs=False):
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
-        chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards)
+        chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards, preferences)
 
         rewards_kl = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, labels, average_log_probs=True)
 
@@ -329,7 +334,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         local_batch_size, seq_len = global_batch[0].shape
         global_batch_size = local_batch_size * dp_size
 
-        forward_mbs = self.cfg.dpo.log_prob_forward_micro_batch_size
+        forward_mbs = self.cfg.kto.log_prob_forward_micro_batch_size
         forward_mbs_times_dp = forward_mbs * dp_size
 
         data_iter = get_iterator_k_split(global_batch, global_batch_size // forward_mbs_times_dp)
@@ -361,15 +366,14 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         return logprobs
 
-    def get_ref_policy_logprobs(self, list_of_batches):
-        tokens = torch.cat([torch.cat((b["chosen"], b["rejected"]), dim=0) for b in list_of_batches], dim=0)
+    def get_ref_policy_logprobs(self, list_of_batches):        
+        tokens = torch.cat([b["sample"] for b in list_of_batches], dim=0)
         masks = torch.cat(
             [torch.cat((b["attention_mask"], b["attention_mask"]), dim=0) for b in list_of_batches], dim=0
         )
         pos_ids = torch.cat([torch.cat((b["position_ids"], b["position_ids"]), dim=0) for b in list_of_batches], dim=0)
-        labels = torch.cat(
-            [torch.cat((b["chosen_labels"], b["rejected_labels"]), dim=0) for b in list_of_batches], dim=0
-        )
+        labels = torch.cat([b["sample_labels"] for b in list_of_batches], dim=0)
+        print(f'{tokens.shape = }\n{masks.shape = }\n{pos_ids.shape = }\n{labels.shape = }')
         global_batch = [tokens, masks, pos_ids, labels]
         with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             ref_log_probs = self.get_logprob_batch(global_batch)
