@@ -38,7 +38,7 @@ def build_train_valid_datasets(
     )
 
     val_data = None
-    if data_cfg.get("validation") is not None and data_cfg.validation.get("data_path"):
+    if data_cfg.get("validation") is not None and data_cfg.validation.get("dataset_path"):
         val_data = WebDatasetCommon(
             dataset_cfg=data_cfg,
             consumed_samples=consumed_samples,

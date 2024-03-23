@@ -5,6 +5,16 @@ trainer:
   num_nodes: 1
   accelerator: gpu
   precision: bf16
+  
+  draftp_sd:
+
+    val_check_interval: 1
+    limit_val_batches: 1
+    save_interval: 500
+    gradient_clip_val: 10
+    max_epochs: 1 # PTL default. In practice, max_steps will be reached first.
+    max_steps: 1000000
+    
   logger: False # logger provided by exp_manager
   enable_checkpointing: False
   # replace_sampler_ddp: False
@@ -12,7 +22,6 @@ trainer:
   max_steps: 50 # consumed_samples = global_step * micro_batch_size * data_parallel_size * accumulate_grad_batches
   log_every_n_steps: 1
   accumulate_grad_batches: 1 # do not modify, grad acc is automatic for training megatron models
-  gradient_clip_val: 1.0
   benchmark: False
   enable_model_summary: True
   val_check_interval: 20
@@ -49,15 +58,9 @@ pretrained_checkpoint:
   restore_from_path: null
 
 model:
-  val_check_interval: 1
-  limit_val_batches: 1
-  save_interval: 500
-  kl_coeff: 10
-  truncation_steps: 1
-  gradient_clip_val: 1000000
-  max_epochs: 5 # PTL default. In practice, max_steps will be reached first.
-  max_steps: 1000000
   restore_from_path: null 
+  kl_coeff: 1.0
+  truncation_steps: 1
   infer:
     unconditional_guidance_scale: 7.5
     num_images_per_prompt: 1
@@ -209,6 +212,9 @@ model:
       shuffle_data: False
       train:
           dataset_path:
+              - null
+      validation:
+          dataset_path: 
               - null
       webdataset:
           infinite_sampler: False

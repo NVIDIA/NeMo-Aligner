@@ -25,14 +25,10 @@ from nemo.collections.multimodal.models.vision_language_foundation.clip.megatron
 )
 from nemo.collections.multimodal.parts.utils import setup_trainer_and_model_for_inference
 from nemo.collections.nlp.modules.common.megatron.module import MegatronModule
+from torchvision.transforms import InterpolationMode
 
+BICUBIC = InterpolationMode.BICUBIC
 
-try:
-    from torchvision.transforms import InterpolationMode
-
-    BICUBIC = InterpolationMode.BICUBIC
-except ImportError:
-    BICUBIC = Image.BICUBIC
 
 
 class PickscoreRewardModel(MegatronModule):

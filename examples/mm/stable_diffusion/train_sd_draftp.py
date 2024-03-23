@@ -36,10 +36,17 @@ from nemo_aligner.utils.train_script_utils import (
     init_peft,
     init_using_ptl,
     retrieve_custom_trainer_state_dict,
+    temp_pop_from_config
 )
 
 mp.set_start_method("spawn", force=True)
-
+def resolve_and_create_trainer(cfg, pop_trainer_key):
+    """resolve the cfg, remove the key before constructing the PTL trainer
+        and then restore it after
+    """
+    OmegaConf.resolve(cfg)
+    with temp_pop_from_config(cfg.trainer, pop_trainer_key):
+        return MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
 
 @hydra_runner(config_path="conf", config_name="draftp_sd")
 def main(cfg) -> None:
@@ -50,7 +57,9 @@ def main(cfg) -> None:
     # TODO: has to be set true for PyTorch 1.12 and later.
     torch.backends.cuda.matmul.allow_tf32 = True
     cfg.model.data.train.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)]
-    trainer = MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
+    cfg.model.data.validation.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)]
+    
+    trainer = resolve_and_create_trainer(cfg, "draftp_sd")
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
     # Instatiating the model here
@@ -68,9 +77,9 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_ds, _ = text_webdataset.build_train_valid_datasets(cfg.model.data, consumed_samples=consumed_samples)
+    train_ds, validation_ds = text_webdataset.build_train_valid_datasets(cfg.model.data, consumed_samples=consumed_samples)
     train_ds = [d["captions"] for d in list(train_ds)]
-    validation_ds = train_ds[0:100]
+    validation_ds = [d["captions"] for d in list(validation_ds)]
 
     train_dataloader = build_dataloader(
         cfg,
@@ -106,7 +115,7 @@ def main(cfg) -> None:
     timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:12:00:00"))
 
     draft_p_trainer = SupervisedTrainer(
-        cfg=cfg.model,
+        cfg=cfg.trainer.draftp_sd,
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,

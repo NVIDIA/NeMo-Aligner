@@ -13,7 +13,7 @@ For more technical details on the DRaFT+ algorithm, check out our technical blog
 Data Input for running DRaFT+
 #############################
 
-The data for running DRaFT+ should be a ``.tar`` file consisting of plain prompt. You can generate a trafile from a ``.txt``
+The data for running DRaFT+ should be a ``.tar`` file consisting of a plain prompt. You can generate a tarfile from a ``.txt``
 file containing the prompts separated by new lines, such as following format::
 
     prompt1
@@ -64,8 +64,8 @@ you can use the `conversion script <https://github.com/NVIDIA/NeMo/blob/main/exa
 DRaFT+ Training
 ###############
 
-To launch reward model training, you must have a checkpoints for UNet and VAE of a trained Stable Diffusion model
-and a checkpoint for the Reward Model. 
+To launch reward model training, you must have checkpoints for `UNet <https://huggingface.co/runwayml/stable-diffusion-v1-5/tree/main/unet>`__ and 
+`VAE <https://huggingface.co/runwayml/stable-diffusion-v1-5/tree/main/vae>`__ of a trained Stable Diffusion model and a checkpoint for the Reward Model. 
 
 .. tab-set::
 
@@ -92,6 +92,7 @@ and a checkpoint for the Reward Model.
                model.unet_config.from_pretrained=${UNET_CKPT} \
                model.first_stage_config.from_pretrained=${VAE_CKPT} \
                rm.model.restore_from_path=${RM_CKPT} \
+               model.data.trian.webdataset.local_root_path=${TRAIN_DATA_PATH} \
                exp_manager.create_wandb_logger=False \
                exp_manager.explicit_log_dir=/results
 
@@ -113,10 +114,12 @@ and a checkpoint for the Reward Model.
             #SBATCH --overcommit
 
             GPFS="/path/to/nemo-aligner-repo"
-            PRETRAINED_CHECKPOINT_NEMO_FILE="/path/to/megatron_gpt_sft.nemo"
 
-            TRAIN_DATA_PATH="/path/to/train_comparisons.jsonl"
-            VALID_DATA_PATH="/path/to/test_comparisons.jsonl"
+            GPFS="/path/to/nemo-aligner-repo"
+            TRAIN_DATA_PATH="/path/to/train_dataset.tar"
+            UNET_CKPT="/path/to/unet_weights.ckpt"
+            VAE_CKPT="/path/to/vae_weights.bin"
+            RM_CKPT="/path/to/reward_model.nemo"
 
             PROJECT="<<WANDB PROJECT>>"
 
@@ -149,6 +152,7 @@ and a checkpoint for the Reward Model.
                model.unet_config.from_pretrained=${UNET_CKPT} \
                model.first_stage_config.from_pretrained=${VAE_CKPT} \
                rm.model.restore_from_path=${RM_CKPT} \
+               model.data.webdataset.local_root_path=${TRAIN_DATA_PATH} \
                exp_manager.explicit_log_dir=${RESULTS_DIR} \
                exp_manager.create_wandb_logger=True \
                exp_manager.wandb_logger_kwargs.name=${NAME} \
@@ -160,7 +164,7 @@ and a checkpoint for the Reward Model.
 
 
 .. note::
-   Fore more info on DRaFT+ hyperparameters please see the model config file:
+   For more info on DRaFT+ hyperparameters please see the model config file:
    
     ``NeMo-Aligner/examples/mm/stable_diffusion/conf/draftp_sd.yaml``
 

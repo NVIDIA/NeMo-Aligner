@@ -23,7 +23,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
 from PIL import Image
 from tqdm import tqdm
-
+from nemo_aligner.utils.utils import _get_autocast_dtype
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
     LatentDiffusion,
@@ -99,8 +99,8 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         """things to call to prepare for validation
         """
         prepare_for_validation_step(self)
-        gbs = int(self.cfg.global_batch_size) #int(self.cfg.data.validation_ds.global_batch_size)
-        mbs = int(self.cfg.micro_batch_size) #int(self.cfg.data.validation_ds.micro_batch_size)
+        gbs = int(self.cfg.global_batch_size) 
+        mbs = int(self.cfg.micro_batch_size) 
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
@@ -109,8 +109,8 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         """
         finish_validation_step(self)
         # restore the batch sizes for training
-        gbs = int(self.cfg.global_batch_size) #int(self.cfg.data.train_ds.global_batch_size)
-        mbs = int(self.cfg.micro_batch_size) #int(self.cfg.data.train_ds.micro_batch_size)
+        gbs = int(self.cfg.global_batch_size) 
+        mbs = int(self.cfg.micro_batch_size) 
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
@@ -299,13 +299,6 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
             gbs=self.cfg.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
-
-    def onload_adam_states(self):
-        if self.distributed_adam_offload_manager is not None:
-            # load back onto GPU
-            self.distributed_adam_offload_manager.__exit__(None, None, None)
-
-        self.distributed_adam_offload_manager = None
 
     def finish_training(self):
         """no need to offload adam states here
