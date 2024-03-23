@@ -33,10 +33,10 @@ from nemo.collections.nlp.modules.common.megatron.utils import average_losses_ac
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import (
-    grad_reductions, 
-    prepare_for_training_step, 
-    finish_validation_step, 
-    prepare_for_validation_step
+    finish_validation_step,
+    grad_reductions,
+    prepare_for_training_step,
+    prepare_for_validation_step,
 )
 from nemo_aligner.utils.utils import configure_batch_sizes, get_iterator_k_split_list
 
@@ -94,7 +94,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
         prepare_for_training_step(self.model, zero_grad=False)
-    
+
     def prepare_for_validation_step(self):
         """things to call to prepare for validation
         """
@@ -193,7 +193,9 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(latents, prompts, self.model)
+        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(
+            latents, prompts, self.model
+        )
         image_init, reward_init, _ = self.generate_log_images(latents, prompts, self.init_model)
 
         images = []
@@ -320,7 +322,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                     ],
                     generator=None,
                 ).to(torch.cuda.current_device())
-            
+
             if validation_step:
                 output_tensor_draft_p, images, captions = self.log_visualization(batch)
             else:
@@ -344,13 +346,13 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
                 reduced_kl_penalty = average_losses_across_data_parallel_group([kl_penalty])
-                
+
                 metrics = {"loss": reduced_loss, "kl_penalty": reduced_kl_penalty}
 
                 if validation_step:
                     metrics["images"] = images
                     metrics["captions"] = captions
-                    
+
                 return (
                     loss,
                     metrics,
