@@ -427,12 +427,12 @@ class KTOModelDataset(Dataset):
             max_curr_seq_len <= self.seq_length
         ), "tokenized text exceeds max seq len! truncate your data in preprocessing prior to KTO training"
 
-        #tokens = torch.nn.functional.pad(
+        # tokens = torch.nn.functional.pad(
         #    torch.LongTensor(sample), (0, max_curr_seq_len - sample_len), mode="constant", value=self.eos_id
-        #)
-        #labels_tokens = torch.nn.functional.pad(
+        # )
+        # labels_tokens = torch.nn.functional.pad(
         #    torch.LongTensor(labels), (0, max_curr_seq_len - len(labels)), mode="constant", value=-100
-        #)
+        # )
 
         output = {
             "prompt_tokens": torch.LongTensor(prompt),

@@ -173,9 +173,9 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
     def split_output_tensor(self, output_tensor, preferences):
         chosen_idx = torch.where(preferences == 1)[0]
         rejected_idx = torch.where(preferences == 0)[0]
-        
+
         chosen_logps, reject_logps = torch.split(output_tensor.float(), len(output_tensor) // 2, dim=0)
-        print(f'{chosen_logps.shape = }\t\t\t{reject_logps.shape = }')
+        print(f"{chosen_logps.shape = }\t\t\t{reject_logps.shape = }")
         asd
         return chosen_logps, reject_logps
 
@@ -368,14 +368,14 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         return logprobs
 
-    def get_ref_policy_logprobs(self, list_of_batches):        
-        tokens = torch.cat([torch.cat((b["samples"], b["kl_samples"]), dim=0) for b in list_of_batches], dim=0)
+    def get_ref_policy_logprobs(self, list_of_batches):
+        tokens = torch.cat([b["sample"] for b in list_of_batches], dim=0)
         masks = torch.cat(
             [torch.cat((b["attention_mask"], b["attention_mask"]), dim=0) for b in list_of_batches], dim=0
         )
         pos_ids = torch.cat([torch.cat((b["position_ids"], b["position_ids"]), dim=0) for b in list_of_batches], dim=0)
         labels = torch.cat([b["sample_labels"] for b in list_of_batches], dim=0)
-
+        print(f"{tokens.shape = }\n{masks.shape = }\n{pos_ids.shape = }\n{labels.shape = }")
         global_batch = [tokens, masks, pos_ids, labels]
         with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             ref_log_probs = self.get_logprob_batch(global_batch)

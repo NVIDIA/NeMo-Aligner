@@ -32,14 +32,14 @@ from nemo_aligner.utils.utils import clear_memory
 
 
 def kto_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
-    #sample_tokens = [item["sample"] for item in batch]
-    sample_tokens = [torch.cat((item["prompt_tokens"],item["response_tokens"]), dim=0) for item in batch]
+    # sample_tokens = [item["sample"] for item in batch]
+    sample_tokens = [torch.cat((item["prompt_tokens"], item["response_tokens"]), dim=0) for item in batch]
     sample_lengths = torch.LongTensor([item["sample_length"] for item in batch])
     sample_labels = [item["sample_labels"] for item in batch]
     sample_preference = torch.tensor([item["preference"] for item in batch])
-    
+
     batch_size = len(batch)
-    # We estimate the KL divergence term from non-matching prompt-response pairs in the batch. For that purpose, 
+    # We estimate the KL divergence term from non-matching prompt-response pairs in the batch. For that purpose,
     # we build samples by combining the every prompt in the batch with the reponse of the subsequent sample
     indices = list(range(1, batch_size)) + [0]
     kl_sample_tokens = [torch.cat((item["prompt_tokens"], batch[indices[k]]["response_tokens"]), dim=0) for k, item in enumerate(batch)]
