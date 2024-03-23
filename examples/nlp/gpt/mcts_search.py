@@ -384,7 +384,14 @@ def main(cfg) -> None:
         {"dataset_length": len(ds)}, step=0, prefix="data/",
     )
 
-    search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
+    search_func = partial(
+        run_mcts,
+        ptl_model=ptl_model,
+        score_fn=score_fn,
+        inference_only=False,
+        has_value=cfg.pretrained_checkpoint.has_value_head,
+        use_cpu=cfg.model.mcts.kv_cache_in_cpu,
+    )
 
     search_cache_dir = cfg.model.mcts.cache_dir
 
