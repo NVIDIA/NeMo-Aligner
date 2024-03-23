@@ -10,13 +10,13 @@ from nemo_aligner.utils.deep_search.text_generation_strategy import (
 )
 
 
-def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_value=True):
+def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_value=True, use_cpu=False):
     mcts_cfg = ptl_model.cfg.mcts
 
     if has_value:
-        strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
+        strategy = HybridGPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
     else:
-        strategy = GPTSearchTextGenerationStrategy(ptl_model)
+        strategy = GPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
     strategy_args = {"strategy": strategy}
 
     def get_client_fun(model, top_k, max_depth, add_bos_token, **strategy_args):
