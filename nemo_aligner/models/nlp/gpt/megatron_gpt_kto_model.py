@@ -104,8 +104,8 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             if batch["samples"] is not None and batch["kl_samples"] is not None:
                 tokens = torch.cat((batch["samples"], batch["kl_samples"]), dim=0)
 
-            if batch["sample_labels"] is not None:
-                labels = batch["sample_labels"]
+            if batch["sample_labels"] is not None and batch["kl_sample_labels"] is not None:
+                tokens = torch.cat((batch["sample_labels"], batch["kl_sample_labels"]), dim=0)
 
             if batch["ref_policy_log_probs_samples"] is not None and batch["ref_policy_log_probs_kl_samples"] is not None:
                 ref_logprobs = torch.cat(
@@ -217,7 +217,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         return loss, acc_chosen
 
     def get_loss_and_metrics(self, batch, forward_only):
-        seq_length = batch["sample"].shape[1]
+        seq_length = batch["samples"].shape[1]
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
@@ -368,14 +368,14 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         return logprobs
 
-    def get_ref_policy_logprobs(self, list_of_batches):
-        tokens = torch.cat([b["sample"] for b in list_of_batches], dim=0)
+    def get_ref_policy_logprobs(self, list_of_batches):        
+        tokens = torch.cat([torch.cat((b["samples"], b["kl_samples"]), dim=0) for b in list_of_batches], dim=0)
         masks = torch.cat(
             [torch.cat((b["attention_mask"], b["attention_mask"]), dim=0) for b in list_of_batches], dim=0
         )
         pos_ids = torch.cat([torch.cat((b["position_ids"], b["position_ids"]), dim=0) for b in list_of_batches], dim=0)
-        labels = torch.cat([b["sample_labels"] for b in list_of_batches], dim=0)
-        print(f"{tokens.shape = }\n{masks.shape = }\n{pos_ids.shape = }\n{labels.shape = }")
+        labels = torch.cat([torch.cat((b["sample_labels"], b["kl_sample_labels"]), dim=0) for b in list_of_batches], dim=0)
+        
         global_batch = [tokens, masks, pos_ids, labels]
         with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             ref_log_probs = self.get_logprob_batch(global_batch)
