@@ -109,7 +109,10 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             if batch["sample_labels"] is not None and batch["kl_sample_labels"] is not None:
                 labels = torch.cat((batch["sample_labels"], batch["kl_sample_labels"]), dim=0)
 
-            if batch["ref_policy_log_probs_samples"] is not None and batch["ref_policy_log_probs_kl_samples"] is not None:
+            if (
+                batch["ref_policy_log_probs_samples"] is not None
+                and batch["ref_policy_log_probs_kl_samples"] is not None
+            ):
                 ref_logprobs = torch.cat(
                     (batch["ref_policy_log_probs_samples"], batch["ref_policy_log_probs_kl_samples"]), dim=0
                 )
@@ -375,14 +378,16 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         return logprobs
 
-    def get_ref_policy_logprobs(self, list_of_batches):        
+    def get_ref_policy_logprobs(self, list_of_batches):
         tokens = torch.cat([torch.cat((b["samples"], b["kl_samples"]), dim=0) for b in list_of_batches], dim=0)
         masks = torch.cat(
             [torch.cat((b["attention_mask"], b["attention_mask"]), dim=0) for b in list_of_batches], dim=0
         )
         pos_ids = torch.cat([torch.cat((b["position_ids"], b["position_ids"]), dim=0) for b in list_of_batches], dim=0)
-        labels = torch.cat([torch.cat((b["sample_labels"], b["kl_sample_labels"]), dim=0) for b in list_of_batches], dim=0)
-        
+        labels = torch.cat(
+            [torch.cat((b["sample_labels"], b["kl_sample_labels"]), dim=0) for b in list_of_batches], dim=0
+        )
+
         global_batch = [tokens, masks, pos_ids, labels]
         with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             ref_log_probs = self.get_logprob_batch(global_batch)
