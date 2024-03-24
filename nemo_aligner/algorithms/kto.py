@@ -42,12 +42,21 @@ def kto_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
     # We estimate the KL divergence term from non-matching prompt-response pairs in the batch. For that purpose, 
     # we build samples by combining the every prompt in the batch with the reponse of the subsequent sample
     indices = list(range(1, batch_size)) + [0]
-    kl_sample_tokens = []
-    for k, item in enumerate(batch):
-        kl_sample_tokens.append([torch.cat((item["prompt_tokens"], batch[indices[k]]["response_tokens"]), dim=0)])
+    kl_sample_tokens = [torch.cat((item["prompt_tokens"], batch[indices[k]]["response_tokens"]), dim=0) for k, item in enumerate(batch)]
+    all_tokens = sample_tokens + kl_sample_tokens
+    all_tokens = torch.nn.utils.rnn.pad_sequence(all_tokens, batch_first=True, padding_value=eos_id)
 
-    sample_tokens = torch.nn.utils.rnn.pad_sequence(sample_tokens, batch_first=True, padding_value=eos_id)
+    sample_tokens = all_tokens[:batch_size]
+    kl_sample_tokens = all_tokens[batch_size:]
+
+    max_length = sample_tokens.size(1)
     sample_labels = torch.nn.utils.rnn.pad_sequence(sample_labels, batch_first=True, padding_value=-100)
+    
+    # Pad the labels in case kl_sample_tokens contains a longer sequence than sample_tokens
+    sample_labels = torch.cat(
+        [sample_labels, torch.full((batch_size, max_length - sample_labels.size(1)), -100, dtype=torch.long)],
+        dim=1
+    )
 
     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
         sample_tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
@@ -59,7 +68,8 @@ def kto_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
 
     output = {
-        "sample": sample_tokens,
+        "samples": sample_tokens,
+        "kl_samples": kl_sample_tokens,
         "sample_length": sample_lengths,
         "sample_labels": sample_labels,
         "attention_mask": attention_mask,
@@ -115,9 +125,11 @@ class KTOTrainer(DPOTrainer):
                 logprobs = self.model.get_ref_policy_logprobs(buffer).cpu()
                 start = 0
                 for batch in buffer:
-                    batch_size = len(batch["sample"])
-                    batch[f"ref_policy_log_probs"] = logprobs[start : start + batch_size]
-                    start += batch_size
+                    batch_size = len(batch["samples"])
+                    assert len(batch["kl_samples"]) == batch_size
+                    for key in ("samples", "kl_samples"):
+                        batch[f"ref_policy_log_probs_{key}"] = logprobs[start : start + batch_size]
+                        start += batch_size
                     yield batch
                 buffer.clear()
                 del logprobs
