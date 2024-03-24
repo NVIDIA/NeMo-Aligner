@@ -181,32 +181,44 @@ def get_kv_cache(selected_actions, session_info, context_ids, search_db: SearchD
             keys = torch.concatenate(keys, axis=0)
             vals = torch.concatenate(vals, axis=0)
             length = keys.shape[0]
-            key_cache_gpu_tensor[:length, key - 1, batch_id] = keys
-            value_cache_gpu_tensor[:length, key - 1, batch_id] = vals
+            action_len = len(action)
+            key_cache_gpu_tensor[-1-length-action_len:-1-action_len, key - 1, batch_id] = keys
+            value_cache_gpu_tensor[-1-length-action_len:-1-action_len, key - 1, batch_id] = vals
 
         batched_tokens.append(np.array(tokens))
+    # do the padding for the contexts 
+    context_lengths = [len(context_id) for context_id in context_ids]
+    max_context_length = max(context_lengths)
+    paddings = [max_context_length - length for length in context_lengths]
+    
     # get number of trailing padding
     trailing_padding = [_get_trailing_padding(tokens, pad_id) for tokens in batched_tokens]
     tokens_nums = [len(tokens) for tokens in batched_tokens]
     no_padding_length = [i - j for i, j in zip(tokens_nums, trailing_padding)]
 
-    paddings = max(no_padding_length) - np.array(no_padding_length)
+    # paddings = max(no_padding_length) - np.array(no_padding_length)
     token_list = []
+    t_length = []
     for token, padding, no_padding in zip(batched_tokens, paddings, no_padding_length):
-        padding = padding.item()
-        token = np.pad(token[0:no_padding], ((0, padding),), "constant", constant_values=pad_id)
+        token = np.pad(token[0:no_padding], ((padding, 0),), "constant", constant_values=pad_id)
+        t_length.append(len(token))
         token_list.append(token)
+    # do the trail padding
+    trail_padding = [max(t_length) - length for length in t_length]
+    token_list = [np.pad(token, ((0, padding),), "constant", constant_values=pad_id) for token, padding in zip(token_list, trail_padding)]
     # all the tokens should have the same length, including context and padding
     tokens = np.stack(token_list, axis=0)
     # find the maximum length
     max_length = tokens.shape[1]
 
     # the context length
-    context_length = np.array([len(c) for c in context_ids])
-    # find out the minimum context length within the batch
-    min_depth = context_length.min()
-    # the minimum tokens that need to be passed in for inference
-    tokens = tokens[:, min_depth:]
+    # context_length = np.array([len(c) for c in context_ids])
+    # # find out the minimum context length within the batch
+    # min_depth = context_length.min()
+    # # the minimum tokens that need to be passed in for inference
+    # tokens = tokens[:, min_depth:]
+
+    tokens = tokens[:, max_context_length:]
 
     output_kv_cache = {}
 

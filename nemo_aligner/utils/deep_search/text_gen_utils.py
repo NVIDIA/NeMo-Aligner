@@ -389,8 +389,8 @@ def sample_sequence_batch(
         tokens = context_tokens
 
         token_to_generate = 1
-        if true_context_length is not None:
-            new_context_lengths = true_context_length - true_context_length.min()
+        if not init:
+            new_context_lengths = torch.cuda.IntTensor([0] * batch_size)
             token_to_generate = (token_len - new_context_lengths).min().item()
 
         maxlen = token_to_generate + context_lengths.max().item()
@@ -413,7 +413,7 @@ def sample_sequence_batch(
         update_pos = torch.cuda.IntTensor(update_pos)
 
         batch, tensor_shape = inference_strategy.prepare_batch(
-            tokens, micro_batch_size, init, session_info, true_context_length
+            tokens, micro_batch_size, init, session_info
         )
         output = inference_strategy.forward_step(batch, tensor_shape, session_info)
 
@@ -481,7 +481,7 @@ def sample_sequence_batch(
                 session_info,
                 context_ids,
                 batch_size,
-                true_context_length - 1,
+                true_context_length,
                 parent_nodes,
                 action_taken,
                 output_policy,

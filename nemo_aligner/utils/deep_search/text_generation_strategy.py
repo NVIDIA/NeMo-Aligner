@@ -370,7 +370,6 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         micro_batch_size: int,
         init: bool = False,
         session_info: str = None,
-        true_context_lengths: torch.Tensor = None,
     ) -> Tuple[List[torch.Tensor], List[int]]:
         """
         generate the batch used in inference for each of the steps
@@ -382,7 +381,9 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             positions2use = self.search_db.get_position_ids(session_info)[..., :maxlen]
         else:
             maxlen = maxlen - 1
-            minlen = true_context_lengths.min().item()  # the last token is not yet computed,
+            # minlen = true_context_lengths.min().item()  # the last token is not yet computed,
+            inference_params = self.get_inference_params(session_info)
+            minlen = inference_params.sequence_len_offset + 1
             attention_mask_3d = self.search_db.get_attention_mask(session_info)[
                 ..., : minlen + maxlen, : minlen + maxlen
             ]
@@ -393,7 +394,6 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                 # repeate the position ids
                 positions2use = positions2use[0:1, ...].repeat(micro_batch_size, 1)
             positions2use = positions2use.view(micro_batch_size, -1)
-            inference_params = self.get_inference_params(session_info)
             assert inference_params.sequence_len_offset == minlen - 1
         batch = [tokens2use, attention_mask_3d, positions2use]
         tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
@@ -408,10 +408,12 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         updated_kv_cache, tokens = get_kv_cache(actions, session_info, context_ids, self.search_db, pad_id)
         tokens = torch.cuda.LongTensor(tokens)
         batch_size, token_len = tokens.shape
-        true_context_lengths = torch.cuda.IntTensor([len(c) + 1 for c in context_ids])
-        new_context_lengths = true_context_lengths - true_context_lengths.min()
-        max_len = true_context_lengths.max().item()
-        token_to_generate = (token_len - new_context_lengths).min().item()
+        token_to_generate = [len(a) for a in actions]
+        token_to_generate = max(token_to_generate)
+        new_context_lengths = torch.cuda.IntTensor([0] * batch_size)
+        true_context_lengths = torch.cuda.IntTensor([len(c) for c in context_ids])
+        max_len = true_context_lengths.max().item() + 1
+        # token_to_generate = (token_len - new_context_lengths).min().item()
         inference = InferenceParams(max_batch_size=batch_size, max_sequence_length=max_len + token_to_generate)
         inference.sequence_len_offset = max_len + token_to_generate - 1 - token_len
         inference.key_value_memory_dict = updated_kv_cache
