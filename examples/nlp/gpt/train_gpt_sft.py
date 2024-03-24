@@ -51,7 +51,17 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
     OmegaConf.set_struct(gpt_cfg, True)
     OmegaConf.resolve(cfg)
     with open_dict(gpt_cfg):
+
+        gpt_cfg.embedmix = cfg.model.get("embedmix", False)
+        gpt_cfg.embedmix_subset_p = cfg.model.get("embedmix_subset_p", 0.0)
+        gpt_cfg.embedmix_tokens_p = cfg.model.get("embedmix_tokens_p", 0.0)
+        gpt_cfg.embedmix_embed_p = cfg.model.get("embedmix_embed_p", 0.0)
+        gpt_cfg.embedmix_type = cfg.model.get("embedmix_type", None)
+        gpt_cfg.embedmix_alpha = cfg.model.get("embedmix_alpha", 0.5)
+
+
         gpt_cfg.neft_reimplement = cfg.model.get("neft_reimplement", False)
+
         gpt_cfg.cre_adversarial_training = cfg.model.get("cre_adversarial_training", False)
         gpt_cfg.creat_init_var = cfg.model.get("creat_init_var", 1e-2)
         gpt_cfg.creat_num_adv_steps = cfg.model.get("creat_num_adv_steps", 2)
