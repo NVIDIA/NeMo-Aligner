@@ -42,7 +42,9 @@ def kto_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
     # We estimate the KL divergence term from non-matching prompt-response pairs in the batch. For that purpose,
     # we build samples by combining the every prompt in the batch with the reponse of the subsequent sample
     indices = list(range(1, batch_size)) + [0]
-    kl_sample_tokens = [torch.cat((item["prompt_tokens"], batch[indices[k]]["response_tokens"]), dim=0) for k, item in enumerate(batch)]
+    kl_sample_tokens = [
+        torch.cat((item["prompt_tokens"], batch[indices[k]]["response_tokens"]), dim=0) for k, item in enumerate(batch)
+    ]
     all_tokens = sample_tokens + kl_sample_tokens
     all_tokens = torch.nn.utils.rnn.pad_sequence(all_tokens, batch_first=True, padding_value=eos_id)
 
@@ -51,11 +53,10 @@ def kto_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
 
     max_length = sample_tokens.size(1)
     sample_labels = torch.nn.utils.rnn.pad_sequence(sample_labels, batch_first=True, padding_value=-100)
-    
+
     # Pad the labels in case kl_sample_tokens contains a longer sequence than sample_tokens
     sample_labels = torch.cat(
-        [sample_labels, torch.full((batch_size, max_length - sample_labels.size(1)), -100, dtype=torch.long)],
-        dim=1
+        [sample_labels, torch.full((batch_size, max_length - sample_labels.size(1)), -100, dtype=torch.long)], dim=1
     )
 
     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
