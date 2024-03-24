@@ -59,7 +59,6 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         gpt_cfg.embedmix_type = cfg.model.get("embedmix_type", None)
         gpt_cfg.embedmix_alpha = cfg.model.get("embedmix_alpha", 0.5)
 
-
         gpt_cfg.neft_reimplement = cfg.model.get("neft_reimplement", False)
 
         gpt_cfg.cre_adversarial_training = cfg.model.get("cre_adversarial_training", False)
