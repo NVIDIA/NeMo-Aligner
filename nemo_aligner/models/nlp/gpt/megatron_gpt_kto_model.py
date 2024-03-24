@@ -101,14 +101,16 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
             tokens, labels, ref_logprobs = None, None, None
-            if batch["sample"] is not None:
-                tokens = batch["sample"]
+            if batch["samples"] is not None and batch["kl_samples"] is not None:
+                tokens = torch.cat((batch["samples"], batch["kl_samples"]), dim=0)
 
             if batch["sample_labels"] is not None:
                 labels = batch["sample_labels"]
 
-            if batch["ref_policy_log_probs"] is not None:
-                ref_logprobs = batch["ref_policy_log_probs"]
+            if batch["ref_policy_log_probs_samples"] is not None and batch["ref_policy_log_probs_kl_samples"] is not None:
+                ref_logprobs = torch.cat(
+                    (batch["ref_policy_log_probs_samples"], batch["ref_policy_log_probs_kl_samples"]), dim=0
+                )
 
             if batch["preference"] is not None:
                 preferences = batch["preference"]
@@ -367,13 +369,13 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         return logprobs
 
     def get_ref_policy_logprobs(self, list_of_batches):        
-        tokens = torch.cat([b["sample"] for b in list_of_batches], dim=0)
+        tokens = torch.cat([torch.cat((b["samples"], b["kl_samples"]), dim=0) for b in list_of_batches], dim=0)
         masks = torch.cat(
             [torch.cat((b["attention_mask"], b["attention_mask"]), dim=0) for b in list_of_batches], dim=0
         )
         pos_ids = torch.cat([torch.cat((b["position_ids"], b["position_ids"]), dim=0) for b in list_of_batches], dim=0)
         labels = torch.cat([b["sample_labels"] for b in list_of_batches], dim=0)
-        print(f'{tokens.shape = }\n{masks.shape = }\n{pos_ids.shape = }\n{labels.shape = }')
+
         global_batch = [tokens, masks, pos_ids, labels]
         with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             ref_log_probs = self.get_logprob_batch(global_batch)
