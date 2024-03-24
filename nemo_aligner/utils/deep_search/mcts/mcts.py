@@ -131,7 +131,7 @@ class Node:
 
     def get_ucb(self, child, C):
         if child.visit_count == 0:
-            q_value = child.prior  # # use prior as initial value
+            q_value = 0.0
         else:
             q_value = child.value_sum / child.visit_count  # assume the q_value is probability of winning
         return q_value + C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
@@ -385,7 +385,7 @@ class MCTSParallel:
                 else:
                     value_head_output = node.prior
                 if self.args["turn_off_value"]:
-                    value_head_output = node.prior
+                    value_head_output = 0.0
 
                 if isinstance(node, tuple):
                     # if the node is a tuple, then it means the node is terminal
