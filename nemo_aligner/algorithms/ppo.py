@@ -392,7 +392,7 @@ class PPOTrainer:
             rollout_batch = self.model.infer(batch)
             rollout_batches.append(rollout_batch)
 
-            futures.append(self.rm_critic.infer_rm_critic(rollout_batch, use_trtllm_reshard=self.use_trtllm_reshard))
+            # futures.append(self.rm_critic.infer_rm_critic(rollout_batch, use_trtllm_reshard=self.use_trtllm_reshard))
 
             start_time = time.time()
             idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
@@ -404,7 +404,11 @@ class PPOTrainer:
         stacked_rollout_batch = self.stack_rollout_batches(rollout_batches)
         print("#### BEFORE FIRST REBALANCE DP", torch.distributed.get_rank())
         local_rollout_batch = rebalance_dp(stacked_rollout_batch, self.step, self.use_trtllm_reshard)
-        print("#### AFTER FIRST REBALANCE DP", torch.distributed.get_rank(), {k:v.shape for k,v in local_rollout_batch.items()})
+        print(
+            "#### AFTER FIRST REBALANCE DP",
+            torch.distributed.get_rank(),
+            {k: v.shape for k, v in local_rollout_batch.items()},
+        )
         del stacked_rollout_batch
 
         batched_response_tokens = local_rollout_batch["response_tokens"]
@@ -426,20 +430,23 @@ class PPOTrainer:
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
         self.timer.start("critic_wait")
-        rm_value_rollout_batches = []
-        for future in futures:
-            print("#### BEFORE FUTURE", torch.distributed.get_rank())
-            rewards, values = future.result(self.use_trtllm_reshard) if isinstance(future, FutureResult) else future
-            print("#### AFTER FUTURE", torch.distributed.get_rank())
-            rm_value_rollout_batches.append({"rewards": rewards, "values": values})
+        # rm_value_rollout_batches = []
+        # for future in futures:
+        # print("#### BEFORE FUTURE", torch.distributed.get_rank())
+        # rewards, values = future.result(self.use_trtllm_reshard) if isinstance(future, FutureResult) else future
+        # print("#### AFTER FUTURE", torch.distributed.get_rank())
+        # rm_value_rollout_batches.append({"rewards": rewards, "values": values})
         timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
-
-        rm_value_rollout_batches = self.stack_rollout_batches(rm_value_rollout_batches)
+        local_rollout_batch["values"] = torch.randn_like(local_rollout_batch["logprobs"])
+        local_rollout_batch["rewards"] = torch.randn(
+            local_rollout_batch["logprobs"].size(0), device=torch.cuda.current_device(), dtype=torch.float32
+        )
+        # rm_value_rollout_batches = self.stack_rollout_batches(rm_value_rollout_batches)
         # TODO: does this reshard into the same stuff?
-        print("#### BEFORE FIRST REBALANCE", torch.distributed.get_rank())
-        rm_value_rollout_batches = rebalance_dp(rm_value_rollout_batches, self.step, self.use_trtllm_reshard)
-        print("#### AFTER FIRST REBALANCE", torch.distributed.get_rank())
-        local_rollout_batch.update(rm_value_rollout_batches)
+        # print("#### BEFORE FIRST REBALANCE", torch.distributed.get_rank())
+        # rm_value_rollout_batches = rebalance_dp(rm_value_rollout_batches, self.step, self.use_trtllm_reshard)
+        # print("#### AFTER FIRST REBALANCE", torch.distributed.get_rank())
+        # local_rollout_batch.update(rm_value_rollout_batches)
 
         # TODO: can rewrite the compute metrics
         rollout_batches = [local_rollout_batch]
@@ -619,7 +626,7 @@ class PPOTrainer:
 
                 # send critic train
                 start_time = time.time()
-                self.rm_critic.train(ppo_rollout_data)
+                # self.rm_critic.train(ppo_rollout_data)
                 end_time = time.time()
                 print("### CRITIC TRAIN TIME", end_time - start_time)
 
@@ -644,7 +651,11 @@ class PPOTrainer:
                 )
 
                 rollout_size = ppo_rollout_data["response_tokens"].size(0)
-                print("### PPO ROLLOUT DATA", torch.distributed.get_rank(), {k:v.shape for k,v in ppo_rollout_data.items()})
+                print(
+                    "### PPO ROLLOUT DATA",
+                    torch.distributed.get_rank(),
+                    {k: v.shape for k, v in ppo_rollout_data.items()},
+                )
                 rollout_dataloader_iter = get_iterator_k_split(
                     ppo_rollout_data, divide(rollout_size, num_to_load_on_each_dp)
                 )
@@ -682,7 +693,6 @@ class PPOTrainer:
                     self.logger.log_table("table/val_rollouts", dataframe=self.val_df, step=self.step)
 
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
-
 
                 step_metrics.update(timing_metrics)
                 step_metrics.update({f"train_{k}": v for k, v in metrics.items()})
@@ -732,7 +742,7 @@ class PPOTrainer:
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
-        future = self.rm_critic.save()
+        # future = self.rm_critic.save()
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
