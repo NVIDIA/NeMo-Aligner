@@ -207,7 +207,13 @@ class SPINTrainer:
         # errors inside model.generate()
         adj_generation_length = min(self.max_gen_seq_len, self.model.cfg.encoder_seq_length - batch_max_length)
 
-        prompt_tokens = torch.cat([batch_pad_to_fixed_len(b["prompts_only"], max_possible_length, pad_token=self.model.tokenizer.eos_id) for b in list_of_batches], dim=0)
+        prompt_tokens = torch.cat(
+            [
+                batch_pad_to_fixed_len(b["prompts_only"], max_possible_length, pad_token=self.model.tokenizer.eos_id)
+                for b in list_of_batches
+            ],
+            dim=0,
+        )
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
 
@@ -420,28 +426,28 @@ class SPINTrainer:
                 ):
                     # Generation happens on GPU but the returned tensors are on CPU.
                     gen_tokens_buf, gen_lengths_buf = self.get_generations(buffer)
-                
+
                 start = 0
                 for batch in buffer:
                     batch_size = len(batch["prompts_and_answers"])
-                    
+
                     gen_tokens = gen_tokens_buf[start : start + batch_size]
                     gen_lengths = gen_lengths_buf[start : start + batch_size]
-                    
+
                     act_tokens = batch["prompts_and_answers"]
                     act_lengths = batch["combined_lengths"]
                     max_batch_len = max(act_tokens.shape[1], gen_tokens.shape[1])
-    
+
                     act_tokens_pad = batch_pad_to_fixed_len(
                         act_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id
                     )
                     gen_tokens_pad = batch_pad_to_fixed_len(
                         gen_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id
                     )
-    
+
                     act_mask = create_mask(act_tokens_pad, batch["prompt_lengths"], act_lengths)
                     gen_mask = create_mask(gen_tokens_pad, batch["prompt_lengths"], gen_lengths)
-    
+
                     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
                         act_tokens_pad,
                         self.model.tokenizer.eos_id,
@@ -456,7 +462,7 @@ class SPINTrainer:
                         attention_mask = attention_mask.repeat(
                             len(act_tokens_pad), *((1,) * (len(attention_mask.shape) - 1))
                         )
-    
+
                     new_batch = {}
                     new_batch["actual"] = act_tokens_pad
                     new_batch["generated"] = gen_tokens_pad
@@ -464,20 +470,19 @@ class SPINTrainer:
                     new_batch["position_ids"] = position_ids
                     new_batch["actual_mask"] = act_mask
                     new_batch["generated_mask"] = gen_mask
-    
+
                     logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
                     act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
-    
+
                     new_batch["ref_policy_log_probs_actual"] = act_logps
                     new_batch["ref_policy_log_probs_generated"] = gen_logps
 
                     start += batch_size
-                    
+
                     yield new_batch
 
                 buffer.clear()
                 del logprobs, act_logps, gen_logps, new_batch
-
 
     @property
     def epoch(self):
