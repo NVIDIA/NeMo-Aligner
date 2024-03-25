@@ -478,11 +478,11 @@ class SPINTrainer:
                     new_batch["ref_policy_log_probs_generated"] = gen_logps
 
                     start += batch_size
+                    del logprobs, act_logps, gen_logps, new_batch
 
                     yield new_batch
 
                 buffer.clear()
-                del logprobs, act_logps, gen_logps, new_batch
 
     @property
     def epoch(self):
