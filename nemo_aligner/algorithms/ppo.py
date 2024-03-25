@@ -363,14 +363,18 @@ class PPOTrainer:
         timer_metrics = {}
 
         self.timer.start("rollout_init")
+        print("#### BEFORE ID SYNC", torch.distributed.get_rank())
         ids = [item[1]["idx"] for item in zip(range(num_microbatches), dataloader_iter)]
         local_ids = set(itertools.chain.from_iterable(ids))
         global_ids = get_global_set(local_ids)
+        print("#### AFTER ID SYNC", torch.distributed.get_rank(), len(global_ids))
 
         if torch.distributed.get_rank() == 0:
             set_idx(global_ids)
 
+        print("#### BEFORE BARRIER", torch.distributed.get_rank())
         torch.distributed.barrier()
+        print("#### AFTER BARRIER", torch.distributed.get_rank())
         timer_metrics["rollout_init"] = self.timer.stop_and_get_time("rollout_init")
 
         self.timer.start("first_request")
@@ -398,33 +402,43 @@ class PPOTrainer:
         timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
         stacked_rollout_batch = self.stack_rollout_batches(rollout_batches)
+        print("#### BEFORE FIRST REBALANCE DP", torch.distributed.get_rank())
         local_rollout_batch = rebalance_dp(stacked_rollout_batch, self.step, self.use_trtllm_reshard)
+        print("#### AFTER FIRST REBALANCE DP", torch.distributed.get_rank(), {k:v.shape for k,v in local_rollout_batch.items()})
         del stacked_rollout_batch
 
         batched_response_tokens = local_rollout_batch["response_tokens"]
 
         self.timer.start("logprobs")
+        print("#### BEFORE LOG PROBS", torch.distributed.get_rank())
         rollout_logprobs = self.model.get_logprobs(batched_response_tokens)
+        print("#### AFTER LOG PROBS", torch.distributed.get_rank())
         local_rollout_batch["logprobs"] = rollout_logprobs
         timer_metrics["logprobs"] = self.timer.stop_and_get_time("logprobs")
 
         compute_init_policy_kl = not is_validation and self.compute_init_policy_kl
         if compute_init_policy_kl:
             self.timer.start("init_logprobs")
+            print("#### BEFORE INIT LOG PROBS", torch.distributed.get_rank())
             rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens)
+            print("#### AFTER INIT LOG PROBS", torch.distributed.get_rank())
             local_rollout_batch["init_logprobs"] = rollout_init_logprobs
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
         self.timer.start("critic_wait")
         rm_value_rollout_batches = []
         for future in futures:
+            print("#### BEFORE FUTURE", torch.distributed.get_rank())
             rewards, values = future.result(self.use_trtllm_reshard) if isinstance(future, FutureResult) else future
+            print("#### AFTER FUTURE", torch.distributed.get_rank())
             rm_value_rollout_batches.append({"rewards": rewards, "values": values})
         timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
 
         rm_value_rollout_batches = self.stack_rollout_batches(rm_value_rollout_batches)
         # TODO: does this reshard into the same stuff?
+        print("#### BEFORE FIRST REBALANCE", torch.distributed.get_rank())
         rm_value_rollout_batches = rebalance_dp(rm_value_rollout_batches, self.step, self.use_trtllm_reshard)
+        print("#### AFTER FIRST REBALANCE", torch.distributed.get_rank())
         local_rollout_batch.update(rm_value_rollout_batches)
 
         # TODO: can rewrite the compute metrics
@@ -609,7 +623,9 @@ class PPOTrainer:
                 end_time = time.time()
                 print("### CRITIC TRAIN TIME", end_time - start_time)
 
+                print("### BEFORE SYNC TIMING", torch.distributed.get_rank())
                 timer_metrics = global_max_timer_metrics(timer_metrics)
+                print("### AFTER SYNC TIMING", torch.distributed.get_rank())
                 timing_metrics.update(timer_metrics)
 
                 # logging
@@ -628,15 +644,20 @@ class PPOTrainer:
                 )
 
                 rollout_size = ppo_rollout_data["response_tokens"].size(0)
+                print("### PPO ROLLOUT DATA", torch.distributed.get_rank(), {k:v.shape for k,v in ppo_rollout_data.items()})
                 rollout_dataloader_iter = get_iterator_k_split(
                     ppo_rollout_data, divide(rollout_size, num_to_load_on_each_dp)
                 )
                 # start training
                 clear_memory()
                 self.timer.start("train_time")
+                print("### BEFORE TRAIN", torch.distributed.get_rank())
                 self.run_training(rollout_dataloader_iter)
+                print("### AFTER TRAIN", torch.distributed.get_rank())
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
+
+                self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
 
                 self.step += 1
 
@@ -662,7 +683,6 @@ class PPOTrainer:
 
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
-                self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
 
                 step_metrics.update(timing_metrics)
                 step_metrics.update({f"train_{k}": v for k, v in metrics.items()})
