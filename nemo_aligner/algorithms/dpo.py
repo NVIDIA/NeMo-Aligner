@@ -316,7 +316,7 @@ class DPOTrainer:
                 chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
                 batch["ref_policy_log_probs_chosen"] = chosen_logps
                 batch["ref_policy_log_probs_rejected"] = reject_logps
-                
+
                 yield batch
                 del logprobs, chosen_logps, reject_logps
             except StopIteration:
