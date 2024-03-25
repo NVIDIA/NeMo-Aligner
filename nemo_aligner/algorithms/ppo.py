@@ -378,6 +378,10 @@ class PPOTrainer:
         timer_metrics["first_request"] = self.timer.stop_and_get_time("first_request")
 
         self.timer.start("generate")
+
+        rm_value_rollout_batches = []
+        critic_wait = []
+
         while len(idx) > 0:
             idx = idx[0]
             batch = dataloader_iter._dataset[idx]
@@ -388,7 +392,14 @@ class PPOTrainer:
             rollout_batch = self.model.infer(batch)
             rollout_batches.append(rollout_batch)
 
-            futures.append(self.rm_critic.infer_rm_critic(rollout_batch, use_trtllm_reshard=self.use_trtllm_reshard))
+            start_time = time.time()
+            future = self.rm_critic.infer_rm_critic(rollout_batch, use_trtllm_reshard=self.use_trtllm_reshard)
+            rewards, values = future.result(self.use_trtllm_reshard) if isinstance(future, FutureResult) else future
+            rm_value_rollout_batches.append({"rewards": rewards, "values": values})
+            end_time = time.time()
+            duration = end_time - start_time
+            print("### CRITIC DURATION", duration)
+            critic_wait.append(duration)
 
             start_time = time.time()
             idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
@@ -396,6 +407,7 @@ class PPOTrainer:
             print("### REQUEST TOOK", end_time - start_time)
 
         timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
+        timer_metrics["critic_wait"] = sum(critic_wait)
 
         stacked_rollout_batch = self.stack_rollout_batches(rollout_batches)
         local_rollout_batch = rebalance_dp(stacked_rollout_batch, self.step, self.use_trtllm_reshard)
@@ -415,12 +427,11 @@ class PPOTrainer:
             local_rollout_batch["init_logprobs"] = rollout_init_logprobs
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
-        self.timer.start("critic_wait")
-        rm_value_rollout_batches = []
-        for future in futures:
-            rewards, values = future.result(self.use_trtllm_reshard) if isinstance(future, FutureResult) else future
-            rm_value_rollout_batches.append({"rewards": rewards, "values": values})
-        timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
+        # self.timer.start("critic_wait")
+        # rm_value_rollout_batches = []
+        # for future in futures:
+        # rewards, values = future.result(self.use_trtllm_reshard) if isinstance(future, FutureResult) else future
+        # rm_value_rollout_batches.append({"rewards": rewards, "values": values})
 
         rm_value_rollout_batches = self.stack_rollout_batches(rm_value_rollout_batches)
         # TODO: does this reshard into the same stuff?
@@ -605,7 +616,14 @@ class PPOTrainer:
 
                 # send critic train
                 start_time = time.time()
-                self.rm_critic.train(ppo_rollout_data)
+                future = self.rm_critic.train(ppo_rollout_data)
+
+                print("### before FUTURE SYNC")
+                if future is not None:
+                    future.result()
+
+                torch.distributed.barrier()
+                print("### after FUTURE SYNC")
                 end_time = time.time()
                 print("### CRITIC TRAIN TIME", end_time - start_time)
 
