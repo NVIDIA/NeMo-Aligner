@@ -24,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Added the ability to do multi-epoch (cfg.max_epochs > 1) training for reward models, DPO, PPO, and SFT
 - Added the SPIN (Self-Play Fine Tuning) algorithm (https://arxiv.org/abs/2401.01335) which allows SPIN SFT training using SFT-format dataset files
 - SFT/SteerLM: added LoRA tuning as an option besides full fine-tuning, only attention_qkv layer is supported
+- SPIN: added `generation_batch_size` parameter which allows users to set the batch size for doing generation during SPIN training.
+        previously the generation batch size was automatically set to the data parallel size (DP) of the model
 
 ### Breaking changes
 - We have changed the shuffle logic in the data sampler to support multi-epoch training, so training runs using identical parameters
