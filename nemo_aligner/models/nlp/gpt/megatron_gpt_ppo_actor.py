@@ -211,18 +211,16 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         # apply the sampling params to the logits - focusing only on the generated tokens.
         context_length = context_lengths.min().item()
         resp_logits = logits[:,context_length-1:].contiguous()
-        # divide by temp
-        resp_logits/=samparams['temperature']
-        for t in range(resp_logits.size(1)):
-            started = context_lengths<=context_length
-            # todo : handle repetition penalty
-            # top_k and top_p
-            resp_logits[:,t] = top_k_logits(resp_logits[:,t],top_k=samparams['top_k'],top_p=samparams['top_p'],started=started) 
-            # token_logits = resp_logits[:,t].contiguous()
-            # token_logits = top_k_logits(token_logits,top_k=samparams['top_k'],top_p=samparams['top_p'],started=started)
-            # resp_logits[:,t] = token_logits
+        if not samparams.get('use_greedy',False):       # if use_greedy is True, use the logits as is
+            # divide by temp
+            resp_logits/=samparams['temperature']
+            for t in range(resp_logits.size(1)):
+                started = context_lengths<=context_length
+                # todo : handle repetition penalty, once its propoerly handled in the generation process
+                # top_k and top_p
+                resp_logits[:,t] = top_k_logits(resp_logits[:,t],top_k=samparams['top_k'],top_p=samparams['top_p'],started=started) 
 
-            context_length+=1
+                context_length+=1
         
         return logits
     
