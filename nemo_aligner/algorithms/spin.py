@@ -201,6 +201,10 @@ class SPINTrainer:
         prompt_lengths = batch["prompt_lengths"]
         batch_max_length = prompt_lengths.max().item()
         max_possible_length = min(self.model.cfg.encoder_seq_length, batch_max_length + self.max_gen_seq_len)
+        # in case the prompt length exceeds encoder_seq_length - max_gen_seq_len, we need to truncate how many
+        # tokens we are allowed to generate such that we never exceed encoder_seq_length, otherwise you will get
+        # errors inside model.generate()
+        adj_generation_length = min(self.max_gen_seq_len, self.model.cfg.encoder_seq_length - batch_max_length)
 
         prompt_tokens = batch_pad_to_fixed_len(
             batch["prompts_only"], max_possible_length, pad_token=self.model.tokenizer.eos_id
@@ -209,11 +213,11 @@ class SPINTrainer:
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
 
         strategy = TrackLengthGPTModelTextGenerationStrategy(
-            model=self.model, context_lengths=prompt_lengths, max_length=self.max_gen_seq_len
+            model=self.model, context_lengths=prompt_lengths, max_length=adj_generation_length
         )
         generations = self.model.generate(
             inputs=(prompt_tokens, prompt_lengths),
-            length_params=self.length_params,
+            length_params=self.length_params | {"max_length": adj_generation_length},
             sampling_params=self.sampling_params,
             strategy=strategy,
         )
@@ -231,7 +235,7 @@ class SPINTrainer:
             # and remove the `if` below.
             if (
                 max_response_length >= response_tokens.size(1)
-                or response_tokens.size(1) != prompt_lengths.max().item() + self.max_gen_seq_len
+                or response_tokens.size(1) != batch_max_length + adj_generation_length
             ):
                 raise AssertionError(
                     f"max response length ({max_response_length}) does not match the size of "

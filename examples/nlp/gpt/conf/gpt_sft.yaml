@@ -151,7 +151,7 @@ model:
       memmap_workers: null
       max_seq_length: 2048
       min_seq_length: 1
-      drop_last: True
+      drop_last: True  # note that `False` is not currently supported
       # Example of how to specify concat_sampling_probabilities
       # concat_sampling_probabilities:
       #   - 0.5
@@ -175,7 +175,7 @@ model:
       memmap_workers: ${model.data.train_ds.memmap_workers}
       max_seq_length: ${model.data.train_ds.max_seq_length}
       min_seq_length: 1
-      drop_last: False
+      drop_last: True  #  note that `False` is not currently supported
       label_key: ${model.data.train_ds.label_key}
       add_eos: ${model.data.train_ds.add_eos}
       add_sep: ${model.data.train_ds.add_sep}
