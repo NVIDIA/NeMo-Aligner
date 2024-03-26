@@ -367,7 +367,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
         # 5 hrs timeout
         app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
 
-        @app.task
+        @app.task(autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, retry_kwargs={"max_retries": 10})
         def search_for_batch(batch_idx):
             batch_size = torch.tensor([len(batch_idx)], dtype=torch.int64).cuda()
             torch.distributed.broadcast(batch_size, 0)
@@ -392,6 +392,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
                 "--loglevel=INFO",
                 "--concurrency=1",
                 "--pool=threads",
+                "--without-gossip",
                 "-Ofair",
                 f"--hostname=worker-{RAND_ID}@%%h",
             ]
