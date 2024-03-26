@@ -308,27 +308,18 @@ class DPOTrainer:
     def augment_dataloader(self, dataloader):
         """Augment dataloader with ref policy log prob"""
         iter_dataloader = iter(dataloader)
-        buffer = []
-        done = False
-        while not done:
+        while True:
             try:
                 batch = next(iter_dataloader)
+                logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
+                chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
+                batch["ref_policy_log_probs_chosen"] = chosen_logps
+                batch["ref_policy_log_probs_rejected"] = reject_logps
+
+                yield batch
+                del logprobs, chosen_logps, reject_logps
             except StopIteration:
-                done = True
-            else:
-                buffer.append(batch)
-            if (done and buffer) or len(buffer) == 1:
-                logprobs = self.model.get_ref_policy_logprobs(buffer).cpu()
-                start = 0
-                for batch in buffer:
-                    batch_size = len(batch["chosen"])
-                    assert len(batch["rejected"]) == batch_size
-                    for key in ("chosen", "rejected"):
-                        batch[f"ref_policy_log_probs_{key}"] = logprobs[start : start + batch_size]
-                        start += batch_size
-                    yield batch
-                buffer.clear()
-                del logprobs
+                break
 
     @property
     def epoch(self):
