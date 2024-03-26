@@ -19,6 +19,7 @@ import torch
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
+from megatron.core import parallel_state
 
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingRandomBatchSampler,
@@ -127,7 +128,9 @@ class SPINTrainer:
         self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
         self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
-        self.gen_batch_size = self.model.cfg.spin.generation_batch_size
+        dp_batch_size = self.model.cfg.global_batch_size // parallel_state.get_data_parallel_world_size()
+        assert self.model.cfg.spin.rollout_micro_batch_size % dp_batch_size == 0, f"rollout_micro_batch_size [{self.model.cfg.spin.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
+        self.rollout_micro_batch_size = max(self.model.cfg.spin.rollout_micro_batch_size, dp_batch_size)
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -419,7 +422,7 @@ class SPINTrainer:
                 done = True
             else:
                 buffer.append(batch)
-            if (done and buffer) or sum([len(b["prompts_and_answers"]) for b in buffer]) == self.gen_batch_size:
+            if (done and buffer) or sum([len(b["prompts_and_answers"]) for b in buffer]) == self.rollout_micro_batch_size:
                 # generations use the reference model weights, as per the paper
                 with cpu_weight_swap(
                     self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
