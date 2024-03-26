@@ -419,7 +419,7 @@ class SPINTrainer:
                 done = True
             else:
                 buffer.append(batch)
-            if (done and buffer) or sum([len(b['prompts_and_answers']) for b in buffer]) == self.gen_batch_size:
+            if (done and buffer) or sum([len(b["prompts_and_answers"]) for b in buffer]) == self.gen_batch_size:
                 # generations use the reference model weights, as per the paper
                 with cpu_weight_swap(
                     self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
