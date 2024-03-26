@@ -184,7 +184,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         reject_logps = logps[rejected_idx, ...]
 
         return chosen_logps, reject_logps, kl_logps
-    
+
     def get_reduced_masked_logps(self, logps, labels, average_log_probs=False):
         assert logps.shape == labels.shape, "logps and labels shape mismatch"
 
@@ -218,7 +218,9 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             reject_losses = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
             reject_rewards = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
 
-        loss = torch.cat((self.desirable_loss_weight * chosen_losses, self.undesirable_loss_weight * reject_losses), dim=0)
+        loss = torch.cat(
+            (self.desirable_loss_weight * chosen_losses, self.undesirable_loss_weight * reject_losses), dim=0
+        )
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
