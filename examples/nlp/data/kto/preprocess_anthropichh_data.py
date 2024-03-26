@@ -28,8 +28,10 @@ def prepare_args():
     )
     return parser.parse_args()
 
+
 START_PROMPT_FORMAT = "Human:\n{body}\nAssistant:\n{response}"
 PROMPT_CONTINUATION_FORMAT = "Human:\n{body}\nAssistant:\n{response}"
+
 
 def process_hh(split):
     if split == "validation":
@@ -56,17 +58,11 @@ def process_hh(split):
                 body, response = output
 
             if len(string_to_use) == 0:
-                prompt_string_to_use = START_PROMPT_FORMAT.format(
-                    body=body, response=""
-                )
+                prompt_string_to_use = START_PROMPT_FORMAT.format(body=body, response="")
                 string_to_use = START_PROMPT_FORMAT.format(body=body, response=response)
             else:
-                prompt_string_to_use = PROMPT_CONTINUATION_FORMAT.format(
-                    text=string_to_use, body=body, response=""
-                )
-                string_to_use = PROMPT_CONTINUATION_FORMAT.format(
-                    text=string_to_use, body=body, response=response
-                )
+                prompt_string_to_use = PROMPT_CONTINUATION_FORMAT.format(text=string_to_use, body=body, response="")
+                string_to_use = PROMPT_CONTINUATION_FORMAT.format(text=string_to_use, body=body, response=response)
 
         # for prompt, remove the space at the end
         return string_to_use, prompt_string_to_use[:-1]
@@ -83,10 +79,10 @@ def process_hh(split):
         chosen_response, chosen_prompt = c
         rejected_response, rejected_prompt = r
 
-        chosen_prompt = chosen_prompt + '\n'
-        rejected_prompt = rejected_prompt + '\n'
-        chosen_response = chosen_response.replace(chosen_prompt, '')
-        rejected_response = rejected_response.replace(rejected_prompt, '')
+        chosen_prompt = chosen_prompt + "\n"
+        rejected_prompt = rejected_prompt + "\n"
+        chosen_response = chosen_response.replace(chosen_prompt, "")
+        rejected_response = rejected_response.replace(rejected_prompt, "")
         if chosen_prompt != rejected_prompt:
             continue
 
@@ -111,11 +107,12 @@ def process_hh(split):
 def convert_list_of_dict_to_jsonl(list_of_dict):
     return "\n".join(json.dumps(item) for item in list_of_dict)
 
+
 def save_dataset_for_kto(list_of_dicts, split, save_dir):
     with open(Path(save_dir) / f"{split}.jsonl", "w") as file:
         for data_dict in list_of_dicts:
             json.dump(data_dict, file)
-            file.write('\n')
+            file.write("\n")
 
 
 if __name__ == "__main__":
