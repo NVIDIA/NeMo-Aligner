@@ -40,18 +40,20 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import cpu_weight_swap
 
+
 def average_rewards_across_data_parallel_group(rewards):
     """Reduce a tensor of losses across all GPUs."""
-    
+
     num_rewards = torch.tensor([(rewards[0].numel())], device=rewards[0].device)
     averaged_rewards = torch.cat([reward.clone().detach().sum().view(1) for reward in rewards])
-    
+
     torch.distributed.all_reduce(averaged_rewards, group=parallel_state.get_data_parallel_group())
     torch.distributed.all_reduce(num_rewards, group=parallel_state.get_data_parallel_group())
 
     averaged_rewards = averaged_rewards / num_rewards.clamp(min=1)
 
     return averaged_rewards
+
 
 class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
     """
@@ -179,7 +181,12 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
                 return (
                     loss,
-                    {"avg": reduced_loss, "kl": kl_divergence, "out_chosen": reduced_chosen_rewards, "out_rejected": reduced_reject_rewards,},
+                    {
+                        "avg": reduced_loss,
+                        "kl": kl_divergence,
+                        "out_chosen": reduced_chosen_rewards,
+                        "out_rejected": reduced_reject_rewards,
+                    },
                 )
 
             return output_tensor, loss_func
@@ -216,14 +223,18 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         kl_divergence = average_losses_across_data_parallel_group([kl_rewards.mean().clamp(min=0).detach()])
 
         if chosen_rewards.shape[0] != 0:
-            chosen_losses = 1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - kl_divergence))
+            chosen_losses = 1.0 - torch.nn.functional.sigmoid(
+                self.ref_policy_kl_penalty * (chosen_rewards - kl_divergence)
+            )
             chosen_rewards = self.ref_policy_kl_penalty * chosen_rewards
         else:
             chosen_losses = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
             chosen_rewards = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
 
         if reject_rewards.shape[0] != 0:
-            reject_losses = 1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (kl_divergence - reject_rewards))
+            reject_losses = 1.0 - torch.nn.functional.sigmoid(
+                self.ref_policy_kl_penalty * (kl_divergence - reject_rewards)
+            )
             reject_rewards = self.ref_policy_kl_penalty * reject_rewards
         else:
             reject_losses = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
