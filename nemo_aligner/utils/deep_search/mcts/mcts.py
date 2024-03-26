@@ -184,14 +184,14 @@ class MCTSParallel:
         # decoded_text = "".join(state).replace('▁', ' ').lstrip()
         return decoded_text
 
-    def get_context_id(self, node):
-        all_tokens = node.get_all_tokens()
+    def token_to_context_id(self, all_tokens, node):
         if node.parent is None:
             # for the root node, the context id is the same as the state
             return tuple(all_tokens)
         else:
             # for the child node, the context id is the same as the parent node
-            return tuple(all_tokens[:-1])
+            num_action_tokens = len(node.state)
+            return tuple(all_tokens[:-num_action_tokens])
 
     def get_text(self, node):
         all_tokens = node.get_all_tokens()
@@ -223,18 +223,13 @@ class MCTSParallel:
 
     def get_input_action_depth(self, ps, expandable_search):
         # get the action to execute and depths in the search tree
-        actions = np.stack(
-            [
-                ps[mappingIdx].node.action if isinstance(ps[mappingIdx].node, Node) else ps[mappingIdx].node[0].action
-                for mappingIdx in expandable_search
-            ]
-        )[:, np.newaxis].astype(np.int32)
+        actions = np.stack([ps[mappingIdx].node["node"].action for mappingIdx in expandable_search])[
+            :, np.newaxis
+        ].astype(np.int32)
         # get the context ids for the search nodes
         # context_ids = [ps[mappingIdx].node.context_id for mappingIdx in expandable_search]
         context_ids = [
-            self.get_context_id(ps[mappingIdx].node)
-            if isinstance(ps[mappingIdx].node, Node)
-            else self.get_context_id(ps[mappingIdx].node[0])
+            self.token_to_context_id(ps[mappingIdx].node["all_tokens"], ps[mappingIdx].node["node"])
             for mappingIdx in expandable_search
         ]
         # # verify context ids are the same
@@ -340,11 +335,18 @@ class MCTSParallel:
                         # if no oracle, then we need to run value inference to get the value
 
                         # cache the value for this node
-                        all_tokens = tuple(node.get_all_tokens())
-                        if all_tokens in self.cache:
-                            value = self.cache[all_tokens]
+                        all_tokens_tuple = tuple(all_tokens)
+                        if all_tokens_tuple in self.cache:
+                            value = self.cache[all_tokens_tuple]
                         else:
-                            spg.node = (node, ends_properly)
+                            # spg.node is a dictory
+                            spg.node = {
+                                "node": node,
+                                "ends_properly": ends_properly,
+                                "all_tokens": all_tokens,
+                                "text": text,
+                                "is_terminal": is_terminal,
+                            }
                             # skip the backpropagation and run inference later to get the value
                             continue
 
@@ -357,7 +359,14 @@ class MCTSParallel:
 
                 else:
                     # if not terminal, then expand the node in the later part of the code
-                    spg.node = node
+                    # spg.node is a dictory
+                    spg.node = {
+                        "node": node,
+                        "ends_properly": ends_properly,
+                        "all_tokens": all_tokens,
+                        "text": text,
+                        "is_terminal": is_terminal,
+                    }
 
             # index of search instances that are expandable
             expandable_search = [mappingIdx for mappingIdx in range(len(ps)) if ps[mappingIdx].node is not None]
@@ -377,7 +386,8 @@ class MCTSParallel:
 
             for i, mappingIdx in enumerate(expandable_search):
                 # node to expand
-                node = ps[mappingIdx].node
+                result_dict = ps[mappingIdx].node
+                node = result_dict["node"]
                 # corresponding policy and value
                 spg_policy, spg_value, spg_action = policy[i], value[i], actions[i]
                 if spg_value is not None:
@@ -387,15 +397,16 @@ class MCTSParallel:
                 if self.args["turn_off_value"]:
                     value_head_output = node.prior
 
-                if isinstance(node, tuple):
+                if result_dict["is_terminal"]:
                     # if the node is a tuple, then it means the node is terminal
                     # backpropagate the value
-                    node, ends_properly = node
+                    ends_properly = result_dict["ends_properly"]
+                    all_tokens = result_dict["all_tokens"]
                     node.backpropagate(value_head_output)
                     if ends_properly:
                         # collect the memory from the root to the terminal node
                         # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                        all_tokens = tuple(node.get_all_tokens())
+                        all_tokens = tuple(all_tokens)
                         ps[mappingIdx].value_memory.add((all_tokens, value_head_output))
                         self.cache[all_tokens] = value_head_output
                 else:
