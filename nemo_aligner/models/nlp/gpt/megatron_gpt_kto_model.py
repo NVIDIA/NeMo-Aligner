@@ -58,6 +58,8 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         self.ref_policy_state_dict = None
 
         self.ref_policy_kl_penalty = self.cfg.kto.get("ref_policy_kl_penalty", 0.0)
+        self.desirable_loss_weight = self.cfg.kto.get("desirable_loss_weight", 1.0)
+        self.undesirable_loss_weight = self.cfg.kto.get("undesirable_loss_weight", 1.0)
         self.avg_log_probs = self.cfg.kto.get("average_log_probs", False)
 
     @torch.no_grad()
@@ -105,7 +107,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
                 tokens = torch.cat((batch["samples"], batch["kl_samples"]), dim=0)
 
             if batch["sample_labels"] is not None and batch["kl_sample_labels"] is not None:
-                tokens = torch.cat((batch["sample_labels"], batch["kl_sample_labels"]), dim=0)
+                labels = torch.cat((batch["sample_labels"], batch["kl_sample_labels"]), dim=0)
 
             if batch["ref_policy_log_probs_samples"] is not None and batch["ref_policy_log_probs_kl_samples"] is not None:
                 ref_logprobs = torch.cat(
@@ -171,14 +173,15 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         return fwd_output_and_loss_func
 
     def split_output_tensor(self, output_tensor, preferences):
+        logps, kl_logps = torch.split(output_tensor.float(), len(output_tensor) // 2, dim=0)
+
         chosen_idx = torch.where(preferences == 1)[0]
         rejected_idx = torch.where(preferences == 0)[0]
+        chosen_logps = logps[chosen_idx, ...]
+        reject_logps = logps[rejected_idx, ...]
 
-        chosen_logps, reject_logps = torch.split(output_tensor.float(), len(output_tensor) // 2, dim=0)
-        print(f"{chosen_logps.shape = }\t\t\t{reject_logps.shape = }")
-        asd
-        return chosen_logps, reject_logps
-
+        return chosen_logps, reject_logps, kl_logps
+    
     def get_reduced_masked_logps(self, logps, labels, average_log_probs=False):
         assert logps.shape == labels.shape, "logps and labels shape mismatch"
 
@@ -194,27 +197,31 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
-        chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards, preferences)
+        chosen_rewards, reject_rewards, kl_rewards = self.split_output_tensor(rewards, preferences)
 
-        rewards_kl = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, labels, average_log_probs=True)
+        kl_term = average_losses_across_data_parallel_group([kl_rewards.mean()])
 
-        chosen_kl, reject_kl = self.split_output_tensor(rewards_kl)
-        loss = (
-            (
-                1.0
-                - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0)))
-            ).sum()
-            + (
-                1.0
-                - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards))
-            ).sum()
-        ) / (chosen_rewards.numel() + reject_rewards.numel())
+        if chosen_rewards.shape[0] != 0:
+            chosen_losses = 1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - kl_term))
+            chosen_rewards = self.ref_policy_kl_penalty * chosen_rewards
+        else:
+            chosen_losses = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
+            chosen_rewards = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
+
+        if reject_rewards.shape[0] != 0:
+            reject_losses = 1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (kl_term - reject_rewards))
+            reject_rewards = self.ref_policy_kl_penalty * reject_rewards
+        else:
+            reject_losses = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
+            reject_rewards = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
+
+        loss = torch.cat((self.desirable_loss_weight * chosen_losses, self.undesirable_loss_weight * reject_losses), dim=0)
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
             acc_chosen = comp.float().mean()
 
-        return loss, acc_chosen
+        return loss.mean(), acc_chosen
 
     def get_loss_and_metrics(self, batch, forward_only):
         seq_length = batch["samples"].shape[1]
