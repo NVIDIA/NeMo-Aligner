@@ -12,8 +12,6 @@ from hydra._internal.utils import _run_hydra, get_args_parser
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig
 from tqdm import tqdm
-
-from nemo_aligner.data.nlp.datasets import MCTSDataset
 from tasks import get_search_for_batch
 
 
@@ -107,9 +105,10 @@ def hydra_runner(
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg):
-    dataset = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
-
-    total = len(dataset)
+    # calculate the number of lines of the file cfg.dataset.data_prefix["train"]
+    with open(cfg.dataset.data_prefix["train"]) as f:
+        number_of_lines = sum(1 for line in f)
+    total = number_of_lines
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
 
     existing_files = pathlib.Path(save_dir).rglob("*.pt")
