@@ -40,6 +40,18 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import cpu_weight_swap
 
+def average_rewards_across_data_parallel_group(rewards):
+    """Reduce a tensor of losses across all GPUs."""
+    
+    num_rewards = torch.tensor([(rewards[0].numel())], device=rewards[0].device)
+    averaged_rewards = torch.cat([reward.clone().detach().sum().view(1) for reward in rewards])
+    
+    torch.distributed.all_reduce(averaged_rewards, group=parallel_state.get_data_parallel_group())
+    torch.distributed.all_reduce(num_rewards, group=parallel_state.get_data_parallel_group())
+
+    averaged_rewards = averaged_rewards / num_rewards.clamp(min=1)
+
+    return averaged_rewards
 
 class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
     """
@@ -157,18 +169,17 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
                     vocab_parallel_logits=output_tensor, target=labels, higher_stability=True
                 )
 
-                loss, acc_chosen = self.loss_func(
+                loss, chosen_rewards, reject_rewards, kl_divergence = self.loss_func(
                     per_token_logps, ref_logprobs, labels[:, 1:], preferences, average_log_probs=self.avg_log_probs
                 )
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
-                reduced_acc = average_losses_across_data_parallel_group([acc_chosen])
-
-                out_chosen, out_rejected = self.gather_and_split_rewards(per_token_logps, ref_logprobs, labels)
+                reduced_chosen_rewards = average_rewards_across_data_parallel_group([chosen_rewards])
+                reduced_reject_rewards = average_rewards_across_data_parallel_group([reject_rewards])
 
                 return (
                     loss,
-                    {"avg": reduced_loss, "acc": reduced_acc, "out_chosen": out_chosen, "out_rejected": out_rejected,},
+                    {"avg": reduced_loss, "kl": kl_divergence, "out_chosen": reduced_chosen_rewards, "out_rejected": reduced_reject_rewards,},
                 )
 
             return output_tensor, loss_func
@@ -202,17 +213,17 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
         )
         chosen_rewards, reject_rewards, kl_rewards = self.split_output_tensor(rewards, preferences)
 
-        kl_term = average_losses_across_data_parallel_group([kl_rewards.mean()])
+        kl_divergence = average_losses_across_data_parallel_group([kl_rewards.mean().clamp(min=0).detach()])
 
         if chosen_rewards.shape[0] != 0:
-            chosen_losses = 1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - kl_term))
+            chosen_losses = 1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - kl_divergence))
             chosen_rewards = self.ref_policy_kl_penalty * chosen_rewards
         else:
             chosen_losses = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
             chosen_rewards = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
 
         if reject_rewards.shape[0] != 0:
-            reject_losses = 1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (kl_term - reject_rewards))
+            reject_losses = 1.0 - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (kl_divergence - reject_rewards))
             reject_rewards = self.ref_policy_kl_penalty * reject_rewards
         else:
             reject_losses = torch.Tensor([]).to(rewards.dtype).to(rewards.device)
@@ -220,11 +231,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         loss = torch.cat((self.desirable_loss_weight * chosen_losses, self.undesirable_loss_weight * reject_losses), dim=0)
 
-        with torch.no_grad():
-            comp = chosen_rewards > reject_rewards
-            acc_chosen = comp.float().mean()
-
-        return loss.mean(), acc_chosen
+        return loss.mean(), chosen_rewards, reject_rewards, kl_divergence
 
     def get_loss_and_metrics(self, batch, forward_only):
         seq_length = batch["samples"].shape[1]
@@ -242,7 +249,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             forward_only=forward_only,
             seq_length=seq_length,
             micro_batch_size=self.cfg.micro_batch_size
-            * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
+            * 2,  # each minibatch has training samples and kl divergence samples, so tensor shape will be mbs * 2
         )
 
         # only the last stages of the pipeline return losses
@@ -261,17 +268,17 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
             loss_tensor = torch.concat(loss_tensors_list)
             loss_mean = loss_tensor.mean()
-            acc_tensors_list = [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch]
+            kl_tensors_list = [loss_reduced["kl"] for loss_reduced in losses_reduced_per_micro_batch]
 
-            if len(acc_tensors_list) == 1:
-                acc_tensor = acc_tensors_list[0]
-            elif len(acc_tensors_list) > 1:
-                acc_tensor = torch.concat(acc_tensors_list)
-            acc_mean = acc_tensor.mean()
+            if len(kl_tensors_list) == 1:
+                kl_tensor = kl_tensors_list[0]
+            elif len(kl_tensors_list) > 1:
+                kl_tensor = torch.concat(kl_tensors_list)
+            kl_mean = kl_tensor.mean()
         else:
 
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            acc_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            kl_mean = torch.tensor(0.0, device=torch.cuda.current_device())
 
             rewards_chosen_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             rewards_rejected_mean = torch.tensor(0.0, device=torch.cuda.current_device())
@@ -280,7 +287,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
-        torch.distributed.broadcast(acc_mean, get_last_rank())
+        torch.distributed.broadcast(kl_mean, get_last_rank())
 
         torch.distributed.broadcast(rewards_chosen_mean, get_last_rank())
         torch.distributed.broadcast(rewards_rejected_mean, get_last_rank())
@@ -289,7 +296,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         metrics = {
             "loss": loss_mean,
-            "acc": acc_mean,
+            "kl": kl_mean,
             "rewards_chosen_mean": rewards_chosen_mean,
             "rewards_rejected_mean": rewards_rejected_mean,
             "rewards_all_mean": rewards_all_mean,
