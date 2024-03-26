@@ -308,8 +308,7 @@ class DPOTrainer:
     def augment_dataloader(self, dataloader):
         """Augment dataloader with ref policy log prob"""
         iter_dataloader = iter(dataloader)
-        done = False
-        while not done:
+        while True:
             try:
                 batch = next(iter_dataloader)
                 logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
@@ -320,7 +319,7 @@ class DPOTrainer:
                 yield batch
                 del logprobs, chosen_logps, reject_logps
             except StopIteration:
-                done = True
+                break
 
     @property
     def epoch(self):
