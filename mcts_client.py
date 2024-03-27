@@ -2,6 +2,7 @@ import numpy as np
 import sentencepiece
 from pytriton.client import ModelClient
 
+from nemo_aligner.utils.deep_search.mcts.environment import CodeExecutionEnvironment, SimpleEnvironment
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
 from nemo_aligner.utils.deep_search.mcts.mcts import DeepSearch, MCTSParallel, ParallelSearch
 from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
@@ -30,7 +31,13 @@ args = {
     "save_timer": 135000,
     "turn_off_value": True,
     "oracle": True,
+    "environment": "simple",
 }
+
+if args["environment"] == "code":
+    env_fn = CodeExecutionEnvironment(tokenizer)
+else:
+    env_fn = SimpleEnvironment()
 
 
 steerlm_template = """<extra_id_0>System
@@ -88,6 +95,7 @@ mcts = MCTSParallel(
     tokenizer,
     session_info="test_selfplay",
     score_fn=score_fun,
+    env_fn=env_fn,
     terminate_fns=[termination_condition],
     client_fun=get_client_fun(),
 )

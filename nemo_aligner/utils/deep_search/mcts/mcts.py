@@ -136,12 +136,14 @@ class Node:
             q_value = child.value_sum / child.visit_count  # assume the q_value is probability of winning
         return q_value + C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
 
-    def expand(self, policy, actions):
+    def expand(self, policy, actions, env, context_tokens, context_text):
         for action, prob in zip(actions, policy):
             action = action.item()
             prob = prob.item()
             child = Node([action], parent=self, action=action, prior=prob, visit_count=0)
             self.children[action] = child
+            # environment is going to decide whether to add observation tokens
+            env.state_transtion(child, context_tokens, context_text)
 
     def backpropagate(self, value):
         self.value_sum += value
@@ -166,6 +168,7 @@ class MCTSParallel:
         tokenizer,
         session_info="session",
         score_fn=None,
+        env_fn=None,
         terminate_fns=None,
         client_fun: Callable = None,
         has_value=True,
@@ -174,6 +177,7 @@ class MCTSParallel:
         self.tokenizer = tokenizer
         self.session = session_info
         self.score_fn = score_fn
+        self.env_fn = env_fn
         self.terminate_fns = terminate_fns
         self.client_fun = client_fun
         self.cache = {}
@@ -305,7 +309,7 @@ class MCTSParallel:
                 # no need to handle the case that no valid moves
                 # because the we search the states[i] which has at least one valid move
                 spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
-                spg.root.expand(spg_policy, spg_action)
+                spg.root.expand(spg_policy, spg_action, self.env_fn, context_id, input_to_text_map[context_id])
 
         # dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
@@ -410,7 +414,7 @@ class MCTSParallel:
                         ps[mappingIdx].value_memory.add((all_tokens, value_head_output))
                         self.cache[all_tokens] = value_head_output
                 else:
-                    node.expand(spg_policy, spg_action)
+                    node.expand(spg_policy, spg_action, self.env_fn, result_dict["all_tokens"], result_dict["text"])
 
                     node.backpropagate(value_head_output)
 

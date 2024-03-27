@@ -67,6 +67,8 @@ model:
 
     kv_cache_in_cpu: True #  save kv cache in cpu memory
 
+    environment: null  # the environment for MCTS to interact with, default None, can be set to "code" for running code
+
     train:
       value_weight: 1 # weight of the value portion of the loss
       policy_weight: 1 # weight of the policy portion of the loss

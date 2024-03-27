@@ -1,5 +1,6 @@
 from megatron.core import InferenceParams, parallel_state
 
+from nemo_aligner.utils.deep_search.mcts.environment import CodeExecutionEnvironment, SimpleEnvironment
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
 from nemo_aligner.utils.deep_search.mcts.mcts import DeepSearch, MCTSParallel, ParallelSearch
 from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
@@ -18,6 +19,11 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_val
     else:
         strategy = GPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
     strategy_args = {"strategy": strategy}
+
+    if mcts_cfg.environment == "code":
+        env_fn = CodeExecutionEnvironment(ptl_model.tokenizer.tokenizer)
+    else:
+        env_fn = SimpleEnvironment()
 
     def get_client_fun(model, top_k, max_depth, add_bos_token, **strategy_args):
         # one token at a time
@@ -45,6 +51,7 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_val
         ptl_model.tokenizer.tokenizer,
         session_info="test_selfplay",
         score_fn=score_fn,
+        env_fn=env_fn,
         terminate_fns=[termination_condition],
         client_fun=get_client_fun(
             ptl_model, mcts_cfg.top_k, mcts_cfg.max_depth, mcts_cfg.add_bos_token, **strategy_args
