@@ -29,6 +29,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
     get_iterator_k_split,
     get_ltor_masks_and_position_ids,
 )
+from nemo.collections.nlp.modules.common.text_generation_utils import repetition_penalty, top_k_logits
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
 from nemo_aligner.utils.distributed import (
@@ -200,6 +201,26 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         """no need to offload adam states here
         """
 
+    def _apply_sampling_params(self, logits, context_lengths):
+        samparams = self._sampling_params
+        # apply the sampling params to the logits - focusing only on the generated tokens.
+        context_length = context_lengths.min().item()
+        resp_logits = logits[:, context_length - 1 :].contiguous()
+        if not samparams.get("use_greedy", False):  # if use_greedy is True, use the logits as is
+            # divide by temp
+            resp_logits /= samparams["temperature"]
+            for t in range(resp_logits.size(1)):
+                started = context_lengths <= context_length
+                # todo : handle repetition penalty, once its propoerly handled in the generation process
+                # top_k and top_p
+                resp_logits[:, t] = top_k_logits(
+                    resp_logits[:, t], top_k=samparams["top_k"], top_p=samparams["top_p"], started=started
+                )
+
+                context_length += 1
+
+        return logits
+
     # inference calls
     def get_logprob_output_only_func(self, inference_only=True):
         fwd_output_only_func = self.get_forward_output_only_func()
@@ -207,7 +228,8 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         def log_prob_output_only_func(dataloader_iter, model):
             batch = next(dataloader_iter)
 
-            output_tensor, _ = fwd_output_only_func(iter([batch,]), model)
+            output_tensor, _ = fwd_output_only_func(iter([batch[:-1],]), model)
+            output_tensor = self._apply_sampling_params(output_tensor, batch[-1])
 
             def id_func(output_tensor, non_loss_data=True):
                 logprobs = from_parallel_logits_to_logprobs(
@@ -220,14 +242,16 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         return log_prob_output_only_func
 
     @torch.no_grad()
-    def get_inference_log_probs(self, response_tokens, forward_micro_batch_size):
+    def get_inference_log_probs(self, prompt_lengths, response_tokens, forward_micro_batch_size):
         set_sync_funcs(self, forward_only=True)
 
         mbs, seq_length = response_tokens.size()
         num_microbatches = divide(mbs, forward_micro_batch_size)
         attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(response_tokens)
 
-        batch_iter = get_iterator_k_split([response_tokens, attention_mask, position_ids], num_microbatches)
+        batch_iter = get_iterator_k_split(
+            [response_tokens, attention_mask, position_ids, prompt_lengths], num_microbatches
+        )
 
         fwd_bwd_function = get_forward_backward_func()
         logprobs_list = fwd_bwd_function(
@@ -291,7 +315,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
         # TODO(geshen): get nemo generate to return the unaltered log probs
         log_probs = self.get_inference_log_probs(
-            response_tokens, forward_micro_batch_size=self.forward_micro_batch_size
+            prompt_lengths, response_tokens, forward_micro_batch_size=self.forward_micro_batch_size
         )
 
         rollout_batch = {
@@ -309,7 +333,9 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             for rollout_batch in rollout_batches:
                 init_log_prob = self.get_inference_log_probs(
-                    rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
+                    rollout_batch["prompt_lengths"],
+                    rollout_batch["response_tokens"].cuda(),
+                    forward_micro_batch_size=self.forward_micro_batch_size,
                 )
                 init_log_probs.append(init_log_prob)
 
