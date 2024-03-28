@@ -615,7 +615,7 @@ class DeepSearch:
                     # need to clean up the mcts cache starting from backup root states
                     if self.strategy is not None:
                         # clean up the cache
-                        self.strategy.clean_up_cache_for_context(self.mcts.session, backup_root_states[i])
+                        self.strategy.clean_up_cache_for_context(self.mcts.session, tuple(backup_root_states[i]))
 
                     del parallel_searches[i]
                     del backup_root_states[i]
