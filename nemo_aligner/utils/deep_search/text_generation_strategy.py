@@ -483,11 +483,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
 
                 # for token_id in range(beg_id, end_id + 1):
                 state = get_state(infer_params, action_taken == -1, context_length, token_len, bid, self.use_cpu)
-                if token_len > 1:
-                    # reverse the state order
-                    for key in state.keys():
-                        state[key] = (state[key][0].flip(0), state[key][1].flip(0))
-                action_taken = context_tokens[bid].tolist()
+                action_taken = context_tokens[bid][beg_id : end_id + 1].tolist()
                 node = Node(
                     state=state,
                     parent=parent_node,
