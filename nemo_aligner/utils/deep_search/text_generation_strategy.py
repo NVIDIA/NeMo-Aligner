@@ -477,12 +477,17 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                 # if parent_node is not None:
                 #     parent_node.children[action_taken] = node
             else:
+                # the new token next to the context tokens
                 beg_id = beg_position
+                # the last new token.
+                # if there is no observation, end_id = beg_id and token_len = 1
                 end_id = update_position
                 token_len = end_id - beg_id + 1
 
                 # for token_id in range(beg_id, end_id + 1):
                 state = get_state(infer_params, action_taken == -1, context_length, token_len, bid, self.use_cpu)
+                # the action_taken has the meaning that if take the first action action_taken[0], it will arrive
+                # at the current node. The action_taken[1:] are the tokens from the environment.
                 action_taken = context_tokens[bid][beg_id : end_id + 1].tolist()
                 node = Node(
                     state=state,
