@@ -36,63 +36,67 @@ class SearchDB:
             self.db[session_info] = session
         else:
             session = self.db[session_info]
-        for token in context_id[:-1]:
-            if token not in session:
-                session[token] = Node(None, None, None, None, None, None)
-            session = session[token].children
-        session[context_id[-1]] = node
+        self.db[session_info][context_id] = node
+        # for token in context_id[:-1]:
+        #     if token not in session:
+        #         session[token] = Node(None, None, None, None, None, None)
+        #     session = session[token].children
+        # session[context_id[-1]] = node
 
     def get(self, session_info, context_id):
         if session_info not in self.db:
             raise ValueError(f"{session_info} not in db")
         db = self.db[session_info]
-        for token in context_id[:-1]:
-            db = db[token].children
-        return db[context_id[-1]]
+        return db[context_id]
+        # for token in context_id[:-1]:
+        #     db = db[token].children
+        # return db[context_id[-1]]
 
     def get_infer_cache(self, session_info, context_id, action):
-        if session_info not in self.db:
-            return None
-        db = self.db[session_info]
-        for token in context_id:
-            if token not in db:
-                return None
-            db = db[token].children
-        if action not in db:
-            return None
-        node = db[action]
-        if node.value_sum is None:
-            return None
+        raise NotImplementedError
+        # if session_info not in self.db:
+        #     return None
+        # db = self.db[session_info]
+        # for token in context_id:
+        #     if token not in db:
+        #         return None
+        #     db = db[token].children
+        # if action not in db:
+        #     return None
+        # node = db[action]
+        # if node.value_sum is None:
+        #     return None
 
-        output = {}
-        output["value"] = node.value_sum
-        policy = node.prior[0]
-        actions = node.prior[1]
-        # actions = []
-        # policy = []
-        # for child_action in node.children:
-        #     child = node.children[child_action]
-        #     assert child.action == child_action
-        #     actions.append(child.action)
-        #     policy.append(child.prior)
-        output["action"] = actions
-        output["policy"] = policy
-        output["value"] = np.array(node.value_sum)
-        return output
+        # output = {}
+        # output["value"] = node.value_sum
+        # policy = node.prior[0]
+        # actions = node.prior[1]
+        # # actions = []
+        # # policy = []
+        # # for child_action in node.children:
+        # #     child = node.children[child_action]
+        # #     assert child.action == child_action
+        # #     actions.append(child.action)
+        # #     policy.append(child.prior)
+        # output["action"] = actions
+        # output["policy"] = policy
+        # output["value"] = np.array(node.value_sum)
+        # return output
 
     def clean_up_cache_for_context(self, session_info, context_id):
         if session_info not in self.db:
             raise ValueError(f"{session_info} not in db")
         db = self.db[session_info]
-        for token in context_id:
-            if token not in db:
-                raise ValueError(f"{context_id} not in db")
-            db = db[token].children
-        # set parent to None
-        for token in db:
-            db[token].parent = None
-        # clean up the cache
-        db.clear()
+        del db[context_id]
+        # for token in context_id:
+        #     if token not in db:
+        #         raise ValueError(f"{context_id} not in db")
+        #     db = db[token].children
+        # # set parent to None
+        # for token in db:
+        #     db[token].parent = None
+        # # clean up the cache
+        # db.clear()
 
     def get_attention_mask(self, session_id):
         return self.attention_mask[session_id]

@@ -43,7 +43,9 @@ class ParallelSearch:
         self.node = None
 
 
-def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch_id: int, use_cpu=False):
+def get_state(
+    infer_params: InferenceParams, init: bool, context_len: int, token_len: int, batch_id: int, use_cpu=False
+):
     # only call this function after inference step is done
     # infer_params.sequence_len_offset is the number of tokens used in the kv cache before the inference step
     # after the inference step, there is one more token in the kv cache
@@ -61,8 +63,12 @@ def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch
         else:
             kv_cache = {
                 key: (
-                    infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id].detach().cpu(),
-                    infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id].detach().cpu(),
+                    infer_params.key_value_memory_dict[key][0][context_len : context_len + token_len, batch_id]
+                    .detach()
+                    .cpu(),
+                    infer_params.key_value_memory_dict[key][1][context_len : context_len + token_len, batch_id]
+                    .detach()
+                    .cpu(),
                 )
                 for key in infer_params.key_value_memory_dict
             }
@@ -80,10 +86,10 @@ def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch
         else:
             kv_cache = {
                 key: (
-                    infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id]
+                    infer_params.key_value_memory_dict[key][0][context_len : context_len + token_len, batch_id]
                     .detach()
                     .clone(),
-                    infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id]
+                    infer_params.key_value_memory_dict[key][1][context_len : context_len + token_len, batch_id]
                     .detach()
                     .clone(),
                 )
@@ -136,14 +142,14 @@ class Node:
             q_value = child.value_sum / child.visit_count  # assume the q_value is probability of winning
         return q_value + C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
 
-    def expand(self, policy, actions, env, context_tokens, context_text):
+    def expand(self, policy, actions, env, context_tokens):
         for action, prob in zip(actions, policy):
             action = action.item()
             prob = prob.item()
             child = Node([action], parent=self, action=action, prior=prob, visit_count=0)
             self.children[action] = child
             # environment is going to decide whether to add observation tokens
-            env.state_transtion(child, context_tokens, context_text)
+            env.state_transtion(child, context_tokens)
 
     def backpropagate(self, value):
         self.value_sum += value
@@ -227,9 +233,22 @@ class MCTSParallel:
 
     def get_input_action_depth(self, ps, expandable_search):
         # get the action to execute and depths in the search tree
-        actions = np.stack([ps[mappingIdx].node["node"].action for mappingIdx in expandable_search])[
-            :, np.newaxis
-        ].astype(np.int32)
+        actions = []
+        action_length = []
+        for mappingIdx in expandable_search:
+            node = ps[mappingIdx].node["node"]
+            if isinstance(node.action, list):
+                actions.append(node.action)
+                action_length.append(len(node.action))
+            else:
+                actions.append([node.action])
+                action_length.append(1)
+        max_length = max(action_length)
+        # padding in the end
+        for action in actions:
+            action.extend([self.tokenizer.pad_id()] * (max_length - len(action)))
+        # convert to tensor
+        actions = np.array(actions, dtype=np.int32)
         # get the context ids for the search nodes
         # context_ids = [ps[mappingIdx].node.context_id for mappingIdx in expandable_search]
         context_ids = [
@@ -309,7 +328,7 @@ class MCTSParallel:
                 # no need to handle the case that no valid moves
                 # because the we search the states[i] which has at least one valid move
                 spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
-                spg.root.expand(spg_policy, spg_action, self.env_fn, context_id, input_to_text_map[context_id])
+                spg.root.expand(spg_policy, spg_action, self.env_fn, list(context_id))
 
         # dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
@@ -414,7 +433,7 @@ class MCTSParallel:
                         ps[mappingIdx].value_memory.add((all_tokens, value_head_output))
                         self.cache[all_tokens] = value_head_output
                 else:
-                    node.expand(spg_policy, spg_action, self.env_fn, result_dict["all_tokens"], result_dict["text"])
+                    node.expand(spg_policy, spg_action, self.env_fn, result_dict["all_tokens"])
 
                     node.backpropagate(value_head_output)
 
@@ -495,16 +514,19 @@ class DeepSearch:
                 spg = parallel_searches[i]
                 action_size = len(spg.root.children)
                 action_probs = np.zeros(action_size, dtype=np.float32)
-                actions = np.zeros(action_size, dtype=np.int32)
+                actions = []
                 use_value_sum = False
                 for child_id, child_action in enumerate(spg.root.children.keys()):
                     child = spg.root.children[child_action]
-                    assert child_action == child.action
+                    if isinstance(child.action, list):
+                        assert child_action == child.action[0]
+                    else:
+                        assert child_action == child.action
                     if use_value_sum:
                         action_probs[child_id] = child.value_sum
                     else:
                         action_probs[child_id] = child.visit_count
-                    actions[child_id] = child.action
+                    actions.append(child.action)
                 action_probs /= np.sum(action_probs)
 
                 # the spg.root.state is the neutral state set at the beginning of the search
@@ -515,12 +537,17 @@ class DeepSearch:
                 action_index = np.random.choice(
                     action_size, p=temperature_action_probs
                 )  # Divide temperature_action_probs with its sum in case of an error
-                action = actions[action_index].item()
+                action = actions[action_index]
 
-                spg.state = spg.state + [action]
-                fake_node = Node(spg.state, parent=None, action=action, prior=0.0, visit_count=0)
                 # pass in the states from selected child node to the fake node
-                child_node = spg.root.children[action]
+                if isinstance(action, list):
+                    child_node = spg.root.children[action[0]]
+                    spg.state = spg.state + action
+                else:
+                    child_node = spg.root.children[action]
+                    spg.state = spg.state + [action]
+                fake_node = Node(spg.state, parent=None, action=action, prior=0.0, visit_count=0)
+
                 assert child_node.action == fake_node.action
                 fake_node.children = child_node.children
                 spg.node = fake_node

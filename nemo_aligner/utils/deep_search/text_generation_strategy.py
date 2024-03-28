@@ -466,37 +466,41 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             #     value = action_value[bid].item()
             # here prior visit_count and C are not used, set to any numbers
             if action_taken == -1:
-                state = get_state(infer_params, action_taken == -1, context_length, bid, self.use_cpu)
+                state = get_state(infer_params, action_taken == -1, context_length, 1, bid, self.use_cpu)
                 # root node, need to add all context tokens
                 tokens = context_tokens[bid, :context_length].cpu().numpy().tolist()
                 node = Node(
                     state=state, parent=parent_node, action=tokens, prior=prior_data, visit_count=0, value_sum=value,
                 )
                 self.search_db.add_root(session_info, context_id, node)
-                # add child node to the parent node
-                if parent_node is not None:
-                    parent_node.children[action_taken] = node
+                # # add child node to the parent node
+                # if parent_node is not None:
+                #     parent_node.children[action_taken] = node
             else:
                 beg_id = beg_position
                 end_id = update_position
+                token_len = end_id - beg_id + 1
 
-                for token_id in range(beg_id, end_id + 1):
-                    state = get_state(
-                        infer_params, action_taken == -1, context_length + token_id - beg_id, bid, self.use_cpu
-                    )
-                    action_taken = context_tokens[bid, token_id].item()
-                    node = Node(
-                        state=state,
-                        parent=parent_node,
-                        action=action_taken,
-                        prior=prior_data,
-                        visit_count=0,
-                        value_sum=value,
-                    )
-                    # add child node to the parent node
-                    if parent_node is not None:
-                        parent_node.children[action_taken] = node
-                    parent_node = node
+                # for token_id in range(beg_id, end_id + 1):
+                state = get_state(infer_params, action_taken == -1, context_length, token_len, bid, self.use_cpu)
+                if token_len > 1:
+                    # reverse the state order
+                    for key in state.keys():
+                        state[key] = (state[key][0].flip(0), state[key][1].flip(0))
+                action_taken = context_tokens[bid].tolist()
+                node = Node(
+                    state=state,
+                    parent=parent_node,
+                    action=action_taken,
+                    prior=prior_data,
+                    visit_count=0,
+                    value_sum=value,
+                )
+                self.search_db.add_root(session_info, context_id + tuple(action_taken), node)
+                # # add child node to the parent node
+                # if parent_node is not None:
+                #     parent_node.children[action_taken] = node
+                # parent_node = node
 
     def get_node(self, session_info: str, context_id: str):
         return self.search_db.get(session_info, context_id)
