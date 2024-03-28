@@ -17,11 +17,14 @@ import re
 
 
 class TerminationCondition:
-    def __init__(self, max_depth, end_strings):
+    def __init__(self, max_depth, end_strings, end_tokens):
         self.end_strings = end_strings
         self.max_depth = max_depth
+        self.end_tokens = set(end_tokens)
 
-    def ends_by_end_strings(self, text):
+    def ends_by_end_strings(self, text, tokens):
+        if tokens[-1] in self.end_tokens:
+            return True
         for end_string in self.end_strings:
             if text.endswith(end_string):
                 return True
@@ -30,10 +33,10 @@ class TerminationCondition:
     def ends_by_depth(self, depth):
         return depth >= self.max_depth
 
-    def __call__(self, text, depth):
+    def __call__(self, text, depth, tokens):
         if self.ends_by_depth(depth):
             return True
-        return self.ends_by_end_strings(text)
+        return self.ends_by_end_strings(text, tokens)
 
     def has_answer(self, response):
         response = response.lower()

@@ -29,7 +29,7 @@ class TestHistoryTrackingNode:
     def test_root_node(self):
         search_db = SearchDB()
         context_id = tuple(range(11))
-        state = get_state(self.root_inference_params, True, 11, 0)
+        state = get_state(self.root_inference_params, True, 11, 1, 0)
         assert state[1][0].shape == (11, 10, 10)
         assert state[1][1].shape == (11, 10, 10)
         assert state[2][0].shape == (11, 10, 10)
@@ -43,10 +43,11 @@ class TestHistoryTrackingNode:
         mock_actions1 = full_actions1[: self.K]
         for k in range(self.K):
             action = mock_actions1[k]
-            child_state = get_state(self.child_inference_params, False, 12, 0)
+            child_state = get_state(self.child_inference_params, False, 12, 1, 0)
             assert child_state[1][0].shape == (1, 10, 10)
             child_node = Node(state=child_state, parent=root_node, action=action, prior=0.0, visit_count=0)
-            root_node.children[action] = child_node
+            search_db.add_root("session1", context_id + (action,), child_node)
+            # root_node.children[action] = child_node
         depth1_child = child_node
 
         self.child_inference_params.sequence_len_offset += 1
@@ -57,10 +58,11 @@ class TestHistoryTrackingNode:
         child_context_id = context_id + (depth1_child.action,)
         for k in range(self.K):
             action = mock_actions2[k]
-            child_state = get_state(self.child_inference_params, False, 13, 0)
+            child_state = get_state(self.child_inference_params, False, 13, 1, 0)
             assert child_state[1][0].shape == (1, 10, 10)
             child_node = Node(state=child_state, parent=depth1_child, action=action, prior=0.0, visit_count=0)
-            depth1_child.children[action] = child_node
+            search_db.add_root("session1", child_context_id + (action,), child_node)
+            # depth1_child.children[action] = child_node
 
         # construction kv cache for selected actions
         K = 30

@@ -277,12 +277,13 @@ class TextGenerationStrategy:
 
 
 class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
-    def __init__(self, model):
+    def __init__(self, model, use_cpu=False):
         super().__init__(model)
         self.forward_model = self.model.model
         # all the model parallel worker will have a copy of the inference params
         # to store the K-V cache
         self.inference_params = None
+        self.use_cpu = use_cpu
 
     def init(self, context_tokens: torch.Tensor, max_depth: int, session_id: str):
         batch_size = context_tokens.shape[0]
@@ -414,10 +415,6 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         inference = InferenceParams(max_batch_size=batch_size, max_sequence_length=max_len + token_to_generate)
         inference.sequence_len_offset = max_len + token_to_generate - 1 - token_len
         inference.key_value_memory_dict = updated_kv_cache
-        # make kv cache into tensors
-        for key in inference.key_value_memory_dict.keys():
-            keys, vals = inference.key_value_memory_dict[key]
-            inference.key_value_memory_dict[key] = (keys.cuda(), vals.cuda())
         self.search_db.add_inference_params(session_info, inference)
         return tokens, new_context_lengths, true_context_lengths
 
@@ -426,7 +423,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         # it can never happen that the node is root node
         if node.parent is None:
             raise ValueError("The node is root node, cannot update kv cache")
-        state = get_state(infer_params, False, context_length, batch_id)
+        state = get_state(infer_params, False, context_length, batch_id, self.use_cpu)
         node.state = state
         node.value_sum = value
 
@@ -469,35 +466,42 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             #     value = action_value[bid].item()
             # here prior visit_count and C are not used, set to any numbers
             if action_taken == -1:
-                state = get_state(infer_params, action_taken == -1, context_length, bid)
+                state = get_state(infer_params, action_taken == -1, context_length, 1, bid, self.use_cpu)
                 # root node, need to add all context tokens
                 tokens = context_tokens[bid, :context_length].cpu().numpy().tolist()
                 node = Node(
                     state=state, parent=parent_node, action=tokens, prior=prior_data, visit_count=0, value_sum=value,
                 )
                 self.search_db.add_root(session_info, context_id, node)
-                # add child node to the parent node
-                if parent_node is not None:
-                    parent_node.children[action_taken] = node
+                # # add child node to the parent node
+                # if parent_node is not None:
+                #     parent_node.children[action_taken] = node
             else:
+                # the new token next to the context tokens
                 beg_id = beg_position
+                # the last new token.
+                # if there is no observation, end_id = beg_id and token_len = 1
                 end_id = update_position
+                token_len = end_id - beg_id + 1
 
-                for token_id in range(beg_id, end_id + 1):
-                    state = get_state(infer_params, action_taken == -1, context_length + token_id - beg_id, bid)
-                    action_taken = context_tokens[bid, token_id].item()
-                    node = Node(
-                        state=state,
-                        parent=parent_node,
-                        action=action_taken,
-                        prior=prior_data,
-                        visit_count=0,
-                        value_sum=value,
-                    )
-                    # add child node to the parent node
-                    if parent_node is not None:
-                        parent_node.children[action_taken] = node
-                    parent_node = node
+                # for token_id in range(beg_id, end_id + 1):
+                state = get_state(infer_params, action_taken == -1, context_length, token_len, bid, self.use_cpu)
+                # the action_taken has the meaning that if take the first action action_taken[0], it will arrive
+                # at the current node. The action_taken[1:] are the tokens from the environment.
+                action_taken = context_tokens[bid][beg_id : end_id + 1].tolist()
+                node = Node(
+                    state=state,
+                    parent=parent_node,
+                    action=action_taken,
+                    prior=prior_data,
+                    visit_count=0,
+                    value_sum=value,
+                )
+                self.search_db.add_root(session_info, context_id + tuple(action_taken), node)
+                # # add child node to the parent node
+                # if parent_node is not None:
+                #     parent_node.children[action_taken] = node
+                # parent_node = node
 
     def get_node(self, session_info: str, context_id: str):
         return self.search_db.get(session_info, context_id)

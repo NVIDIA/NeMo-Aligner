@@ -14,6 +14,8 @@
 
 import torch.multiprocessing as mp
 
+from nemo_aligner.data.nlp.datasets import MCTSDataset
+
 mp.set_start_method("spawn", force=True)
 import os
 import random
@@ -32,12 +34,13 @@ from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf
 from tqdm import tqdm
 
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, GSK8KFeedbackHF
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
@@ -48,24 +51,6 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 OmegaConf.register_new_resolver("not", lambda x: not x)
-
-
-prompt_template = """\x00System
-
-\x11User
-{prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-\x11Assistant
-"""
-
-steerlm_template = """<extra_id_0>System
-A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-<extra_id_1>User
-{prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-<extra_id_1>Assistant
-<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
-"""
 
 
 def groupby(key, output):
@@ -104,7 +89,6 @@ def collate_func(batch):
 
     for b in batch:
         new_dict["question"].append(b["question"])
-        new_dict["answer"].append(b["answer"])
         new_dict["data_id"].append(b["data_id"])
 
     return new_dict
@@ -270,27 +254,22 @@ class DatasetWrapper:
         return len(self.ds)
 
 
-def get_dataset(dataset_name, split, template_name):
-    assert dataset_name == "gsm8k"
-    dataset = load_dataset("gsm8k", "main")
-    if template_name == "steerlm":
-        template = steerlm_template
-    else:
-        template = prompt_template
-    ds = DatasetWrapper(dataset[split], template)
-    score_fn = GSK8KFeedbackHF(split=split)
-
-    return ds, score_fn
+def get_dataset(cfg):
+    train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
+    ds = train_ds.data_lookup
+    score_fn = GSK8KFeedbackDataset(ds)
+    return train_ds, score_fn
 
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split, cfg.dataset.prompt_template_name)
+    ds, score_fn = get_dataset(cfg)
     logging.info(f"loaded {ds}")
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
-    cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
+    if cfg.pretrained_checkpoint.has_value_head:
+        cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
@@ -300,7 +279,10 @@ def main(cfg) -> None:
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
-    hybrid_model_cls = MegatronGPTHybridModel
+    if cfg.pretrained_checkpoint.has_value_head:
+        hybrid_model_cls = MegatronGPTHybridModel
+    else:
+        hybrid_model_cls = MegatronGPTModel
 
     ptl_model = load_from_nemo(
         hybrid_model_cls,
@@ -313,7 +295,13 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    ptl_model.prepare_for_inference()
+    if cfg.pretrained_checkpoint.has_value_head:
+        ptl_model.prepare_for_inference()
+    else:
+        ptl_model._reset_activation_checkpointing_args()
+        ptl_model._reset_sequence_parallelism_args()
+        ptl_model.eval()
+
     ptl_model.freeze()
 
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
@@ -329,7 +317,14 @@ def main(cfg) -> None:
         {"dataset_length": len(ds)}, step=0, prefix="data/",
     )
 
-    search_func = partial(run_mcts, ptl_model=ptl_model, score_fn=score_fn)
+    search_func = partial(
+        run_mcts,
+        ptl_model=ptl_model,
+        score_fn=score_fn,
+        inference_only=False,
+        has_value=cfg.pretrained_checkpoint.has_value_head,
+        use_cpu=cfg.model.mcts.kv_cache_in_cpu,
+    )
 
     # start the worker on the rank
     start_worker(search_func, collate_func, save_dir, ds, cfg, cfg.server_url, cfg.backend_url)
@@ -346,7 +341,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
         # 5 hrs timeout
         app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
 
-        @app.task
+        @app.task(autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, retry_kwargs={"max_retries": 10})
         def search_for_batch(batch_idx):
             batch_size = torch.tensor([len(batch_idx)], dtype=torch.int64).cuda()
             torch.distributed.broadcast(batch_size, 0)
@@ -371,6 +366,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
                 "--loglevel=INFO",
                 "--concurrency=1",
                 "--pool=threads",
+                "--without-gossip",
                 "-Ofair",
                 f"--hostname=worker-{RAND_ID}@%%h",
             ]

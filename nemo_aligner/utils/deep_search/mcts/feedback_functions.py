@@ -1,7 +1,10 @@
+import os
 import re
 
 import pandas as pd
 from datasets import load_dataset
+from nemo_skills.code_execution.math_grader import extract_answer
+from nemo_skills.code_execution.sandbox import LocalSandbox
 
 
 class Feedback(object):
@@ -16,23 +19,32 @@ class Feedback(object):
 
 
 class GSK8KFeedbackDataset(Feedback):
-    def score(self, response, answer):
+    def __init__(self, ds):
+        self.ds = ds
+        # local_rank = os.getenv("local_rank", "0")
+        host = os.getenv("NEMO_SKILLS_SANDBOX_HOST", "localhost")
+        port = os.getenv("NEMO_SKILLS_SANDBOX_PORT", "1034")
+        self.sandbox = LocalSandbox(host=host, port=port)
+
+    def score(self, response, data_id):
         """
         score the response
         """
+        assert self.ds[data_id]["data_id"] == data_id
         response = response.lower()
-        answer = answer.lower().split("####")[1].strip().replace(",", "")
-
-        # predicted answer matches the answer pattern
-        numbers = re.findall(r"\{{([\d,]+)\}}", response)
-        # Extract the last number
-        last_number = numbers[-1] if numbers else None
-        if last_number is None:
-            return 0.0
-        if last_number == answer:
-            return 1.0
-        else:
-            return 0.0
+        answer = self.ds[data_id]["expected_answer"]
+        # this needs to be on a seperate server for anything
+        # complicated but for GSM8K this is fine
+        response = extract_answer(response)
+        try:
+            score = float(self.sandbox.is_output_correct(response, answer))
+        except Exception as e:
+            print("############ Inference failed ############")
+            print(answer, response)
+            print(e)
+            score = 0.0
+        finally:
+            return score
 
 
 class GSK8KFeedback(Feedback):
