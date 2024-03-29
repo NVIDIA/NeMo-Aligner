@@ -465,6 +465,20 @@ class DeepSearch:
         print("### TIMER TRIGGER")
         self.save_flag = True
 
+    def clear_search_db_cache(self, backup_root_node):
+        if self.strategy is not None:
+            # clean up the cache
+            context_id = tuple(backup_root_node.state)
+            # depth first search to go through all the notes
+            stack = [(backup_root_node, context_id)]
+            while len(stack) > 0:
+                node, c_id = stack.pop()
+                self.strategy.clean_up_cache_for_context(self.mcts.session, c_id)
+                for child_action in node.children:
+                    child = node.children[child_action]
+                    if len(child.children) != 0:
+                        stack.append((child, c_id + tuple(child.state)))
+
     def search(self, parallel_searches: List[ParallelSearch], filename):
         dp_rank = parallel_state.get_data_parallel_rank()
         # clear the cache
@@ -509,6 +523,8 @@ class DeepSearch:
             # start to do the mcts search
             self.mcts.search(parallel_searches)
 
+            if count == 1:
+                backup_root_nodes = [spg.root for spg in parallel_searches]
             # loop from large to small so that we can remove search instances as we go
             for i in range(len(parallel_searches))[::-1]:
                 spg = parallel_searches[i]
@@ -578,12 +594,13 @@ class DeepSearch:
                             }
                         )
                         # need to clean up the mcts cache starting from backup root states
-                        if self.strategy is not None:
-                            # clean up the cache
-                            self.strategy.clean_up_cache_for_context(self.mcts.session, backup_root_states[i])
+                        backup_root_node = backup_root_nodes[i]
+                        assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
+                        self.clear_search_db_cache(self, backup_root_node)
                         # we can remove the search instance
                         del parallel_searches[i]
                         del backup_root_states[i]
+                        del backup_root_nodes[i]
                         continue
                     # loop through all the steps and add to the memory
                     # need to update the value based on the game play at the end of the games
@@ -612,13 +629,12 @@ class DeepSearch:
                         }
                     )
 
-                    # need to clean up the mcts cache starting from backup root states
-                    if self.strategy is not None:
-                        # clean up the cache
-                        self.strategy.clean_up_cache_for_context(self.mcts.session, tuple(backup_root_states[i]))
-
+                    backup_root_node = backup_root_nodes[i]
+                    assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
+                    self.clear_search_db_cache(self, backup_root_node)
                     del parallel_searches[i]
                     del backup_root_states[i]
+                    del backup_root_nodes[i]
             if self.save_flag:
                 if self.strategy is not None:
                     pb.write(f"saving the search to disk {filename}")
