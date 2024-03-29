@@ -596,7 +596,7 @@ class DeepSearch:
                         # need to clean up the mcts cache starting from backup root states
                         backup_root_node = backup_root_nodes[i]
                         assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
-                        self.clear_search_db_cache(self, backup_root_node)
+                        self.clear_search_db_cache(backup_root_node)
                         # we can remove the search instance
                         del parallel_searches[i]
                         del backup_root_states[i]
@@ -631,7 +631,7 @@ class DeepSearch:
 
                     backup_root_node = backup_root_nodes[i]
                     assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
-                    self.clear_search_db_cache(self, backup_root_node)
+                    self.clear_search_db_cache(backup_root_node)
                     del parallel_searches[i]
                     del backup_root_states[i]
                     del backup_root_nodes[i]
