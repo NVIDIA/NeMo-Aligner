@@ -472,10 +472,20 @@ Please show the calculation steps and lastly make sure to put the answer (and on
 [/INST]"""
 
 
+mathtool_template = """System:
+You're an expert Python programmer and mathematician. Help the user to solve this problem using code when necessary. Make sure to put the answer (and only answer) inside \boxed{}.
+
+User:
+{prompt}
+
+Assistant:
+"""
+
 TEMPLATES = {
     "steerlm": steerlm_template,
     "mistral": mistral_template,
     "sft": prompt_template,
+    "mathtool": mathtool_template,
 }
 
 
