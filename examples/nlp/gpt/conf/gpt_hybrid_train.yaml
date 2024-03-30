@@ -69,6 +69,8 @@ model:
 
     environment: null  # the environment for MCTS to interact with, default None, can be set to "code" for running code
 
+    turn_off_kv_cache: False # turn off the kv cache for inference
+
     train:
       value_weight: 1 # weight of the value portion of the loss
       policy_weight: 1 # weight of the policy portion of the loss

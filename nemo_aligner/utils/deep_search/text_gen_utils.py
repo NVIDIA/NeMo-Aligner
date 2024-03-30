@@ -449,46 +449,47 @@ def sample_sequence_batch(
             torch.distributed.broadcast(output_values, src, group)
         # after inference, save the kv cache to the search db
         # inference_strategy.save_kv_cache(session_id)
-        if init:
-            parent_nodes = [None] * batch_size
-            actions_taken = torch.cuda.IntTensor([-1] * batch_size)
-            # construct and save the root node
-            # root node kv cache is all we need
-            inference_strategy.save_kv_cache(
-                session_info,
-                context_ids,
-                batch_size,
-                context_lengths,
-                parent_nodes,
-                actions_taken,
-                output_policy,
-                output_values,
-                output_actions,
-                context_tokens,
-                update_pos,
-                context_lengths,
-            )
-        else:
-            # construct and save the next level nodes
-            parent_nodes = []
-            for i in range(batch_size):
-                context_id = context_ids[i]
-                parent_node = inference_strategy.get_node(session_info, context_id)
-                parent_nodes.append(parent_node)
-            action_taken = torch.gather(context_tokens, 1, context_lengths.unsqueeze(-1).type(torch.int64))
+        if inference_strategy.use_kv_cache:
+            if init:
+                parent_nodes = [None] * batch_size
+                actions_taken = torch.cuda.IntTensor([-1] * batch_size)
+                # construct and save the root node
+                # root node kv cache is all we need
+                inference_strategy.save_kv_cache(
+                    session_info,
+                    context_ids,
+                    batch_size,
+                    context_lengths,
+                    parent_nodes,
+                    actions_taken,
+                    output_policy,
+                    output_values,
+                    output_actions,
+                    context_tokens,
+                    update_pos,
+                    context_lengths,
+                )
+            else:
+                # construct and save the next level nodes
+                parent_nodes = []
+                for i in range(batch_size):
+                    context_id = context_ids[i]
+                    parent_node = inference_strategy.get_node(session_info, context_id)
+                    parent_nodes.append(parent_node)
+                action_taken = torch.gather(context_tokens, 1, context_lengths.unsqueeze(-1).type(torch.int64))
 
-            inference_strategy.save_kv_cache(
-                session_info,
-                context_ids,
-                batch_size,
-                true_context_length - 1,
-                parent_nodes,
-                action_taken,
-                output_policy,
-                output_values,
-                output_actions,
-                context_tokens,
-                update_pos,
-                context_lengths,
-            )
+                inference_strategy.save_kv_cache(
+                    session_info,
+                    context_ids,
+                    batch_size,
+                    true_context_length - 1,
+                    parent_nodes,
+                    action_taken,
+                    output_policy,
+                    output_values,
+                    output_actions,
+                    context_tokens,
+                    update_pos,
+                    context_lengths,
+                )
         return output_actions, output_policy, output_values

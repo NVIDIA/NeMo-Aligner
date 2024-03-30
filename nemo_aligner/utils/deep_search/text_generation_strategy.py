@@ -284,6 +284,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         # to store the K-V cache
         self.inference_params = None
         self.use_cpu = use_cpu
+        self.use_kv_cache = True
 
     def init(self, context_tokens: torch.Tensor, max_depth: int, session_id: str):
         batch_size = context_tokens.shape[0]
@@ -521,6 +522,63 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
 
 
 class HybridGPTSearchTextGenerationStrategy(GPTSearchTextGenerationStrategy):
+    def forward_step(self, batch, tensor_shape, session_info):
+        func = get_forward_output_only_func_hybrid(self, session_info)
+
+        fwd_bwd_function = get_forward_backward_func()
+        output_tensor = fwd_bwd_function(
+            forward_step_func=func,
+            data_iterator=iter([batch,]),
+            model=[self.forward_model],
+            num_microbatches=get_num_microbatches(),
+            forward_only=True,
+            seq_length=tensor_shape[0],
+            micro_batch_size=tensor_shape[1],
+        )
+
+        return output_tensor
+
+
+class NoKVCacheGPTSearchTextGenerationStrategy(GPTSearchTextGenerationStrategy):
+    def __init__(self, model, use_cpu=False):
+        super().__init__(model, use_cpu)
+        self.use_kv_cache = False
+
+    def compute_inference_params(self, session_info: str, context_ids: List[str], actions: torch.Tensor, pad_id: int):
+        tokens = [list(context_id) + action for action, context_id in zip(actions.tolist(), context_ids)]
+        token_lengths = [len(t) for t in tokens]
+        max_length = max(token_lengths)
+        paddings = [max_length - len(t) for t in tokens]
+        tokens = [t + [pad_id] * p for t, p in zip(tokens, paddings)]
+        tokens = torch.cuda.LongTensor(tokens)
+        batch_size, token_len = tokens.shape
+        new_context_lengths = torch.cuda.IntTensor(token_lengths)
+        inference = InferenceParams(max_batch_size=batch_size, max_sequence_length=token_len)
+        inference.sequence_len_offset = 0
+        self.search_db.add_inference_params(session_info, inference)
+        return tokens, new_context_lengths, None
+
+    def prepare_batch(
+        self,
+        tokens: torch.Tensor,
+        micro_batch_size: int,
+        init: bool = False,
+        session_info: str = None,
+        true_context_lengths: torch.Tensor = None,
+    ) -> Tuple[List[torch.Tensor], List[int]]:
+        """
+        generate the batch used in inference for each of the steps
+        """
+        batch, maxlen = tokens.shape
+        attention_mask_3d = self.search_db.get_attention_mask(session_info)[..., :maxlen, :maxlen]
+        tokens2use = tokens
+        positions2use = self.search_db.get_position_ids(session_info)[..., :maxlen]
+        batch = [tokens2use, attention_mask_3d, positions2use]
+        tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
+        return batch, tensor_shape
+
+
+class NoKVCacheHybridGPTSearchTextGenerationStrategy(NoKVCacheGPTSearchTextGenerationStrategy):
     def forward_step(self, batch, tensor_shape, session_info):
         func = get_forward_output_only_func_hybrid(self, session_info)
 

@@ -8,6 +8,8 @@ from nemo_aligner.utils.deep_search.text_gen_utils import dp_search
 from nemo_aligner.utils.deep_search.text_generation_strategy import (
     GPTSearchTextGenerationStrategy,
     HybridGPTSearchTextGenerationStrategy,
+    NoKVCacheGPTSearchTextGenerationStrategy,
+    NoKVCacheHybridGPTSearchTextGenerationStrategy,
 )
 
 
@@ -15,9 +17,15 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_val
     mcts_cfg = ptl_model.cfg.mcts
 
     if has_value:
-        strategy = HybridGPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
+        if mcts_cfg.turn_off_kv_cache:
+            strategy = NoKVCacheHybridGPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
+        else:
+            strategy = HybridGPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
     else:
-        strategy = GPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
+        if mcts_cfg.turn_off_kv_cache:
+            strategy = NoKVCacheGPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
+        else:
+            strategy = GPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
     strategy_args = {"strategy": strategy}
 
     if mcts_cfg.environment == "code":

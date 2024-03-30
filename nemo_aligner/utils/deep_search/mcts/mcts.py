@@ -466,7 +466,7 @@ class DeepSearch:
         self.save_flag = True
 
     def clear_search_db_cache(self, backup_root_node):
-        if self.strategy is not None:
+        if self.strategy is not None and self.strategy.use_kv_cache:
             # clean up the cache
             context_id = tuple(backup_root_node.state)
             # depth first search to go through all the notes
