@@ -80,6 +80,11 @@ def process_single_sample(list_of_samples):
                         sample_all[key].append(np.zeros_like(item[key]))
         else:
             for key in keys_to_stack:
+                if key == "actions":
+                    list_obj = [isinstance(element, list) for element in item[key]]
+                    if any(list_obj):
+                        fixed = [element[0] if isinstance(element, list) else element for element in item[key]]
+                        item[key] = fixed
                 sample_all[key].append(item[key])
 
     for k in keys_to_stack:
