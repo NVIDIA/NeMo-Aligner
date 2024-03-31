@@ -59,8 +59,28 @@ def process_single_sample(list_of_samples):
     for idx in indices:
         item = list_of_samples[idx]
 
-        for key in keys_to_stack:
-            sample_all[key].append(item[key])
+        diff = 1
+        if idx + 1 in indices:
+            diff = len(list_of_samples[idx + 1]["tokens"]) - len(item["tokens"])
+        if diff > 1:
+            for key in keys_to_stack:
+                if key == "actions":
+                    list_obj = [isinstance(element, list) for element in item[key]]
+                    # has to have list in actions
+                    assert any(list_obj)
+                    fixed = [element[0] if isinstance(element, list) else element for element in item[key]]
+                    item[key] = fixed
+                sample_all[key].append(item[key])
+                for _ in range(diff - 1):
+                    if key == "actions":
+                        sample_all[key].append([-1] * len(item[key]))
+                    elif key == "reward":
+                        sample_all[key].append(item[key])
+                    elif key == "action_probs":
+                        sample_all[key].append(np.zeros_like(item[key]))
+        else:
+            for key in keys_to_stack:
+                sample_all[key].append(item[key])
 
     for k in keys_to_stack:
         sample_all[k] = np.stack(sample_all[k])
