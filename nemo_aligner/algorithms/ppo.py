@@ -638,6 +638,8 @@ class PPOTrainer:
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
 
+                self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
+
                 self.step += 1
 
                 is_train_end = self.step == self.max_steps
@@ -662,7 +664,6 @@ class PPOTrainer:
 
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
-                self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
 
                 step_metrics.update(timing_metrics)
                 step_metrics.update({f"train_{k}": v for k, v in metrics.items()})
