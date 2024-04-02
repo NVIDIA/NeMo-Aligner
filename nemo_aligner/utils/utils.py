@@ -14,6 +14,7 @@
 
 """Misc helper functions"""
 import gc
+import itertools
 import os
 import re
 import tempfile
