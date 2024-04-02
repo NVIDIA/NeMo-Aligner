@@ -68,6 +68,7 @@ model:
     kv_cache_in_cpu: True #  save kv cache in cpu memory
 
     environment: null  # the environment for MCTS to interact with, default None, can be set to "code" for running code
+    feedback: math # the feedback function used for the search, ['math', 'steerlm']
 
     turn_off_kv_cache: False # turn off the kv cache for inference
 

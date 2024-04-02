@@ -40,7 +40,11 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, GSK8KFeedbackHF
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import (
+    GSK8KFeedbackDataset,
+    GSK8KFeedbackHF,
+    SteerLMFeedback,
+)
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
@@ -257,7 +261,10 @@ class DatasetWrapper:
 def get_dataset(cfg):
     train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
     ds = train_ds.data_lookup
-    score_fn = GSK8KFeedbackDataset(ds)
+    if cfg.model.mcts.feedback == "math":
+        score_fn = GSK8KFeedbackDataset(ds)
+    elif cfg.model.mcts.feedback == "steerlm":
+        score_fn = SteerLMFeedback()
     return train_ds, score_fn
 
 

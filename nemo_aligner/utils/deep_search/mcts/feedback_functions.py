@@ -6,6 +6,8 @@ from datasets import load_dataset
 from nemo_skills.code_execution.math_grader import extract_answer
 from nemo_skills.code_execution.sandbox import LocalSandbox
 
+from nemo_aligner.utils.deep_search.mcts.reward_functions import get_reward
+
 
 class Feedback(object):
     def __init__(self):
@@ -41,6 +43,43 @@ class GSK8KFeedbackDataset(Feedback):
         except Exception as e:
             print("############ Inference failed ############")
             print(answer, response)
+            print(e)
+            score = 0.0
+        finally:
+            return score
+
+
+class SteerLMFeedback(Feedback):
+    def __init__(self):
+        # local_rank = os.getenv("local_rank", "0")
+        self.host = os.getenv("REWARD_SERVER_HOST", "localhost")
+        self.port = os.getenv("REWARD_SERVER_PORT", "5555")
+
+    def score(self, response, data_id):
+        """
+        score the response
+        """
+        # remove the trailing extra_id_1
+        if response.endswith("<extra_id_1>"):
+            response = response[: -len("<extra_id_1>")]
+        # get the expected answer, e.g. 'quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2'
+        attribute_str = response.split("<extra_id_2>")[-1].split("\n")[0]
+        # extract the numbers
+        attributes = attribute_str.split(",")
+        numbers = [int(attr.split(":")[-1]) for attr in attributes]
+        response = response + "<extra_id_2>"
+        try:
+            evaluate = get_reward([response], False, self.host, self.port)[0]
+
+            # compute the distance between the two vectors
+            distance = sum([(a - b) ** 2 for a, b in zip(numbers, evaluate)])
+
+            # normalize the distance to be between 0 and 1
+            distance = distance / (4 ** 2 * len(numbers))
+
+            score = 1 - distance
+        except Exception as e:
+            print("############ Inference failed ############")
             print(e)
             score = 0.0
         finally:
