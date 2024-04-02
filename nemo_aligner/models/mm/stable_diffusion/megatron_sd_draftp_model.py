@@ -85,7 +85,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def finish_training_step(self):
         grad_reductions(self)
 
-    def infer(self):
+    def infer(self, batch):
         return
 
     def prepare_for_inference(self):
