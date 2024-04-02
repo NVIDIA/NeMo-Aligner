@@ -56,8 +56,12 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     git cherry-pick --no-commit -X theirs \
         81f56ea2cbff893dcd131d1a6030811bd9cea51e \
         6454b8da5441dfd60225a1930a50f8ae8ca556c8 \
+	5b38a7e6b9b2b75abb704a79b79b20a1e4f9ff35 \
+	eb45a8746a291bb7e2997997f3ee9224e8654376 \
         49c10c881c835725ae24ed115b6aefd2cb595e8e \
-        9940ec60058f644662809a6787ba1b7c464567ad && \
+        cc9a257f08be44b9ac375f7c05290e13dca3706f \
+	e1a8cef284e8a4827ff9fc572e22b191ed659d90 \
+	9940ec60058f644662809a6787ba1b7c464567ad && \
     rm -rf .git && pip install -e ".[nlp]" && \
     cd nemo/collections/nlp/data/language_modeling/megatron && make
 
