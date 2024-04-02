@@ -30,6 +30,7 @@ from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batch
 
 IMAGE_CAPTION_KEY = "images_and_captions"
 
+
 class SupervisedTrainer:
     """trainer that implements the supervised training loop
         this is useful for things like SFT and reward model training
