@@ -345,8 +345,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                 metrics = {"loss": reduced_loss, "kl_penalty": reduced_kl_penalty}
 
                 if validation_step:
-                    metrics["images"] = images
-                    metrics["captions"] = captions
+                    metrics["images_and_captions"] = images, captions
 
                 return (
                     loss,
