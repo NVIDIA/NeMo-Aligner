@@ -192,6 +192,9 @@ class CustomLoggerWrapper:
     def log_table(self, *args, **kwargs):
         self.apply_fn("log_table", *args, **kwargs)
 
+    def log_image(self, *args, **kwargs):
+        self.apply_fn("log_image", *args, **kwargs)
+
     def log_metrics(self, metrics, step=None, prefix=""):
         metrics = {f"{prefix}{k}": v for k, v in metrics.items()}
         self.apply_fn("log_metrics", metrics, step)
