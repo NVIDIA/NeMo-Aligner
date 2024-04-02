@@ -183,6 +183,7 @@ class GPTRewardModel(GPTModel):
             share_embeddings_and_output_weights=share_embeddings_and_output_weights,
             position_embedding_type=position_embedding_type,
             rotary_percent=rotary_percent,
+            rotary_base=rotary_base,
             seq_len_interpolation_factor=seq_len_interpolation_factor,
         )
 
