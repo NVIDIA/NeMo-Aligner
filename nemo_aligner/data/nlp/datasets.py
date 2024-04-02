@@ -481,11 +481,14 @@ User:
 Assistant:
 """
 
+raw = """{prompt}"""
+
 TEMPLATES = {
     "steerlm": steerlm_template,
     "mistral": mistral_template,
     "sft": prompt_template,
     "mathtool": mathtool_template,
+    "raw": raw,
 }
 
 

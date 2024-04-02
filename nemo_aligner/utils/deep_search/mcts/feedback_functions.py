@@ -72,10 +72,10 @@ class SteerLMFeedback(Feedback):
             evaluate = get_reward([response], False, self.host, self.port)[0]
 
             # compute the distance between the two vectors
-            distance = sum([(a - b) ** 2 for a, b in zip(numbers, evaluate)])
+            distance = sum([int(bool(a - b)) for a, b in zip(numbers, evaluate)])
 
             # normalize the distance to be between 0 and 1
-            distance = distance / (4 ** 2 * len(numbers))
+            distance = distance / (len(numbers))
 
             score = 1 - distance
         except Exception as e:
