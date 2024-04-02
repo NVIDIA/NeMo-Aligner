@@ -53,7 +53,7 @@ class SteerLMFeedback(Feedback):
     def __init__(self):
         # local_rank = os.getenv("local_rank", "0")
         self.host = os.getenv("REWARD_SERVER_HOST", "localhost")
-        self.port = os.getenv("REWARD_SERVER_PORT", "5555")
+        self.port = os.getenv("REWARD_SERVER_PORT", "1234")
 
     def score(self, response, data_id):
         """
