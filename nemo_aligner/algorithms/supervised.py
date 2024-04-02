@@ -76,7 +76,6 @@ class SupervisedTrainer:
 
         # any metrics that require running full token-by-token inference during validation
         self.inference_metrics_handler = InferenceMetricsHandler(cfg.get("inference_metrics"))
-        self.log_images = cfg.get("log_images", False)
 
     def validation_step(self, batch):
         self.model.prepare_for_validation_step()
@@ -109,10 +108,10 @@ class SupervisedTrainer:
                 generation_output = self.run_generation(batch)
                 self.inference_metrics_handler.update(batch, generation_output)
 
-            # for SD
-            if self.log_images:
-                images = self.model.infer(batch)
-                self.logger.log_image(images)
+            # for stable diffusion logging
+            if "images_and_captions" in metrics:
+                images, captions = metrics.pop("images_and_captions")
+                self.logger.log_image(images=images, captions=captions)
 
             loss_means.append(loss_mean)
             for k, v in metrics.items():
