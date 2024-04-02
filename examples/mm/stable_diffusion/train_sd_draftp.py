@@ -117,7 +117,6 @@ def main(cfg) -> None:
 
     reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
     ptl_model.reward_model = reward_model
-    ptl_model.wandb_logger = logger
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
     timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:12:00:00"))

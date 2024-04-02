@@ -207,11 +207,6 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
             captions.append("SD: " + prompts[i] + ", Reward = " + str(reward_init[i]))
 
         return vae_decoder_output_draft_p, images, captions
-        self.wandb_logger.loggers[1].log_image(
-            key="Inference Images",
-            images=[wandb.Image(Image.fromarray(img.round().astype("uint8"))) for img in images],
-            caption=captions,
-        )
 
     def generate(
         self, batch, x_T,
