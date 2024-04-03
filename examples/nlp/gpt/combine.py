@@ -25,7 +25,7 @@ save_dict = {}
 for split in ["train", "validation"]:
 
     policies = list(itertools.chain(x[split]["policies"] for x in loaded_files))
-    values = list(itertools.chain(x[split]["values"] for x in loaded_files[split]))
+    values = list(itertools.chain(x[split]["values"] for x in loaded_files))
 
     save_dict[split] = {"policies": policies, "values": values}
 
