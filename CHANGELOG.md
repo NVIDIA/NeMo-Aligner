@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [Next Version]
 
 ### New features and optimizations
-- LoRA: enabled on all model layers
+- SFT/SteerLM: LoRA can now be enabled on all model layers
 ### Breaking changes
 
 ### Bug Fixes
