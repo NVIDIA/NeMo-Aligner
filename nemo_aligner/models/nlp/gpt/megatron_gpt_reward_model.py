@@ -19,12 +19,11 @@ from typing import List, Union
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
 from megatron.core import parallel_state
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel, get_specs
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
@@ -90,7 +89,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         model = GPTRewardModel(
             config=self.transformer_config,
-            transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(),
+            transformer_layer_spec=get_specs(self.spec_name, self.transformer_config.num_moe_experts),
             vocab_size=self.cfg.get("override_vocab_size", self.padded_vocab_size),
             max_sequence_length=self.cfg.get("encoder_seq_length", 512),
             pre_process=pre_process,
@@ -100,6 +99,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             position_embedding_type=self.cfg.get("position_embedding_type", "learned_absolute"),
             rotary_percent=self.cfg.get("rotary_percentage", 1.0),
             seq_len_interpolation_factor=self.cfg.get("seq_len_interpolation_factor", None),
+            rotary_base=self.cfg.get("rotary_base", 10000),
             output_sequence=self.cfg.get("output_sequence", False),
             use_avg_pool=self.cfg.get("use_avg_pool", False),
             head_dtype=head_dtype,
