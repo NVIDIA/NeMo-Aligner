@@ -67,6 +67,8 @@ class SteerLMFeedback(Feedback):
         # extract the numbers
         attributes = attribute_str.split(",")
         numbers = [int(attr.split(":")[-1]) for attr in attributes]
+        # remove the <extra_id_2> line
+        response = "\n".join([i for i in response.split("\n") if not i.startswith("<extra_id_2>")])
         response = response + "<extra_id_2>"
         try:
             evaluate = get_reward([response], False, self.host, self.port)[0]
