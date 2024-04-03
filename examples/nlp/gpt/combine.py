@@ -1,13 +1,14 @@
-import itertools
-import torch
 import argparse
+import itertools
+
+import torch
 
 # Create the parser
-parser = argparse.ArgumentParser(description='Process a list of files.')
+parser = argparse.ArgumentParser(description="Process a list of files.")
 
 # Add the argument that accepts a variable number of values
-parser.add_argument('--files', nargs='*', type=str, help='Provide a list of files to process')
-parser.add_argument('--output-name', type=str, required=True)
+parser.add_argument("--files", nargs="*", type=str, help="Provide a list of files to process")
+parser.add_argument("--output-name", type=str, required=True)
 
 # Parse the arguments
 args = parser.parse_args()
@@ -23,12 +24,8 @@ save_dict = {}
 
 for split in ["train", "validation"]:
 
-    policies = list(itertools.chain(
-        x['policies'] for x in loaded_files[split]
-    ))
-    values = list(itertools.chain(
-        x['values'] for x in loaded_files[split]
-    ))
+    policies = list(itertools.chain(x[split]["policies"] for x in loaded_files))
+    values = list(itertools.chain(x[split]["values"] for x in loaded_files[split]))
 
     save_dict[split] = {"policies": policies, "values": values}
 
