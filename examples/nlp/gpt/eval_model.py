@@ -27,6 +27,7 @@ import torch.multiprocessing as mp
 from datasets import load_dataset
 from megatron.core import parallel_state
 from nemo_skills.code_execution.math_grader import extract_answer
+from nemo_skills.inference.inference_strategy import CodeExecutionStrategy
 from omegaconf.omegaconf import OmegaConf
 from tqdm import tqdm
 
@@ -55,7 +56,9 @@ mp.set_start_method("spawn", force=True)
 # Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
 
 
-def run_inference(model, feedback, dataloader, limit_batches=1.0, num_to_log_to_table=10, desc="inference"):
+def run_inference(
+    model, feedback, dataloader, limit_batches=1.0, num_to_log_to_table=10, desc="inference", strategy=None
+):
     model.prepare_for_inference()
 
     total = 0
@@ -72,7 +75,7 @@ def run_inference(model, feedback, dataloader, limit_batches=1.0, num_to_log_to_
     incorrect_samples = []
 
     for _, batch in inference_pbar:
-        output = model.generate(batch["question"])
+        output = model.generate(batch["question"], strategy=strategy)
 
         for question, response, answer in zip(batch["question"], output["sentences"], batch["answer"], strict=True):
             score = feedback.score(response, answer)
@@ -138,9 +141,9 @@ def main(cfg) -> None:
     val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
     test_ds = MCTSDataset(cfg.dataset.data_prefix["test"], cfg.dataset.prompt_template_name)
 
-    feedback = MathSandBoxedFeedBack(
-        host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT")
-    )
+    sandbox_cfg = {"host": os.getenv("NEMO_SKILLS_SANDBOX_HOST"), "port": os.getenv("NEMO_SKILLS_SANDBOX_PORT")}
+
+    feedback = MathSandBoxedFeedBack(**sandbox_cfg,)
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
@@ -169,6 +172,8 @@ def main(cfg) -> None:
 
     ptl_model.prepare_for_inference()
     ptl_model.freeze()
+
+    code_strategy = CodeExecutionStrategy(sandbox_cfg=sandbox_cfg | {"sandbox_type": "local"}, model=ptl_model)
 
     dp_size = parallel_state.get_data_parallel_world_size()
 
@@ -217,16 +222,20 @@ def main(cfg) -> None:
     train_dataloader = train_dataloader_builder_func()
     test_dataloader = test_dataloader_builder_func()
 
-    val_metrics, val_table, val_wrong = run_inference(ptl_model, feedback, val_dataloader, desc="val inference")
+    val_metrics, val_table, val_wrong = run_inference(
+        ptl_model, feedback, val_dataloader, desc="val inference", strategy=code_strategy
+    )
     logger.log_metrics(val_metrics, step=0, prefix="val/")
     logger.log_table("table/val", dataframe=val_table, step=0)
 
-    test_metrics, test_table, test_wrong = run_inference(ptl_model, feedback, test_dataloader, desc="test inference")
+    test_metrics, test_table, test_wrong = run_inference(
+        ptl_model, feedback, test_dataloader, desc="test inference", strategy=code_strategy
+    )
     logger.log_metrics(test_metrics, step=0, prefix="test/")
     logger.log_table("table/test", dataframe=test_table, step=0)
 
     train_metrics, train_table, train_wrong = run_inference(
-        ptl_model, feedback, train_dataloader, desc="train inference"
+        ptl_model, feedback, train_dataloader, desc="train inference", strategy=code_strategy,
     )
     logger.log_metrics(train_metrics, step=0, prefix="train/")
     logger.log_table("table/train", dataframe=train_table, step=0)

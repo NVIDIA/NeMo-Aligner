@@ -78,6 +78,7 @@ class DeepSearchTrainer:
         logger,
         ckpt_callback,
         run_timer,
+        strategy,
     ):
         self.cfg = cfg
         self.model = model
@@ -102,6 +103,8 @@ class DeepSearchTrainer:
         self.value_optimization_step = 0
         self.consumed_samples_values = 0
         self.consumed_samples = 0
+
+        self.strategy = strategy
 
         # TODO(geshen): steps probably wrong
         self.set_max_steps()
@@ -129,7 +132,7 @@ class DeepSearchTrainer:
         inference_pbar = tqdm(loop_iter, total=min(len(dataloader), limit_batches), leave=True, desc="Inference")
 
         for (_, batch) in inference_pbar:
-            output = self.model.generate(batch["question"])
+            output = self.model.generate(batch["question"], strategy=self.strategy)
 
             for response, answer in zip(output["sentences"], batch["answer"], strict=True):
                 score = self.feedback.score(response, answer)

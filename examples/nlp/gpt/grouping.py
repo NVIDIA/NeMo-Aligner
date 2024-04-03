@@ -2,12 +2,17 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+import jsonlines
 import numpy as np
 import torch
 from tqdm import tqdm
 
 CACHE_DIR = sys.argv[1]
-DATA_FILE = "data.pt"
+VAL_DATASET = sys.argv[2]
+DATA_FILE = sys.argv[3]
+
+with jsonlines.open(VAL_DATASET) as reader:
+    val_ids = set([obj["data_id"] for obj in reader])
 
 GLOBAL_CONTEXT_LENGTH_DICT = {}
 
@@ -178,4 +183,16 @@ before_filter_len = len(policies)
 policies = [p for p in policies if all(r > 0 for r in p["reward"])]
 print("questions before filter {} questions after filter {}".format(before_filter_len, len(policies)))
 
-torch.save({"policies": policies, "values": values}, DATA_FILE)
+
+policy_train_data = [item for item in policies if item["data_id"] not in val_ids]
+policy_val_data = [item for item in policies if item["data_id"] in val_ids]
+
+value_train_data = [item for item in values if item["data_id"] not in val_ids]
+value_val_data = [item for item in values if item["data_id"] in val_ids]
+
+dataset = {
+    "train": {"policies": policy_train_data, "values": value_train_data},
+    "validation": {"policies": policy_val_data, "values": value_val_data},
+}
+
+torch.save(dataset, DATA_FILE)

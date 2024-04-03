@@ -326,11 +326,11 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
         return metrics["loss"], metrics
 
-    def generate(self, inputs, length_params=None, sampling_params=None):
+    def generate(self, inputs, length_params=None, sampling_params=None, strategy=None):
         length_params = length_params or self.length_params
         sampling_params = sampling_params or self.sampling_params
 
-        return super().generate(inputs, length_params, sampling_params)
+        return super().generate(inputs, length_params, sampling_params, strategy=strategy)
 
     def get_forward_output_only_func(self):
         def fwd_output_only_func(dataloader_iter, model):

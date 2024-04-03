@@ -25,6 +25,7 @@ from datasets import load_dataset
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from nemo_skills.code_execution.math_grader import extract_answer
+from nemo_skills.inference.inference_strategy import CodeExecutionStrategy
 from omegaconf import open_dict
 from omegaconf.omegaconf import OmegaConf
 
@@ -168,11 +169,10 @@ def mcts_value_collate_fn(eos_id, batches):
 def main(cfg) -> None:
     train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
     val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
-    val_ids = {item["data_id"] for item in val_ds}
 
-    feedback = MathSandBoxedFeedBack(
-        host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT")
-    )
+    sandbox_cfg = {"host": os.getenv("NEMO_SKILLS_SANDBOX_HOST"), "port": os.getenv("NEMO_SKILLS_SANDBOX_PORT")}
+
+    feedback = MathSandBoxedFeedBack(**sandbox_cfg,)
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
     cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
@@ -196,6 +196,8 @@ def main(cfg) -> None:
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
+    code_strategy = CodeExecutionStrategy(sandbox_cfg=sandbox_cfg | {"sandbox_type": "local"}, model=ptl_model)
+
     trainer_restore_path = trainer.ckpt_path
     if trainer_restore_path is not None:
         custom_trainer_state_dict = retrieve_custom_trainer_state_dict(trainer)
@@ -211,45 +213,54 @@ def main(cfg) -> None:
     dp_size = parallel_state.get_data_parallel_world_size()
 
     assert os.path.exists(cfg.mcts_data_file)
-    train_data = torch.load(cfg.mcts_data_file)
+    all_data = torch.load(cfg.mcts_data_file)
 
-    policy_train_data = [item for item in train_data["policies"] if item["data_id"] not in val_ids]
-    policy_val_data = [item for item in train_data["policies"] if item["data_id"] in val_ids]
+    policy_train_data, value_train_data = all_data["train"]["policies"], all_data["train"]["values"]
+    policy_val_data, value_val_data = all_data["validation"]["policies"], all_data["validation"]["values"]
 
-    value_train_data = [item for item in train_data["values"] if item["data_id"] not in val_ids]
-    value_val_data = [item for item in train_data["values"] if item["data_id"] in val_ids]
+    def compute_policy_and_val_total_correct(policy, val):
+        policy_correct = 0
+        policy_total = 0
 
-    num_samples = compute_limit_batches(
-        len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches
+        for p in policy:
+            if all(x > 0 for x in p["reward"]):
+                policy_correct += 1
+
+            policy_total += 1
+
+        value_correct = 0
+        value_total = 0
+
+        for v in val:
+            rewards = v["reward"]
+            value_correct += sum(r > 0 for r in rewards)
+            value_total += len(rewards)
+
+        return policy_correct, policy_total, value_correct, value_total
+
+    (
+        train_policy_correct,
+        train_policy_total,
+        train_value_correct,
+        train_value_total,
+    ) = compute_policy_and_val_total_correct(policy_train_data, value_train_data)
+    val_policy_correct, val_policy_total, val_value_correct, val_value_total = compute_policy_and_val_total_correct(
+        policy_val_data, value_val_data
     )
 
-    train_ds_id_mapping = {item["data_id"]: i for i, item in enumerate(train_ds)}
-    train_eval_ds = []
-    for _, p in zip(range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_train_data):
-        idx = train_ds_id_mapping[p["data_id"]]
-        train_eval_ds.append(train_ds[idx])
-
-    num_questions_correct = 0
-
-    for p in train_data["policies"]:
-        if all(x > 0 for x in p["reward"]):
-            num_questions_correct += 1
-
-    value_correct = 0
-    value_total = 0
-
-    for v in train_data["values"]:
-        rewards = v["reward"]
-        value_correct += sum(r > 0 for r in rewards)
-        value_total += len(rewards)
-
     data_metrics = {
-        "num_questions_correct": num_questions_correct,
-        "num_questions": len(train_data["policies"]),
-        "accuracy": num_questions_correct / len(train_data["policies"]),
-        "value_correct": value_correct,
-        "value_total": value_total,
-        "value_accuracy": value_correct / value_total,
+        "num_train_policy_correct": train_policy_correct,
+        "num_train_total": train_policy_total,
+        "num_val_policy_correct": val_policy_correct,
+        "num_val_total": val_policy_total,
+        "train_accuracy": train_policy_correct / train_policy_total,
+        "val_accuracy": val_policy_correct / val_policy_total,
+        "value_train_correct": train_value_correct,
+        "value_train_total": train_value_total,
+        "value_val_correct": val_value_correct,
+        "value_val_total": val_value_total,
+        "value_train_accuracy": train_value_correct / train_value_total,
+        "value_val_accuracy": val_value_correct / val_value_total,
     }
 
     logging.info("Loaded search cached data at {} with metric {}".format(cfg.mcts_data_file, data_metrics))
@@ -299,7 +310,7 @@ def main(cfg) -> None:
     train_dataloader_builder_func = partial(
         build_dataloader,
         cfg=cfg,
-        dataset=train_eval_ds,
+        dataset=train_ds,
         consumed_samples=0,
         mbs=cfg.model.inference.micro_batch_size,
         gbs=cfg.model.inference.micro_batch_size * dp_size,
@@ -372,6 +383,7 @@ def main(cfg) -> None:
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
+        strategy=code_strategy,
     )
 
     if custom_trainer_state_dict is not None:
