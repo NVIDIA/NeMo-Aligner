@@ -86,7 +86,7 @@ def fill_padded_tensor_with_data(batches, max_seqlen, lengths, response_lengths,
     return output
 
 
-def create_mask(tokens, lengths, response_length):
+def create_mask(tokens, lengths, response_length, actions=None):
     idx = lengths - 1
 
     end = (response_length).view(-1, 1)
@@ -94,6 +94,12 @@ def create_mask(tokens, lengths, response_length):
 
     seq_range = torch.arange(tokens.size(-1), device=lengths.device).view(1, -1)
     sequence_mask = (start <= seq_range) & (end > seq_range)
+
+    if actions is not None:
+        # mask out actions that are -1
+        action_mask = ~((actions == -1).sum(-1) > 0)
+        sequence_mask &= action_mask
+
     return sequence_mask
 
 
@@ -126,8 +132,10 @@ def mcts_collate_fn(eos_id, batch):
         )
         new_dict[k] = output
 
-    mask = create_mask(new_dict["tokens"], lengths, new_dict["response_length"])
+    mask = create_mask(new_dict["tokens"], lengths, new_dict["response_length"], new_dict["actions"])
 
+    # after masking the actions need to be 0ed otherwise it crashes the training code
+    new_dict["actions"].clamp_(min=0)
     return new_dict | {"mcts_mask": mask}
 
 
@@ -150,6 +158,7 @@ def mcts_value_collate_fn(eos_id, batches):
 
         final_dict[k] = output
 
+    # TODO: do i need to add masking for this?
     mask = create_mask(final_dict["tokens"], final_dict["context_length"], final_dict["response_length"])
 
     return final_dict | {"mcts_mask": mask}

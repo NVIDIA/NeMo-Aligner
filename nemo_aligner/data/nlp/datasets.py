@@ -460,8 +460,18 @@ Please show the calculation steps and lastly make sure to put the answer (and on
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
 
+mathtool_template = """System:
+You're an expert Python programmer and mathematician. Help the user to solve this problem using code when necessary. Make sure to put the answer (and only answer) inside \\boxed{{}}.
+
+User:
+{question}
+
+Assistant:
+"""
+
 TEMPLATES = {
     "steerlm": steerlm_template,
+    "mathtool": mathtool_template,
 }
 
 
