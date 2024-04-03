@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 
 CACHE_DIR = sys.argv[1]
-DATA_FILE = "data.pt"
+DATA_FILE = "solar_no_value_head_iter0.pt"
 
 GLOBAL_CONTEXT_LENGTH_DICT = {}
 
@@ -59,33 +59,8 @@ def process_single_sample(list_of_samples):
     for idx in indices:
         item = list_of_samples[idx]
 
-        diff = 1
-        if idx + 1 in indices:
-            diff = len(list_of_samples[idx + 1]["tokens"]) - len(item["tokens"])
-        if diff > 1:
-            for key in keys_to_stack:
-                if key == "actions":
-                    list_obj = [isinstance(element, list) for element in item[key]]
-                    # has to have list in actions
-                    assert any(list_obj)
-                    fixed = [element[0] if isinstance(element, list) else element for element in item[key]]
-                    item[key] = fixed
-                sample_all[key].append(item[key])
-                for _ in range(diff - 1):
-                    if key == "actions":
-                        sample_all[key].append([-1] * len(item[key]))
-                    elif key == "reward":
-                        sample_all[key].append(item[key])
-                    elif key == "action_probs":
-                        sample_all[key].append(np.zeros_like(item[key]))
-        else:
-            for key in keys_to_stack:
-                if key == "actions":
-                    list_obj = [isinstance(element, list) for element in item[key]]
-                    if any(list_obj):
-                        fixed = [element[0] if isinstance(element, list) else element for element in item[key]]
-                        item[key] = fixed
-                sample_all[key].append(item[key])
+        for key in keys_to_stack:
+            sample_all[key].append(item[key])
 
     for k in keys_to_stack:
         sample_all[k] = np.stack(sample_all[k])
@@ -147,7 +122,6 @@ print("length of value after filtering", len(values))
 print("length of policies before filtering", len(policies))
 policies = [p for p in policies if len(p["tokens"]) > 0]
 print("length of policies after filtering", len(policies))
-print("not finished ids", total_data_ids - set([i["data_id"] for i in policies]))
 
 print("total data ids", len(total_data_ids))
 
@@ -156,14 +130,9 @@ policy_data, value_data = policies, values
 
 num_questions_correct = 0
 
-correct_ids = set()
-finished_ids = set()
 for p in policy_data:
-    if all(x == 1 for x in p["reward"]):
+    if all(x > 0 for x in p["reward"]):
         num_questions_correct += 1
-        finished_ids = set()
-    finished_ids = set()
-print("wrong ids", finished_ids - correct_ids)
 
 data_metrics = {
     "num_questions_correct": num_questions_correct,
