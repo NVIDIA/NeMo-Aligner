@@ -75,6 +75,9 @@ def run_inference(
     incorrect_samples = []
 
     for _, batch in inference_pbar:
+        if len(batch) <= 0:
+            break
+
         output = model.generate(batch["question"], strategy=strategy)
 
         for question, response, answer in zip(batch["question"], output["sentences"], batch["answer"], strict=True):
