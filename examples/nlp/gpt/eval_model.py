@@ -72,6 +72,9 @@ def run_inference(model, feedback, dataloader, limit_batches=1.0, num_to_log_to_
     incorrect_samples = []
 
     for _, batch in inference_pbar:
+        if len(batch) <= 0:
+            break
+
         output = model.generate(batch["question"])
 
         for question, response, answer in zip(batch["question"], output["sentences"], batch["answer"], strict=True):

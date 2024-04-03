@@ -129,6 +129,9 @@ class DeepSearchTrainer:
         inference_pbar = tqdm(loop_iter, total=min(len(dataloader), limit_batches), leave=True, desc="Inference")
 
         for (_, batch) in inference_pbar:
+            if len(batch) <= 0:
+                break
+
             output = self.model.generate(batch["question"])
 
             for response, answer in zip(output["sentences"], batch["answer"], strict=True):

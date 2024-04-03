@@ -292,7 +292,7 @@ def main(cfg) -> None:
         gbs=cfg.model.inference.micro_batch_size * dp_size,
         load_gbs=False,
         collate_fn=collate_fn,
-        drop_last=True,
+        drop_last=False,
         shuffle=False,
     )
 
