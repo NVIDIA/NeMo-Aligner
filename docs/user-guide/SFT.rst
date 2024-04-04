@@ -7,7 +7,7 @@ Prerequisite: Obtaining a pretrained model
 
 The NeMo framework supports efficient model alignment via the NeMo Aligner codebase.
 
-All algorithms in NeMo Aligner will work with any GPT based model that is from mcore(i.e in the config it has ``mcore_gpt=True``). 
+All algorithms in NeMo Aligner will work with any NeMo GPT based model. `Here <https://github.com/NVIDIA/NeMo/tree/main/scripts/nlp_language_modeling>`__ is a collection of scripts that convert popular models from HuggingFace to ``.nemo`` format.
 
 To start, we must first get a pretrained model to align. There are 2 models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes we will use the smaller 2B model. 
 
@@ -32,8 +32,8 @@ To start, we must first get a pretrained model to align. There are 2 models we r
         #. Convert the LLaMa2 LLM into ``.nemo`` format
             .. code-block:: bash 
 
-               python NeMo/scripts/nlp_language_modeling/convert_hf_llama_to_nemo.py \
-                   --in-file /path/to/llama --out-file /output_path/mcore_gpt.nemo
+               python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py \
+                   --input_name_or_path /path/to/llama --output_path /output_path/mcore_gpt.nemo
 
 After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Aligner.
 
@@ -46,7 +46,7 @@ After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Align
       export NVTE_FLASH_ATTN=0
       export NVTE_FUSED_ATTN=0
 
-.. _sft:
+.. _model-aligner-sft:
 
 Model Alignment by Supervised Fine-Tuning (SFT)
 ############################################################

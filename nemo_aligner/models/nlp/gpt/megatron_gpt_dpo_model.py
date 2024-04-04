@@ -357,15 +357,11 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         return logprobs
 
-    def get_ref_policy_logprobs(self, list_of_batches):
-        tokens = torch.cat([torch.cat((b["chosen"], b["rejected"]), dim=0) for b in list_of_batches], dim=0)
-        masks = torch.cat(
-            [torch.cat((b["attention_mask"], b["attention_mask"]), dim=0) for b in list_of_batches], dim=0
-        )
-        pos_ids = torch.cat([torch.cat((b["position_ids"], b["position_ids"]), dim=0) for b in list_of_batches], dim=0)
-        labels = torch.cat(
-            [torch.cat((b["chosen_labels"], b["rejected_labels"]), dim=0) for b in list_of_batches], dim=0
-        )
+    def get_ref_policy_logprobs(self, batch):
+        tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
+        masks = torch.cat((batch["attention_mask"], batch["attention_mask"]), dim=0)
+        pos_ids = torch.cat((batch["position_ids"], batch["position_ids"]), dim=0)
+        labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
         global_batch = [tokens, masks, pos_ids, labels]
 
         if self.use_peft and self.ref_policy_state_dict is None:

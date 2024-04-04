@@ -6,11 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [Next Version]
 
 ### New features and optimizations
+- Add MoE Support for our reward models.
+- SFT/SteerLM: LoRA can now be enabled on all model layers
+
+### Breaking changes
+
+### Bug Fixes
+- Fixed issue where random sampler keeps state when resetting for validation, leading to a different validation batch each validation step. Fixed by using a deterministic sampler
+- Fixed crash with float val check interval in DPOTrainer
+- Fixed crash with float val check interval when checking progress in DPOTrainer
+- Fixed potential crash in SPIN when prompts are longer than encoder_seq_len - generation.max_length
+
+## [0.2.0] - 2024-02
+### New features and optimizations
 - Added public-facing official Dockerfile for NeMo-Aligner.
 - PPO: memory optimization to help avoid OOM in the actor when sending training data to the critic.
 - PPO: it is now possible to use a custom end string in `sampling_params.end_strings` that is different from `<extra_id_1>`.
 - SFT: added support for custom validation metrics based on model generations.
 - Added the ability to do multi-epoch (cfg.max_epochs > 1) training for reward models, DPO, PPO, and SFT
+- Added the SPIN (Self-Play Fine Tuning) algorithm (https://arxiv.org/abs/2401.01335) which allows SPIN SFT training using SFT-format dataset files
 - SFT/SteerLM: added LoRA tuning as an option besides full fine-tuning, only attention_qkv layer is supported
 
 ### Breaking changes
@@ -23,7 +37,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 a dictionary from the training configuration.
 - `exp_manager.max_time_per_run` is now respected, the trainers will save and run validation before exiting if we've reached the time limit.
 - Fixed crash in PPO when using a separate reward model server (i.e., with `combine_rm_and_critic_server=False`).
-- Fixed a crash when LR scheduler was not specified
+- Fixed crash when LR scheduler is not specified
 
 ## [0.1.0] - 2023-12-04
 ### Added
