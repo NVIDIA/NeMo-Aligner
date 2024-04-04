@@ -4,8 +4,8 @@ FROM nvcr.io/nvidia/pytorch:24.01-py3
 ### config tags
 ARG APEX_TAG=master
 ARG TE_TAG=release_v1.4
-ARG MLM_TAG=core_r0.5.0
-ARG NEMO_TAG=r1.23.0
+ARG MLM_TAG=43792028f003ed25a3ee8c5a0d4cad82317d81b5
+ARG NEMO_TAG=9d86acd5ebf3cec020f84dfe7e25c109506803b1 
 ARG PYTRITON_VERSION=0.4.1
 ARG PROTOBUF_VERSION=4.24.4
 ARG ALIGNER_COMMIT=main
@@ -53,8 +53,6 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
         git checkout FETCH_HEAD; \
     fi && \
     pip uninstall -y nemo_toolkit sacrebleu && \
-    git cherry-pick --no-commit -X theirs \
-        9940ec60058f644662809a6787ba1b7c464567ad && \
     rm -rf .git && pip install -e ".[nlp]" && \
     cd nemo/collections/nlp/data/language_modeling/megatron && make
 
