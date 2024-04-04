@@ -144,11 +144,22 @@ class SupervisedTrainer:
         self.optimizer.step()
         self.scheduler.step()
 
+        model_ref = self.model.model.module if self.model.megatron_amp_O2 else self.model.model
+
+        if hasattr(model_ref, "embedding") and hasattr(model_ref.embedding, "noise_scheduler"):
+            noise_scheduler = model_ref.embedding.noise_scheduler
+            if noise_scheduler is not None:
+                noise_scheduler.step()
+
         trainer_metrics = {}
         if grad_norm is not None:
             trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
-
+        if hasattr(model_ref, "embeddings") and hasattr(model_ref.embedding, "noise_scheduler"):
+            noise_scheduler = model_ref.embedding.noise_scheduler
+            if noise_scheduler is not None:
+                metrics["noise_value"] = noise_scheduler.current_value
+                metrics["noise_step"] = noise_scheduler.current_step
         return loss_mean, trainer_metrics | metrics
 
     @torch.no_grad()
