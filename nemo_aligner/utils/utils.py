@@ -14,12 +14,14 @@
 
 """Misc helper functions"""
 import gc
+import itertools
 import os
 import re
 import tempfile
 from contextlib import contextmanager
 from dataclasses import replace
 from functools import partial
+from typing import Iterator, List
 from unittest.mock import patch
 
 import torch
@@ -369,6 +371,35 @@ def convert_to_amp_o2_format(state_dict):
         new_state_dict[new_key] = state_dict[key]
 
     return new_state_dict
+
+
+def get_iterator_k_split_list(batch: List[str], num_microbatches: int) -> Iterator:
+    """
+    Generate an iterator to split a list into microbatches of equal size.
+    
+    Args:
+        batch (List[str]): The list to be split into microbatches.
+        num_microbatches (int): The number of microbatches to split the list into.
+        
+    Returns:
+        Iterator: An iterator that yields the microbatches.
+    """
+    assert len(batch) % num_microbatches == 0, "Issue with batch size configuration!"
+    batch_size_per_microbatch = len(batch) // num_microbatches
+    microbatches = [
+        batch[i * batch_size_per_microbatch : (i + 1) * batch_size_per_microbatch] for i in range(num_microbatches)
+    ]
+    return itertools.chain(microbatches)
+
+
+def _get_autocast_dtype(precision: str):
+    if precision in ["bf16", "bf16-mixed"]:
+        return torch.bfloat16
+    if precision in [32, "32", "32-true"]:
+        return torch.float
+    if precision in [16, "16", "16-mixed"]:
+        return torch.half
+    raise ValueError('precision must be in ["32-true", "16-mixed", "bf16-mixed"]')
 
 
 # this function uses dataclasses.replace to create ShardedTensors/ShardedObjects from torch.Tensor and IOBytes objects
