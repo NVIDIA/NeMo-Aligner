@@ -30,7 +30,6 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
-from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, from_parallel_logits_to_logprobs
 from nemo_aligner.utils.train_utils import (
@@ -40,7 +39,7 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_validation_step,
     set_sync_funcs,
 )
-from nemo_aligner.utils.utils import cpu_weight_swap
+from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
 
 
 class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
@@ -365,18 +364,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         global_batch = [tokens, masks, pos_ids, labels]
 
         if self.use_peft and self.ref_policy_state_dict is None:
-            # disable adapters -> reference model
-            for _, module in self.named_modules():
-                if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
-                    module.set_enabled_adapters(enabled=False)
-
-            ref_log_probs = self.get_logprob_batch(global_batch)
-
-            # enable adapters after calculating ref_log_probs
-            for _, module in self.named_modules():
-                if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
-                    module.set_enabled_adapters(enabled=True)
-
+            # when using adapters instead of full-tuning, the actor is reference model + adapters
+            with adapter_control(self):
+                # With adapters disabled (meaning using the reference model), calculate ref_log_probs
+                ref_log_probs = self.get_logprob_batch(global_batch)
         else:
             with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
                 ref_log_probs = self.get_logprob_batch(global_batch)
