@@ -378,22 +378,34 @@ class PPOTrainer:
         timer_metrics["first_request"] = self.timer.stop_and_get_time("first_request")
 
         self.timer.start("generate")
-        while len(idx) > 0:
+        batches = []
+        for _ in range(num_microbatches):
             idx = idx[0]
             batch = dataloader_iter._dataset[idx]
             batch = collate_with_pad_to_max_batch(
                 self.model.cfg.ppo.length_params.max_length, self.model.tokenizer.eos_id, self.model.cfg
             )([batch])
 
-            rollout_batch = self.model.infer(batch)
-            rollout_batches.append(rollout_batch)
-
-            futures.append(self.rm_critic.infer_rm_critic(rollout_batch, use_trtllm_reshard=self.use_trtllm_reshard))
-
-            start_time = time.time()
+            batches.append(batch)
             idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
-            end_time = time.time()
-            print("### REQUEST TOOK", end_time - start_time)
+
+        # while len(idx) > 0:
+            # idx = idx[0]
+            # batch = dataloader_iter._dataset[idx]
+            # batch = collate_with_pad_to_max_batch(
+                # self.model.cfg.ppo.length_params.max_length, self.model.tokenizer.eos_id, self.model.cfg
+            # )([batch])
+
+            # rollout_batch = self.model.infer(batch)
+            # rollout_batches.append(rollout_batch)
+
+            # futures.append(self.rm_critic.infer_rm_critic(rollout_batch, use_trtllm_reshard=self.use_trtllm_reshard))
+
+            # start_time = time.time()
+            # idx = send_request(host=self.host, port=self.port, use_trtllm_reshard=self.use_trtllm_reshard)
+            # end_time = time.time()
+        #     print("### REQUEST TOOK", end_time - start_time)
+        rollout_batches = self.model.infer(batches)
 
         timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 

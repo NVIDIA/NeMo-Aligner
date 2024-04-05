@@ -51,6 +51,8 @@ class RLHFDataset(Dataset):
 
         np_rng = np.random.default_rng(seed=seed)
         np_rng.shuffle(self.shuffled_indices)
+        
+        self.text_key = self.cfg.data.get("text_key", "text")
 
         # Checks
         assert np.min(documents) >= 0
@@ -101,7 +103,7 @@ class RLHFDataset(Dataset):
             shuffled_idx = self.shuffled_indices[idx]
             sample = self.data[shuffled_idx]
             if self.use_json:
-                sample, _ = self.encode(sample["text"])
+                sample, _ = self.encode(sample[self.text_key])
             if len(sample) <= self.max_sample_length:
                 break
             idx = (idx + 1) % len(self)

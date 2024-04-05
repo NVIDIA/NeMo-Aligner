@@ -44,7 +44,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM, GPTGenerateWithToolsTRTLLM
 from nemo_aligner.utils.utils import (
     calculate_dialogue_response_lengths,
     configure_batch_sizes,
@@ -52,6 +52,7 @@ from nemo_aligner.utils.utils import (
     masked_mean,
     offload_distributed_adam,
 )
+from nemo_aligner.tools.code_execution import CodeExecutionTool
 
 
 def print_mem(prefix):
@@ -81,8 +82,10 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self.use_trtllm_generation = self.cfg.ppo.use_trtllm
         self.orig_dp_rank = parallel_state.get_data_parallel_rank()
 
+        tools = [CodeExecutionTool(tokenizer=self.tokenizer, max_threads=8)]
         if self.use_trtllm_generation:
             self.trtllm_generate = GPTGenerateTRTLLM(self.cfg, self.tokenizer)
+            # self.trtllm_generate = GPTGenerateWithToolsTRTLLM(self.cfg, self.tokenizer, tools)
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
@@ -284,32 +287,57 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
     @torch.no_grad()
     def infer(self, inference_batch):
-        prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
-        prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
-        inputs = (prompt_tokens, prompt_lengths)
-
-        if self.use_trtllm_generation:
+        if isinstance(inference_batch, list):
+            inputs = [(i["text"].cuda(non_blocking=True), i["length"].cuda(non_blocking=True)) for i in inference_batch]
             actor_output = self.trtllm_generate.generate(inputs)
+
+            rollout_batches = []
+            for ao in actor_output:
+                response_tokens = torch.cuda.LongTensor(ao["token_ids"])
+                response_lengths = calculate_dialogue_response_lengths(
+                    tokens=response_tokens,
+                    prompt_lengths=prompt_lengths,
+                    tokenizer=self.tokenizer,
+                    end_strings=self._sampling_params["end_strings"],
+                    max_generation_length=self._length_params["max_length"],
+                    max_sequence_length=self.cfg.encoder_seq_length,
+                )
+
+                rollout_batch = {
+                    "response_tokens": response_tokens,
+                    "response_lengths": response_lengths,
+                    "prompt_lengths": prompt_lengths,
+                }
+                rollout_batches.append(rollout_batch)
+            return rollout_batches
+
         else:
-            actor_output = self.generate(
-                inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params
+            prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
+            prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
+            inputs = (prompt_tokens, prompt_lengths)
+
+            if self.use_trtllm_generation:
+                actor_output = self.trtllm_generate.generate(inputs)
+            else:
+                actor_output = self.generate(
+                    inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params
+                )
+
+            response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
+            response_lengths = calculate_dialogue_response_lengths(
+                tokens=response_tokens,
+                prompt_lengths=prompt_lengths,
+                tokenizer=self.tokenizer,
+                end_strings=self._sampling_params["end_strings"],
+                max_generation_length=self._length_params["max_length"],
+                max_sequence_length=self.cfg.encoder_seq_length,
             )
 
-        response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
-        response_lengths = calculate_dialogue_response_lengths(
-            tokens=response_tokens,
-            prompt_lengths=prompt_lengths,
-            tokenizer=self.tokenizer,
-            end_strings=self._sampling_params["end_strings"],
-            max_generation_length=self._length_params["max_length"],
-            max_sequence_length=self.cfg.encoder_seq_length,
-        )
-
-        rollout_batch = {
-            "response_tokens": response_tokens,
-            "response_lengths": response_lengths,
-            "prompt_lengths": prompt_lengths,
-        }
+            rollout_batch = {
+                "response_tokens": response_tokens,
+                "response_lengths": response_lengths,
+                "prompt_lengths": prompt_lengths,
+            }
 
         # return in GPU, trainer needs to move to cpu
 
