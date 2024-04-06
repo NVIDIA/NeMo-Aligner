@@ -688,7 +688,7 @@ class PPOTrainer:
     def set_max_steps(self):
         max_steps = self.cfg.get("max_steps", -1)
 
-        train_dataloader_len = self.train_dataloader_builder(consumed_samples=self.consumed_samples)
+        train_dataloader_len = len(self.train_dataloader_builder(consumed_samples=self.consumed_samples))
 
         if max_steps == -1:
             # the dataloader already knows how much longer
