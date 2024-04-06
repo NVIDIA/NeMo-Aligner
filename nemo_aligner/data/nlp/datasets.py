@@ -130,7 +130,7 @@ class RLHFDataset(Dataset):
 
         output = {
             "text": sample_tensor,
-            "length": torch.as_tensor(sample_tensor.shape[0]),
+            "length": sample_tensor.shape[0],
             "loss_multiplier": loss_multiplier,
             "idx": idx,
         }

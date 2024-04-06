@@ -27,18 +27,26 @@ trainer:
     model_gbs: ${model.global_batch_size}
     model_mbs: ${model.micro_batch_size}
 
-    # the sequence length to pad the rollout batch to
-    # this reduces fragmentation at the cost of using more
+    # the sequence length to pad the rollout batch for training to
+    # reduce fragmentation at the cost of using more
     # memory, set to null if we don't want to pad it
     # to a constant size
-    rollout_batch_seq_length: null
+    # if actual seq length is higher than this a warning will be raised
+    # but will not crash and training will still proceed
+    train_seq_length: null
 
     # if this is true, we send everything to the critic at once
     batch_critic_send: True
 
-    # flask server port
-    port: 12345
-    host: localhost
+    trt_llm:
+      enable: False
+      reshard: False # if True then reshard the model into TP only for inf
+
+    flask_server:
+      # flask server that acts as a worker pool to balance out generation time
+      enable: False
+      port: 12345
+      host: localhost
 
   # no need to change these
   logger: False # logger provided by exp_manager
@@ -51,8 +59,7 @@ trainer:
 remote_critic_rm:
   # what to batch the inputs to
   # set to None if no batching when sending inference to the critic
-# pad_to_length: ${model.encoder_seq_length}
-  pad_to_length: null
+  pad_to_length: ${model.encoder_seq_length}
 
   # must match the same flag in the critic config
   combine_rm_and_critic_server: True

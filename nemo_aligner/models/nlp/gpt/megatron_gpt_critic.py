@@ -17,7 +17,6 @@ from enum import Enum
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
-from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.transformer.module import Float16Module
 from omegaconf.dictconfig import DictConfig
@@ -32,6 +31,7 @@ from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.utils import AppState
 from nemo_aligner.models.alignable_interface import CriticModelInterface
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import set_sync_funcs
 from nemo_aligner.utils.utils import masked_mean, offload_distributed_adam, swap_dict
 

@@ -264,7 +264,13 @@ def offload_distributed_adam(state_dict):
 
 
 def collate_with_batch_max_sequence_length(
-    data_batch, response_token_length, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
+    data_batch,
+    response_token_length,
+    eos_id,
+    reset_position_ids,
+    reset_attention_mask,
+    eod_mask_loss,
+    generate_masks_and_position_ids,
 ):
     """collate function that batches by max sequence length
     """
@@ -281,21 +287,25 @@ def collate_with_batch_max_sequence_length(
     ]
 
     texts = torch.stack(texts)
-
-    # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
-    attention_masks, loss_masks, position_ids = get_ltor_masks_and_position_ids(
-        texts, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
-    )
-
-    return {
+    output = {
         "text": texts,
         "length": lengths,
-        "attention_mask": attention_masks,
-        # to preserve the loss mask from the dataset
-        "loss_mask": loss_masks * loss_multipliers,
-        "position_ids": position_ids,
         "idx": idx,
     }
+
+    other = {}
+    if generate_masks_and_position_ids:
+        # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
+        attention_masks, loss_masks, position_ids = get_ltor_masks_and_position_ids(
+            texts, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
+        )
+        other = {
+            "attention_mask": attention_masks,
+            # to preserve the loss mask from the dataset
+            "loss_mask": loss_masks * loss_multipliers,
+            "position_ids": position_ids,
+        }
+    return output | other
 
 
 def apply_func_to_dict(func, dictionary):

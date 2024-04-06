@@ -1,9 +1,9 @@
 from typing import List
 
 import torch
-from megatron.core import parallel_state
 
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor
 
 

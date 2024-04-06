@@ -18,7 +18,6 @@ from typing import Dict
 
 import numpy as np
 import torch
-from megatron.core import parallel_state
 from megatron.core.utils import divide
 from pytriton.decorators import batch, sample
 from pytriton.model_config import ModelConfig, Tensor
@@ -30,6 +29,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_sp
 from nemo.utils import logging
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import run_rm_or_critic_inference
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor
 from nemo_aligner.utils.server_utils import lock_method, pad_input
 from nemo_aligner.utils.train_utils import clip_gradients

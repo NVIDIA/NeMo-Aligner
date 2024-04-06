@@ -15,7 +15,7 @@ import threading
 
 import torch
 import torch.multiprocessing as mp
-from flask import Flask
+from flask import Flask, request
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf
@@ -113,7 +113,7 @@ def main(cfg) -> None:
     eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    collate_fn = collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg)
+    collate_fn = collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg, generate_masks_and_position_ids=False)
 
     train_dataloader = build_dataloader(
         cfg=cfg,
@@ -165,6 +165,7 @@ def main(cfg) -> None:
         scheduler=scheduler,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
+        collate_fn=collate_fn,
         rm_critic=rm_critic,
         logger=logger,
         ckpt_callback=ckpt_callback,
@@ -173,20 +174,26 @@ def main(cfg) -> None:
     if custom_trainer_state_dict is not None:
         ppo_trainer.load_state_dict(custom_trainer_state_dict)
 
-    # rank 0 setup flask server
-    flask_host = cfg.trainer.ppo.host
-    flask_port = cfg.trainer.ppo.port
+    flask_cfg = cfg.trainer.ppo.flask_server
 
-    if torch.distributed.get_rank() == 0:
-        app = Flask(__name__)
+    if flask_cfg.enable:
+        # TODO: we might be able to just broadcast the hostname
+        # so the user don't have to specify it
+        flask_host = flask_cfg.host
+        flask_port = flask_cfg.port
 
-        @app.route("/get_idx", methods=["PUT"])
-        def get_http_idx():
-            return get_idx()
+        if torch.distributed.get_rank() == 0:
+            app = Flask(__name__)
 
-        set_lock(threading.Lock())
+            # TODO: add batch size
+            @app.route("/get_idx", methods=["PUT"])
+            def get_http_idx():
+                batch_size = request.get_json()["batch_size"]
+                return get_idx(batch_size)
 
-        threading.Thread(target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False)).start()
+            set_lock(threading.Lock())
+
+            threading.Thread(target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False)).start()
 
     ppo_trainer.fit()
 

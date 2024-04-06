@@ -17,12 +17,11 @@ from functools import partial
 
 import numpy as np
 import torch
-from megatron.core import parallel_state
 from omegaconf import DictConfig
 
-from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, broadcast_2d_tensor_within_mp, gather_tensor
+from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
 
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
@@ -30,41 +29,7 @@ from nemo_aligner.utils.server_utils import FutureResult
 """
 
 
-def run_if_model_parallel_src(fn, use_trtllm_reshard, *fn_args, **fn_kwargs):
-    """This function is meant to wrap an arbitary function to only call the function
-    if it's the model parallel src. So if we have DP=2, this function will be called
-    only twice."""
-    src_rank = (
-        parallel_state.get_tensor_model_parallel_src_rank() if use_trtllm_reshard else get_model_parallel_src_rank()
-    )
-
-    output = None
-    if torch.distributed.get_rank() == src_rank:
-        output = fn(*fn_args, **fn_kwargs)
-
-    return output
-
-
-def broadcast_2d_tensor_with_reshard(tensor, use_trtllm_reshard=False):
-    """helper function to broadcast within the model parallel group
-    """
-    src_rank = (
-        parallel_state.get_tensor_model_parallel_src_rank() if use_trtllm_reshard else get_model_parallel_src_rank()
-    )
-
-    group = (
-        parallel_state.get_tensor_model_parallel_group()
-        if use_trtllm_reshard
-        else parallel_state.get_model_parallel_group()
-    )
-
-    if torch.distributed.get_world_size(group) > 1:
-        return broadcast_2d_tensor(tensor, src_rank, group)
-
-    return tensor
-
-
-def get_future_result(future, use_trtllm_reshard, *keys):
+def get_future_result(future, *keys):
     """It waits for the result of the future to be ready, gets the value with the given key,
     and broadcasts it to the model parallel group. Then it returns it as output.
     """
@@ -78,7 +43,7 @@ def get_future_result(future, use_trtllm_reshard, *keys):
         if output is not None:
             result = torch.tensor(output[key], device=torch.cuda.current_device())
 
-        ten = broadcast_2d_tensor_with_reshard(result, use_trtllm_reshard)
+        ten = broadcast_2d_tensor_within_mp(result)
 
         results.append(ten)
 
@@ -96,12 +61,12 @@ class RMCriticFutureResult(FutureResult):
 
         self.og_seq_length = og_seq_length
 
-    def result(self, use_trtllm_reshard=False):
+    def result(self):
         if self.combine_rm_and_critic_server:
-            rewards, values = get_future_result(self.critic_future, use_trtllm_reshard, "rewards", "values")
+            rewards, values = get_future_result(self.critic_future, "rewards", "values")
         else:
-            rewards = get_future_result(self.rm_future, use_trtllm_reshard, "rewards")
-            values = get_future_result(self.critic_future, use_trtllm_reshard, "values")
+            rewards = get_future_result(self.rm_future, "rewards")
+            values = get_future_result(self.critic_future, "values")
 
         values = values[:, : self.og_seq_length - 1].contiguous()
 
@@ -144,7 +109,7 @@ class RemoteGPTRMCriticClient:
         self.combine_rm_and_critic_server = self.cfg.combine_rm_and_critic_server
         self.pad_to_length = self.cfg.pad_to_length
 
-    def infer_rm_critic(self, rollout_batch, use_trtllm_reshard=False):
+    def infer_rm_critic(self, rollout_batch):
         response_tokens = rollout_batch["response_tokens"].cpu()
         og_seq_length = response_tokens.size(-1)
 
@@ -162,19 +127,13 @@ class RemoteGPTRMCriticClient:
         }
 
         critic_future = run_if_model_parallel_src(
-            self.communicator.send_data_to_server,
-            use_trtllm_reshard,
-            server_name=self.cfg.critic.name.infer,
-            data=send_data,
+            self.communicator.send_data_to_server, server_name=self.cfg.critic.name.infer, data=send_data,
         )
 
         rm_future = None
         if not self.combine_rm_and_critic_server:
             rm_future = run_if_model_parallel_src(
-                self.communicator.send_data_to_server,
-                use_trtllm_reshard,
-                server_name=self.cfg.reward_model.name,
-                data=send_data,
+                self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data,
             )
 
         return RMCriticFutureResult(critic_future, rm_future, self.combine_rm_and_critic_server, og_seq_length)

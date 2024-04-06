@@ -20,11 +20,40 @@ from collections import defaultdict
 from contextlib import contextmanager
 
 import torch
-from megatron.core import parallel_state, tensor_parallel
+from megatron.core import tensor_parallel
 
-from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo.utils.timers import NamedTimer
+from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.parallel_state import get_model_parallel_group, get_model_parallel_src_rank
 from nemo_aligner.utils.ppo_utils import calculate_entropy
+
+
+def rebalance_nd_tensor(tensor, group):
+    """takes tensors with variable leading sizes(at dim=0) and then stack them into a single tensor. NOTE: assumes dim != 0 to have all the same shape
+    """
+    num_samples = torch.as_tensor(tensor.size(0), dtype=torch.int64, device=torch.cuda.current_device())
+    batch_num_per_rank = torch.zeros(
+        torch.distributed.get_world_size(group), dtype=torch.int64, device=torch.cuda.current_device()
+    )
+    torch.distributed.all_gather_into_tensor(batch_num_per_rank, num_samples, group=group)
+
+    B = batch_num_per_rank.sum()
+    other_dims = tensor.shape[1:]
+
+    indices = batch_num_per_rank.cumsum(dim=0)
+    output_tensor = torch.zeros(B, *other_dims, dtype=tensor.dtype, device=torch.cuda.current_device())
+
+    # tensor_split is a view we can copy into
+    output_tensor.tensor_split(indices.cpu())[torch.distributed.get_rank(group=group)].copy_(tensor)
+    torch.distributed.all_reduce(output_tensor, group=group)
+    return output_tensor
+
+
+def all_reduce_dict(dictionary, dtype, group=None, op=torch.distributed.ReduceOp.SUM):
+    keys = sorted(dictionary)
+    tensor = torch.as_tensor([dictionary[k] for k in keys], dtype=dtype, device=torch.cuda.current_device())
+    torch.distributed.all_reduce(tensor, op=op, group=group)
+    return dict(zip(keys, tensor.tolist()))
 
 
 def gather_tensor(tensor, dst, group, dtype=torch.float32):
@@ -70,7 +99,7 @@ def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
 def broadcast_2d_tensor_within_mp(tensor):
     """helper function to broadcast within the model parallel group
     """
-    group = parallel_state.get_model_parallel_group()
+    group = get_model_parallel_group()
 
     if torch.distributed.get_world_size(group) > 1:
         return broadcast_2d_tensor(tensor, get_model_parallel_src_rank(), group)
@@ -255,29 +284,6 @@ def from_parallel_logits_to_logprobs(vocab_parallel_logits, target, inference_on
     return DistributedLogprob.apply(vocab_parallel_logits, target, inference_only, higher_stability)[
         :, :-1
     ].contiguous()
-
-
-def pad_tensors_to_max_global_seq_len(list_of_tensors, pad_value, group, sequence_length_to_pad_to=None):
-    """pad a list of tensors to the global sequence length across the specified group
-    """
-    # compute the local padding
-    tensors_padded = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
-
-    # find global max seq length
-    max_seq_length = torch.tensor([tensors_padded.size(-1)], dtype=torch.float32, device=torch.cuda.current_device())
-    torch.distributed.all_reduce(max_seq_length, op=torch.distributed.ReduceOp.MAX, group=group)
-    max_seq_length = int(max_seq_length)
-
-    if sequence_length_to_pad_to is not None:
-        if max_seq_length > sequence_length_to_pad_to:
-            warnings.warn(
-                f"{max_seq_length=} is bigger than the provided {sequence_length_to_pad_to=}, overwriting the padding"
-                f" to {max_seq_length}"
-            )
-        # pad to sequence length or max seq length, whichever is bigger
-        max_seq_length = max(sequence_length_to_pad_to, max_seq_length)
-
-    return torch.nn.functional.pad(tensors_padded, (0, max_seq_length - tensors_padded.size(-1)), value=pad_value)
 
 
 class SyncTimer(NamedTimer):
