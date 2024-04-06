@@ -221,10 +221,11 @@ class PPOTrainer:
         model,
         optimizer,
         scheduler,
-        train_dataloader,
-        val_dataloader,
+        train_dataloader_builder,
+        val_dataloader_builder,
         collate_fn,
         rm_critic,
+        batch_iterator_cls,
         logger,
         ckpt_callback,
     ):
@@ -232,16 +233,16 @@ class PPOTrainer:
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
+        self.train_dataloader_builder = train_dataloader_builder
+        self.val_dataloader_builder = val_dataloader_builder
         self.collate_fn = collate_fn
         self.rm_critic = rm_critic
+        self.batch_iterator_cls = batch_iterator_cls
         self.logger = logger
         self.ckpt_callback = ckpt_callback
 
         # TODO: need to knob it so we can actually disable it on nemo export side
         self.trtllm_reshard = cfg.trt_llm.enable and cfg.trt_llm.reshard
-        self.flask_server_cfg = cfg.flask_server
 
         self.consumed_samples = 0
         self.epoch = 0
@@ -250,8 +251,6 @@ class PPOTrainer:
         # keep track of how many times we optimized the actor
         self.ppo_optimization_step = 0
 
-        # used to compute the max step
-        self._train_dataloader_len = len(train_dataloader)
         self.set_max_steps()
 
         self.compute_init_policy_kl = self.cfg.initial_policy_kl_penalty > 0
@@ -349,27 +348,28 @@ class PPOTrainer:
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
 
-    def _run_inference(self, sampler_iter, dataloader, is_validation):
+    def _run_inference(self, dataloader_builder, consumed_samples, is_validation):
         """this function is run per DP so the metrics need to be computed globally
+        assumes that the dataloader is built with the proper consumed samples value
         """
         reshard_context = trt_llm_reshard_region if self.trtllm_reshard else nullcontext
-        batch_iterator_cls = (
-            partial(HTTPBatchIterator, self.flask_server_cfg.host, self.flask_server_cfg.port)
-            if self.flask_server_cfg.enable
-            else DefaultBatchIterator
-        )
 
         rollout_batches, futures = [], []
         timer_metrics = {}
-        dataset = dataloader.dataset
 
         with reshard_context():
+            # dataloader must be built within the reshard context because it uses DP rank and size
+            dataloader = dataloader_builder(consumed_samples=consumed_samples)
+            sampler_iter = iter(dataloader.batch_sampler)
+
             # must compute the number of microbatches in the reshard context
             # so the DP groups are correct
             num_microbatches = compute_num_rollout_microbatches(dataloader)
 
             self.timer.start("batch_iterator_init")
-            batch_iterator = batch_iterator_cls(sampler_iter, num_microbatches, dataset, self.collate_fn)
+            batch_iterator = self.batch_iterator_cls(
+                sampler_iter, num_microbatches, dataloader.dataset, self.collate_fn
+            )
             timer_metrics["batch_iterator_init"] = self.timer.stop_and_get_time("batch_iterator_init")
 
             self.timer.start("generate")
@@ -388,7 +388,7 @@ class PPOTrainer:
             )
             global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()
             balanced_local_batch = global_rollout_batch.chunk(
-                parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_group(), self.step
+                parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
             )
 
         # since we compute the logprobs in nemo we need to disable the resharding
@@ -422,7 +422,7 @@ class PPOTrainer:
             )
             global_rm_value_batch = unbalanced_rm_value_batch.gather_and_balance_globally()
             balanced_rm_value_batch = global_rm_value_batch.chunk(
-                parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_group(), self.step
+                parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
             )
             balanced_local_batch.update(balanced_rm_value_batch)
 
@@ -461,14 +461,15 @@ class PPOTrainer:
     def run_validation(self):
         self.model.prepare_for_inference()
 
-        sampler_iter = iter(self.val_dataloader.batch_sampler)
+        _, rollout_metrics, _ = self._run_inference(
+            self.val_dataloader_builder, consumed_samples=0, is_validation=True
+        )
 
-        _, rollout_metrics, _ = self._run_inference(sampler_iter, self.val_dataloader, is_validation=True)
         self.model.finish_inference()
         return rollout_metrics
 
     @torch.no_grad()
-    def generate_rollouts(self, sampler_iter, dataloader):
+    def generate_rollouts(self, dataloader):
         timing_metrics = {}
 
         self.timer.start("prepare_for_inference")
@@ -476,7 +477,7 @@ class PPOTrainer:
         timing_metrics["prepare_for_inference"] = self.timer.stop_and_get_time("prepare_for_inference")
 
         rollout_batch, rollout_metrics, timer_metrics = self._run_inference(
-            sampler_iter, dataloader, is_validation=False
+            self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False
         )
         self.consumed_samples += rollout_metrics["consumed_samples"]
 
@@ -550,8 +551,6 @@ class PPOTrainer:
             if len(loop_iter) <= 0:
                 return  # training ended
 
-            sampler_iter = iter(self.train_dataloader.batch_sampler)
-
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
 
             dp_size = parallel_state.get_data_parallel_world_size()
@@ -564,7 +563,8 @@ class PPOTrainer:
                 timing_metrics = {}
 
                 self.timer.start("rollout_time")
-                ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts(sampler_iter, self.train_dataloader,)
+                ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
+
                 self.timer.stop("rollout_time")
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
@@ -688,13 +688,15 @@ class PPOTrainer:
     def set_max_steps(self):
         max_steps = self.cfg.get("max_steps", -1)
 
+        train_dataloader_len = self.train_dataloader_builder(consumed_samples=self.consumed_samples)
+
         if max_steps == -1:
             # the dataloader already knows how much longer
             # because consumed samples is resumed
-            max_steps = self._train_dataloader_len
+            max_steps = train_dataloader_len
         else:
             # user specified the max step, figure out how much longer
             # we need to run for
             max_steps = max_steps - self.step
 
-        self.max_steps = min(max_steps, self._train_dataloader_len) + self.step
+        self.max_steps = min(max_steps, train_dataloader_len) + self.step

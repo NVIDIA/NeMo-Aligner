@@ -43,7 +43,7 @@ trainer:
       # flask server that acts as a worker pool to balance out generation time
       enable: False
       port: 12345
-      host: localhost
+      host: null # if not provided, it will be automatically set
 
   # no need to change these
   logger: False # logger provided by exp_manager

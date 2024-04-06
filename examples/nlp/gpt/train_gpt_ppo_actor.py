@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import socket
 import threading
+from functools import partial
 
 import torch
 import torch.multiprocessing as mp
@@ -24,7 +26,7 @@ from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerB
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.ppo import PPOTrainer
+from nemo_aligner.algorithms.ppo import DefaultBatchIterator, HTTPBatchIterator, PPOTrainer
 from nemo_aligner.data.nlp.builders import (
     build_dataloader,
     build_train_valid_test_rlhf_datasets,
@@ -115,20 +117,20 @@ def main(cfg) -> None:
     # collate fn to pad to the max seq length in the batch
     collate_fn = collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg, generate_masks_and_position_ids=False)
 
-    train_dataloader = build_dataloader(
+    train_dataloader_builder = partial(
+        build_dataloader,
         cfg=cfg,
         dataset=train_ds,
-        consumed_samples=consumed_samples,
         mbs=cfg.model.ppo.rollout_micro_batch_size,
         gbs=cfg.model.ppo.num_rollout_samples,
         collate_fn=collate_fn,
         load_gbs=False,
     )
 
-    val_dataloader = build_dataloader(
+    val_dataloader_builder = partial(
+        build_dataloader,
         cfg=cfg,
         dataset=validation_ds,
-        consumed_samples=0,
         mbs=cfg.model.ppo.val_rollout_micro_batch_size,
         gbs=cfg.model.ppo.num_val_samples,
         collate_fn=collate_fn,
@@ -158,29 +160,20 @@ def main(cfg) -> None:
 
     rm_critic = RemoteGPTRMCriticClient(cfg.remote_critic_rm)
 
-    ppo_trainer = PPOTrainer(
-        cfg=cfg.trainer.ppo,
-        model=ptl_model,
-        optimizer=optimizer,
-        scheduler=scheduler,
-        train_dataloader=train_dataloader,
-        val_dataloader=val_dataloader,
-        collate_fn=collate_fn,
-        rm_critic=rm_critic,
-        logger=logger,
-        ckpt_callback=ckpt_callback,
-    )
-
-    if custom_trainer_state_dict is not None:
-        ppo_trainer.load_state_dict(custom_trainer_state_dict)
-
+    batch_iterator_cls = DefaultBatchIterator
     flask_cfg = cfg.trainer.ppo.flask_server
-
     if flask_cfg.enable:
         # TODO: we might be able to just broadcast the hostname
         # so the user don't have to specify it
         flask_host = flask_cfg.host
+        if flask_host is None:
+            # automatically get rank 0's host and broadcast it if not specified
+            ip_address = [socket.gethostbyname(socket.gethostname())]
+            torch.distributed.broadcast_object_list(ip_address, src=0, group=None, device=torch.cuda.current_device())
+            flask_host = ip_address[0]
+
         flask_port = flask_cfg.port
+        batch_iterator_cls = partial(HTTPBatchIterator, flask_host, flask_port)
 
         if torch.distributed.get_rank() == 0:
             app = Flask(__name__)
@@ -194,6 +187,23 @@ def main(cfg) -> None:
             set_lock(threading.Lock())
 
             threading.Thread(target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False)).start()
+
+    ppo_trainer = PPOTrainer(
+        cfg=cfg.trainer.ppo,
+        model=ptl_model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        train_dataloader_builder=train_dataloader_builder,
+        val_dataloader_builder=val_dataloader_builder,
+        collate_fn=collate_fn,
+        rm_critic=rm_critic,
+        batch_iterator_cls=batch_iterator_cls,
+        logger=logger,
+        ckpt_callback=ckpt_callback,
+    )
+
+    if custom_trainer_state_dict is not None:
+        ppo_trainer.load_state_dict(custom_trainer_state_dict)
 
     ppo_trainer.fit()
 

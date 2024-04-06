@@ -68,6 +68,18 @@ def get_data_parallel_world_size():
     )
 
 
+def get_data_parallel_rank():
+    data_parallel_rank = mcore_parallel_state.get_data_parallel_rank()
+
+    if is_trt_llm_reshard():
+        data_parallel_rank = data_parallel_rank + (
+            mcore_parallel_state.get_data_parallel_world_size()
+            * mcore_parallel_state.get_pipeline_model_parallel_rank()
+        )
+
+    return data_parallel_rank
+
+
 @contextmanager
 def trt_llm_reshard_region():
     """mutates global state so distributed call are aware of TRT-LLM resharding
@@ -80,4 +92,8 @@ def trt_llm_reshard_region():
 
 
 def __getattr__(name):
+    # DEBUG ONLY
+    if is_trt_llm_reshard():
+        print("#### TRT RESHARD IS ON BUT YOU USED THE DEFAULT PARALLEL STATE", name)
+    # DEBUG ONLY
     return getattr(mcore_parallel_state, name)
