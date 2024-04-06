@@ -87,6 +87,7 @@ def trt_llm_reshard_region():
     """
     try:
         enable_trt_llm_reshard_calls()
+        yield
     finally:
         disable_trt_llm_reshard_calls()
 
