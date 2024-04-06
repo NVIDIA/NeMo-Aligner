@@ -469,7 +469,7 @@ class PPOTrainer:
         return rollout_metrics
 
     @torch.no_grad()
-    def generate_rollouts(self, dataloader):
+    def generate_rollouts(self):
         timing_metrics = {}
 
         self.timer.start("prepare_for_inference")
