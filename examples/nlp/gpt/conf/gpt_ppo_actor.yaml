@@ -33,10 +33,7 @@ trainer:
     # to a constant size
     # if actual seq length is higher than this a warning will be raised
     # but will not crash and training will still proceed
-    train_seq_length: null
-
-    # if this is true, we send everything to the critic at once
-    batch_critic_send: True
+    rollout_batch_seq_length: null
 
     trt_llm:
       enable: False

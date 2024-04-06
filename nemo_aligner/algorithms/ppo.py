@@ -382,7 +382,9 @@ class PPOTrainer:
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
             unbalanced_local_batch = PPORolloutBatch.from_rollout_batches(
-                rollout_batches, rollout_sequence_length=self.cfg.rollout_batch_seq_length,
+                rollout_batches,
+                eos_id=self.model.tokenizer.eos_id,
+                rollout_sequence_length=self.cfg.rollout_batch_seq_length,
             )
             global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()
             balanced_local_batch = global_rollout_batch.chunk(
@@ -414,7 +416,9 @@ class PPOTrainer:
             timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
 
             unbalanced_rm_value_batch = PPORolloutBatch.from_rollout_batches(
-                rm_value_rollout_batches, rollout_sequence_length=self.cfg.rollout_batch_seq_length,
+                rm_value_rollout_batches,
+                eos_id=self.model.tokenizer.eos_id,
+                rollout_sequence_length=self.cfg.rollout_batch_seq_length,
             )
             global_rm_value_batch = unbalanced_rm_value_batch.gather_and_balance_globally()
             balanced_rm_value_batch = global_rm_value_batch.chunk(
@@ -445,6 +449,7 @@ class PPOTrainer:
 
         metrics = {
             "table": table,
+            "consumed_samples": prompt_lengths.size(0).item(),
             "global_response_lengths_mean": response_lengths.mean(),
             "global_prompt_lengths": prompt_lengths.mean(),
             "global_rewards": rewards.mean(),
@@ -473,15 +478,13 @@ class PPOTrainer:
         rollout_batch, rollout_metrics, timer_metrics = self._run_inference(
             sampler_iter, dataloader, is_validation=False
         )
+        self.consumed_samples += rollout_metrics["consumed_samples"]
+
         ppo_rollout_data, ppo_rollout_metrics = map(cpu_dict, self.generate_ppo_data(rollout_batch))
 
         self.timer.start("finish_inference")
         self.model.finish_inference()
         timing_metrics["finish_inference"] = self.timer.stop_and_get_time("finish_inference")
-
-        self.consumed_samples += (
-            ppo_rollout_data["response_tokens"].size(0) * parallel_state.get_data_parallel_world_size()
-        )
 
         timing_metrics.update(timer_metrics)
 

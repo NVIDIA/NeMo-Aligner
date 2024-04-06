@@ -4,7 +4,7 @@ import torch
 
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import broadcast_2d_tensor
+from nemo_aligner.utils.distributed import broadcast_2d_tensor, broadcast_2d_tensor_within_mp
 
 
 class GPTGenerateTRTLLM:
@@ -90,16 +90,7 @@ class GPTGenerateTRTLLM:
                 output_ids = output_ids.squeeze()
             output_ids = output_ids.to(torch.int64)
 
-        # TRTLLM PP resharding
-        if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-            group = parallel_state.get_tensor_model_parallel_group()
-            src = parallel_state.get_tensor_model_parallel_src_rank()
-        else:
-            group = parallel_state.get_model_parallel_group()
-            src = get_model_parallel_src_rank()
-
-        if torch.distributed.get_world_size(group) > 1:
-            output_ids = broadcast_2d_tensor(output_ids, src, group, dtype=output_ids.dtype)
+        output_ids = broadcast_2d_tensor_within_mp(output_ids)
 
         sentences = [self.tokenizer.ids_to_text(output.tolist()) for output in output_ids]
         output_ids = torch.Tensor.tolist(output_ids)
@@ -121,7 +112,7 @@ class GPTGenerateTRTLLM:
             session=decoder,
             max_batch_size=self.generation_batch_size,
             max_input_len=self.max_context_length,
-            max_seq_len=4096,
+            max_seq_len=4096,  # TODO: fix
             max_beam_width=1,
         )
 
