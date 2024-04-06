@@ -104,6 +104,8 @@ pretrained_checkpoint:
 model:
 
   ppo:
+    trt_llm: ${trainer.ppo.trt_llm}
+
     # training generation mbs
     rollout_micro_batch_size: 8
     num_rollout_samples: 512

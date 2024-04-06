@@ -78,7 +78,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self.ratio_eps = self.cfg.ppo.ratio_eps
         self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
 
-        self.use_trtllm_generation = self.cfg.ppo.use_trtllm
+        self.use_trtllm_generation = self.cfg.ppo.trt_llm.enable
         self.orig_dp_rank = parallel_state.get_data_parallel_rank()
 
         if self.use_trtllm_generation:

@@ -101,7 +101,7 @@ class HTTPBatchIterator:
 
 class PPORolloutBatch(UserDict):
     @classmethod
-    def from_rollout_batches(cls, rollout_batches, eos_id, rollout_sequence_length):
+    def from_rollout_batches(cls, rollout_batches, eos_id, rollout_batch_seq_length):
         stacked_dict = cls()
 
         if len(rollout_batches) == 0:
@@ -116,7 +116,7 @@ class PPORolloutBatch(UserDict):
             if all(map(lambda x: x.ndim == 1, list_of_tensors)):
                 tensor = torch.cat(list_of_tensors)
             else:
-                pad_seq_length = rollout_sequence_length
+                pad_seq_length = rollout_batch_seq_length
                 pad_value = eos_id
 
                 list_of_tensors = list(
@@ -133,10 +133,10 @@ class PPORolloutBatch(UserDict):
                     # pad to the max sequence length if not specified`
                     pad_seq_length = max_seqlen
 
-                if max_seqlen > rollout_sequence_length:
+                if max_seqlen > rollout_batch_seq_length:
                     logging.warning(
                         "specified rollout sequence length to be padded to {} but actual rollout sequence length is {}".format(
-                            rollout_sequence_length, max_seqlen
+                            rollout_batch_seq_length, max_seqlen
                         )
                     )
                     pad_seq_length = max_seqlen
@@ -384,7 +384,7 @@ class PPOTrainer:
             unbalanced_local_batch = PPORolloutBatch.from_rollout_batches(
                 rollout_batches,
                 eos_id=self.model.tokenizer.eos_id,
-                rollout_sequence_length=self.cfg.rollout_batch_seq_length,
+                rollout_batch_seq_length=self.cfg.rollout_batch_seq_length,
             )
             global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()
             balanced_local_batch = global_rollout_batch.chunk(
@@ -418,7 +418,7 @@ class PPOTrainer:
             unbalanced_rm_value_batch = PPORolloutBatch.from_rollout_batches(
                 rm_value_rollout_batches,
                 eos_id=self.model.tokenizer.eos_id,
-                rollout_sequence_length=self.cfg.rollout_batch_seq_length,
+                rollout_batch_seq_length=self.cfg.rollout_batch_seq_length,
             )
             global_rm_value_batch = unbalanced_rm_value_batch.gather_and_balance_globally()
             balanced_rm_value_batch = global_rm_value_batch.chunk(
