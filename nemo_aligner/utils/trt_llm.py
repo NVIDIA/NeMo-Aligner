@@ -91,9 +91,10 @@ class GPTGenerateTRTLLM:
             output_ids = output_ids.to(torch.int64)
 
         output_ids = broadcast_2d_tensor_within_mp(output_ids)
+        print("### RANK", torch.distributed.get_rank(), output_ids)
 
         sentences = [self.tokenizer.ids_to_text(output.tolist()) for output in output_ids]
-        output_ids = torch.Tensor.tolist(output_ids)
+        output_ids = output_ids.tolist()
 
         output = {
             "token_ids": output_ids,
