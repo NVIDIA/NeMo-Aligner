@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### New features and optimizations
 - Add MoE Support for our reward models.
 - SFT/SteerLM: LoRA can now be enabled on all model layers
+- DPO: Enable LoRA on all model layers (In this case the actor will be reference model + LoRA weights, we can switch between actor/reference model by enabling/disabling LoRA)
 
 ### Breaking changes
 

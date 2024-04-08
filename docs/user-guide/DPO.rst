@@ -9,6 +9,10 @@ The NeMo framework supports efficient model alignment via the NeMo Aligner codeb
 
 All algorithms in NeMo Aligner will work with any GPT based model that is from mcore(i.e in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire DPO pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  The same tutorial also works for GPT models(such as LLaMa2) of any size.
 
+We support both full-parameter DPO training and LoRA DPO training. 
+For full-parameter DPO, there exists an actor and a reference model. Actor is initialized with the reference model and fully trainable, while reference model is frozen and used to calculate logprobs for KL-penalty loss (see `DPO paper <https://arxiv.org/pdf/2305.18290.pdf>`__). 
+For LoRA-based DPO, the actor is initialized by reference model + LoRA weights, where only the LoRA weights are trainable. Therefore, it allows us to switch between actor/reference models by simply enabling/disabling LoRA, and there is no need to store two sets of LLM weights.
+
 Obtaining a pretrained model
 ############################
 To start, we must first get a pretrained model to align. There are 2 models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes we will use the smaller 2B model. 
@@ -165,6 +169,8 @@ For the below parameters, the ``model.dpo.ref_policy_kl_penalty`` corresponds to
 
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
+
+The default DPO training tunes all parameters. To use LoRA, we can set ``model.peft.peft_scheme=lora`` and use different parameters in ``model.peft.lora_tuning`` (please check `the config file <https://github.com/NVIDIA/NeMo-Aligner/blob/main/examples/nlp/gpt/conf/gpt_dpo.yaml>`__).
 
 During DPO training, there will be several metrics recorded to WandB which you can monitor, chiefly acc (representing the percentage amount whereby the model's chosen rewards are greater than the rejected rewards).
 The ``reward`` in this case is calculated as the difference between model log probs and the reference log probs, multiplied by the KL penalty (beta in the original paper), for the chosen and rejected responses.

@@ -28,6 +28,7 @@ from nemo_aligner.utils.train_script_utils import (
     add_custom_checkpoint_callback,
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
+    init_peft,
     init_using_ptl,
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
@@ -59,10 +60,14 @@ def main(cfg) -> None:
         load_base_model_only=False,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
-    ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-        ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
-    )
-    ptl_model.ref_policy_state_dict = ref_policy_state_dict
+
+    init_peft(ptl_model, cfg.model)
+
+    if cfg.model.peft.peft_scheme == "none":
+        ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
+        )
+        ptl_model.ref_policy_state_dict = ref_policy_state_dict
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path

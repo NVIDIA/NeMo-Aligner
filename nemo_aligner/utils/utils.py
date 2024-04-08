@@ -31,6 +31,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
+from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
@@ -360,6 +361,23 @@ def cpu_weight_swap(resident_model, cpu_weights, megatron_amp_O2=True):
         swap_dict(resident_model, cpu_dict, offload_onto_cpu=False, megatron_amp_O2=megatron_amp_O2)
 
 
+@contextmanager
+def adapter_control(model):
+    """Temporarily disable adapters and re-enable them after the operation
+    """
+    try:
+        # Disable adapters before yielding control
+        for _, module in model.named_modules():
+            if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
+                module.set_enabled_adapters(enabled=False)
+        yield
+    finally:
+        # Re-enable adapters after operation
+        for _, module in model.named_modules():
+            if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
+                module.set_enabled_adapters(enabled=True)
+
+
 def convert_to_amp_o2_format(state_dict):
     """when amp_o2 is enabled, the model gets wrapped in a Float16Module which changes
         the keys and how it loads need to add module onto it
@@ -367,8 +385,9 @@ def convert_to_amp_o2_format(state_dict):
     new_state_dict = {}
 
     for key in state_dict.keys():
-        new_key = key.replace("model.", "model.module.", 1)
-        new_state_dict[new_key] = state_dict[key]
+        if "model.module." not in key:
+            new_key = key.replace("model.", "model.module.", 1)
+            new_state_dict[new_key] = state_dict[key]
 
     return new_state_dict
 
