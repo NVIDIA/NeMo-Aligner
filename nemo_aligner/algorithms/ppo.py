@@ -125,6 +125,8 @@ class PPORolloutBatch(UserDict):
 
                 tensor = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
 
+                print("### STACKED SHAPE", k, tensor.shape)
+
                 # find the max sequence length
                 max_seqlen = torch.tensor([tensor.size(-1)], dtype=torch.long, device=torch.cuda.current_device())
                 torch.distributed.all_reduce(max_seqlen, op=torch.distributed.ReduceOp.MAX)
@@ -146,6 +148,7 @@ class PPORolloutBatch(UserDict):
                     pad_seq_length -= 1
 
                 tensor = torch.nn.functional.pad(tensor, (0, pad_seq_length - tensor.size(-1)), value=pad_value)
+                print("### PADDED SHAPE", k, tensor.shape)
 
             stacked_dict[k] = tensor
 
@@ -274,6 +277,9 @@ class PPOTrainer:
         """
         ppo_rollout_data = {}
         ppo_rollout_metrics = {}
+
+        for k, v in rollout_batch.items():
+            print("## SHAPER", k, v.shape)
 
         prompt_lengths = rollout_batch["prompt_lengths"]
         response_lengths = rollout_batch["response_lengths"]
