@@ -428,7 +428,7 @@ class PPOTrainer:
 
         global_rollout_batch.update(global_rm_value_batch)
 
-        return balanced_local_batch, cpu_dict(self.compute_global_rollout_metrics(global_rollout_batch)), timer_metrics
+        return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
 
     def compute_rollout_metrics(self, rollout_batch):
         table = {}
