@@ -93,18 +93,8 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             mask = batch["mask"]
             prev_logprobs = batch["prev_logprobs"]
 
-            attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-                data=response_tokens,
-                eod_token=self.tokenizer.eos_id,
-                reset_position_ids=False,
-                reset_attention_mask=False,
-                eod_mask_loss=False,
-            )
-
             batch = {
                 "tokens": response_tokens,
-                "attention_mask": attention_mask,
-                "position_ids": position_ids,
                 "advantages": advantages,
                 "prev_log_probs": prev_logprobs,
                 "mask": mask,
@@ -180,7 +170,17 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         prepare_for_training_step(self, zero_grad=False)
 
     def get_loss_and_metrics(self, batch, forward_only):
-        sequence_length = batch["response_tokens"].size(-1)
+        batch_size, sequence_length = batch["response_tokens"].size()
+
+        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+            data=batch["response_tokens"],
+            eod_token=self.tokenizer.eos_id,
+            reset_position_ids=False,
+            reset_attention_mask=False,
+            eod_mask_loss=False,
+        )
+        batch["attention_mask"] = attention_mask.expand(batch_size, -1, -1, -1)
+        batch["position_ids"] = position_ids.expand(batch_size, -1)
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
