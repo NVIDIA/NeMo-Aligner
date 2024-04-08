@@ -503,7 +503,7 @@ class PPOTrainer:
             self.optimizer.zero_grad()
 
             self.model.prepare_for_training_step()
-            print("### BATCH SHAPE", {k: v for k, v in batch.items()})
+            print("### BATCH SHAPE", {k: v.shape for k, v in batch.items()})
             loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
             self.model.finish_training_step()
 
