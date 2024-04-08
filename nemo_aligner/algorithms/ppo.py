@@ -471,9 +471,11 @@ class PPOTrainer:
         rollout_batch, rollout_metrics, timer_metrics = self._run_inference(
             self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False
         )
+
         self.consumed_samples += rollout_metrics["consumed_samples"]
 
-        ppo_rollout_data, ppo_rollout_metrics = map(cpu_dict, self.generate_ppo_data(rollout_batch))
+        ppo_rollout_data, ppo_rollout_metrics = self.generate_ppo_data(rollout_batch)
+        ppo_rollout_metrics = cpu_dict(ppo_rollout_metrics)
 
         self.timer.start("finish_inference")
         self.model.finish_inference()

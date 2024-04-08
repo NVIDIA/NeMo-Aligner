@@ -88,17 +88,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
     def get_actor_forward_output_and_loss_func(self):
         def fwd_output_and_loss_func(data_iterator, model):
             batch = next(data_iterator)
-            response_tokens = batch["response_tokens"]
-            advantages = batch["advantages"]
-            mask = batch["mask"]
-            prev_logprobs = batch["prev_logprobs"]
-
-            batch = {
-                "tokens": response_tokens,
-                "advantages": advantages,
-                "prev_log_probs": prev_logprobs,
-                "mask": mask,
-            }
+            print("### BATCH AT TRAINING", batch.keys())
 
             required_keys = set()
             if parallel_state.get_pipeline_model_parallel_world_size() == 1:
@@ -107,20 +97,22 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
                 required_keys.add("attention_mask")
 
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("tokens", "position_ids"))
+                    required_keys.update(("response_tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("tokens", "advantages", "mask", "prev_log_probs"))
+                    required_keys.update(("response_tokens", "advantages", "mask", "prev_logprobs"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None,)
+            parallel_logits = model(
+                batch["response_tokens"], batch["position_ids"], batch["attention_mask"], labels=None,
+            )
 
             def loss_func(parallel_logits):
                 mask = batch["mask"]
                 advantages = batch["advantages"]
-                prev_log_probs = batch["prev_log_probs"]
-                tokens = batch["tokens"]
+                prev_log_probs = batch["prev_logprobs"]
+                tokens = batch["response_tokens"]
 
                 curr_log_probs = from_parallel_logits_to_logprobs(vocab_parallel_logits=parallel_logits, target=tokens)
 
@@ -142,7 +134,12 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
                     ppo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
                     scaled_entropy = scaled_entropy.detach()
 
-                reduced_actor_loss = average_losses_across_data_parallel_group([loss])
+                (
+                    reduced_actor_loss,
+                    ppo_ratio,
+                    ppo_ratio_clamped,
+                    scaled_entropy,
+                ) = average_losses_across_data_parallel_group([loss, ppo_ratio, ppo_ratio_clamped, scaled_entropy])
                 return (
                     loss,
                     {
