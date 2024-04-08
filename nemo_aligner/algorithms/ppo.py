@@ -126,12 +126,12 @@ class PPORolloutBatch(UserDict):
                 tensor = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
 
                 # find the max sequence length
-                max_seqlen = torch.tensor([tensor.size(-1)], dtype=torch.float32, device=torch.cuda.current_device())
+                max_seqlen = torch.tensor([tensor.size(-1)], dtype=torch.long, device=torch.cuda.current_device())
                 torch.distributed.all_reduce(max_seqlen, op=torch.distributed.ReduceOp.MAX)
 
                 if pad_seq_length is None:
                     # pad to the max sequence length if not specified`
-                    pad_seq_length = max_seqlen
+                    pad_seq_length = max_seqlen.item()
 
                 if max_seqlen > rollout_batch_seq_length:
                     logging.warning(
