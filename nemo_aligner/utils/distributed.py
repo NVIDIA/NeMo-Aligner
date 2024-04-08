@@ -49,7 +49,7 @@ def rebalance_nd_tensor(tensor, group):
     return output_tensor
 
 
-def all_reduce_dict(dictionary, dtype, group=None, op=torch.distributed.ReduceOp.SUM):
+def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distributed.ReduceOp.SUM):
     keys = sorted(dictionary)
     tensor = torch.as_tensor([dictionary[k] for k in keys], dtype=dtype, device=torch.cuda.current_device())
     torch.distributed.all_reduce(tensor, op=op, group=group)

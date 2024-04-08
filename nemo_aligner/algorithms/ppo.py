@@ -450,9 +450,9 @@ class PPOTrainer:
         metrics = {
             "table": table,
             "consumed_samples": prompt_lengths.size(0),
-            "global_response_lengths_mean": response_lengths.float().mean(),
-            "global_prompt_lengths": prompt_lengths.float().mean(),
-            "global_rewards": rewards.mean(),
+            "global_response_lengths_mean": response_lengths.float().mean().item(),
+            "global_prompt_lengths": prompt_lengths.float().mean().item(),
+            "global_rewards": rewards.mean().item(),
         }
 
         return metrics
