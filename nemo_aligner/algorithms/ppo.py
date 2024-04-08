@@ -379,10 +379,11 @@ class PPOTrainer:
                 rollout_batch_seq_length=self.cfg.rollout_batch_seq_length,
             )
             global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()
-            balanced_local_batch = global_rollout_batch.chunk(
-                parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
-            )
 
+        # the chunking must be outside of the TRT-LLM context because we do logprob calculation in nemo
+        balanced_local_batch = global_rollout_batch.chunk(
+            parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
+        )
         # since we compute the logprobs in nemo we need to disable the resharding
         batched_response_tokens = balanced_local_batch["response_tokens"]
 
@@ -413,12 +414,16 @@ class PPOTrainer:
                 rollout_batch_seq_length=self.cfg.rollout_batch_seq_length,
             )
             global_rm_value_batch = unbalanced_rm_value_batch.gather_and_balance_globally()
-            balanced_rm_value_batch = global_rm_value_batch.chunk(
-                parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
-            )
-            balanced_local_batch.update(balanced_rm_value_batch)
+
+        # chunking needs to be outside of reshard region
+        balanced_rm_value_batch = global_rm_value_batch.chunk(
+            parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
+        )
+        balanced_local_batch.update(balanced_rm_value_batch)
 
         global_rollout_batch.update(global_rm_value_batch)
+        print("### GLOBAL ROLLOUTS SHAPE", {k: v.shape for k, v in global_rollout_batch.items()})
+        print("### LOCAL ROLLOUTS SHAPE", {k: v.shape for k, v in balanced_local_batch.items()})
 
         return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
 
@@ -498,6 +503,7 @@ class PPOTrainer:
             self.optimizer.zero_grad()
 
             self.model.prepare_for_training_step()
+            print("### BATCH SHAPE", {k: v for k, v in batch.items()})
             loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
             self.model.finish_training_step()
 
