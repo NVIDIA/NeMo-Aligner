@@ -188,7 +188,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_actor_forward_output_and_loss_func(),
-            data_iterator=data_iter,
+            data_iterator=self._make_data_iterator_list(data_iter),
             model=self.model,
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
@@ -251,7 +251,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         fwd_bwd_function = get_forward_backward_func()
         logprobs_list = fwd_bwd_function(
             forward_step_func=self.get_logprob_output_only_func(inference_only=True),
-            data_iterator=batch_iter,
+            data_iterator=self._make_data_iterator_list(batch_iter),
             model=self.model,
             num_microbatches=num_microbatches,
             forward_only=True,
