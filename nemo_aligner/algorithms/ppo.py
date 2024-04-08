@@ -116,38 +116,24 @@ class PPORolloutBatch(UserDict):
             if all(map(lambda x: x.ndim == 1, list_of_tensors)):
                 tensor = torch.cat(list_of_tensors)
             else:
-                pad_seq_length = rollout_batch_seq_length
-                pad_value = eos_id
+                pad_value = eos_id if k == "response_tokens" else 0
 
                 list_of_tensors = list(
                     itertools.chain(*(map(lambda x: x.flatten(), item.split(1, dim=0)) for item in list_of_tensors))
                 )
-
                 tensor = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
-
-                print("### STACKED SHAPE", k, tensor.shape)
 
                 # find the max sequence length
                 max_seqlen = torch.tensor([tensor.size(-1)], dtype=torch.long, device=torch.cuda.current_device())
                 torch.distributed.all_reduce(max_seqlen, op=torch.distributed.ReduceOp.MAX)
+                print("### STACKED SHAPE", k, tensor.shape)
 
-                if pad_seq_length is None:
-                    # pad to the max sequence length if not specified`
-                    pad_seq_length = max_seqlen.item()
+                if rollout_batch_seq_length is None or max_seqlen > rollout_batch_seq_length:
+                    pad_seq_len = max_seqlen.item()
+                else:
+                    pad_seq_len = rollout_batch_seq_length if k == "response_tokens" else rollout_batch_seq_length - 1
 
-                if max_seqlen > rollout_batch_seq_length:
-                    logging.warning(
-                        "specified rollout sequence length to be padded to {} but actual rollout sequence length is {}".format(
-                            rollout_batch_seq_length, max_seqlen
-                        )
-                    )
-                    pad_seq_length = max_seqlen
-
-                if k != "response_tokens":
-                    pad_value = 0
-                    pad_seq_length -= 1
-
-                tensor = torch.nn.functional.pad(tensor, (0, pad_seq_length - tensor.size(-1)), value=pad_value)
+                tensor = torch.nn.functional.pad(tensor, (0, pad_seq_len - tensor.size(-1)), value=pad_value)
                 print("### PADDED SHAPE", k, tensor.shape)
 
             stacked_dict[k] = tensor
