@@ -167,11 +167,12 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
             sampling_params=sampling_params,
             strategy=strategy,
         )
-        # adding predictions key which contains only model predictions without the prompt
-        output["predictions"] = [
-            self.tokenizer.ids_to_text(tokens[length.item() :][:max_response_length])
-            for tokens, length in zip(output["token_ids"], prompt_lengths)
-        ]
+        if output is not None:  # may be `None` for intermediate PP ranks when PP>2
+            # adding predictions key which contains only model predictions without the prompt
+            output["predictions"] = [
+                self.tokenizer.ids_to_text(tokens[length.item() :][:max_response_length])
+                for tokens, length in zip(output["token_ids"], prompt_lengths)
+            ]
         return output
 
     @torch.no_grad()
