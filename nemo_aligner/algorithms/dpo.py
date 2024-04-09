@@ -23,9 +23,10 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
     MegatronPretrainingRandomBatchSampler,
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
+from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
-from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches
+from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory
 
 
@@ -79,6 +80,7 @@ class DPOTrainer:
         test_dataloader,
         logger,
         ckpt_callback,
+        run_timer,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -89,17 +91,20 @@ class DPOTrainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
 
+        # this timer checks if we should stop training
+        self.run_timer = run_timer
+
         self.step = 0
-        self.epoch = 0
         self.consumed_samples = 0
 
         self.ckpt_callback = ckpt_callback
 
-        # used to compute the max step
-        self._train_dataloader_len = len(train_dataloader)
+        # compute `max_steps`
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
+
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
-            int(self.cfg.val_check_interval * self._train_dataloader_len)
+            int(self.cfg.val_check_interval * len(self.train_dataloader))
             if isinstance(self.cfg.val_check_interval, float)
             else self.cfg.val_check_interval
         )
@@ -188,11 +193,15 @@ class DPOTrainer:
             # epoch done
             return
 
-        for _ in epoch_iter:
-            loop_iter = range(self.step, self.max_steps)
+        self.run_timer.start_time()
 
-            # TODO(geshen): to change for when we support > 1 epoch
-            if len(loop_iter) <= 0:
+        for _ in epoch_iter:
+            num_steps_in_epoch = min(
+                self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
+            )
+            loop_iter = range(num_steps_in_epoch)
+
+            if not loop_iter:
                 return  # training ended
 
             global_pbar = tqdm(
@@ -216,6 +225,7 @@ class DPOTrainer:
                 self.consumed_samples += self.model.cfg.global_batch_size
                 metrics["consumed_samples"] = self.consumed_samples
                 metrics["step_time"] = train_step_time
+                metrics["epoch"] = self.epoch + 1
                 self.logger.log_metrics(
                     metrics, step=self.step, prefix="train/",
                 )
@@ -223,12 +233,14 @@ class DPOTrainer:
 
                 self.step += 1
 
+                run_time_exceeded = self.run_timer.is_finished()
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
-                    self.cfg.val_check_interval,
+                    self.val_check_interval,
                     self.cfg.save_interval,
                     self.limit_val_batches,
+                    run_time_exceeded=run_time_exceeded,
                 )
 
                 if run_val:
@@ -246,9 +258,11 @@ class DPOTrainer:
                     metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
                     self.save(metrics, is_train_end=is_train_end)
 
-                metrics.clear()
+                if run_time_exceeded:
+                    logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
+                    return
 
-            self.epoch += 1
+                metrics.clear()
 
         self.logger.finalize()
 
@@ -265,7 +279,7 @@ class DPOTrainer:
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
     def set_max_steps(self):
-        self.max_steps = self._train_dataloader_len + self.step
+        self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
 
         if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
@@ -280,9 +294,8 @@ class DPOTrainer:
     def load_state_dict(self, state_dict):
         self.step = state_dict["step"]
         self.consumed_samples = state_dict["consumed_samples"]
-        self.epoch = state_dict["epoch"]
 
-        loaded_values = [self.step, self.consumed_samples, self.epoch]
+        loaded_values = [self.step, self.consumed_samples]
 
         # make sure everyone loaded the same checkpoint as rank 0
         to_broadcast = torch.tensor(loaded_values, dtype=torch.float32, device=torch.cuda.current_device())
@@ -295,24 +308,19 @@ class DPOTrainer:
     def augment_dataloader(self, dataloader):
         """Augment dataloader with ref policy log prob"""
         iter_dataloader = iter(dataloader)
-        buffer = []
-        done = False
-        while not done:
+        while True:
             try:
                 batch = next(iter_dataloader)
+                logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
+                chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
+                batch["ref_policy_log_probs_chosen"] = chosen_logps
+                batch["ref_policy_log_probs_rejected"] = reject_logps
+
+                yield batch
+                del logprobs, chosen_logps, reject_logps
             except StopIteration:
-                done = True
-            else:
-                buffer.append(batch)
-            if (done and buffer) or len(buffer) == 1:
-                logprobs = self.model.get_ref_policy_logprobs(buffer).cpu()
-                start = 0
-                for batch in buffer:
-                    batch_size = len(batch["chosen"])
-                    assert len(batch["rejected"]) == batch_size
-                    for key in ("chosen", "rejected"):
-                        batch[f"ref_policy_log_probs_{key}"] = logprobs[start : start + batch_size]
-                        start += batch_size
-                    yield batch
-                buffer.clear()
-                del logprobs
+                break
+
+    @property
+    def epoch(self):
+        return self.step // self.num_steps_per_epoch

@@ -24,19 +24,24 @@ from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel, get_specs
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
     get_ltor_masks_and_position_ids,
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
-from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import AppState, logging
+from nemo.utils.dtype import str_to_dtype
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, gather_tensor, print_timer
+from nemo_aligner.utils.distributed import (
+    broadcast_2d_tensor,
+    broadcast_2d_tensor_within_pp,
+    gather_tensor,
+    print_timer,
+)
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
@@ -78,7 +83,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         """Model depends on pipeline paralellism."""
 
         force_head_dtype = self.cfg.get("force_head_dtype", torch.float32)
-        head_dtype = None if force_head_dtype is None else _str_to_dtype(force_head_dtype)
+        head_dtype = None if force_head_dtype is None else str_to_dtype(force_head_dtype)
         if self.cfg.get("megatron_amp_O2", False) and (head_dtype is None or torch.finfo(head_dtype).bits < 32):
             logging.warning(
                 "When `megatron_amp_O2` is enabled, it is recommended to set `force_head_dtype=32` "
@@ -93,7 +98,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         model = GPTRewardModel(
             config=self.transformer_config,
-            transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(),
+            transformer_layer_spec=get_specs(self.spec_name, self.transformer_config.num_moe_experts),
             vocab_size=self.cfg.get("override_vocab_size", self.padded_vocab_size),
             max_sequence_length=self.cfg.get("encoder_seq_length", 512),
             pre_process=pre_process,
@@ -103,9 +108,13 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             position_embedding_type=self.cfg.get("position_embedding_type", "learned_absolute"),
             rotary_percent=self.cfg.get("rotary_percentage", 1.0),
             seq_len_interpolation_factor=self.cfg.get("seq_len_interpolation_factor", None),
+            rotary_base=self.cfg.get("rotary_base", 10000),
             output_sequence=self.cfg.get("output_sequence", False),
             use_avg_pool=self.cfg.get("use_avg_pool", False),
             head_dtype=head_dtype,
+            num_attributes=self.cfg.get("regression", {}).get("num_attributes", 1),
+            attribute_weights=self.cfg.get("regression", {}).get("attribute_weights", None),
+            merge_attributes=self.cfg.get("regression", {}).get("merge_attributes", False),
         )
         return model
 
@@ -318,7 +327,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         """
         # mcore uses distributed checkpointing
         if "state_dict" in checkpoint and checkpoint["state_dict"]:
-            for index, module in enumerate(self.get_gpt_module_list()):
+            for index, module in enumerate(self.get_model_module_list()):
                 if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
                     checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
                 else:
@@ -430,12 +439,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             if self.enable_standardization:
                 rewards = (rewards - self.rew_mean) / self.rew_std
 
-        if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-            rewards = broadcast_2d_tensor(
-                rewards,
-                parallel_state.get_pipeline_model_parallel_last_rank(),
-                parallel_state.get_pipeline_model_parallel_group(),
-            )
+        rewards = broadcast_2d_tensor_within_pp(rewards)
 
         rewards_list = gather_tensor(
             rewards, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()

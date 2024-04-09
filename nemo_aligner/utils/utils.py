@@ -13,21 +13,25 @@
 # limitations under the License.
 
 """Misc helper functions"""
-
 import gc
+import itertools
 import os
 import re
 import tempfile
 from contextlib import contextmanager
+from dataclasses import replace
 from functools import partial
+from typing import Iterator, List
 from unittest.mock import patch
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
-from omegaconf import OmegaConf
+from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
+from omegaconf import DictConfig, OmegaConf
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
+from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
@@ -67,11 +71,19 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
 
 
 def load_from_nemo(
-    cls, model_cfg, trainer, strict=True, modify_config_fn=None, restore_path=None, load_base_model_only=False
+    cls,
+    model_cfg,
+    trainer,
+    strict=True,
+    modify_config_fn=None,
+    restore_path=None,
+    load_base_model_only=False,
+    return_updated_cfg=False,
 ):
     """load a model using nemo checkpoint
     """
     connector = CustomSaveRestoreConnector(load_base_model_only=load_base_model_only)
+    assert os.path.exists(restore_path), f"tried to load from {restore_path=} but it does not exist"
 
     # if we gave it a directory, then load as if it was extracted already
     if os.path.isdir(restore_path):
@@ -90,13 +102,20 @@ def load_from_nemo(
         save_restore_connector=connector,
         strict=strict,
     )
-    return model
+    return (model, model_cfg) if return_updated_cfg else model
 
 
 def load_checkpoint_model_config(restore_path):
     """load only the model config from a checkpoint
     """
     config_name_in_ckpt = NLPSaveRestoreConnector()._model_config_yaml
+    assert os.path.exists(restore_path), f"tried to load from {restore_path=} but it does not exist"
+
+    # if we gave it a directory, then load the cfg directly
+    if os.path.isdir(restore_path):
+        cfg_path = os.path.join(restore_path, config_name_in_ckpt)
+        assert os.path.exists(cfg_path), f"tried to load cfg at {cfg_path=} but it does not exist"
+        return OmegaConf.load(cfg_path)
 
     if os.path.isdir(restore_path):
         return OmegaConf.load(os.path.join(restore_path, config_name_in_ckpt))
@@ -110,7 +129,7 @@ def load_checkpoint_model_config(restore_path):
 
 def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_meta_info=True):
     """load the config in the model checkpoint and then overwrite it
-        with whatever is provided 
+        with whatever is provided
     """
     checkpoint_cfg = load_checkpoint_model_config(restore_path)
 
@@ -118,7 +137,31 @@ def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_
         checkpoint_cfg.pop("target", None)
         checkpoint_cfg.pop("nemo_version", None)
 
-    return OmegaConf.merge(checkpoint_cfg, model_cfg_to_overwrite)
+    if "overwrite_base_config" in model_cfg_to_overwrite:
+        remove_overwritten_fields(checkpoint_cfg, model_cfg_to_overwrite.overwrite_base_config)
+
+    merged_cfg = OmegaConf.merge(checkpoint_cfg, model_cfg_to_overwrite)
+
+    # Remove the "overwrite_base_config" key to avoid cluttering the model config.
+    merged_cfg.pop("overwrite_base_config", None)
+
+    return merged_cfg
+
+
+def remove_overwritten_fields(base_config, overwrite_config):
+    """
+    Remove from `base_config` fields associated to a `True` value in `overwrite_config`.
+    """
+    for key, value in overwrite_config.items():
+        if key not in base_config:
+            continue
+
+        if isinstance(value, DictConfig) and isinstance(base_config[key], DictConfig):
+            remove_overwritten_fields(base_config[key], value)
+        else:
+            assert isinstance(value, bool), "the overwrite config can only contain boolean values"
+            if value:
+                base_config.pop(key)
 
 
 def masked_mean(values, mask, dim=None):
@@ -154,46 +197,6 @@ def set_autocast_gpu_dtype(precision):
 def calculate_response_lengths(tokens, eos_id):
     """calculates the response length of the tokens after padding"""
     return (tokens != eos_id).sum(-1)
-
-
-def calculate_dialogue_response_lengths(
-    tokens, prompt_lengths, tokenizer, end_strings, max_generation_length, max_sequence_length
-):
-    # for EOS
-    eos_length = calculate_response_lengths(tokens, tokenizer.eos_id)
-
-    if "<extra_id_1>" in end_strings:
-        # for the extra_id_1
-        extra_id_1_idx = tokenizer.text_to_ids("<extra_id_1>")[-1]
-        mask = tokens == extra_id_1_idx
-
-        # take the last extra id token index(assumes we are not padding with extra_id_1)
-        length_with_extra_id_1 = torch.argmax(
-            mask * torch.arange(tokens.size(-1), device=torch.cuda.current_device()), dim=-1
-        )
-
-        # if it terminated on the extra token id, then it must have been generated by the model, otherwise it couldn't have
-        length_with_extra_id_1 = torch.where(
-            length_with_extra_id_1 >= prompt_lengths, length_with_extra_id_1, torch.iinfo(torch.int32).max
-        )
-
-        # either terminated using eos id or extra id 1
-        lengths = torch.minimum(eos_length, length_with_extra_id_1)
-    else:
-        lengths = eos_length
-
-    # we also want the model to learn EOS or extra id 1
-    lengths = lengths + 1
-    # Ensure we never go over `length_params.max_length`. Note that this means the response may not necessarily
-    # end with EOS / extra_id_1 (we should not enforce it as PPO training requires the real generated token).
-    # max_lengths = prompt_lengths + max_generation_length
-    max_lengths = prompt_lengths + max_generation_length
-
-    lengths = torch.minimum(lengths, max_lengths)
-
-    # Prompts' max size and `max_length` should be such that we never exceed the encoder input size.
-    assert (lengths <= max_sequence_length).all()
-    return lengths
 
 
 def configure_batch_sizes(mbs, gbs, dp=1):
@@ -263,6 +266,14 @@ def offload_distributed_adam(state_dict):
         torch.cuda.synchronize()
 
 
+def batch_pad_to_fixed_len(batch, max_batch_len, pad_token):
+    batch_pad = torch.stack(
+        [torch.cat([seq, torch.full((max_batch_len - len(seq),), pad_token, dtype=seq.dtype),]) for seq in batch]
+    )
+
+    return batch_pad
+
+
 def collate_with_batch_max_sequence_length(
     data_batch,
     response_token_length,
@@ -279,17 +290,7 @@ def collate_with_batch_max_sequence_length(
     lengths = torch.as_tensor([item["length"] for item in data_batch])
     batch_max_length = lengths.max()
 
-    # pad each sequence to len(prompt) + response token length
-    texts = [
-        torch.cat([seq, torch.full((batch_max_length + response_token_length - len(seq),), eos_id, dtype=seq.dtype)])
-        for seq in texts
-    ]
-
-    texts = torch.stack(texts)
-    output = {
-        "text": texts,
-        "length": lengths,
-    }
+    texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
     other = {}
     if generate_masks_and_position_ids:
@@ -369,6 +370,23 @@ def cpu_weight_swap(resident_model, cpu_weights, megatron_amp_O2=True):
         swap_dict(resident_model, cpu_dict, offload_onto_cpu=False, megatron_amp_O2=megatron_amp_O2)
 
 
+@contextmanager
+def adapter_control(model):
+    """Temporarily disable adapters and re-enable them after the operation
+    """
+    try:
+        # Disable adapters before yielding control
+        for _, module in model.named_modules():
+            if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
+                module.set_enabled_adapters(enabled=False)
+        yield
+    finally:
+        # Re-enable adapters after operation
+        for _, module in model.named_modules():
+            if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
+                module.set_enabled_adapters(enabled=True)
+
+
 def convert_to_amp_o2_format(state_dict):
     """when amp_o2 is enabled, the model gets wrapped in a Float16Module which changes
         the keys and how it loads need to add module onto it
@@ -376,7 +394,57 @@ def convert_to_amp_o2_format(state_dict):
     new_state_dict = {}
 
     for key in state_dict.keys():
-        new_key = key.replace("model.", "model.module.", 1)
-        new_state_dict[new_key] = state_dict[key]
+        if "model.module." not in key:
+            new_key = key.replace("model.", "model.module.", 1)
+            new_state_dict[new_key] = state_dict[key]
 
     return new_state_dict
+
+
+def get_iterator_k_split_list(batch: List[str], num_microbatches: int) -> Iterator:
+    """
+    Generate an iterator to split a list into microbatches of equal size.
+    
+    Args:
+        batch (List[str]): The list to be split into microbatches.
+        num_microbatches (int): The number of microbatches to split the list into.
+        
+    Returns:
+        Iterator: An iterator that yields the microbatches.
+    """
+    assert len(batch) % num_microbatches == 0, "Issue with batch size configuration!"
+    batch_size_per_microbatch = len(batch) // num_microbatches
+    microbatches = [
+        batch[i * batch_size_per_microbatch : (i + 1) * batch_size_per_microbatch] for i in range(num_microbatches)
+    ]
+    return itertools.chain(microbatches)
+
+
+def _get_autocast_dtype(precision: str):
+    if precision in ["bf16", "bf16-mixed"]:
+        return torch.bfloat16
+    if precision in [32, "32", "32-true"]:
+        return torch.float
+    if precision in [16, "16", "16-mixed"]:
+        return torch.half
+    raise ValueError('precision must be in ["32-true", "16-mixed", "bf16-mixed"]')
+
+
+# this function uses dataclasses.replace to create ShardedTensors/ShardedObjects from torch.Tensor and IOBytes objects
+# based on the TP/PP/DP axis information taken from already existing ShardedTensors/Objects belonging to some input reference parameter
+# this is useful for creating TP/PP/DP compliant ShardedDicts where the TP/PP/DP of each sharded tensor can be copied from some
+# other model which acts as a reference for providing this TP/PP/DP information. We use this in SPIN
+# to ensure that the reference policy inside SPIN is sharded along the correct axis during saving of the checkpoint by reading
+# the TP/PP/DP information from the actor policy. The reference_param in the function below refers to the parameter which acts as
+# the reference for what the TP/PP/DP information should be. This is not the same thing as the "reference policy" in SPIN/DPO
+# NOTE: dataclasses.replace is out-of-place so this is safe
+def make_sharded_tensors_from_reference(reference_param, model_param, prefix: str):
+    if isinstance(reference_param, ShardedTensorFactory):
+        return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param)
+    if isinstance(reference_param, ShardedObject):
+        return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param)
+
+    assert (
+        tuple(model_param.shape) == reference_param.local_shape
+    ), f"Model shape ({tuple(model_param.shape)} does not match reference shape ({reference_param.local_shape})"
+    return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param, dtype=model_param.dtype)

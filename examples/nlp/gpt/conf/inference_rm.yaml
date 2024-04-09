@@ -21,3 +21,7 @@ model:
     enable: False
     mean: null
     std: null 
+  
+  regression:
+    merge_attributes: False # whether to merge attribute values into a scalar
+    attribute_weights: null # apply these weights to each attributes when merging them into a scalar

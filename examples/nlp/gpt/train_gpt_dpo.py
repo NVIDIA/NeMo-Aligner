@@ -14,7 +14,7 @@
 from functools import partial
 
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf, open_dict
+from omegaconf.omegaconf import OmegaConf
 
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
@@ -22,11 +22,13 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.dpo import DPOTrainer, dpo_custom_collate
 from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_dpo_datasets
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
+from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
+    init_peft,
     init_using_ptl,
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
@@ -39,7 +41,7 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 mp.set_start_method("spawn", force=True)
 
 
-@hydra_runner(config_path="conf", config_name="dpo_gpt")
+@hydra_runner(config_path="conf", config_name="gpt_dpo")
 def main(cfg) -> None:
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
@@ -58,10 +60,14 @@ def main(cfg) -> None:
         load_base_model_only=False,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
-    ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-        ptl_model, megatron_amp_o2=cfg.model.get("megatron_amp_O2", False)
-    )
-    ptl_model.ref_policy_state_dict = ref_policy_state_dict
+
+    init_peft(ptl_model, cfg.model)
+
+    if cfg.model.peft.peft_scheme == "none":
+        ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
+        )
+        ptl_model.ref_policy_state_dict = ref_policy_state_dict
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
@@ -122,6 +128,7 @@ def main(cfg) -> None:
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
         ),
+        use_random_sampler=False,
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
@@ -131,6 +138,7 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
+    timer = Timer(cfg.exp_manager.get("max_time_per_run"))
     dpo_trainer = DPOTrainer(
         cfg=cfg.trainer.dpo,
         model=ptl_model,
@@ -141,6 +149,7 @@ def main(cfg) -> None:
         test_dataloader=None,
         logger=logger,
         ckpt_callback=ckpt_callback,
+        run_timer=timer,
     )
 
     if custom_trainer_state_dict is not None:

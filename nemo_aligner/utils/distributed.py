@@ -18,6 +18,9 @@ import time
 import warnings
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Dict, Optional, Union
 
 import torch
 from megatron.core import tensor_parallel
@@ -102,7 +105,19 @@ def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     group = get_model_parallel_group()
 
     if torch.distributed.get_world_size(group) > 1:
-        return broadcast_2d_tensor(tensor, get_model_parallel_src_rank(), group, dtype=dtype)
+        return broadcast_2d_tensor(tensor, get_model_parallel_src_rank(), group, dtype=dtype, dtype=dtype)
+
+    return tensor
+
+
+def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32):
+    if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        return broadcast_2d_tensor(
+            tensor,
+            parallel_state.get_pipeline_model_parallel_last_rank(),
+            parallel_state.get_pipeline_model_parallel_group(),
+            dtype=dtype,
+        )
 
     return tensor
 
@@ -332,6 +347,40 @@ class SyncTimer(NamedTimer):
         yield from output_list
 
         del self.stored_results[name]
+
+
+@dataclass
+class Timer:
+    """Timer to tell us when the time limit is reached
+    """
+
+    duration: Optional[str]
+
+    def __post_init__(self):
+        self._duration = float("inf")
+
+        if self.duration is not None:
+            days, hours, mins, seconds = map(int, self.duration.strip().split(":"))
+            self._duration = timedelta(days=days, hours=hours, minutes=mins, seconds=seconds).total_seconds()
+
+    def start_time(self):
+        self._start_time = time.monotonic()
+
+    def get_time_elapsed(self):
+        return time.monotonic() - self._start_time
+
+    def get_time_remaining(self):
+        return self._duration - self.get_time_elapsed()
+
+    def is_finished(self):
+        time_left = self.get_time_remaining()
+
+        is_finished = time_left <= 0
+        is_finished_tensor = torch.tensor([is_finished], dtype=torch.bool, device="cuda")
+
+        # only respect rank 0 timing
+        torch.distributed.broadcast(is_finished_tensor, 0)
+        return is_finished_tensor.item()
 
 
 @contextmanager

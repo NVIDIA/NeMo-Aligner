@@ -47,11 +47,6 @@ class RLHFDataset(Dataset):
 
         self.use_json = self.cfg.data.data_impl.startswith("json")
 
-        self.shuffled_indices = list(range(len(self)))
-
-        np_rng = np.random.default_rng(seed=seed)
-        np_rng.shuffle(self.shuffled_indices)
-
         # Checks
         assert np.min(documents) >= 0
         assert np.max(documents) < len(self.data)
@@ -98,8 +93,7 @@ class RLHFDataset(Dataset):
 
         orig_idx = idx = idx % len(self)
         while True:
-            shuffled_idx = self.shuffled_indices[idx]
-            sample = self.data[shuffled_idx]
+            sample = self.data[idx]
             if self.use_json:
                 sample, _ = self.encode(sample["text"])
             if len(sample) <= self.max_sample_length:
@@ -112,7 +106,7 @@ class RLHFDataset(Dataset):
         if idx != orig_idx:
             logging.warning(
                 f"Sample {orig_idx} in dataset '{self.name}' has length "
-                f"{len(self.data[self.shuffled_indices[orig_idx]])} > {self.max_sample_length} "
+                f"{len(self.data[orig_idx])} > {self.max_sample_length} "
                 f"=> replacing it with sample {idx} and masking its loss"
             )
             mask_sample = True
@@ -158,11 +152,6 @@ class RewardModelDataset(Dataset):
         self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
         self.eos_id = tokenizer.eos_id
 
-        self.shuffled_indices = list(range(len(self)))
-
-        np_rng = np.random.default_rng(seed=seed)
-        np_rng.shuffle(self.shuffled_indices)
-
         # Checks
         assert np.min(documents) >= 0
         assert np.max(documents) < len(self.data)
@@ -198,9 +187,8 @@ class RewardModelDataset(Dataset):
         """
         found = False
         while not found:
-            shuffled_idx = self.shuffled_indices[idx]
-            chosen = self.data[multiple * shuffled_idx]
-            rejected = self.data[multiple * shuffled_idx + 1]
+            chosen = self.data[multiple * idx]
+            rejected = self.data[multiple * idx + 1]
             if self.cfg.data.data_impl.startswith("json"):
                 chosen, _ = self.encode(chosen["text"])
                 rejected, _ = self.encode(rejected["text"])
@@ -269,7 +257,7 @@ class DPOModelDataset(Dataset):
         super().__init__()
         self.cfg = cfg
         self.name = name
-        self.data = data.copy()
+        self.data = data
         self.drop_last = drop_last
         self.seq_length = seq_length
         self.tokenizer = tokenizer
@@ -278,9 +266,6 @@ class DPOModelDataset(Dataset):
         self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
         self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
         self.eos_id = tokenizer.eos_id
-
-        np_rng = np.random.default_rng(seed=seed)
-        np_rng.shuffle(self.data)
 
         # Checks
         assert np.min(documents) >= 0
@@ -346,5 +331,102 @@ class DPOModelDataset(Dataset):
             "rejected_length": reject_len,
             "chosen_labels": labels_chosen_tokens,
             "rejected_labels": labels_reject_tokens,
+        }
+        return output
+
+
+class RegressionRewardModelDataset(RewardModelDataset):
+    """This class assumes each line of the dataset file is a dictionary with "text" and "label" field, 
+        where "text" is a string representing the input prompt, and "label" is a list of float or int values. 
+        Note that when training the model with multiple datasets which contain different attributes,
+        we should set missing attributes to model.regression.loss_mask_val(according to training_rm.yaml)
+        in the dataset files so that their losses are masked. At least one attribute should be present for each sample.
+
+        WARNING: It's recommended to preprocess your data in advance to ensure all samples are within self.seq_length.
+                 Otherwise if all samples in a batch are longer than self.seq_length, you may get NaN loss.
+    """
+
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+    ):
+
+        assert cfg.data.data_impl.startswith(
+            "json"
+        ), f"data.data_impl must be either json or jsonl, but got {cfg.data.data_impl}"
+
+        super().__init__(
+            cfg=cfg,
+            tokenizer=tokenizer,
+            name=name,
+            data_prefix=data_prefix,
+            documents=documents,
+            data=data,
+            seq_length=seq_length,
+            seed=seed,
+            drop_last=drop_last,
+        )
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        """
+        Returns one training sample, its label, and its respective length.
+        """
+
+        orig_idx = idx = idx % len(self)
+        while True:
+            sample = self.data[idx]
+            sample_text, sample_length = self.encode(sample["text"])
+            sample_label = sample["label"]
+            if idx == orig_idx:
+                orig_length = sample_length
+            if sample_length <= self.seq_length:
+                break
+
+            idx = (idx + 1) % len(self)
+            if idx == orig_idx:
+                raise RuntimeError(f"All samples have length > {self.seq_length}")
+
+        assert isinstance(sample_label, list) and all(
+            isinstance(value, (float, int)) for value in sample_label
+        ), "label should be a list of float or int values"
+
+        sample_label = [float(value) for value in sample_label]
+
+        label_tensor = torch.tensor(sample_label, dtype=torch.float)
+
+        text_np = np.array(sample_text, dtype=np.int64)
+        text_np_pad = np.pad(
+            text_np, (0, max(0, self.seq_length - text_np.shape[0])), mode="constant", constant_values=self.eos_id
+        )
+
+        text_tensor = torch.tensor(text_np_pad)
+        attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
+            text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
+        )
+
+        # Negative index comes when we pad the last batch in MegatronPretrainingBatchSampler
+        # We make the loss_mask zero to mask out loss from these samples
+        if idx == -1:
+            logging.waring("WARNING: Got -1 as item index. Masking loss from this sample")
+            loss_mask = torch.zeros_like(loss_mask)
+
+        # Replace current sample (when it exceeds max length) with another sample but mask its loss
+        if idx != orig_idx:
+            logging.warning(
+                f"Sample {orig_idx} in dataset '{self.name}' has length "
+                f"{orig_length} > {self.seq_length} "
+                f"=> replacing it with sample {idx} and masking its loss"
+            )
+            loss_mask = torch.zeros_like(loss_mask)
+
+        output = {
+            "inputs": text_tensor,
+            "lengths": text_np.shape[0],
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "loss_mask": loss_mask,
+            "labels": label_tensor,
         }
         return output

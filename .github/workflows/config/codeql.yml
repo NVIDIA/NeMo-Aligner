@@ -1,7 +1,0 @@
-name: "CodeQL config"
-
-paths:
-  - nemo_aligner/
-  - tests/
-  - examples/
-  - .github/

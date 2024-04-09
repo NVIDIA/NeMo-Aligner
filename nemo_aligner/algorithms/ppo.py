@@ -33,6 +33,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_sp
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo.utils import logging
 from nemo_aligner.data.nlp.builders import collate_with_pad_to_max_batch
+from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     SyncTimer,
@@ -53,6 +54,7 @@ from nemo_aligner.utils.ppo_utils import (
 )
 from nemo_aligner.utils.server_utils import FutureResult, get_idx, set_idx
 from nemo_aligner.utils.train_utils import clip_gradients
+from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 
 
@@ -217,6 +219,7 @@ class PPOTrainer:
         batch_iterator_cls,
         logger,
         ckpt_callback,
+        run_timer,
     ):
         self.cfg = cfg
         self.model = model
@@ -230,16 +233,21 @@ class PPOTrainer:
         self.logger = logger
         self.ckpt_callback = ckpt_callback
 
+        # this timer checks if we should stop training
+        self.run_timer = run_timer
+
         # TODO: need to knob it so we can actually disable it on nemo export side
         self.trtllm_reshard = cfg.trt_llm.enable and cfg.trt_llm.reshard
 
         self.consumed_samples = 0
-        self.epoch = 0
         # the step here is PPO step
         self.step = 0
         # keep track of how many times we optimized the actor
         self.ppo_optimization_step = 0
 
+        # compute `max_steps`
+        train_dataloader = self.train_dataloader_builder(consumed_samples=0)
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(train_dataloader.batch_sampler)
         self.set_max_steps()
 
         self.compute_init_policy_kl = self.cfg.initial_policy_kl_penalty > 0
@@ -254,11 +262,7 @@ class PPOTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-        assert (
-            self.cfg.save_interval % self.cfg.val_check_interval == 0
-        ), f"{self.cfg.save_interval=} must be divisible by {self.cfg.val_check_interval=}"
-
-    def generate_ppo_data(self, rollout_batch):
+    def generate_ppo_data(self, rollout_batches):
         """generate ppo specific data for training
         """
         ppo_rollout_data = {}
@@ -535,10 +539,16 @@ class PPOTrainer:
         return loss_mean, metrics
 
     def fit(self):
-        if self.cfg.max_epochs is not None and self.cfg.max_epochs > 1:
-            # because we need to figure out a nice way to reset the shuffling on our dataset
-            # otherwise epoch > 1 will loop over the dataset in the same order
-            raise ValueError("epoch > 1 is not supported")
+        if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomSampler)) and (
+            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
+        ):
+            # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
+            # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
+            # to fix this, you should use MegatronPretrainingRandomSampler instead, which alleviates this issue and allows
+            # random shuffling for each epoch.
+            raise ValueError(
+                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomSampler` as the batch_sampler for your train dataloader"
+            )
 
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
         if len(epoch_iter) <= 0:
@@ -546,10 +556,12 @@ class PPOTrainer:
             return
 
         for _ in epoch_iter:
-            loop_iter = range(self.step, self.max_steps)
+            num_steps_in_epoch = min(
+                self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
+            )
+            loop_iter = range(num_steps_in_epoch)
 
-            # TODO(geshen): to change for when we support > 1 epoch
-            if len(loop_iter) <= 0:
+            if not loop_iter:
                 return  # training ended
 
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
@@ -558,6 +570,7 @@ class PPOTrainer:
 
             num_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
 
+            self.run_timer.start_time()
             for _ in global_pbar:
                 print(f"***STEP {self.step}")
                 step_metrics = {}
@@ -570,6 +583,7 @@ class PPOTrainer:
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
                 # send critic train
+                clear_memory()
                 start_time = time.time()
                 self.rm_critic.train(ppo_rollout_data)
                 end_time = time.time()
@@ -586,6 +600,7 @@ class PPOTrainer:
                     table_metrics["response"],
                     table_metrics["reward"],
                 ]
+                metrics["epoch"] = self.epoch + 1
                 self.logger.log_metrics(
                     metrics, step=self.step, prefix="train_rollouts/",
                 )
@@ -608,8 +623,16 @@ class PPOTrainer:
 
                 self.step += 1
 
-                is_train_end = self.step == self.max_steps
-                run_val = (self.step % self.cfg.val_check_interval == 0) or is_train_end
+                run_time_exceeded = self.run_timer.is_finished()
+                run_val, save_model, is_train_end = check_progress(
+                    self.step,
+                    self.max_steps,
+                    self.cfg.val_check_interval,
+                    self.cfg.save_interval,
+                    1.0,  # TODO:(geshen): allow for limit val batches
+                    run_time_exceeded=run_time_exceeded,
+                )
+
                 if run_val:
                     print(f"***VAL {self.step}")
                     self.timer.start("validation_time")
@@ -634,11 +657,13 @@ class PPOTrainer:
                 step_metrics.update({f"train_{k}": v for k, v in metrics.items()})
                 global_pbar.set_postfix(step_metrics)
 
-                step_metrics = {k: torch.as_tensor(v) for k, v in step_metrics.items()}
-                if run_val and (self.step % self.cfg.save_interval == 0 or is_train_end):
+                if save_model:
+                    step_metrics = {k: torch.as_tensor(v) for k, v in step_metrics.items()}
                     self.save(step_metrics, is_train_end=is_train_end)
 
-            self.epoch += 1
+                if run_time_exceeded:
+                    logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
+                    return
 
         self.logger.finalize()
 
@@ -653,10 +678,9 @@ class PPOTrainer:
     def load_state_dict(self, state_dict):
         self.step = state_dict["step"]
         self.consumed_samples = state_dict["consumed_samples"]
-        self.epoch = state_dict["epoch"]
         self.ppo_optimization_step = state_dict["ppo_optimization_step"]
 
-        loaded_values = [self.step, self.consumed_samples, self.epoch, self.ppo_optimization_step]
+        loaded_values = [self.step, self.consumed_samples, self.ppo_optimization_step]
 
         # make sure everyone loaded the same checkpoint as rank 0
         to_broadcast = torch.tensor(loaded_values, dtype=torch.float32, device=torch.cuda.current_device())
@@ -687,17 +711,11 @@ class PPOTrainer:
         self.model.finish_training()
 
     def set_max_steps(self):
-        max_steps = self.cfg.get("max_steps", -1)
+        self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
 
-        train_dataloader_len = len(self.train_dataloader_builder(consumed_samples=self.consumed_samples))
+        if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
+            self.max_steps = min(self.max_steps, max_steps)
 
-        if max_steps == -1:
-            # the dataloader already knows how much longer
-            # because consumed samples is resumed
-            max_steps = train_dataloader_len
-        else:
-            # user specified the max step, figure out how much longer
-            # we need to run for
-            max_steps = max_steps - self.step
-
-        self.max_steps = min(max_steps, train_dataloader_len) + self.step
+    @property
+    def epoch(self):
+        return self.step // self.num_steps_per_epoch

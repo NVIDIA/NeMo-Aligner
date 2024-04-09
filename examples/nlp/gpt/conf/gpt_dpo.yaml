@@ -45,7 +45,7 @@ exp_manager:
     mode: min
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt--{val_loss:.3f}-{step}-{consumed_samples}-{epoch}'
+    filename: 'megatron_gpt--{${.monitor}:.3f}-{step}-{consumed_samples}-{epoch}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
 
 pretrained_checkpoint:
@@ -67,6 +67,24 @@ model:
 
   # miscellaneous
   seed: 1234
+
+  #peft 
+  peft:
+    peft_scheme: "none"  # ["lora", "none"]
+    restore_from_path: null
+    restore_from_ckpt:
+      checkpoint_dir: null
+      checkpoint_name: null
+
+    lora_tuning:
+      target_modules: ['attention_qkv'] # this can either be 'attention_qkv','attention_dense','mlp_fc1','mlp_fc2', 'attention' (qkv & dense), 'mlp' (fc1 & fc2), 'all'
+      adapter_dim: 32
+      adapter_dropout: 0.0
+      column_init_method: 'xavier' # IGNORED if linear_adapter is used, options: xavier, zero or normal
+      row_init_method: 'zero' # IGNORED if linear_adapter is used, options: xavier, zero or normal
+      layer_selection:  null  # selects in which layers to add lora adapters. e.g. [1,12] will add lora to layer 1 (lowest) and 12. null will apply adapters to all layers
+      weight_tying: False
+      position_embedding_strategy: null # used only when weight_tying is True
 
   optim:
     name: distributed_fused_adam
@@ -96,5 +114,10 @@ model:
     eod_mask_loss: False # Mask loss for the end of document tokens
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: null
+
+  # define fields from the base model's config that should be ignored when merging with this config.
+  overwrite_base_config:
+    data:
+      data_prefix: True
 
 precision: ${trainer.precision}
