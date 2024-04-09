@@ -181,7 +181,7 @@ def send_request(host, port, endpoint="/get_idx", batch_size=1):
         output = output.json()
         output = torch.as_tensor(output).view(1, -1)
 
-    output = broadcast_2d_tensor_within_mp(output)
+    output = broadcast_2d_tensor_within_mp(output, dtype=torch.long)
     return output.flatten().tolist()
 
 
