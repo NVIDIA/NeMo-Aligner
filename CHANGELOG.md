@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Fixed crash with float val check interval in DPOTrainer
 - Fixed crash with float val check interval when checking progress in DPOTrainer
 - Fixed potential crash in SPIN when prompts are longer than encoder_seq_len - generation.max_length
+- Fixed crash when calling the `generate()` method of an SFT model with pipeline parallelism greater than two
 
 ## [0.2.0] - 2024-02
 ### New features and optimizations
