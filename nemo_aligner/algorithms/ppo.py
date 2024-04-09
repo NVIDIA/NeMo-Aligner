@@ -308,10 +308,10 @@ class PPOTrainer:
 
         # compute metrics
         # these are not global yet
-        ppo_rollout_metrics["global_init_policy_kl"] = (
+        ppo_rollout_metrics["init_policy_kl"] = (
             masked_mean(init_policy_kl, mask, dim=-1).sum().item() if self.compute_init_policy_kl else 0
         )
-        ppo_rollout_metrics["global_rewards_with_kl"] = masked_mean(rewards_with_kl, mask, dim=-1).sum().item()
+        ppo_rollout_metrics["rewards_with_kl"] = masked_mean(rewards_with_kl, mask, dim=-1).sum().item()
         ppo_rollout_metrics["num_samples"] = prompt_lengths.size(0)
 
         # now the metrics are global
@@ -328,8 +328,8 @@ class PPOTrainer:
             global_mean, global_var = masked_global_mean_var(
                 tensor, mask, group=parallel_state.get_data_parallel_group(),
             )
-            ppo_rollout_metrics[f"global_{key}_mean"] = global_mean.item()
-            ppo_rollout_metrics[f"global_{key}_std"] = global_var.sqrt().item()
+            ppo_rollout_metrics[f"{key}_mean"] = global_mean.item()
+            ppo_rollout_metrics[f"{key}_std"] = global_var.sqrt().item()
 
         if self.cfg.normalize_advantages:
             ppo_rollout_data["advantages"] = normalize_tensor(
