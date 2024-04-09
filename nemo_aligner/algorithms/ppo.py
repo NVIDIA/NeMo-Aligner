@@ -262,7 +262,7 @@ class PPOTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-    def generate_ppo_data(self, rollout_batches):
+    def generate_ppo_data(self, rollout_batch):
         """generate ppo specific data for training
         """
         ppo_rollout_data = {}
@@ -539,9 +539,11 @@ class PPOTrainer:
         return loss_mean, metrics
 
     def fit(self):
-        if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomSampler)) and (
-            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
-        ):
+        if (
+            not isinstance(
+                self.train_dataloader_builder(consumed_samples=0).batch_sampler, MegatronPretrainingRandomSampler
+            )
+        ) and (self.cfg.max_epochs is not None and self.cfg.max_epochs > 1):
             # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
             # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
             # to fix this, you should use MegatronPretrainingRandomSampler instead, which alleviates this issue and allows

@@ -105,7 +105,7 @@ def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     group = get_model_parallel_group()
 
     if torch.distributed.get_world_size(group) > 1:
-        return broadcast_2d_tensor(tensor, get_model_parallel_src_rank(), group, dtype=dtype, dtype=dtype)
+        return broadcast_2d_tensor(tensor, get_model_parallel_src_rank(), group, dtype=dtype)
 
     return tensor
 

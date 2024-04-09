@@ -292,6 +292,11 @@ def collate_with_batch_max_sequence_length(
 
     texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
+    output = {
+        "text": texts,
+        "length": lengths,
+    }
+
     other = {}
     if generate_masks_and_position_ids:
         # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
@@ -304,6 +309,7 @@ def collate_with_batch_max_sequence_length(
             "loss_mask": loss_masks * loss_multipliers,
             "position_ids": position_ids,
         }
+
     return output | other
 
 
