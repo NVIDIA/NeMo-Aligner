@@ -32,7 +32,7 @@ class GenerationPipelineStage:
         pass
     
     def has_work(self):
-        return len(self.work_queue) > 0
+        return self.work_queue.qsize() > 0
     
     def get_stop_words(self):
         pass
@@ -67,13 +67,16 @@ class GenerationPipelineRunner:
             for stage_idx in range(len(self.stages)):
                 stage_complete = self.stages[stage_idx].get_complete()
                 completed += list(filter(lambda x: x.completed, stage_complete))
+                logging.warning(f'completed {len(completed)}')
 
                 to_queue = list(filter(lambda x: not x.completed, stage_complete))
                 for offset in range(num_stages):
-                    to_queue = self.stages[(stage_idx + offset) % num_stages].enqueue(to_queue)
+                    logging.warning(f'to_queue {len(to_queue)}')
+                    to_queue = self.stages[(stage_idx + offset + 1) % num_stages].enqueue(to_queue)
+                    completed += list(filter(lambda x: x.completed, to_queue))
+                    to_queue = list(filter(lambda x: not x.completed, to_queue))
 
-                completed += list(filter(lambda x: x.completed, to_queue))
-                to_queue = list(filter(lambda x: not x.completed, to_queue))
+                logging.warning(f'post queuing completed {len(completed)}, to_queue {len(to_queue)}')
                 
                 assert len(to_queue) == 0, f"ERROR: there are {len(to_queue)} items that no \
                                             stage can work on and are still marked incomplete"
@@ -86,8 +89,11 @@ class GenerationPipelineRunner:
             #         break
             for s in range(num_stages):
                 if self.stages[(current_stage + s) % num_stages].has_work():
+                    logging.warning(f"stage {current_stage + s} has work")
                     self.stages[(current_stage + s) % num_stages].run_batch()
                     break
+                else:
+                    logging.warning(f"stage {current_stage + s} has no work")
 
         return [c.data for c in completed.sort(key=lambda x: x.id)]
 

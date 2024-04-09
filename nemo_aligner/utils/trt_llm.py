@@ -1,5 +1,7 @@
 from typing import List
+import logging
 
+import numpy as np
 import torch
 from megatron.core import parallel_state
 
@@ -132,6 +134,7 @@ class GPTGenerateTRTLLM:
         batch_input_ids = []
         for idx in range(prompt_tokens.shape[0]):
             batch_input_ids.append(prompt_tokens[idx][0 : prompt_lengths[idx]].cpu())
+        logging.warning(f'input ids{batch_input_ids}')
 
         output_ids = self.model_runner.generate(
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
@@ -176,18 +179,23 @@ class TRTGenerationPipelineStage(GenerationPipelineStage):
         not_run = []
         for item in inputs:
             tokens = item.data["token_ids"]
-            text = self.tokenizer.decode(tokens)
-            if not text.endswith("<extra_id_1>") and len(tokens < self.max_attn_window_size):
-                self.work_queue.put(item)
-            else:
+            text = self.tokenizer.ids_to_text(tokens.tolist())#[0]
+            logging.warning(f"in generation text {text}")
+            boxed_in_text = "oxed{" in text and "}$" in text
+            logging.warning(f"boxed {boxed_in_text}")
+            # if not text.endswith("<extra_id_1>") and len(tokens < self.max_attn_window_size):
+            if text.endswith("<extra_id_1>") or len(tokens) > self.max_context_length or ("oxed{" in text and "}$" in text):
                 item.complete = True
                 not_run.append(item)
+            else:
+                self.work_queue.put(item)
+                logging.warning(f'trt qsize {self.work_queue.qsize()}')
 
         return not_run
 
     def run_batch(self):
         stop_words = self.stop_words
-        inputs = [self.work_queue.get() for _ in range(min(self.max_batch_size, len(self.work_queue)))]
+        inputs = [self.work_queue.get() for _ in range(min(self.max_batch_size, self.work_queue.qsize()))]
         input_ids = [item.data["token_ids"] for item in inputs]
         input_ids += [[0]] * (self.max_batch_size - len(inputs))
 
@@ -216,7 +224,7 @@ class TRTGenerationPipelineStage(GenerationPipelineStage):
         #sentences = [self.tokenizer.ids_to_text(output.tolist()) for output in output_ids]
         output_ids = torch.Tensor.tolist(output_ids)
         for i in range(len(inputs)):
-            inputs[i].data["token_ids"] = output_ids[i]
+            inputs[i].data["token_ids"] = np.array(output_ids[i])
             self.out_queue.put(inputs[i])
 
     def forward(self, inputs):
@@ -238,7 +246,7 @@ class TRTGenerationPipelineStage(GenerationPipelineStage):
         # batch_input_ids = []
         # for idx in range(prompt_tokens.shape[0]):
             # batch_input_ids.append(prompt_tokens[idx][0 : prompt_lengths[idx]].cpu())
-
+        logging.warning(f'in pipe generate inputs {inputs}')
         output_ids = self.model_runner.generate(
             batch_input_ids=[torch.tensor(s) for s in inputs], sampling_config=self.sampling_config, streaming=False
         )
@@ -246,8 +254,12 @@ class TRTGenerationPipelineStage(GenerationPipelineStage):
         output_ids = torch.clamp(output_ids, max=self.tokenizer.vocab_size - 1)  # TODO: hack for padded vocab
 
         return output_ids
-
-
+    
+    def get_complete(self):
+        complete = []
+        for _ in range(self.out_queue.qsize()):
+            complete.append(self.out_queue.get())
+        return complete
 
 class GPTGenerateWithToolsTRTLLM:
     def __init__(
@@ -256,7 +268,7 @@ class GPTGenerateWithToolsTRTLLM:
         self.cfg = cfg
         self.tokenizer = tokenizer
         self.max_generation_length = self.cfg.ppo.length_params.get("max_length")
-        self.max_context_length = 2048
+        self.max_context_length = 4096
         self.max_attn_window_size = 4096
         self.generation_batch_size = self.cfg.ppo.get("rollout_micro_batch_size")
         self._trtllm_model_compiled = False
@@ -330,12 +342,14 @@ class GPTGenerateWithToolsTRTLLM:
             )
 
     def generate(self, inputs: List):
-        prompt_tokens, prompt_lengths = inputs
+        prompt_tokens, prompt_lengths = [i[0] for i in inputs], [i[1] for i in inputs]
 
         batch_input_ids = []
-        for idx in range(prompt_tokens.shape[0]):
-            batch_input_ids.append(prompt_tokens[idx][0 : prompt_lengths[idx]].cpu())
+        for b_idx in range(len(prompt_tokens)):
+            for idx in range(prompt_tokens[b_idx].shape[0]):
+                batch_input_ids.append(prompt_tokens[b_idx][idx][0 : prompt_lengths[b_idx][idx]].cpu())
 
+        logging.warning(f"out of pipe ids {batch_input_ids}")
         inferences = self.generation_pipeline_runner.run_pipe([{"token_ids": b} for b in batch_input_ids])
         for i in range(len(inferences)):
             inferences[i]["sentences"] = self.tokenizer.ids_to_text(inferences[i].tolist())

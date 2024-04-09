@@ -2,6 +2,7 @@ import os
 from queue import Queue
 from typing import List, Dict
 from threading import Thread
+import logging
 
 import numpy as np
 import torch
@@ -47,10 +48,12 @@ class CodeExecutionTool(GenerationPipelineStage):
         not_run = []
         for item in inputs:
             tokens = item.data["token_ids"]
-            text = self.tokenizer.decode(tokens)
+            text = self.tokenizer.ids_to_text(tokens.tolist())#[0]
+            logging.warning(f"in to code exec tool {text}")
             if text.endswith("</llm-code>"):
                 item.tool_data["code_exec/code_exec_string"] = text
                 self.work_queue.put(item)
+                logging.warning(f"code in {text}")
             else:
                 not_run.append(item)
 
@@ -61,6 +64,7 @@ class CodeExecutionTool(GenerationPipelineStage):
         Performs TP communication for asynchronously completed code requests.
         """
         tp_group = parallel_state.get_tensor_model_parallel_group()
+        logging.warning('running batch code exec')
 
         # src rank
         if torch.distributed.get_rank() == parallel_state.get_tensor_model_parallel_src_rank():
@@ -142,7 +146,7 @@ class CodeExecutionTool(GenerationPipelineStage):
                     output, uuid = self.sandbox.execute_code(code)
                     results = output["result"]
                     output_text = code_output_template.format(answer=results)
-                    item.data["token_ids"] = self.tokenizer.text_to_ids(text + output_text) 
+                    item.data["token_ids"] = torch.tensor(self.tokenizer.text_to_ids(text + output_text))
                     del item.tool_data["code_exec/code_exec_string"]
                     self.tmp_queue.put(item)
                 except Exception as e:
@@ -155,10 +159,16 @@ class CodeExecutionTool(GenerationPipelineStage):
                 
     
     def get_stop_words(self):
-        return prepare_stop_words(["<llm-code-output>"], self.tokenizer)
+        return prepare_stop_words(["</llm-code>"], self.tokenizer)
     
     def has_work(self):
-        return len(self.work_queue) + len(self.tmp_queue) > 0
+        return self.work_queue.qsize() + self.tmp_queue.qsize() > 0
+    
+    def get_complete(self):
+        complete = []
+        for _ in range(self.out_queue.qsize()):
+            complete.append(self.out_queue.get())
+        return complete
 
 def prepare_stop_words(stop_words_list, tokenizer):
     # adapted from https://github.com/NVIDIA/TensorRT-LLM/blob/b310ec675145c9ee7668592549f733df4abf1e94/tensorrt_llm/runtime/generation.py#L46

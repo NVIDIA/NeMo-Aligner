@@ -84,8 +84,8 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
         tools = [CodeExecutionTool(tokenizer=self.tokenizer, max_threads=8)]
         if self.use_trtllm_generation:
-            self.trtllm_generate = GPTGenerateTRTLLM(self.cfg, self.tokenizer)
-            # self.trtllm_generate = GPTGenerateWithToolsTRTLLM(self.cfg, self.tokenizer, tools)
+            #self.trtllm_generate = GPTGenerateTRTLLM(self.cfg, self.tokenizer)
+            self.trtllm_generate = GPTGenerateWithToolsTRTLLM(self.cfg, self.tokenizer, tools)
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
