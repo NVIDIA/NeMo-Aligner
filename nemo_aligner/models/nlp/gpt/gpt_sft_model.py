@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 import hydra
 import torch
@@ -144,17 +144,31 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
 
     def generate(
         self,
-        inputs: Tuple[torch.Tensor, torch.Tensor],  # we do not support non-tensor inputs
+        inputs: Union[List[str], Tuple[torch.Tensor, torch.Tensor]],
         length_params: LengthParam,
         sampling_params: SamplingParam = None,
         *,
         strategy: Optional[TextGenerationStrategy] = None,
     ) -> OutputType:
-        """Same as base model generate, except the following
-
-        1. Going to apply padding to max length
-        2. Going to append "predictions" key which is the model output without the prompt
         """
+        Same as base model generate, except the following:
+
+        1. Apply padding to max length.
+        2. Add a "predictions" key to the output, which is the model output without the prompt.
+
+        These two additional steps above are only performed for actual generation from the model:
+        if `generate()` is called with `compute_logprob=True` then the base model method is used.
+        """
+        if sampling_params is not None and sampling_params.get("compute_logprob", False):
+            return super().generate(
+                inputs=inputs, length_params=length_params, sampling_params=sampling_params, strategy=strategy
+            )
+
+        if isinstance(inputs, (list, tuple)) and isinstance(inputs[0], str):
+            raise NotImplementedError(
+                "`GPTSFTModel.generate()` does not currently support string inputs, please tokenize prompts first"
+            )
+
         prompt_tokens, prompt_lengths = inputs
         max_prompt_length = prompt_lengths.max().item()
         max_response_length = length_params["max_length"]
