@@ -74,19 +74,12 @@ class GPTGenerateTRTLLM():
             sampling_config=self.sampling_config,
             streaming=False)
 
-        output_ids = output_dict['output_ids']
-        resp_lens = output_dict['sequence_lengths'].squeeze()
-
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
-        mbs = output_ids.shape[0]
-        if mbs == 1:
-            output_ids = output_ids.view([1,output_ids.shape[-1]])
-        else:
-            output_ids = output_ids.squeeze()
-        output_ids = output_ids.to(torch.int64)
+        output_ids = torch.squeeze(output_dict['output_ids'], dim=1).long()
+        resp_lens = output_dict['sequence_lengths'].squeeze().long()
 
         #broadcast output to all PP ranks
-        if parallel_state.get_pipeline_model_parallel_world_size() > 1 and not self.reshard_model:  
+        if not self.reshard_model and parallel_state.get_pipeline_model_parallel_world_size() > 1:  
             group = parallel_state.get_pipeline_model_parallel_group()
             src = parallel_state.get_pipeline_model_parallel_first_rank()
             output_ids = broadcast_2d_tensor(output_ids, src, group, dtype=output_ids.dtype)
