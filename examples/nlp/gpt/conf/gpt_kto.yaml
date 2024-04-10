@@ -7,8 +7,8 @@ trainer:
   accelerator: gpu
   precision: bf16
   
-  # dpo specific args
-  dpo:
+  # kto specific args
+  kto:
     max_epochs: 1
     max_steps: -1
     val_check_interval: 0.1
@@ -23,8 +23,8 @@ trainer:
   enable_checkpointing: False
   use_distributed_sampler: False
   max_time: null
-  max_epochs: ${.dpo.max_epochs}
-  max_steps: ${.dpo.max_steps}
+  max_epochs: ${.kto.max_epochs}
+  max_steps: ${.kto.max_steps}
 
 exp_manager:
   explicit_log_dir: /results
@@ -33,8 +33,8 @@ exp_manager:
   max_time_per_run: ${trainer.max_time}
   create_wandb_logger: False
   wandb_logger_kwargs:
-    project: nemo_aligner_dpo
-    name: rlhf_gpt3_dpo
+    project: nemo_aligner_kto
+    name: rlhf_gpt3_kto
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   resume_if_exists: True
   resume_ignore_no_checkpoint: True
@@ -45,7 +45,7 @@ exp_manager:
     mode: min
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt--{${.monitor}:.3f}-{step}-{consumed_samples}-{epoch}'
+    filename: 'megatron_gpt--{val_loss:.3f}-{step}-{consumed_samples}-{epoch}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
 
 pretrained_checkpoint:
@@ -57,36 +57,18 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
 
-  dpo:
+  kto:
     log_prob_forward_micro_batch_size: 1
     ref_policy_kl_penalty: 0.2
+    desirable_loss_weight: 1.0
+    undesirable_loss_weight: 1.0
     average_log_probs: False
-    label_smoothing: 0.0 # for conservative dpo
-    preference_loss: 'dpo' # dpo | ipo | kto
   
   #encoder_seq_length: 4096
   #max_position_embeddings: ${model.encoder_seq_length}
 
   # miscellaneous
   seed: 1234
-
-  #peft 
-  peft:
-    peft_scheme: "none"  # ["lora", "none"]
-    restore_from_path: null
-    restore_from_ckpt:
-      checkpoint_dir: null
-      checkpoint_name: null
-
-    lora_tuning:
-      target_modules: ['attention_qkv'] # this can either be 'attention_qkv','attention_dense','mlp_fc1','mlp_fc2', 'attention' (qkv & dense), 'mlp' (fc1 & fc2), 'all'
-      adapter_dim: 32
-      adapter_dropout: 0.0
-      column_init_method: 'xavier' # IGNORED if linear_adapter is used, options: xavier, zero or normal
-      row_init_method: 'zero' # IGNORED if linear_adapter is used, options: xavier, zero or normal
-      layer_selection:  null  # selects in which layers to add lora adapters. e.g. [1,12] will add lora to layer 1 (lowest) and 12. null will apply adapters to all layers
-      weight_tying: False
-      position_embedding_strategy: null # used only when weight_tying is True
 
   optim:
     name: distributed_fused_adam
