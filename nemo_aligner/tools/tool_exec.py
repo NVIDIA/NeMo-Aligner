@@ -91,11 +91,13 @@ class GenerationPipelineRunner:
                 if self.stages[(current_stage + s) % num_stages].has_work():
                     logging.warning(f"stage {current_stage + s} has work")
                     self.stages[(current_stage + s) % num_stages].run_batch()
+                    # current_stage = (current_stage + s) % num_stages
                     break
                 else:
                     logging.warning(f"stage {current_stage + s} has no work")
 
-        return [c.data for c in completed.sort(key=lambda x: x.id)]
+        completed.sort(key=lambda x: x.id)
+        return [c.data for c in completed]
 
 def merge_stop_words(stop_word_lists_processed: List[np.array]):
     """

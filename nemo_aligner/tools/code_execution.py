@@ -14,8 +14,7 @@ from nemo_skills.code_execution.sandbox import LocalSandbox
 from nemo_skills.code_execution.utils import extract_code_to_execute
 # from nemo_skills.inference.server.serve_trt import prepare_stop_words
 
-code_output_template = """
-<llm-code-output>
+code_output_template = """<llm-code-output>
 {answer}
 </llm-code-output>
 """
@@ -34,7 +33,7 @@ class CodeExecutionTool(GenerationPipelineStage):
 
         self.tokenizer = tokenizer
         host = os.getenv("NEMO_SKILLS_SANDBOX_HOST", "localhost")
-        port = os.getenv("NEMO_SKILLS_SANDBOX_PORT", "1034")
+        port = os.getenv("NEMO_SKILLS_SANDBOX_PORT", "6000")
         self.sandbox = LocalSandbox(host=host, port=port)
 
         self.tmp_queue = Queue()
@@ -49,8 +48,8 @@ class CodeExecutionTool(GenerationPipelineStage):
         for item in inputs:
             tokens = item.data["token_ids"]
             text = self.tokenizer.ids_to_text(tokens.tolist())#[0]
-            logging.warning(f"in to code exec tool {text}")
-            if text.endswith("</llm-code>"):
+            if text.endswith("<llm-code-output>"):
+                text = text[:-len("<llm-code-output>")]
                 item.tool_data["code_exec/code_exec_string"] = text
                 self.work_queue.put(item)
                 logging.warning(f"code in {text}")
@@ -64,62 +63,65 @@ class CodeExecutionTool(GenerationPipelineStage):
         Performs TP communication for asynchronously completed code requests.
         """
         tp_group = parallel_state.get_tensor_model_parallel_group()
+        tp_src = parallel_state.get_tensor_model_parallel_src_rank()
         logging.warning('running batch code exec')
 
         # src rank
-        if torch.distributed.get_rank() == parallel_state.get_tensor_model_parallel_src_rank():
+        if torch.distributed.get_rank() == tp_src:
             completed = []
             id_and_lens = []
 
-            while len(self.tmp_queue) > 0:
+            while self.tmp_queue.qsize() > 0:
                 completed.append(self.tmp_queue.get())
-            completed = completed.sort(key=lambda x: x.id)
+            completed.sort(key=lambda x: x.id)
             max_len = max([len(c.data["token_ids"]) for c in completed])
 
             # communicates the completed tensor size
             num_complete_and_maxlen = torch.cuda.LongTensor([len(completed), max_len])
-            torch.distributed.broadcast(num_complete_and_maxlen, tp_group)
+            torch.distributed.broadcast(num_complete_and_maxlen, tp_src, tp_group)
             
             # constucts a token_id tensor with padding
-            completed_tensor = torch.zeros((len(completed), max_len), dtype=torch.int32)
+            completed_tensor = torch.zeros((len(completed), max_len), dtype=torch.int64)
             for i, c in enumerate(completed):
                 str_len = len(c.data["token_ids"])
-                completed_tensor[i][:str_len] = torch.IntTensor(c.data["token_ids"])
+                completed_tensor[i][:str_len] = torch.LongTensor(c.data["token_ids"])
                 id_and_lens.append([c.id, str_len])
 
             # communicates the token tensor
-            completed_tensor = completed_tensor.cuda()
-            id_and_lens = torch.IntTensor(id_and_lens).cuda()
-            torch.distributed.broadcast(completed_tensor, tp_group)
-            torch.distributed.broadcast(id_and_lens, tp_group)
+            completed_tensor = torch.cuda.LongTensor(completed_tensor.cuda())
+            id_and_lens = torch.cuda.LongTensor(id_and_lens)
+            logging.warning(f'ids and lens {id_and_lens.shape}, completed shape {completed_tensor.shape}')
+            torch.distributed.broadcast(completed_tensor, tp_src, tp_group)
+            torch.distributed.broadcast(id_and_lens, tp_src, tp_group)
+            logging.warning(f"completed code {completed}")
           
         # subscriber ranks
         else:
             # gets all elements in the tmp queue
             buffer = []
-            while len(self.tmp_queue) > 0:
+            while self.tmp_queue.qsize() > 0:
                 buffer.append(self.tmp_queue.get())
                 
             # recieves the shape of the complete token tensor
             num_complete_and_maxlen = torch.cuda.LongTensor([0, 0])
-            torch.distributed.broadcast(num_complete_and_maxlen, tp_group)
+            torch.distributed.broadcast(num_complete_and_maxlen, tp_src, tp_group)
             num_complete = num_complete_and_maxlen[0]
             max_len = num_complete_and_maxlen[1]
             
             # recieves the token tensor
-            completed_tensor = torch.zeros((num_complete, max_len)).cuda()
-            ids_and_lens = torch.zeros((num_complete, 2)).cuda()
-            torch.distributed.broadcast(completed_tensor, tp_group)
-            torch.distributed.broadcast(ids_and_lens, tp_group)
+            completed_tensor = torch.cuda.LongTensor(torch.zeros((num_complete, max_len), dtype=torch.int64).cuda())
+            ids_and_lens = torch.cuda.LongTensor(torch.zeros((num_complete, 2), dtype=torch.int64).cuda())
+            torch.distributed.broadcast(completed_tensor, tp_src, tp_group)
+            torch.distributed.broadcast(ids_and_lens, tp_src, tp_group)
             
             # unpads and converts the token tensor to lists
             ids = ids_and_lens[:, 0].tolist()
             lens = ids_and_lens[:, 1].tolist()
             src_completed = []
             for item in buffer:
-                if buffer.id in ids:
-                    tensor_idx = ids.index(buffer.id)
-                    item.data["token_ids"] = completed_tensor[tensor_idx][:lens[tensor_idx]].tolist()
+                if item.id in ids:
+                    tensor_idx = ids.index(item.id)
+                    item.data["token_ids"] = completed_tensor[tensor_idx][:lens[tensor_idx]].cpu()
                     src_completed.append(item)
             src_completed.sort(key=lambda x: x.id)
             assert len(src_completed) == num_complete, f"ERROR: non-src TP found {len(src_completed)} completed items compared to expected {num_complete}"
@@ -129,6 +131,7 @@ class CodeExecutionTool(GenerationPipelineStage):
                 self.tmp_queue.put(item)
 
             completed = src_completed
+            logging.warning(f"completed code {completed}")
 
         for item in completed:
             self.out_queue.put(item)
@@ -159,7 +162,7 @@ class CodeExecutionTool(GenerationPipelineStage):
                 
     
     def get_stop_words(self):
-        return prepare_stop_words(["</llm-code>"], self.tokenizer)
+        return prepare_stop_words([["<llm-code-output>"]], self.tokenizer)
     
     def has_work(self):
         return self.work_queue.qsize() + self.tmp_queue.qsize() > 0
@@ -186,6 +189,7 @@ def prepare_stop_words(stop_words_list, tokenizer):
             # require refactoring if different stop words are used in the future.
             # Eventually, this needs to be fixed inside TensorRT-LLM itself.
             ids = tokenizer.text_to_ids('magic' + word)
+            logging.warning(f'ids {ids}')
             ids = ids[2:]  # skipping "magic"
 
             if len(ids) == 0:
@@ -199,6 +203,8 @@ def prepare_stop_words(stop_words_list, tokenizer):
 
     pad_to = max(1, max(len(ids) for ids in flat_ids))
 
+    logging.warning(f'flat ids {flat_ids}')
+    logging.warning(f'offsets {offsets}')
     for i, (ids, offs) in enumerate(zip(flat_ids, offsets)):
         flat_ids[i] = np.pad(ids, (0, pad_to - len(ids)), constant_values=0)
         offsets[i] = np.pad(offs, (0, pad_to - len(offs)), constant_values=-1)

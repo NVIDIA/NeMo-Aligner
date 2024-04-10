@@ -182,10 +182,9 @@ class TRTGenerationPipelineStage(GenerationPipelineStage):
             text = self.tokenizer.ids_to_text(tokens.tolist())#[0]
             logging.warning(f"in generation text {text}")
             boxed_in_text = "oxed{" in text and "}$" in text
-            logging.warning(f"boxed {boxed_in_text}")
             # if not text.endswith("<extra_id_1>") and len(tokens < self.max_attn_window_size):
             if text.endswith("<extra_id_1>") or len(tokens) > self.max_context_length or ("oxed{" in text and "}$" in text):
-                item.complete = True
+                item.completed = True
                 not_run.append(item)
             else:
                 self.work_queue.put(item)
@@ -278,10 +277,12 @@ class GPTGenerateWithToolsTRTLLM:
         
         # get and merge all tool stop words
         trt_stop_words = self._create_stop_words()[0]
+        logging.warning(f'trt stop {trt_stop_words}')
         all_stop_words = [trt_stop_words]
         for tool in tools:
             all_stop_words.append(tool.get_stop_words()[0])
         self.stop_words = torch.IntTensor(merge_stop_words(all_stop_words)).cuda().repeat(self.generation_batch_size, 1, 1).contiguous()
+        logging.warning(f'all stop{self.stop_words}')
 
         self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
             end_id=tokenizer.eos_id,
