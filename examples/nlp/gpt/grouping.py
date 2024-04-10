@@ -114,8 +114,9 @@ def batch_value_memory(output_value):
     for value in output_value:
         batch = defaultdict(list)
 
-        for toks, reward in value["value_memory"]:
+        for toks, token_values, reward in value["value_memory"]:
             batch["tokens"].append(list(toks))
+            batch["token_values"].append(list(token_values))
             batch["reward"].append(reward)
 
         batch["context_length"] = len(value["backup_root_states"])

@@ -1,9 +1,14 @@
+import os
 import re
 
 import pandas as pd
 from datasets import load_dataset
 from nemo_skills.code_execution.math_grader import extract_answer, math_equal
 from nemo_skills.code_execution.sandbox import LocalSandbox
+from nemo_skills.code_execution.math_grader import extract_answer
+from nemo_skills.code_execution.sandbox import LocalSandbox
+
+from nemo_aligner.utils.deep_search.mcts.reward_functions import get_reward
 
 
 class Feedback(object):
@@ -17,8 +22,20 @@ class Feedback(object):
         raise NotImplementedError
 
 
+class DummyScore(Feedback):
+    def score(self, response, data_id):
+        return 0.0
+
+
 class GSK8KFeedbackDataset(Feedback):
-    def score(self, response, answer):
+    def __init__(self, ds):
+        self.ds = ds
+        # local_rank = os.getenv("local_rank", "0")
+        host = os.getenv("NEMO_SKILLS_SANDBOX_HOST", "localhost")
+        port = os.getenv("NEMO_SKILLS_SANDBOX_PORT", "1034")
+        self.sandbox = LocalSandbox(host=host, port=port)
+
+    def score(self, response, data_id):
         """
         score the response
         """

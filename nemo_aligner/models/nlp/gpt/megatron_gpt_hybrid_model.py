@@ -54,8 +54,8 @@ from nemo.collections.nlp.modules.common.text_generation_strategy import GPTMode
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.core.classes.modelPT import ModelPT
 from nemo.core.optim import MainParamsOptimizerWrapper, prepare_lr_scheduler
-from nemo.core.optim.distributed_adam import _str_to_dtype
 from nemo.utils import logging
+from nemo.utils.dtype import str_to_dtype
 from nemo_aligner.algorithms.deepsearch import TrainMode
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
 from nemo_aligner.utils.train_utils import (
@@ -127,7 +127,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         """Model depends on pipeline paralellism."""
 
         force_head_dtype = self.cfg.get("force_head_dtype", torch.float32)
-        head_dtype = None if force_head_dtype is None else _str_to_dtype(force_head_dtype)
+        head_dtype = None if force_head_dtype is None else str_to_dtype(force_head_dtype)
         if self.cfg.get("megatron_amp_O2", False) and (head_dtype is None or torch.finfo(head_dtype).bits < 32):
             logging.warning(
                 "When `megatron_amp_O2` is enabled, it is recommended to set `force_head_dtype=32` "
@@ -386,7 +386,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         """
         # mcore uses distributed checkpointing
         if "state_dict" in checkpoint and checkpoint["state_dict"]:
-            for index, module in enumerate(self.get_gpt_module_list()):
+            for index, module in enumerate(self.get_model_module_list()):
                 if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
                     checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
                 else:

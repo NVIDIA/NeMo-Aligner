@@ -451,27 +451,45 @@ class RegressionRewardModelDataset(RewardModelDataset):
         return output
 
 
+prompt_template = """\x00System
+
+\x11User
+{prompt}
+Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
+\x11Assistant
+"""
+
 steerlm_template = """<extra_id_0>System
 A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
 <extra_id_1>User
-{question}
+{prompt}
 Please show the calculation steps and lastly make sure to put the answer (and only answer) inside \\boxed{{}}.
 <extra_id_1>Assistant
 <extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
 """
 
+mistral_template = """[INST] {prompt}
+Please show the calculation steps and lastly make sure to put the answer (and only answer) inside \\boxed{{}}.
+[/INST]"""
+
+
 mathtool_template = """System:
 You're an expert Python programmer and mathematician. Help the user to solve this problem using code when necessary. Make sure to put the answer (and only answer) inside \\boxed{{}}.
 
 User:
-{question}
+{prompt}
 
 Assistant:
 """
 
+raw = """{prompt}"""
+
 TEMPLATES = {
     "steerlm": steerlm_template,
+    "mistral": mistral_template,
+    "sft": prompt_template,
     "mathtool": mathtool_template,
+    "raw": raw,
 }
 
 
@@ -491,10 +509,12 @@ class MCTSDataset:
 
         self.template = TEMPLATES[self.prompt_template]
         self.ds = ds
+        self.data_lookup = {obj["data_id"]: obj for obj in self.ds}
 
     def __getitem__(self, idx):
         item = deepcopy(self.ds[idx])
-        item["question"] = self.template.format(question=item["question"])
+        item["question"] = self.template.format(prompt=item["question"])
+        item["data_id"] = item["data_id"]
         return item
 
     def __len__(self):
