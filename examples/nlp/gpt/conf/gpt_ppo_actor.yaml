@@ -38,6 +38,12 @@ trainer:
     trt_llm:
       enable: False
       reshard: False # if True then reshard the model into TP only for inf
+      max_context_len: ${int_div:${model.encoder_seq_length}, 2}
+      model_type: "LLaMAForCausalLM"
+
+      # Unload the TRTLLM engine during the training stage 
+      # (TODO: Current not supported)
+      unload_engine_train: False
 
     flask_server:
       # flask server that acts as a worker pool to balance out generation time

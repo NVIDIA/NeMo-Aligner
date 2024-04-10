@@ -119,8 +119,6 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
 
         self.use_trtllm_generation = self.cfg.ppo.trt_llm.enable
-        self.orig_dp_rank = parallel_state.get_data_parallel_rank()
-
         if self.use_trtllm_generation:
             self.trtllm_generate = GPTGenerateTRTLLM(self.cfg, self.tokenizer)
 
@@ -321,14 +319,11 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
 
-        strategy = TrackLengthGPTModelTextGenerationStrategy(
-            model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
-        )
-
         if self.use_trtllm_generation:
             actor_output = self.trtllm_generate.generate(inputs)
+            response_tokens = actor_output['response_tokens']
+            response_lengths = actor_output['response_lengths']
         else:
-
             actor_output = self.generate(
                 inputs=inputs,
                 length_params=self._length_params,
@@ -336,36 +331,39 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
                 strategy=strategy,
             )
 
-        response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
-        response_lengths = (
-            calculate_dialogue_response_lengths(
-                tokens=response_tokens,
-                prompt_lengths=prompt_lengths,
-                tokenizer=self.tokenizer,
-                end_strings=self._sampling_params["end_strings"],
-                max_generation_length=self._length_params["max_length"],
-                max_sequence_length=self.cfg.encoder_seq_length,
-            )
-            if self.use_trtllm_generation
-            else strategy.get_lengths()
-        )
-
-        max_response_length = response_lengths.max().item()
-
-        # Sanity check to validate response length.
-        if max_response_length != response_tokens.size(1):
-            # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
-            # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
-            # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
-            # and remove the `if` below.
-            if (
-                max_response_length >= response_tokens.size(1)
-                or response_tokens.size(1) != prompt_lengths.max().item() + self._length_params["max_length"]
-            ):
-                raise AssertionError(
-                    f"max response length ({max_response_length}) does not match the size of "
-                    f"`response_tokens` ({response_tokens.size(1)})"
+            response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
+            response_lengths = (
+                calculate_dialogue_response_lengths(
+                    tokens=response_tokens,
+                    prompt_lengths=prompt_lengths,
+                    tokenizer=self.tokenizer,
+                    end_strings=self._sampling_params["end_strings"],
+                    max_generation_length=self._length_params["max_length"],
+                    max_sequence_length=self.cfg.encoder_seq_length,
                 )
+            )
+            strategy = TrackLengthGPTModelTextGenerationStrategy(
+                model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
+            )
+            strategy.get_lengths()
+
+
+            max_response_length = response_lengths.max().item()
+
+            # Sanity check to validate response length.
+            if max_response_length != response_tokens.size(1):
+                # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
+                # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
+                # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
+                # and remove the `if` below.
+                if (
+                    max_response_length >= response_tokens.size(1)
+                    or response_tokens.size(1) != prompt_lengths.max().item() + self._length_params["max_length"]
+                ):
+                    raise AssertionError(
+                        f"max response length ({max_response_length}) does not match the size of "
+                        f"`response_tokens` ({response_tokens.size(1)})"
+                    )
 
         rollout_batch = {
             "response_tokens": response_tokens,
