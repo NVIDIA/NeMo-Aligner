@@ -26,7 +26,7 @@ from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerB
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.ppo import DefaultBatchIterator, HTTPBatchIterator, PPOTrainer
+from nemo_aligner.algorithms.ppo import DefaultBatchIterator, HTTPBatchIterator, PPOTrainer, SharedSet
 from nemo_aligner.data.nlp.builders import (
     build_dataloader,
     build_train_valid_test_rlhf_datasets,
@@ -35,7 +35,7 @@ from nemo_aligner.data.nlp.builders import (
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMCriticClient
 from nemo_aligner.utils.distributed import Timer
-from nemo_aligner.utils.server_utils import FutureResult, get_idx, set_idx, set_lock
+from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -164,58 +164,34 @@ def main(cfg) -> None:
     batch_iterator_cls = DefaultBatchIterator
     flask_cfg = cfg.trainer.ppo.flask_server
     if flask_cfg.enable:
+        # only rank 0 has a not None shared set
+        shared_set = None
+
         # TODO: we might be able to just broadcast the hostname
         # so the user don't have to specify it
         flask_host = flask_cfg.host
+        flask_port = flask_cfg.port
         if flask_host is None:
             # automatically get rank 0's host and broadcast it if not specified
             ip_address = [socket.gethostbyname(socket.gethostname())]
             torch.distributed.broadcast_object_list(ip_address, src=0, group=None, device=torch.cuda.current_device())
             flask_host = ip_address[0]
 
-        flask_port = flask_cfg.port
-        batch_iterator_cls = partial(HTTPBatchIterator, flask_host, flask_port)
-
         if torch.distributed.get_rank() == 0:
+            lock = threading.Lock()
+            shared_set = SharedSet(lock)
             app = Flask(__name__)
 
             # TODO: add batch size
             @app.route("/get_idx", methods=["PUT"])
             def get_http_idx():
                 batch_size = request.get_json()["batch_size"]
-                return get_idx(batch_size)
-
-            set_lock(threading.Lock())
-
-            threading.Thread(target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False)).start()
-
-    batch_iterator_cls = DefaultBatchIterator
-    flask_cfg = cfg.trainer.ppo.flask_server
-    if flask_cfg.enable:
-        # TODO: we might be able to just broadcast the hostname
-        # so the user don't have to specify it
-        flask_host = flask_cfg.host
-        if flask_host is None:
-            # automatically get rank 0's host and broadcast it if not specified
-            ip_address = [socket.gethostbyname(socket.gethostname())]
-            torch.distributed.broadcast_object_list(ip_address, src=0, group=None, device=torch.cuda.current_device())
-            flask_host = ip_address[0]
-
-        flask_port = flask_cfg.port
-        batch_iterator_cls = partial(HTTPBatchIterator, flask_host, flask_port)
-
-        if torch.distributed.get_rank() == 0:
-            app = Flask(__name__)
-
-            # TODO: add batch size
-            @app.route("/get_idx", methods=["PUT"])
-            def get_http_idx():
-                batch_size = request.get_json()["batch_size"]
-                return get_idx(batch_size)
-
-            set_lock(threading.Lock())
+                print("### SHARED SET request", shared_set.data)
+                return shared_set.get_idx(batch_size)
 
             threading.Thread(target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False)).start()
+
+        batch_iterator_cls = partial(HTTPBatchIterator, shared_set, flask_host, flask_port)
 
     ppo_trainer = PPOTrainer(
         cfg=cfg.trainer.ppo,

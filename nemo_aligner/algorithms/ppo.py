@@ -14,6 +14,7 @@
 
 import itertools
 import json
+import threading
 import time
 from collections import UserDict, defaultdict
 from collections.abc import Iterator, Mapping
@@ -52,10 +53,32 @@ from nemo_aligner.utils.ppo_utils import (
     calculate_ppo_rewards,
     create_mask,
 )
-from nemo_aligner.utils.server_utils import FutureResult, get_idx, set_idx
+from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
+
+
+@dataclass
+class SharedSet:
+    lock: threading.Lock
+
+    def __post_init__(self):
+        self.data = set()
+
+    def clear(self):
+        with self.lock:
+            self.data.clear()
+
+    def set_idx(self, ids):
+        with self.lock:
+            self.data.update(ids)
+
+    def get_idx(self, batch_size):
+        with self.lock:
+            to_ret = [self.data.pop() for _ in range(batch_size) if len(self.data) > 0]
+
+        return to_ret
 
 
 @dataclass
@@ -73,6 +96,7 @@ class DefaultBatchIterator:
 
 @dataclass
 class HTTPBatchIterator:
+    shared_set: SharedSet
     host: str
     port: int
     sampler_iter: Iterator[int]
@@ -88,7 +112,8 @@ class HTTPBatchIterator:
         global_ids = get_global_set(local_ids)
 
         if torch.distributed.get_rank() == 0:
-            set_idx(global_ids)
+            self.shared_set.clear()
+            self.shared_set.set_idx(global_ids)
 
         torch.distributed.barrier()
 
