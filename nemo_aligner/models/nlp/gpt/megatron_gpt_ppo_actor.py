@@ -324,6 +324,10 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
             response_tokens = actor_output['response_tokens']
             response_lengths = actor_output['response_lengths']
         else:
+            strategy = TrackLengthGPTModelTextGenerationStrategy(
+                model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
+            )
+
             actor_output = self.generate(
                 inputs=inputs,
                 length_params=self._length_params,
@@ -342,12 +346,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
                     max_sequence_length=self.cfg.encoder_seq_length,
                 )
             )
-            strategy = TrackLengthGPTModelTextGenerationStrategy(
-                model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
-            )
             strategy.get_lengths()
-
-
             max_response_length = response_lengths.max().item()
 
             # Sanity check to validate response length.
