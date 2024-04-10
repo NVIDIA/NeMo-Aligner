@@ -345,8 +345,9 @@ class DeepSearchTrainer:
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
 
         if self.step == 0:
-            self.run_validation()
-            self.run_train_evaluation()
+            pass
+            # self.run_validation()
+            # self.run_train_evaluation()
 
         for e in epoch_iter:
             # TODO(geshen): make sure to shuffle every epoch
@@ -395,11 +396,11 @@ class DeepSearchTrainer:
                 )
 
                 if run_val or forced_run_val:
-                    val_metrics = self.run_validation()
-                    step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
+                    # val_metrics = self.run_validation()
+                    # step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
-                    train_eval_metrics = self.run_train_evaluation()
-                    step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
+                    # train_eval_metrics = self.run_train_evaluation()
+                    # step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
                     loss_eval_metrics = self.run_loss_val()
                     step_metrics.update({f"search_eval_{k}": v for k, v in loss_eval_metrics.items()})
