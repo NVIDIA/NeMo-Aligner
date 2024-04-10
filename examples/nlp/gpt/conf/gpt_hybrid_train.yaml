@@ -38,7 +38,9 @@ backend_url: rpc://  # the backend server url, e.g. rpc://
 
 dataset:
   name: gsm8k
-  split: train
+  data_prefix:
+      train: null
+      validation: null
   prompt_template_name: ''
  
 model:
@@ -131,22 +133,6 @@ model:
     tensor_model_parallel_size: ${model.tensor_model_parallel_size}
     megatron_amp_O2: False
 
-    optim:
-      name: distributed_fused_adam
-      bucket_cap_mb: 200
-      overlap_grad_sync: False
-      contiguous_grad_buffer: True
-      lr: 1e-6
-      weight_decay: 0.01
-      betas:
-      - 0.9
-      - 0.98
-      sched:
-        name: CosineAnnealing
-        warmup_steps: 5
-        constant_steps: 10
-        min_lr: 1e-7
-
     # define fields from the base model's config that should be ignored when merging with this config.
     overwrite_base_config:
       data:
@@ -193,10 +179,10 @@ exp_manager:
   resume_ignore_no_checkpoint: True
   create_checkpoint_callback: False
   checkpoint_callback_params:
-    monitor: val_global_accuracy
+    monitor: search_eval_total_loss
     save_top_k: 3
-    mode: max
+    mode: min
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt-{step}-{consumed_samples}-{consumed_samples_values}-{policy_optimization_step}-{value_optimization_step}-{epoch}-{val_global_accuracy:.3f}'
+    filename: 'megatron_gpt-{step}-{consumed_samples}-{consumed_samples_values}-{policy_optimization_step}-{value_optimization_step}-{epoch}-{search_eval_total_loss:.5f}-{val_global_accuracy:.3f}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}

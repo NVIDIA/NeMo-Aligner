@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 
 CACHE_DIR = sys.argv[1]
-DATA_FILE = "data.pt"
+DATA_FILE = "solar_no_value_head_iter0.pt"
 
 GLOBAL_CONTEXT_LENGTH_DICT = {}
 

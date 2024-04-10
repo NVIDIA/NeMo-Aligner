@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import random
 from collections import defaultdict
 from enum import IntEnum, auto
 from functools import partial
@@ -65,12 +66,12 @@ class DeepSearchTrainer:
         self,
         cfg: DictConfig,
         model,
-        policy_optimizer,
-        policy_scheduler,
-        value_optimizer,
-        value_scheduler,
+        optimizer,
+        scheduler,
         train_policy_dataloader,
         train_value_dataloader,
+        val_policy_dataloader,
+        val_value_dataloader,
         val_dataloader_builder_func,
         train_dataloader_builder_func,
         feedback,
@@ -80,14 +81,16 @@ class DeepSearchTrainer:
     ):
         self.cfg = cfg
         self.model = model
-        self.policy_optimizer = policy_optimizer
-        self.policy_scheduler = policy_scheduler
-        self.value_optimizer = value_optimizer
-        self.value_scheduler = value_scheduler
+        self.optimizer = optimizer
+        self.scheduler = scheduler
         self.train_policy_dataloader = train_policy_dataloader
         self.train_value_dataloader = train_value_dataloader
         self.val_dataloader_builder_func = val_dataloader_builder_func
         self.train_dataloader_builder_func = train_dataloader_builder_func
+
+        self.val_policy_dataloader = val_policy_dataloader
+        self.val_value_dataloader = val_value_dataloader
+
         self.feedback = feedback
         self.logger = logger
         self.ckpt_callback = ckpt_callback
@@ -126,6 +129,9 @@ class DeepSearchTrainer:
         inference_pbar = tqdm(loop_iter, total=min(len(dataloader), limit_batches), leave=True, desc="Inference")
 
         for (_, batch) in inference_pbar:
+            if len(batch) <= 0:
+                break
+
             output = self.model.generate(batch["question"])
 
             for response, answer in zip(output["sentences"], batch["answer"], strict=True):
@@ -158,76 +164,130 @@ class DeepSearchTrainer:
             "table": tables,
         }
 
+    def val_single_step(self, batch, train_mode):
+        batch["train_mode"] = train_mode
+        loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=True)
+        metrics.update({"loss": loss_mean})
+
+        return metrics
+
     def train_single_step(self, batch, train_mode):
         batch["train_mode"] = train_mode
-        if train_mode == TrainMode.POLICY_ONLY:
-            self.policy_optimizer.zero_grad()
-        elif train_mode == TrainMode.VALUE_ONLY:
-            self.value_optimizer.zero_grad()
-        else:
-            raise ValueError(f"Invalid train mode {train_mode}")
+
         self.model.prepare_for_training_step()
         loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
         self.model.finish_training_step()
 
-        if train_mode == TrainMode.POLICY_ONLY:
-            grad_norm = clip_optimier_gradients(self.model, self.policy_optimizer, self.cfg.gradient_clip_val)
-        elif train_mode == TrainMode.VALUE_ONLY:
-            grad_norm = clip_optimier_gradients(self.model, self.value_optimizer, self.cfg.gradient_clip_val)
-        else:
-            raise ValueError(f"Invalid train mode {train_mode}")
+        metrics.update({"loss": loss_mean})
 
-        grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
-        if train_mode == TrainMode.POLICY_ONLY:
-            lr = self.policy_optimizer.param_groups[0]["lr"]
-            self.policy_optimizer.step()
-            self.policy_scheduler.step()
-        elif train_mode == TrainMode.VALUE_ONLY:
-            lr = self.value_optimizer.param_groups[0]["lr"]
-            self.value_optimizer.step()
-            self.value_scheduler.step()
-        else:
-            raise ValueError(f"Invalid train mode {train_mode}")
+        return metrics
 
-        if grad_norm is not None:
-            metrics["grad_norm"] = grad_norm
+    @torch.no_grad()
+    def run_loss_val(self):
+        self.model.prepare_for_inference()
 
-        metrics.update({"lr": lr, "loss": loss_mean})
+        value_losses, policy_losses = [], []
+
+        num_policy_batches = min(self.cfg.num_policy_batches, len(self.val_policy_dataloader))
+        policy_batches = [output[1] for output in zip(range(num_policy_batches), self.val_policy_dataloader)]
+
+        for batch in policy_batches:
+            batch["amount_of_batches"] = len(policy_batches)
+            policy_metrics = self.val_single_step(batch, TrainMode.POLICY_ONLY)
+            policy_losses.append(policy_metrics["loss"])
+
+        num_value_batches = min(self.cfg.num_value_batches, len(self.val_value_dataloader))
+        value_batches = [output[1] for output in zip(range(num_value_batches), self.val_value_dataloader)]
+
+        for batch in value_batches:
+            batch["amount_of_batches"] = len(value_batches)
+            value_metrics = self.val_single_step(batch, TrainMode.VALUE_ONLY)
+            value_losses.append(value_metrics["loss"])
+
+        metrics = {}
+
+        value_loss = sum(value_losses)
+        policy_loss = sum(policy_losses)
+
+        if len(value_losses) > 0:
+            metrics.update({"value_loss": value_loss})
+
+        if len(policy_losses) > 0:
+            metrics.update({"policy_loss": policy_loss})
+
+        metrics.update({"total_loss": value_loss + policy_loss})
+
+        self.logger.log_metrics(
+            metrics, step=self.step, prefix="search_eval/",
+        )
+
+        self.model.finish_inference()
         return metrics
 
     def run_training(self, policy_dataloader_iter, value_dataloader_iter):
         self.model.prepare_for_training()
+        self.optimizer.zero_grad()
         dp_size = parallel_state.get_data_parallel_world_size()
         # TODO: add consumed samples logic
         # TODO: add optimizer step bump
-        for _, batch in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter):
-            # at least if we do this the lr are not synced between the 2 stages of training
-            metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
-            metrics.update({"policy_optimization_step": self.policy_optimization_step})
+        run_value = self.value_steps.pop()
+        run_policy = self.policy_steps.pop()
+        value_losses, policy_losses = [], []
 
-            self.consumed_samples += batch["tokens"].size(0) * dp_size
+        if run_policy:
+            policy_batches = [output[1] for output in zip(range(self.cfg.num_policy_batches), policy_dataloader_iter)]
+
+            for batch in policy_batches:
+                # at least if we do this the lr are not synced between the 2 stages of training
+                batch["amount_of_batches"] = len(policy_batches)
+                policy_metrics = self.train_single_step(batch, TrainMode.POLICY_ONLY)
+                policy_losses.append(policy_metrics["loss"])
+
+                self.consumed_samples += batch["tokens"].size(0) * dp_size
+
             self.policy_optimization_step += 1
 
-            metrics.update({"consumed_samples": self.consumed_samples})
+        if run_value:
+            value_batches = [output[1] for output in zip(range(self.cfg.num_value_batches), value_dataloader_iter)]
 
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="train_optim_policy/",
-            )
+            for batch in value_batches:
+                # at least if we do this the lr are not synced between the 2 stages of training
+                batch["amount_of_batches"] = len(value_batches)
+                value_metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
+                value_losses.append(value_metrics["loss"])
 
-        for _, batch in zip(range(self.cfg.num_value_batches), value_dataloader_iter):
-            # at least if we do this the lr are not synced between the 2 stages of training
-            metrics = self.train_single_step(batch, TrainMode.VALUE_ONLY)
-            metrics.update({"value_optimization_step": self.value_optimization_step})
-
-            self.consumed_samples_values += self.model.cfg.critic_global_batch_size
-            metrics.update({"consumed_samples_values": self.consumed_samples_values})
+                self.consumed_samples_values += self.model.cfg.critic_global_batch_size
 
             self.value_optimization_step += 1
 
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="train_optim_value/",
-            )
+        metrics = {}
 
+        grad_norm = clip_optimier_gradients(self.model, self.optimizer, self.cfg.gradient_clip_val)
+        grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
+
+        lr = self.optimizer.param_groups[0]["lr"]
+        if grad_norm is not None:
+            metrics["grad_norm"] = grad_norm
+
+        metrics.update({"policy_optimization_step": self.policy_optimization_step})
+        metrics.update({"value_optimization_step": self.value_optimization_step})
+        metrics.update({"consumed_samples_values": self.consumed_samples_values})
+        metrics.update({"consumed_samples": self.consumed_samples})
+
+        if len(value_losses) > 0:
+            metrics.update({"value_loss": sum(value_losses)})
+
+        if len(policy_losses) > 0:
+            metrics.update({"policy_loss": sum(policy_losses)})
+
+        metrics.update({"lr": lr})
+
+        self.logger.log_metrics(
+            metrics, step=self.step, prefix="train_optim/",
+        )
+
+        self.optimizer.step()
+        self.scheduler.step()
         self.model.finish_training()
         return metrics
 
@@ -313,8 +373,13 @@ class DeepSearchTrainer:
                 self.step += 1
                 inner_step += 1
 
+                forced_run_val = False
+                forced_save_model = False
+
                 if inner_step == self.max_steps:
                     self.epoch += 1
+                    forced_run_val = self.cfg.val_check_interval > 0
+                    forced_save_model = self.cfg.save_interval > 0
 
                 run_time_exceeded = self.run_timer.is_finished()
 
@@ -329,12 +394,15 @@ class DeepSearchTrainer:
                     run_time_exceeded=run_time_exceeded,
                 )
 
-                if run_val:
+                if run_val or forced_run_val:
                     val_metrics = self.run_validation()
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
 
                     train_eval_metrics = self.run_train_evaluation()
                     step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
+
+                    loss_eval_metrics = self.run_loss_val()
+                    step_metrics.update({f"search_eval_{k}": v for k, v in loss_eval_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch
@@ -342,7 +410,7 @@ class DeepSearchTrainer:
 
                 global_pbar.set_postfix(step_metrics)
 
-                if save_model:
+                if save_model or forced_save_model:
                     step_metrics = {k: torch.as_tensor(v) for k, v in step_metrics.items()}
                     self.save(step_metrics, is_train_end=is_train_end)
 
@@ -371,6 +439,18 @@ class DeepSearchTrainer:
             raise NotImplementedError("manual max step doesn't work right now")
 
         self.max_steps = min(max_steps, dataloader_max_steps)
+
+        # TODO(geshen): this slightly changes how things go when we restore
+        # so it's not perfectly the same whenevr we get preempted
+        value_steps = [True] * max_steps_value + [False] * (max_steps - max_steps_value)
+        policy_steps = [True] * max_steps_policy + [False] * (max_steps - max_steps_policy)
+
+        g = random.Random(self.epoch)
+        g.shuffle(value_steps)
+        g.shuffle(policy_steps)
+
+        self.value_steps = value_steps
+        self.policy_steps = policy_steps
 
     def state_dict(self):
         # TODO(geshen): add epoch logic
