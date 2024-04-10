@@ -90,7 +90,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
         torch.distributed.all_gather(output_list, batch_logs, group=dp_group)
 
-        #split_iter = map(self.split_output_tensor, output_list)
+        # split_iter = map(self.split_output_tensor, output_list)
         split_iter = map(partial(self.split_output_tensor, preferences=preferences), output_list)
 
         out_chosen, out_rejected, kl_rewards = map(torch.cat, zip(*split_iter))
@@ -178,16 +178,13 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
 
-                out_chosen, out_rejected, kl_div = self.gather_and_split_rewards(per_token_logps, ref_logprobs, labels, preferences)
+                out_chosen, out_rejected, kl_div = self.gather_and_split_rewards(
+                    per_token_logps, ref_logprobs, labels, preferences
+                )
 
                 return (
                     loss,
-                    {
-                        "avg": reduced_loss,
-                        "kl": kl_div,
-                        "out_chosen": out_chosen,
-                        "out_rejected": out_rejected,
-                    },
+                    {"avg": reduced_loss, "kl": kl_div, "out_chosen": out_chosen, "out_rejected": out_rejected,},
                 )
 
             return output_tensor, loss_func
@@ -216,7 +213,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             return (logps * loss_mask).sum(-1)
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, preferences, average_log_probs=False):
-        
+
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
@@ -271,7 +268,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             # NOTE: assume that the returned values are already gathered across the DP workers
             rewards_chosen = torch.cat([item["out_chosen"] for item in losses_reduced_per_micro_batch])
             rewards_rejected = torch.cat([item["out_rejected"] for item in losses_reduced_per_micro_batch])
-            kl_div =  torch.cat([item["kl"] for item in losses_reduced_per_micro_batch])
+            kl_div = torch.cat([item["kl"] for item in losses_reduced_per_micro_batch])
             kl_mean = kl_div.mean()
 
             rewards_all = torch.cat((rewards_chosen, rewards_rejected))
@@ -284,7 +281,7 @@ class MegatronGPTKTOModel(MegatronGPTModel, SupervisedInterface):
             # average loss across micro batches
             loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
             loss_tensor = torch.concat(loss_tensors_list)
-            loss_mean = loss_tensor.mean()            
+            loss_mean = loss_tensor.mean()
         else:
 
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
