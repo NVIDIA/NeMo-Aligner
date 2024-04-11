@@ -26,7 +26,12 @@ from nemo.utils import logging
 from nemo_aligner.metrics import InferenceMetricsHandler
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
-from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
+from nemo_aligner.utils.trainer_utils import (
+    check_progress,
+    compute_limit_batches,
+    compute_num_steps_per_epoch,
+    set_consumed_samples,
+)
 
 IMAGE_CAPTION_KEY = "images_and_captions"
 
@@ -67,7 +72,7 @@ class SupervisedTrainer:
         self.ckpt_callback = ckpt_callback
 
         # compute `max_steps`
-        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader)
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.set_max_steps()
@@ -183,6 +188,7 @@ class SupervisedTrainer:
             if not loop_iter:
                 return  # training ended
 
+            set_consumed_samples(self.train_dataloader, self.consumed_samples)
             global_pbar = tqdm(
                 self.train_dataloader, initial=self.step, total=self.max_steps, leave=True, desc="Training steps"
             )

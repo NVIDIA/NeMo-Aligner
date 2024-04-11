@@ -13,18 +13,17 @@
 # limitations under the License.
 
 
-from itertools import chain
 from typing import Optional
 
 import torch
 
+from nemo.collections.nlp.data.language_modeling.megatron import megatron_batch_samplers
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import BaseMegatronSampler
-
-from nemo.utils import logging
 
 
 # this class is meant to be temporary until NeMo upstream merges in https://github.com/NVIDIA/NeMo/pull/8239
 # once that PR is merged, we can delete this class (and file) and just use the NeMo class instead
+# TODO the NeMo version will also need to be updated to include `auto_update_consumed_samples`.
 class MegatronPretrainingRandomSampler(BaseMegatronSampler):
     def __init__(
         self,
@@ -37,6 +36,7 @@ class MegatronPretrainingRandomSampler(BaseMegatronSampler):
         global_batch_size: Optional[int] = None,
         pad_samples_to_global_batch_size: Optional[bool] = False,
         seed: int = 0,
+        auto_update_consumed_samples: bool = True,
     ) -> None:
         super().__init__(
             total_samples=total_samples,
@@ -58,6 +58,8 @@ class MegatronPretrainingRandomSampler(BaseMegatronSampler):
             )
         self.last_batch_size = self.total_samples % self.micro_batch_times_data_parallel_size
         self.seed = seed
+        self.auto_update_consumed_samples = auto_update_consumed_samples
+        self._last_iter_consumed_samples = 0
 
     def __len__(self):
         active_total_samples = self.total_samples - (self.last_batch_size if self.drop_last else 0)
@@ -74,6 +76,17 @@ class MegatronPretrainingRandomSampler(BaseMegatronSampler):
                 return (num_available_samples - 1) // self.micro_batch_times_data_parallel_size
 
     def __iter__(self):
+        if (
+            not self.auto_update_consumed_samples
+            and self.consumed_samples == self._last_iter_consumed_samples
+            and self.consumed_samples > 0
+        ):
+            raise RuntimeError(
+                f"Tried to iterate twice with `{self.consumed_samples=}`. Did you forget to call "
+                "`set_consumed_samples(dataloader, updated_consumed_samples)` before iterating again?"
+            )
+        self._last_iter_consumed_samples = self.consumed_samples
+
         active_total_samples = self.total_samples - self.last_batch_size
         self.epoch = self.consumed_samples // active_total_samples
         current_epoch_samples = self.consumed_samples % active_total_samples
@@ -94,10 +107,60 @@ class MegatronPretrainingRandomSampler(BaseMegatronSampler):
         for idx in idx_range:
             batch.append(idx)
             if len(batch) == self.micro_batch_size:
-                self.consumed_samples += self.micro_batch_times_data_parallel_size
+                if self.auto_update_consumed_samples:
+                    self.consumed_samples += self.micro_batch_times_data_parallel_size
                 yield batch
                 batch = []
 
+        # Check the last partial batch and see drop_last is set
+        if len(batch) > 0 and not self.drop_last:
+            yield batch
+
+
+# this class is also meant to be removed once the `auto_update_consumed_samples` is upstreamed into NeMo.
+class MegatronPretrainingRandomBatchSampler(megatron_batch_samplers.MegatronPretrainingRandomBatchSampler):
+    def __init__(self, *args, auto_update_consumed_samples: bool = True, **kw):
+        super().__init__(*args, **kw)
+        self.auto_update_consumed_samples = auto_update_consumed_samples
+        self._last_iter_consumed_samples = 0
+
+    # This is just a copy of the parent class' `__iter__()` method, but also handling `auto_update_consumed_samples`.
+    def __iter__(self):
+        if (
+            not self.auto_update_consumed_samples
+            and self.consumed_samples == self._last_iter_consumed_samples
+            and self.consumed_samples > 0
+        ):
+            raise RuntimeError(
+                f"Tried to iterate twice with `{self.consumed_samples=}`. Did you forget to call "
+                "`set_consumed_samples(dataloader, updated_consumed_samples)` before iterating again?"
+            )
+        self._last_iter_consumed_samples = self.consumed_samples
+
+        active_total_samples = self.total_samples - self.last_batch_size
+        self.epoch = self.consumed_samples // active_total_samples
+        current_epoch_samples = self.consumed_samples % active_total_samples
+        assert current_epoch_samples % self.micro_batch_times_data_parallel_size == 0
+
+        # data sharding and random sampling
+        bucket_size = (self.total_samples // self.micro_batch_times_data_parallel_size) * self.micro_batch_size
+        bucket_offset = current_epoch_samples // self.data_parallel_size
+        start_idx = self.data_parallel_rank * bucket_size
+
+        g = torch.Generator()
+        g.manual_seed(self.seed + self.epoch)
+        random_idx = torch.randperm(bucket_size, generator=g).tolist()
+        idx_range = [start_idx + x for x in random_idx[bucket_offset:]]
+
+        batch = []
+        # Last batch if not complete will be dropped.
+        for idx in idx_range:
+            batch.append(idx)
+            if len(batch) == self._global_batch_size_on_this_data_parallel_rank:
+                if self.auto_update_consumed_samples:
+                    self.consumed_samples += self._global_batch_size
+                yield batch
+                batch = []
         # Check the last partial batch and see drop_last is set
         if len(batch) > 0 and not self.drop_last:
             yield batch
