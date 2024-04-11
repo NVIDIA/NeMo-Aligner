@@ -43,6 +43,7 @@ from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHyb
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import (
     GSK8KFeedbackDataset,
     GSK8KFeedbackHF,
+    LLMJudgementFeedback,
     SteerLMFeedback,
 )
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
@@ -265,6 +266,8 @@ def get_dataset(cfg):
         score_fn = GSK8KFeedbackDataset(ds)
     elif cfg.model.mcts.feedback == "steerlm":
         score_fn = SteerLMFeedback()
+    elif cfg.model.mcts.feedback == "llm_as_a_judge":
+        score_fn = LLMJudgementFeedback()
     return train_ds, score_fn
 
 

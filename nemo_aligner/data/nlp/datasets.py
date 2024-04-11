@@ -457,6 +457,12 @@ prompt_template = """\x00System
 Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
 \x11Assistant
 """
+extra_sft_empty_sys = """<extra_id_0>System
+
+<extra_id_1>User
+{prompt}
+<extra_id_1>Assistant
+"""
 
 steerlm_template = """<extra_id_0>System
 A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
@@ -489,6 +495,7 @@ TEMPLATES = {
     "sft": prompt_template,
     "mathtool": mathtool_template,
     "raw": raw,
+    "extra_sft_empty_sys": extra_sft_empty_sys,
 }
 
 

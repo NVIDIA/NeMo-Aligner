@@ -1,7 +1,9 @@
+import json
 import os
 import re
 
 import pandas as pd
+import requests
 from datasets import load_dataset
 from nemo_skills.code_execution.math_grader import extract_answer
 from nemo_skills.code_execution.sandbox import LocalSandbox
@@ -86,6 +88,75 @@ class SteerLMFeedback(Feedback):
             score = 0.0
         finally:
             return score
+
+
+class LLMJudgementFeedback(Feedback):
+    def __init__(self):
+        # local_rank = os.getenv("local_rank", "0")
+        self.host = os.getenv("JUDGE_SERVER_HOST", "localhost")
+        self.port = os.getenv("JUDGE_SERVER_PORT", "1234")
+
+    def score(self, response, data_id):
+        """
+        score the response
+        """
+        prompt_to_sent = self.format_prompt(response)
+        print("prompt_to_sent", prompt_to_sent)
+        try:
+            eval_output = self.get_generation(
+                prompt_to_sent, True, False, self.len, 1, 1.0, 1.0, 0, 1.0
+            )  # get_reward([response], False, self.host, self.port)[0]
+            if eval_output.find("<extra_id_0>") < 0:
+                # hack due to the problem that huggingface's tokenizer strips out the <extra_id_x> token
+                prompt_to_sent = (
+                    prompt_to_sent.replace("<extra_id_0>", "").replace("<extra_id_1>", "").replace("<extra_id_2>", "")
+                )
+            evaluation = eval_output[len(prompt_to_sent) :]
+            print("evaluation", evaluation)
+            rating_matches = re.findall(r"\[\[(\d+)\]\]", evaluation)
+            score = float(rating_matches[-1])  # Get the last match
+            print("score", score)
+        except Exception as e:
+            print("############ Inference failed ############")
+            print(e)
+            score = 0.0
+        finally:
+            return score
+
+    def text_generation(self, data, ip, port):
+        headers = {"Content-Type": "application/json"}
+        resp = requests.put(f"http://{ip}:{port}/generate", data=json.dumps(data), headers=headers)
+        return resp.json()
+
+    def get_generation(self, prompt, greedy, add_BOS, token_to_gen, min_tokens, temp, top_p, top_k, repetition):
+        data = {
+            "sentences": [prompt],
+            "tokens_to_generate": int(token_to_gen),
+            "temperature": temp,
+            "add_BOS": add_BOS,
+            "top_k": top_k,
+            "top_p": top_p,
+            "greedy": greedy,
+            "all_probs": False,
+            "repetition_penalty": repetition,
+            "min_tokens_to_generate": int(min_tokens),
+            "end_strings": ["<|endoftext|>", "<extra_id_1>", "\x11"],
+        }
+        sentences = self.text_generation(data, ip=self.host, port=self.port)["sentences"]
+        return sentences[0]
+
+    def format_prompt(self, response):
+        # remove the trailing extra_id_1
+        if response.endswith("<extra_id_1>"):
+            response = response[: -len("<extra_id_1>")]
+        response = response[response.find("<extra_id_1>") :]
+        response = response.replace("<extra_id_1>User", "### User:").replace("<extra_id_1>Assistant", "### Assistant:")
+        mt_bench_multi_turn = f"""[Instruction]\nPlease act as an impartial judge and evaluate the quality of the responses provided by an AI assistant to the user's questions displayed below. Your evaluation should consider factors such as the helpfulness, relevance, accuracy, depth, creativity, and level of detail of the response. Your evaluation should focus on all the assistant turns. Begin your evaluation by providing a short explanation. Be as objective as possible. After providing your explanation, you must rate the response on a scale of 1 to 10 by strictly following this format:\"[[rating]]\", for example: \"Rating: [[5]]\".
+<|The Start of Assistant A's Conversation with User|>
+{response}
+<|The End of Assistant A's Conversation with User|>"""
+
+        return mt_bench_multi_turn
 
 
 class GSK8KFeedback(Feedback):
