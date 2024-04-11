@@ -112,7 +112,7 @@ class CriticServerTrainer:
         end_time = time.time()
         print("#### INFER TOOK", end_time - start_time)
 
-        return {
+        output = {
             "values": values,
             "exceeded": exceeded,
         }

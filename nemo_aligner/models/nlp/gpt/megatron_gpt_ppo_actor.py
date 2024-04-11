@@ -45,8 +45,15 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import configure_batch_sizes, cpu_weight_swap, masked_mean, offload_distributed_adam
+
+try:
+    from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
+    from tensorrt_llm.bindings import GptSession
+    GptSession.refit_engine #check if TRTLLM Cpp runtime was compiled with engine refitting
+    HAVE_TRTLLM = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TRTLLM = False
 
 
 def print_mem(prefix):
@@ -120,6 +127,7 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
         self.use_trtllm_generation = self.cfg.ppo.trt_llm.enable
         if self.use_trtllm_generation:
+            assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM was not able to be imported"
             self.trtllm_generate = GPTGenerateTRTLLM(self.cfg, self.tokenizer)
 
     # training calls
