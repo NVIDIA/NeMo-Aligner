@@ -133,15 +133,21 @@ def main(cfg) -> None:
         use_random_sampler=False,
     )
 
-    # nemo uses the train dataloader to figure out
-    # max steps to take when max_steps = -1
-    # but our train dataloader is for the prompts
-    # so we instaniate a dummy dataloader
-    # to get the proper max *optimization* steps
-    # nemo treats batch size of normal dataloader as GBS/DP
-    # so we need to offset it by DP
-    dummy_train_dataloader = torch.utils.data.DataLoader(
-        dataset=train_ds, batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size())
+    # NeMo uses the train dataloader to figure out max steps to take when max_steps == -1, but our train dataloader
+    # is for the prompts. So we instantiate a dummy dataloader to get the proper max *optimization* steps.
+    dummy_train_dataloader = build_dataloader(
+        cfg=cfg,
+        # We fake a dataset whose size is consistent with the number of batches yielded by `train_dataloader`.
+        # If we used `dataset=train_ds`, we would risk over-estimating the number of steps per epoch when
+        # `global_batch_size` is smaller than `num_rollout_samples`.
+        dataset=range(len(train_dataloader) * cfg.model.ppo.num_rollout_samples),
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.global_batch_size,
+        # Arguments below don't really matter => keeping them simple.
+        consumed_samples=0,
+        collate_fn=None,
+        load_gbs=False,
+        use_random_sampler=False,
     )
 
     init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_ds)
