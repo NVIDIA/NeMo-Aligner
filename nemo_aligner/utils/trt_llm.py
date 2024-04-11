@@ -76,7 +76,7 @@ class GPTGenerateTRTLLM():
 
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
         output_ids = torch.squeeze(output_dict['output_ids'], dim=1).long()
-        resp_lens = output_dict['sequence_lengths'].squeeze().long()
+        resp_lens = torch.squeeze(output_dict['sequence_lengths'], dim=1).long()
 
         #broadcast output to all PP ranks
         if not self.reshard_model and parallel_state.get_pipeline_model_parallel_world_size() > 1:  
