@@ -152,9 +152,9 @@ class LLMJudgementFeedback(Feedback):
         response = response[response.find("<extra_id_1>") :]
         response = response.replace("<extra_id_1>User", "### User:").replace("<extra_id_1>Assistant", "### Assistant:")
         mt_bench_multi_turn = f"""[Instruction]\nPlease act as an impartial judge and evaluate the quality of the responses provided by an AI assistant to the user's questions displayed below. Your evaluation should consider factors such as the helpfulness, relevance, accuracy, depth, creativity, and level of detail of the response. Your evaluation should focus on all the assistant turns. Begin your evaluation by providing a short explanation. Be as objective as possible. After providing your explanation, you must rate the response on a scale of 1 to 10 by strictly following this format:\"[[rating]]\", for example: \"Rating: [[5]]\".
-<|The Start of Assistant A's Conversation with User|>
+<|The Start of Assistant's Conversation with User|>
 {response}
-<|The End of Assistant A's Conversation with User|>"""
+<|The End of Assistant's Conversation with User|>"""
 
         return mt_bench_multi_turn
 
