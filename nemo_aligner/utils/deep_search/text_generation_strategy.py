@@ -134,7 +134,7 @@ class TextGenerationStrategy:
             context_tokens = [[tokenizer.bos_id] + tokenizer.text_to_ids(s) for s in sentences]
         else:
             context_tokens = [tokenizer.text_to_ids(s) for s in sentences]
-        context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.eos_id, max_len)
+        context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.pad_id, max_len)
         context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
         context_length_tensor = torch.cuda.LongTensor(context_lengths)
         return context_tokens_tensor, context_length_tensor
@@ -277,12 +277,14 @@ class TextGenerationStrategy:
 
 
 class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
-    def __init__(self, model):
+    def __init__(self, model, use_cpu=False):
         super().__init__(model)
         self.forward_model = self.model.model
         # all the model parallel worker will have a copy of the inference params
         # to store the K-V cache
         self.inference_params = None
+        self.use_cpu = use_cpu
+        self.use_kv_cache = True
 
     def init(self, context_tokens: torch.Tensor, max_depth: int, session_id: str):
         batch_size = context_tokens.shape[0]
@@ -363,25 +365,57 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
         return batch, tensor_shape
 
+    def prepare_batch(
+        self,
+        tokens: torch.Tensor,
+        micro_batch_size: int,
+        init: bool = False,
+        session_info: str = None,
+        true_context_lengths: torch.Tensor = None,
+    ) -> Tuple[List[torch.Tensor], List[int]]:
+        """
+        generate the batch used in inference for each of the steps
+        """
+        batch, maxlen = tokens.shape
+        if init:
+            attention_mask_3d = self.search_db.get_attention_mask(session_info)[..., :maxlen, :maxlen]
+            tokens2use = tokens
+            positions2use = self.search_db.get_position_ids(session_info)[..., :maxlen]
+        else:
+            maxlen = maxlen - 1
+            minlen = true_context_lengths.min().item()  # the last token is not yet computed,
+            attention_mask_3d = self.search_db.get_attention_mask(session_info)[
+                ..., : minlen + maxlen, : minlen + maxlen
+            ]
+            attention_mask_3d = attention_mask_3d[0:1]  # only need one copy
+            tokens2use = tokens[:, : maxlen + 1].contiguous()
+            positions2use = self.search_db.get_position_ids(session_info)[..., : minlen + maxlen]
+            if positions2use.shape[0] != micro_batch_size:
+                # repeate the position ids
+                positions2use = positions2use[0:1, ...].repeat(micro_batch_size, 1)
+            positions2use = positions2use.view(micro_batch_size, -1)
+            inference_params = self.get_inference_params(session_info)
+            assert inference_params.sequence_len_offset == minlen - 1
+        batch = [tokens2use, attention_mask_3d, positions2use]
+        tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
+        return batch, tensor_shape
+
     def get_inference_params(self, session_info: str):
         # inference_params works for all batches in the sessions
         # TODO, change the key to hash(sessions)
         return self.search_db.get_inference_params(session_info)
 
-    def compute_inference_params(self, session_info: str, context_ids: List[str], actions: torch.Tensor):
-        updated_kv_cache, tokens = get_kv_cache(actions, session_info, context_ids, self.search_db)
+    def compute_inference_params(self, session_info: str, context_ids: List[str], actions: torch.Tensor, pad_id: int):
+        updated_kv_cache, tokens = get_kv_cache(actions, session_info, context_ids, self.search_db, pad_id)
         tokens = torch.cuda.LongTensor(tokens)
         batch_size, token_len = tokens.shape
         true_context_lengths = torch.cuda.IntTensor([len(c) + 1 for c in context_ids])
         new_context_lengths = true_context_lengths - true_context_lengths.min()
         max_len = true_context_lengths.max().item()
-        inference = InferenceParams(max_batch_size=batch_size, max_sequence_length=max_len + 1)
-        inference.sequence_len_offset = max_len - token_len
+        token_to_generate = (token_len - new_context_lengths).min().item()
+        inference = InferenceParams(max_batch_size=batch_size, max_sequence_length=max_len + token_to_generate)
+        inference.sequence_len_offset = max_len + token_to_generate - 1 - token_len
         inference.key_value_memory_dict = updated_kv_cache
-        # make kv cache into tensors
-        for key in inference.key_value_memory_dict.keys():
-            keys, vals = inference.key_value_memory_dict[key]
-            inference.key_value_memory_dict[key] = (keys.cuda(), vals.cuda())
         self.search_db.add_inference_params(session_info, inference)
         return tokens, new_context_lengths, true_context_lengths
 
@@ -390,7 +424,7 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         # it can never happen that the node is root node
         if node.parent is None:
             raise ValueError("The node is root node, cannot update kv cache")
-        state = get_state(infer_params, False, context_length, batch_id)
+        state = get_state(infer_params, False, context_length, batch_id, self.use_cpu)
         node.state = state
         node.value_sum = value
 
@@ -412,10 +446,14 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
         action_value: torch.Tensor,
         children_action: torch.Tensor,
         context_tokens: torch.Tensor = None,
+        update_pos: torch.Tensor = None,
+        beg_pos: torch.Tensor = None,
     ):
         for bid in range(batch_size):
             context_length = context_lengths[bid].item()
             context_id = context_ids[bid]
+            update_position = update_pos[bid].item()
+            beg_position = beg_pos[bid].item()
             infer_params = self.search_db.get_inference_params(session_info)
             # self.search_db.add_kv_cache(session_id, depth, tokens, kv_cache)
             parent_node = parent_nodes[bid]
@@ -424,19 +462,34 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             # children_action_array = children_action[bid].cpu().numpy()
             # prior_data = (children_prob_array, children_action_array)
             prior_data = None
-            state = get_state(infer_params, action_taken == -1, context_length, bid)
             value = None
-            if action_value is not None:
-                value = action_value[bid].item()
+            # if action_value is not None:
+            #     value = action_value[bid].item()
             # here prior visit_count and C are not used, set to any numbers
             if action_taken == -1:
+                state = get_state(infer_params, action_taken == -1, context_length, 1, bid, self.use_cpu)
                 # root node, need to add all context tokens
                 tokens = context_tokens[bid, :context_length].cpu().numpy().tolist()
                 node = Node(
                     state=state, parent=parent_node, action=tokens, prior=prior_data, visit_count=0, value_sum=value,
                 )
                 self.search_db.add_root(session_info, context_id, node)
+                # # add child node to the parent node
+                # if parent_node is not None:
+                #     parent_node.children[action_taken] = node
             else:
+                # the new token next to the context tokens
+                beg_id = beg_position
+                # the last new token.
+                # if there is no observation, end_id = beg_id and token_len = 1
+                end_id = update_position
+                token_len = end_id - beg_id + 1
+
+                # for token_id in range(beg_id, end_id + 1):
+                state = get_state(infer_params, action_taken == -1, context_length, token_len, bid, self.use_cpu)
+                # the action_taken has the meaning that if take the first action action_taken[0], it will arrive
+                # at the current node. The action_taken[1:] are the tokens from the environment.
+                action_taken = context_tokens[bid][beg_id : end_id + 1].tolist()
                 node = Node(
                     state=state,
                     parent=parent_node,
@@ -445,9 +498,11 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
                     visit_count=0,
                     value_sum=value,
                 )
-            # add child node to the parent node
-            if parent_node is not None:
-                parent_node.children[action_taken] = node
+                self.search_db.add_root(session_info, context_id + tuple(action_taken), node)
+                # # add child node to the parent node
+                # if parent_node is not None:
+                #     parent_node.children[action_taken] = node
+                # parent_node = node
 
     def get_node(self, session_info: str, context_id: str):
         return self.search_db.get(session_info, context_id)
@@ -462,8 +517,68 @@ class GPTSearchTextGenerationStrategy(TextGenerationStrategy):
             output[key] = output[key].cpu().numpy()
         return output
 
+    def clean_up_cache_for_context(self, session_info: str, context_id: str):
+        self.search_db.clean_up_cache_for_context(session_info, context_id)
+
 
 class HybridGPTSearchTextGenerationStrategy(GPTSearchTextGenerationStrategy):
+    def forward_step(self, batch, tensor_shape, session_info):
+        func = get_forward_output_only_func_hybrid(self, session_info)
+
+        fwd_bwd_function = get_forward_backward_func()
+        output_tensor = fwd_bwd_function(
+            forward_step_func=func,
+            data_iterator=iter([batch,]),
+            model=[self.forward_model],
+            num_microbatches=get_num_microbatches(),
+            forward_only=True,
+            seq_length=tensor_shape[0],
+            micro_batch_size=tensor_shape[1],
+        )
+
+        return output_tensor
+
+
+class NoKVCacheGPTSearchTextGenerationStrategy(GPTSearchTextGenerationStrategy):
+    def __init__(self, model, use_cpu=False):
+        super().__init__(model, use_cpu)
+        self.use_kv_cache = False
+
+    def compute_inference_params(self, session_info: str, context_ids: List[str], actions: torch.Tensor, pad_id: int):
+        tokens = [list(context_id) + action for action, context_id in zip(actions.tolist(), context_ids)]
+        token_lengths = [len(t) for t in tokens]
+        max_length = max(token_lengths)
+        paddings = [max_length - len(t) for t in tokens]
+        tokens = [t + [pad_id] * p for t, p in zip(tokens, paddings)]
+        tokens = torch.cuda.LongTensor(tokens)
+        batch_size, token_len = tokens.shape
+        new_context_lengths = torch.cuda.IntTensor(token_lengths)
+        inference = InferenceParams(max_batch_size=batch_size, max_sequence_length=token_len)
+        inference.sequence_len_offset = 0
+        self.search_db.add_inference_params(session_info, inference)
+        return tokens, new_context_lengths, None
+
+    def prepare_batch(
+        self,
+        tokens: torch.Tensor,
+        micro_batch_size: int,
+        init: bool = False,
+        session_info: str = None,
+        true_context_lengths: torch.Tensor = None,
+    ) -> Tuple[List[torch.Tensor], List[int]]:
+        """
+        generate the batch used in inference for each of the steps
+        """
+        batch, maxlen = tokens.shape
+        attention_mask_3d = self.search_db.get_attention_mask(session_info)[..., :maxlen, :maxlen]
+        tokens2use = tokens
+        positions2use = self.search_db.get_position_ids(session_info)[..., :maxlen]
+        batch = [tokens2use, attention_mask_3d, positions2use]
+        tensor_shape = [tokens2use.shape[1], micro_batch_size, self.model.cfg.hidden_size]
+        return batch, tensor_shape
+
+
+class NoKVCacheHybridGPTSearchTextGenerationStrategy(NoKVCacheGPTSearchTextGenerationStrategy):
     def forward_step(self, batch, tensor_shape, session_info):
         func = get_forward_output_only_func_hybrid(self, session_info)
 

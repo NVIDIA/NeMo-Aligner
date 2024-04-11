@@ -197,7 +197,7 @@ def main(cfg) -> None:
     strategy = GPTSearchTextGenerationStrategy(model)
     strategy_args = {"strategy": strategy}
 
-    def get_infer_fn(model, top_k, max_depth, **strategy_args):
+    def get_infer_fn(model, top_k, max_depth, add_bos_token, **strategy_args):
         # one token at a time
 
         def infer_fn(inputs=None, action=None, context_ids=None, session_info=None):
@@ -209,12 +209,15 @@ def main(cfg) -> None:
                 session_info,
                 tokens_to_generate=max_depth,  # max search depth
                 top_k=top_k,
+                add_bos_token=add_bos_token,
                 **strategy_args,
             )
 
         return infer_fn
 
-    infer_fn = get_infer_fn(model, cfg.inference.top_k, cfg.inference.tokens_to_generate, **strategy_args)
+    infer_fn = get_infer_fn(
+        model, cfg.inference.top_k, cfg.inference.tokens_to_generate, cfg.inference.add_bos_token, **strategy_args
+    )
 
     if torch.distributed.get_rank() == 0:
         infer_callable = SearchCallable(model_name="search", infer_fn=infer_fn, lock=threading.Lock())
@@ -248,5 +251,4 @@ def main(cfg) -> None:
 
 
 if __name__ == "__main__":
-    with torch.no_grad():
-        main()  # noqa pylint: disable=no-value-for-parameter
+    main()  # noqa pylint: disable=no-value-for-parameter

@@ -85,6 +85,7 @@ class TestSearch:
                 session_info,
                 tokens_to_generate=tokens_to_generate,  # max search depth
                 top_k=top_k,
+                add_bos_token=False,
                 **strategy_args,
             )
 
@@ -93,7 +94,7 @@ class TestSearch:
         context_ids = [tuple(tokenizer.text_to_ids(input)) for input in batched_inputs]
         token_lengths = [len(input) for input in context_ids]
         output = infer_fn(inputs=batched_inputs, action=None, context_ids=context_ids, session_info="session1")
-        assert strategy.search_db.get_inference_params("session1").sequence_len_offset == max(token_lengths) - 1
+        assert strategy.search_db.get_inference_params("session1").sequence_len_offset == 0
         assert "session1" in strategy.search_db.db
         root = strategy.search_db.get("session1", context_ids[0])
 
@@ -111,7 +112,7 @@ class TestSearch:
             depths = np.array([[step + 1], [step + 1]], dtype=np.int32)
             actions = output["action"][:, 0:1]  # greedy sampling
             output = infer_fn(inputs=None, action=actions, context_ids=context_ids, session_info="session1")
-            assert strategy.search_db.get_inference_params("session1").sequence_len_offset == max(token_lengths) + step
+            assert strategy.search_db.get_inference_params("session1").sequence_len_offset == 2 + step
             context_ids = [parent_ids + (child.item(),) for parent_ids, child in zip(context_ids, actions)]
             root = strategy.search_db.get("session1", context_ids[0][:-1])
             for action in actions[0]:

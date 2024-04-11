@@ -1,9 +1,14 @@
+import os
 import re
 
 import pandas as pd
 from datasets import load_dataset
 from nemo_skills.code_execution.math_grader import extract_answer, math_equal
 from nemo_skills.code_execution.sandbox import LocalSandbox
+from nemo_skills.code_execution.math_grader import extract_answer
+from nemo_skills.code_execution.sandbox import LocalSandbox
+
+from nemo_aligner.utils.deep_search.mcts.reward_functions import get_reward
 
 
 class Feedback(object):
@@ -17,8 +22,20 @@ class Feedback(object):
         raise NotImplementedError
 
 
+class DummyScore(Feedback):
+    def score(self, response, data_id):
+        return 0.0
+
+
 class GSK8KFeedbackDataset(Feedback):
-    def score(self, response, answer):
+    def __init__(self, ds):
+        self.ds = ds
+        # local_rank = os.getenv("local_rank", "0")
+        host = os.getenv("NEMO_SKILLS_SANDBOX_HOST", "localhost")
+        port = os.getenv("NEMO_SKILLS_SANDBOX_PORT", "1034")
+        self.sandbox = LocalSandbox(host=host, port=port)
+
+    def score(self, response, data_id):
         """
         score the response
         """
@@ -26,6 +43,60 @@ class GSK8KFeedbackDataset(Feedback):
         # complicated but for GSM8K this is fine
         response = extract_answer(response)
         return float(math_equal(response, answer))
+        assert self.ds[data_id]["data_id"] == data_id
+        response = response.lower()
+        answer = self.ds[data_id]["expected_answer"]
+        # this needs to be on a seperate server for anything
+        # complicated but for GSM8K this is fine
+        response = extract_answer(response)
+        try:
+            score = float(self.sandbox.is_output_correct(response, answer))
+        except Exception as e:
+            print("############ Inference failed ############")
+            print(answer, response)
+            print(e)
+            score = 0.0
+        finally:
+            return score
+
+
+class SteerLMFeedback(Feedback):
+    def __init__(self):
+        # local_rank = os.getenv("local_rank", "0")
+        self.host = os.getenv("REWARD_SERVER_HOST", "localhost")
+        self.port = os.getenv("REWARD_SERVER_PORT", "1234")
+
+    def score(self, response, data_id):
+        """
+        score the response
+        """
+        # remove the trailing extra_id_1
+        if response.endswith("<extra_id_1>"):
+            response = response[: -len("<extra_id_1>")]
+        # get the expected answer, e.g. 'quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2'
+        attribute_str = response.split("<extra_id_2>")[-1].split("\n")[0]
+        # extract the numbers
+        attributes = attribute_str.split(",")
+        numbers = [int(attr.split(":")[-1]) for attr in attributes]
+        # remove the <extra_id_2> line
+        response = "\n".join([i for i in response.split("\n") if not i.startswith("<extra_id_2>")])
+        response = response + "<extra_id_2>"
+        try:
+            evaluate = get_reward([response], False, self.host, self.port)[0]
+
+            # compute the distance between the two vectors
+            distance = sum([int(bool(a - b)) for a, b in zip(numbers, evaluate)])
+
+            # normalize the distance to be between 0 and 1
+            distance = distance / (len(numbers))
+
+            score = 1 - distance
+        except Exception as e:
+            print("############ Inference failed ############")
+            print(e)
+            score = 0.0
+        finally:
+            return score
 
 
 class GSK8KFeedback(Feedback):

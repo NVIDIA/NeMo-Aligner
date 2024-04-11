@@ -1,5 +1,6 @@
 inference:
   top_k: 50  # The number of highest probability vocabulary tokens to keep for top-k-filtering.
+  add_bos_token: False # add the bos token at the beginning of the prompt
   tokens_to_generate: 4096 # The search depth
   micro_batch_size: 16
   port: 2323

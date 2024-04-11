@@ -29,8 +29,12 @@ trainer:
 pretrained_checkpoint:
   restore_from_path: null
   from_mcts_trained: False
+  has_value_head: True  # whehter the pretrained model has value head
 
 mcts_data_file: null
+
+server_url: ??  # the rabbitmq server url, e.g. pyamqp://guest@localhost:5672//
+backend_url: rpc://  # the backend server url, e.g. rpc://
 
 dataset:
   name: gsm8k
@@ -58,9 +62,17 @@ model:
 
     top_k: 50
     end_strings: ["<extra_id_1>", "\x11"]  # generation will stop when one of these tokens is generated
+    add_bos_token: False # add the bos token at the beginning of the prompt
 
     oracle: True  # whether to use the oracle value for the search results, Default True, so it uses ground truth value when it reaches the terminal state
     turn_off_value: ${not:${pretrained_checkpoint.from_mcts_trained}}
+
+    kv_cache_in_cpu: True #  save kv cache in cpu memory
+
+    environment: null  # the environment for MCTS to interact with, default None, can be set to "code" for running code
+    feedback: math # the feedback function used for the search, ['math', 'steerlm']
+
+    turn_off_kv_cache: False # turn off the kv cache for inference
 
     train:
       value_weight: 1 # weight of the value portion of the loss
