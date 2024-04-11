@@ -186,7 +186,6 @@ def main(cfg) -> None:
             @app.route("/get_idx", methods=["PUT"])
             def get_http_idx():
                 batch_size = request.get_json()["batch_size"]
-                print("### SHARED SET request", shared_set.data)
                 return shared_set.get_idx(batch_size)
 
             threading.Thread(target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False)).start()
