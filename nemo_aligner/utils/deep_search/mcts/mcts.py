@@ -189,6 +189,8 @@ class MCTSParallel:
         self.cache = {}
         self.has_value = has_value
 
+        self.text_to_value_cache = {}
+
     def decode_text(self, state):
         decoded_text = self.tokenizer.decode(state)
         # decoded_text = "".join(state).replace('▁', ' ').lstrip()
@@ -217,7 +219,12 @@ class MCTSParallel:
 
         value = 0.0
         if terminate:
-            value = self.score_fn.score(text, data_id)
+            if text in self.text_to_value_cache:
+                value = self.text_to_value_cache[text]
+                print("retrieve score from text_to_value_cache", "-" * 100)
+            else:
+                value = self.score_fn.score(text, data_id)
+                self.text_to_value_cache[text] = value
         # check if the text ends properly
         end_properly = False
         for fun in self.terminate_fns:
