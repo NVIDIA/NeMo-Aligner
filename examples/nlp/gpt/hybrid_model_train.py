@@ -144,6 +144,7 @@ def mcts_value_collate_fn(eos_id, batches):
 
     for batch in batches:
         new_dict["tokens"].extend(batch["tokens"])
+        new_dict["token_values"].extend(batch["token_values"])
         new_dict["reward"].extend(batch["reward"])
         new_dict["response_length"].extend(list(len(x) for x in batch["tokens"]))
         new_dict["context_length"].extend([batch["context_length"]] * len(batch["tokens"]))
@@ -153,6 +154,9 @@ def mcts_value_collate_fn(eos_id, batches):
         if k == "tokens":
             inputs = tuple(torch.as_tensor(x) for x in v)
             output = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=eos_id,)
+        elif k == "token_values":
+            inputs = tuple(torch.as_tensor(x) for x in v)
+            output = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=0)
         else:
             output = torch.as_tensor(v)
 

@@ -173,15 +173,15 @@ class MegatronGPTHybridModel(MegatronGPTModel):
         value_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
 
         if batch["train_mode"][0] == TrainMode.VALUE_ONLY and (self.value_loss_weight > 0):
-            rewards = batch["reward"].view(-1, 1)
             # TODO(geshen); the mask contains the last <extra_id_1> token as well
             # we may not want to include this, but it doesn't really matter
             # because the model is forced to stop by nemo generate anyway
             mask = batch["mcts_mask"]
+            token_values = batch["token_values"]
 
             # TODO(geshen): change to cross entropy
             value_loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                values, rewards.broadcast_to(values.shape), reduction="none"
+                values, token_values, reduction="none"
             )
             value_loss = compute_masked_per_sample_average(self.value_loss_weight * value_loss, mask, dim=-1)
 
@@ -234,7 +234,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     required_keys.update(("tokens", "position_ids", "train_mode"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("tokens", "actions", "action_probs", "reward", "mcts_mask", "train_mode"))
+                    required_keys.update(("tokens", "actions", "action_probs", "reward", "mcts_mask", "train_mode", "token_values"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
