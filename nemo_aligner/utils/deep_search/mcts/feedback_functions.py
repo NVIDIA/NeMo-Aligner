@@ -22,6 +22,11 @@ class Feedback(object):
         raise NotImplementedError
 
 
+class DummyScore(Feedback):
+    def score(self, response, data_id):
+        return 0.0
+
+
 class GSK8KFeedbackDataset(Feedback):
     def __init__(self, ds):
         self.ds = ds

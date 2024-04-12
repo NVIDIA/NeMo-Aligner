@@ -38,7 +38,7 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import DummyScore
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer, broadcast_python_obj
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
@@ -181,14 +181,9 @@ class MCTSSearchOneBatch:
         self.outputs = state_dict["mcts_outputs"]
 
 
-class DummpyScore:
-    def score(self, response, data_id):
-        return 0.0
-
-
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    score_fn = DummpyScore()
+    score_fn = DummyScore()
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 

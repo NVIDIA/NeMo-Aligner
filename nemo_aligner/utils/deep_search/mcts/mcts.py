@@ -385,7 +385,7 @@ class MCTSParallel:
                     # collect the memory from the root to the terminal node
                     if ends_properly:
                         # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                        spg.value_memory.add((tuple(node.get_all_tokens()), value))
+                        spg.value_memory.add((tuple(node.get_all_tokens()), value, node))
 
                 else:
                     # if not terminal, then expand the node in the later part of the code
@@ -437,7 +437,7 @@ class MCTSParallel:
                         # collect the memory from the root to the terminal node
                         # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
                         all_tokens = tuple(all_tokens)
-                        ps[mappingIdx].value_memory.add((all_tokens, value_head_output))
+                        ps[mappingIdx].value_memory.add((all_tokens, value_head_output, node))
                         self.cache[all_tokens] = value_head_output
                 else:
                     node.expand(spg_policy, spg_action, self.env_fn, result_dict["all_tokens"])
@@ -628,9 +628,27 @@ class DeepSearch:
                                     "context_length": len(backup_root_states[i]),
                                 }
                             )
+
+                    # process the value memory to get the value for each of the tokens
+                    value_mems = []
+                    for tokens, value, node in spg.value_memory:
+                        all_values = []
+                        all_tokens = []
+                        all_tokens += node.state[::-1]
+                        for _ in range(len(node.state)):
+                            all_values.append(node.value_sum / node.visit_count)
+                        while node.parent is not None:
+                            node = node.parent
+                            for _ in range(len(node.state)):
+                                all_values.append(node.value_sum / node.visit_count)
+                            all_tokens += node.state[::-1]
+                        all_tokens = all_tokens[::-1]
+                        all_values = all_values[::-1]
+                        assert tuple(all_tokens) == tuple(tokens)
+                        value_mems.append((tokens, all_values, value))
                     return_value_memory.append(
                         {
-                            "value_memory": list(spg.value_memory),
+                            "value_memory": value_mems,
                             "data_id": spg.data_id,
                             "backup_root_states": backup_root_states[i],
                         }

@@ -41,6 +41,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import (
+    DummyScore,
     GSK8KFeedbackDataset,
     GSK8KFeedbackHF,
     LLMJudgementFeedback,
@@ -268,6 +269,11 @@ def get_dataset(cfg):
         score_fn = SteerLMFeedback()
     elif cfg.model.mcts.feedback == "llm_as_a_judge":
         score_fn = LLMJudgementFeedback()
+    elif cfg.model.mcts.feedback == "dummy":
+        score_fn = DummyScore()
+    else:
+        raise ValueError(f"Invalid feedback function {cfg.model.mcts.feedback}")
+
     return train_ds, score_fn
 
 
