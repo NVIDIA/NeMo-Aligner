@@ -8,6 +8,7 @@ from datasets import load_dataset
 from nemo_skills.code_execution.math_grader import extract_answer
 from nemo_skills.code_execution.sandbox import LocalSandbox
 
+from nemo_aligner.data.nlp.datasets import TEMPLATES
 from nemo_aligner.utils.deep_search.mcts.reward_functions import get_reward
 
 
@@ -96,10 +97,11 @@ class SteerLMFeedback(Feedback):
 
 
 class LLMJudgementFeedback(Feedback):
-    def __init__(self):
+    def __init__(self, template="extra_sft_empty_sys"):
         # local_rank = os.getenv("local_rank", "0")
         self.host = os.getenv("JUDGE_SERVER_HOST", "localhost")
         self.port = os.getenv("JUDGE_SERVER_PORT", "1234")
+        self.template = TEMPLATES[template]
 
     def score(self, response, data_id):
         """
@@ -162,7 +164,8 @@ class LLMJudgementFeedback(Feedback):
 {response}
 <|The End of Assistant's Conversation with User|>"""
 
-        return mt_bench_multi_turn
+        formatted = self.template.format(prompt=mt_bench_multi_turn)
+        return formatted
 
 
 class GSK8KFeedback(Feedback):
