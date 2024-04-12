@@ -45,6 +45,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
 from nemo_aligner.utils.utils import configure_batch_sizes, cpu_weight_swap, masked_mean, offload_distributed_adam
 
 try:
@@ -343,18 +344,13 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
                 strategy=strategy,
             )
 
-            response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
-            response_lengths = (
-                calculate_dialogue_response_lengths(
-                    tokens=response_tokens,
-                    prompt_lengths=prompt_lengths,
-                    tokenizer=self.tokenizer,
-                    end_strings=self._sampling_params["end_strings"],
-                    max_generation_length=self._length_params["max_length"],
-                    max_sequence_length=self.cfg.encoder_seq_length,
-                )
-            )
-            strategy.get_lengths()
+            response_tokens = None
+            if actor_output is not None:
+                response_tokens = torch.as_tensor(actor_output["token_ids"], dtype=torch.long, device=torch.cuda.current_device())
+            
+            response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
+            response_lengths = strategy.get_lengths()
+
             max_response_length = response_lengths.max().item()
 
             # Sanity check to validate response length.
