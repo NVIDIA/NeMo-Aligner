@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch.multiprocessing as mp
+
+from nemo_aligner.data.nlp.datasets import MCTSDataset
+
+mp.set_start_method("spawn", force=True)
 import os
 import random
 import tempfile
@@ -19,22 +24,28 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Union
+from typing import List, Union
 
 import pandas as pd
 import torch
-import torch.multiprocessing as mp
+from celery import Celery
 from datasets import load_dataset
 from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf
 from tqdm import tqdm
 
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import (
+    DummyScore,
+    GSK8KFeedbackDataset,
+    GSK8KFeedbackHF,
+    SteerLMFeedback,
+)
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
@@ -45,25 +56,6 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 OmegaConf.register_new_resolver("not", lambda x: not x)
-
-mp.set_start_method("spawn", force=True)
-
-prompt_template = """\x00System
-
-\x11User
-{prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-\x11Assistant
-"""
-
-steerlm_template = """<extra_id_0>System
-A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-<extra_id_1>User
-{prompt}
-Please show the calculation steps and lastly the final answer in format {{{{answer number}}}}
-<extra_id_1>Assistant
-<extra_id_2>quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2
-"""
 
 
 def groupby(key, output):
@@ -102,7 +94,6 @@ def collate_func(batch):
 
     for b in batch:
         new_dict["question"].append(b["question"])
-        new_dict["answer"].append(b["answer"])
         new_dict["data_id"].append(b["data_id"])
 
     return new_dict
@@ -167,105 +158,59 @@ def get_local_iterator(global_set, num_to_load, extra_filters=None):
     return indices
 
 
-class MCTSSearch:
+class MCTSSearchOneBatch:
     def __init__(
-        self,
-        search_func,
-        collate_func,
-        save_path,
-        num_to_load,
-        rollout_micro_batch_size,
-        dataset,
-        logger,
-        run_timer,
-        save_interval,
-        cache_dir,
+        self, search_func, collate_func, save_path, dataset, cache_dir,
     ):
         self.search_func = search_func
         self.collate_func = collate_func
-        self.save_path = Path(save_path).resolve()
 
         self.dataset = dataset
-        self.logger = logger
+        self.save_path = save_path
+        self.cache_dir = cache_dir
 
-        # has to be DP specific timer
-        self.run_timer = run_timer
-
-        self.data_ids = set()
-        self.outputs = []
         self.timer = NamedTimer(reduction="mean", sync_cuda=True, buffer_size=1)
-        self.save_interval = save_interval
 
-        if self.save_path.exists():
-            self.load_state_dict(torch.load(self.save_path))
-
-        dp_rank = parallel_state.get_data_parallel_rank()
-        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
         tp_rank = parallel_state.get_tensor_model_parallel_rank()
-        self.filename_format = "{num}" + f"_dp_{dp_rank}_tp_{tp_rank}_pp_{pp_rank}.pt"
-
-        global_set = get_global_set(self.data_ids)
-        local_cached_batches, global_cached_batch_ids = get_cached_outputs(cache_dir, global_set)
-
+        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        self.filename_format = "{num}" + f"_tp_{tp_rank}_pp_{pp_rank}.pt"
         # search for the files here
-        assert len(local_cached_batches) <= rollout_micro_batch_size
-
-        self.batch_chunks = list(
-            get_local_iterator(global_set, num_to_load, global_cached_batch_ids).split(rollout_micro_batch_size)
-        )
-
-        if len(local_cached_batches) > 0:
-            self.batch_chunks = [torch.as_tensor(local_cached_batches)] + self.batch_chunks
-
         self.step = 0
 
-    def search(self):
-        self.run_timer.start_time()
+    def search(self, batch_idx: List[int]):
+        self.data_ids = set()
+        self.outputs = []
+        print("###### START", batch_idx)
+        batch_file_name = "-".join([str(b) for b in batch_idx])
+        batch = self.collate_func([self.dataset[idx] for idx in batch_idx])
 
-        global_pbar = tqdm(self.batch_chunks, leave=True, desc="Search Global Step")
-        print("### BATCH ID TO USE", self.batch_chunks)
+        metrics = {}
+        self.timer.start("mcts_search_time")
 
-        for batch_idx in global_pbar:
-            print("###### START", batch_idx.tolist())
-            batch_file_name = "-".join([str(b) for b in batch_idx.tolist()])
-            batch = self.collate_func([self.dataset[idx] for idx in batch_idx.tolist()])
+        output = self.search_func(batch=batch, filename=self.filename_format.format(num=batch_file_name))
 
-            metrics = {}
-            self.timer.start("mcts_search_time")
+        # TODO(geshen): compute metrics
+        self.timer.stop("mcts_search_time")
 
-            output = self.search_func(batch=batch, filename=self.filename_format.format(num=batch_file_name))
+        search_metrics = compute_metric_from_output(output)
 
-            # TODO(geshen): compute metrics
-            self.timer.stop("mcts_search_time")
+        metrics.update(search_metrics)
+        metrics["search_time"] = self.timer.get("mcts_search_time")
+        metrics["step"] = self.step
 
-            search_metrics = compute_metric_from_output(output)
+        print("##### Metrics", metrics)
 
-            metrics.update(search_metrics)
-            metrics["search_time"] = self.timer.get("mcts_search_time")
-            metrics["step"] = self.step
+        self.outputs.extend(output)
+        self.step += 1
 
-            global_pbar.set_postfix(metrics)
+        self.data_ids.update(batch_idx)
+        print("###### DONE", batch_idx)
 
-            self.logger.log_metrics(
-                metrics, step=self.step, prefix="search/",
-            )
+        print("### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx, "at step", self.step)
+        save_path = os.path.join(self.save_path, f"{batch_file_name}_.pt")
+        self.save(save_path)
 
-            self.outputs.extend(output)
-            self.step += 1
-
-            self.data_ids.update(batch_idx.tolist())
-            print("###### DONE", batch_idx.tolist())
-
-            print(
-                "### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx.tolist(), "at step", self.step
-            )
-            if self.run_timer.is_within_dp_finished() or self.step % self.save_interval == 0:
-                self.save()
-
-        # this will timeout in 30mins, but at least it gives other DP ranks a chance to finish on time
-        torch.distributed.barrier()
-
-    def save(self):
+    def save(self, save_path):
         group = parallel_state.get_model_parallel_group()
         rank = torch.distributed.get_rank(group=group)
 
@@ -273,7 +218,7 @@ class MCTSSearch:
 
         if rank + 1 == torch.distributed.get_world_size(group):
             print("### RANK SAVING", torch.distributed.get_rank())
-            preemptable_save(self.state_dict(), self.save_path)
+            preemptable_save(self.state_dict(), save_path)
 
         torch.distributed.barrier(group=group)
 
@@ -314,31 +259,29 @@ class DatasetWrapper:
         return len(self.ds)
 
 
-def get_dataset(dataset_name, split, template_name):
-    assert dataset_name == "gsm8k"
-    dataset = load_dataset("gsm8k", "main")
-
-    if template_name == "steerlm":
-        template = steerlm_template
-    elif template_name == "mistral":
-        template = prompt_template
+def get_dataset(cfg):
+    train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
+    ds = train_ds.data_lookup
+    if cfg.model.mcts.feedback == "math":
+        score_fn = GSK8KFeedbackDataset(ds)
+    elif cfg.model.mcts.feedback == "steerlm":
+        score_fn = SteerLMFeedback()
+    elif cfg.model.mcts.feedback == "dummy":
+        score_fn = DummyScore()
     else:
-        raise NotImplementedError(f"template {template_name} is not supported")
-
-    ds = DatasetWrapper(dataset[split], template)
-    score_fn = GSK8KFeedbackHF(split=split)
-
-    return ds, score_fn
+        raise ValueError(f"Invalid feedback function {cfg.model.mcts.feedback}")
+    return train_ds, score_fn
 
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    ds, score_fn = get_dataset(cfg.dataset.name, cfg.dataset.split, cfg.dataset.prompt_template_name)
+    ds, score_fn = get_dataset(cfg)
     logging.info(f"loaded {ds}")
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
-    cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
+    if cfg.pretrained_checkpoint.has_value_head:
+        cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
@@ -348,7 +291,10 @@ def main(cfg) -> None:
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
-    hybrid_model_cls = MegatronGPTHybridModel
+    if cfg.pretrained_checkpoint.has_value_head:
+        hybrid_model_cls = MegatronGPTHybridModel
+    else:
+        hybrid_model_cls = MegatronGPTModel
 
     ptl_model = load_from_nemo(
         hybrid_model_cls,
@@ -361,10 +307,14 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    ptl_model.prepare_for_inference()
-    ptl_model.freeze()
+    if cfg.pretrained_checkpoint.has_value_head:
+        ptl_model.prepare_for_inference()
+    else:
+        ptl_model._reset_activation_checkpointing_args()
+        ptl_model._reset_sequence_parallelism_args()
+        ptl_model.eval()
 
-    num_to_load = compute_limit_batches(len(ds), cfg.model.mcts.num_rollouts)
+    ptl_model.freeze()
 
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
 
@@ -373,12 +323,7 @@ def main(cfg) -> None:
 
     torch.distributed.barrier()
 
-    # we only really need model parallel src to save the checkpoint
-    dp_rank = parallel_state.get_data_parallel_rank()
-    save_path = os.path.join(save_dir, "dp_{}.pt".format(dp_rank))
-
     logger.log_hyperparams(OmegaConf.to_container(cfg))
-    timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
     logger.log_metrics(
         {"dataset_length": len(ds)}, step=0, prefix="data/",
@@ -393,29 +338,67 @@ def main(cfg) -> None:
         use_cpu=cfg.model.mcts.kv_cache_in_cpu,
     )
 
-    search_cache_dir = cfg.model.mcts.cache_dir
+    # start the worker on the rank
+    start_worker(search_func, collate_func, save_dir, ds, cfg, cfg.server_url, cfg.backend_url)
 
-    if search_cache_dir is not None:
-        # create the cache dir if it does not exist
-        if torch.distributed.get_rank() == 0:
-            if not os.path.exists(search_cache_dir):
-                os.makedirs(search_cache_dir, exist_ok=True)
-        torch.distributed.barrier()
 
-    searcher = MCTSSearch(
-        search_func=search_func,
-        collate_func=collate_func,
-        save_path=save_path,
-        num_to_load=num_to_load,
-        rollout_micro_batch_size=cfg.model.mcts.rollout_micro_batch_size,
-        dataset=ds,
-        logger=logger,
-        run_timer=timer,
-        save_interval=cfg.trainer.deep_search.save_interval,
-        cache_dir=search_cache_dir,
-    )
+def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url):
+    if torch.distributed.get_rank() == 0:
+        app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
 
-    searcher.search()
+        app.conf.task_acks_late = True
+        app.conf.worker_deduplicate_successful_tasks = True
+        app.conf.worker_prefetch_multiplier = 1
+
+        # 5 hrs timeout
+        app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
+
+        @app.task(autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, retry_kwargs={"max_retries": 10})
+        def search_for_batch(batch_idx):
+            batch_size = torch.tensor([len(batch_idx)], dtype=torch.int64).cuda()
+            torch.distributed.broadcast(batch_size, 0)
+            batch_idx = torch.tensor(batch_idx, dtype=torch.int64).cuda()
+            torch.distributed.broadcast(batch_idx, 0)
+            batch_idx = batch_idx.tolist()
+            # braodcast the
+            searcher = MCTSSearchOneBatch(
+                search_func=search_func,
+                collate_func=collate_func,
+                save_path=save_path,
+                dataset=ds,
+                cache_dir=cfg.model.mcts.cache_dir,
+            )
+            searcher.search(batch_idx)
+            return batch_idx
+
+        RAND_ID = os.environ.get("local_rank", random.randint(0, 10000))
+        app.worker_main(
+            [
+                "worker",
+                "--loglevel=INFO",
+                "--concurrency=1",
+                "--pool=threads",
+                "--without-gossip",
+                "-Ofair",
+                f"--hostname=worker-{RAND_ID}@%%h",
+            ]
+        )
+    else:
+        while True:
+            batch_size = torch.tensor([0], dtype=torch.int64).cuda()
+            torch.distributed.broadcast(batch_size, 0)
+            batch_size = batch_size.tolist()[0]
+            batch_idx = torch.tensor([0] * batch_size, dtype=torch.int64).cuda()
+            torch.distributed.broadcast(batch_idx, 0)
+            batch_idx = batch_idx.tolist()
+            searcher = MCTSSearchOneBatch(
+                search_func=search_func,
+                collate_func=collate_func,
+                save_path=save_path,
+                dataset=ds,
+                cache_dir=cfg.model.mcts.cache_dir,
+            )
+            searcher.search(batch_idx)
 
 
 if __name__ == "__main__":

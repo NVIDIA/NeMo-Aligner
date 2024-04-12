@@ -52,7 +52,7 @@ def get_model_parallel_src_rank():
 
 
 def send_generate_info(
-    context_tokens_tensor, context_length_tensor, action, tokens_to_generate, top_k, context_ids, session_info,
+    context_tokens_tensor, context_length_tensor, action, tokens_to_generate, top_k, context_ids, session_info, inputs,
 ):
     """
     Needs to be synced up with receive_generate_info
@@ -74,6 +74,7 @@ def send_generate_info(
 
     broadcast_python_obj(context_ids, src, None)
     broadcast_python_obj(session_info, src, None)
+    broadcast_python_obj(inputs, src, None)
 
 
 def receive_generate_info():
@@ -96,6 +97,7 @@ def receive_generate_info():
 
     context_ids = broadcast_python_obj(None, src, None)
     session_info = broadcast_python_obj(None, src, None)
+    inputs = broadcast_python_obj(None, src, None)
 
     return (
         context_tokens_tensor,
@@ -105,4 +107,5 @@ def receive_generate_info():
         top_k,
         context_ids,
         session_info,
+        inputs,
     )

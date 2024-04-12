@@ -6,7 +6,7 @@ import sentencepiece
 import torch
 from pytriton.client import ModelClient
 
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedback
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackHF
 from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
 
 steerlm_template = """<extra_id_0>System
@@ -37,8 +37,8 @@ input_text = ["how are you?", "how large is the universe?"]
 # ### sub sequent evaluation to construct the children node
 
 max_depth = 500
-termination_condition = TerminationCondition(max_depth, end_strings=["<extra_id_1>"])
-score_fun = GSK8KFeedback("train-00000-of-00001.parquet")
+termination_condition = TerminationCondition(max_depth, end_strings=["<extra_id_1>"], end_tokens=[tokenizer.eos_id()])
+score_fun = GSK8KFeedbackHF()
 total_data = 500
 
 batch_size = 2
@@ -47,7 +47,7 @@ for data_id in range(0, total_data, batch_size):
 
     input_text = []
     for i in range(batch_size):
-        question = score_fun.gsk8k.iloc[data_id + i]["question"]
+        question = score_fun.ds["train"][data_id + i]["question"]
         input_text.append(steerlm_template.format(prompt=question))
 
     str_ndarray = np.array(input_text)[..., np.newaxis]
@@ -101,7 +101,7 @@ for data_id in range(0, total_data, batch_size):
 
     # save decoded to jsonl file
     for i in range(batch_size):
-        answer = score_fun.gsk8k.iloc[data_id + i]["answer"]
+        answer = score_fun.ds["train"][data_id + i]["answer"]
         output = {}
         output["question"] = input_text[i]
         output["answer"] = answer

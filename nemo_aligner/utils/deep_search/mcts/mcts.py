@@ -43,28 +43,58 @@ class ParallelSearch:
         self.node = None
 
 
-def get_state(infer_params: InferenceParams, init: bool, context_len: int, batch_id: int):
+def get_state(
+    infer_params: InferenceParams, init: bool, context_len: int, token_len: int, batch_id: int, use_cpu=False
+):
     # only call this function after inference step is done
     # infer_params.sequence_len_offset is the number of tokens used in the kv cache before the inference step
     # after the inference step, there is one more token in the kv cache
-    if init:
-        # root state has all the context
-        # key_value_memory_dict [length, batch_size, ...]
-        kv_cache = {
-            key: (
-                infer_params.key_value_memory_dict[key][0][:context_len, batch_id].detach().clone(),
-                infer_params.key_value_memory_dict[key][1][:context_len, batch_id].detach().clone(),
-            )
-            for key in infer_params.key_value_memory_dict
-        }
+    if use_cpu:
+        if init:
+            # root state has all the context
+            # key_value_memory_dict [length, batch_size, ...]
+            kv_cache = {
+                key: (
+                    infer_params.key_value_memory_dict[key][0][:context_len, batch_id].detach().cpu(),
+                    infer_params.key_value_memory_dict[key][1][:context_len, batch_id].detach().cpu(),
+                )
+                for key in infer_params.key_value_memory_dict
+            }
+        else:
+            kv_cache = {
+                key: (
+                    infer_params.key_value_memory_dict[key][0][context_len : context_len + token_len, batch_id]
+                    .detach()
+                    .cpu(),
+                    infer_params.key_value_memory_dict[key][1][context_len : context_len + token_len, batch_id]
+                    .detach()
+                    .cpu(),
+                )
+                for key in infer_params.key_value_memory_dict
+            }
     else:
-        kv_cache = {
-            key: (
-                infer_params.key_value_memory_dict[key][0][context_len : context_len + 1, batch_id].detach().clone(),
-                infer_params.key_value_memory_dict[key][1][context_len : context_len + 1, batch_id].detach().clone(),
-            )
-            for key in infer_params.key_value_memory_dict
-        }
+        if init:
+            # root state has all the context
+            # key_value_memory_dict [length, batch_size, ...]
+            kv_cache = {
+                key: (
+                    infer_params.key_value_memory_dict[key][0][:context_len, batch_id].detach().clone(),
+                    infer_params.key_value_memory_dict[key][1][:context_len, batch_id].detach().clone(),
+                )
+                for key in infer_params.key_value_memory_dict
+            }
+        else:
+            kv_cache = {
+                key: (
+                    infer_params.key_value_memory_dict[key][0][context_len : context_len + token_len, batch_id]
+                    .detach()
+                    .clone(),
+                    infer_params.key_value_memory_dict[key][1][context_len : context_len + token_len, batch_id]
+                    .detach()
+                    .clone(),
+                )
+                for key in infer_params.key_value_memory_dict
+            }
     return kv_cache
 
 
@@ -107,17 +137,19 @@ class Node:
 
     def get_ucb(self, child, C):
         if child.visit_count == 0:
-            q_value = 0.0  #
+            q_value = child.prior  # # use prior as initial value
         else:
             q_value = child.value_sum / child.visit_count  # assume the q_value is probability of winning
         return q_value + C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
 
-    def expand(self, policy, actions):
+    def expand(self, policy, actions, env, context_tokens):
         for action, prob in zip(actions, policy):
             action = action.item()
             prob = prob.item()
             child = Node([action], parent=self, action=action, prior=prob, visit_count=0)
             self.children[action] = child
+            # environment is going to decide whether to add observation tokens
+            env.state_transtion(child, context_tokens)
 
     def backpropagate(self, value):
         self.value_sum += value
@@ -137,39 +169,49 @@ class Node:
 
 class MCTSParallel:
     def __init__(
-        self, args, tokenizer, session_info="session", score_fn=None, terminate_fns=None, client_fun: Callable = None
+        self,
+        args,
+        tokenizer,
+        session_info="session",
+        score_fn=None,
+        env_fn=None,
+        terminate_fns=None,
+        client_fun: Callable = None,
+        has_value=True,
     ):
         self.args = args
         self.tokenizer = tokenizer
         self.session = session_info
         self.score_fn = score_fn
+        self.env_fn = env_fn
         self.terminate_fns = terminate_fns
         self.client_fun = client_fun
         self.cache = {}
+        self.has_value = has_value
 
     def decode_text(self, state):
         decoded_text = self.tokenizer.decode(state)
         # decoded_text = "".join(state).replace('▁', ' ').lstrip()
         return decoded_text
 
-    def get_context_id(self, node):
-        all_tokens = node.get_all_tokens()
+    def token_to_context_id(self, all_tokens, node):
         if node.parent is None:
             # for the root node, the context id is the same as the state
             return tuple(all_tokens)
         else:
             # for the child node, the context id is the same as the parent node
-            return tuple(all_tokens[:-1])
+            num_action_tokens = len(node.state)
+            return tuple(all_tokens[:-num_action_tokens])
 
     def get_text(self, node):
         all_tokens = node.get_all_tokens()
         text = self.decode_text(all_tokens)
         return text
 
-    def get_value_and_terminated(self, text, data_id, depth):
+    def get_value_and_terminated(self, text, data_id, depth, tokens):
         terminate = False
         for fun in self.terminate_fns:
-            if fun(text, depth):
+            if fun(text, depth, tokens):
                 terminate = True
                 break
 
@@ -179,25 +221,38 @@ class MCTSParallel:
         # check if the text ends properly
         end_properly = False
         for fun in self.terminate_fns:
-            if fun.ends_by_end_strings(text):
+            if fun.ends_by_end_strings(text, tokens):
                 end_properly = True
                 break
-        return value, terminate, end_properly
+        has_answer = False
+        for fun in self.terminate_fns:
+            if fun.has_answer(text):
+                has_answer = True
+                break
+        return value, terminate, end_properly, has_answer
 
     def get_input_action_depth(self, ps, expandable_search):
         # get the action to execute and depths in the search tree
-        actions = np.stack(
-            [
-                ps[mappingIdx].node.action if isinstance(ps[mappingIdx].node, Node) else ps[mappingIdx].node[0].action
-                for mappingIdx in expandable_search
-            ]
-        )[:, np.newaxis].astype(np.int32)
+        actions = []
+        action_length = []
+        for mappingIdx in expandable_search:
+            node = ps[mappingIdx].node["node"]
+            if isinstance(node.action, list):
+                actions.append(node.action)
+                action_length.append(len(node.action))
+            else:
+                actions.append([node.action])
+                action_length.append(1)
+        max_length = max(action_length)
+        # padding in the end
+        for action in actions:
+            action.extend([self.tokenizer.pad_id()] * (max_length - len(action)))
+        # convert to tensor
+        actions = np.array(actions, dtype=np.int32)
         # get the context ids for the search nodes
         # context_ids = [ps[mappingIdx].node.context_id for mappingIdx in expandable_search]
         context_ids = [
-            self.get_context_id(ps[mappingIdx].node)
-            if isinstance(ps[mappingIdx].node, Node)
-            else self.get_context_id(ps[mappingIdx].node[0])
+            self.token_to_context_id(ps[mappingIdx].node["all_tokens"], ps[mappingIdx].node["node"])
             for mappingIdx in expandable_search
         ]
         # # verify context ids are the same
@@ -273,7 +328,7 @@ class MCTSParallel:
                 # no need to handle the case that no valid moves
                 # because the we search the states[i] which has at least one valid move
                 spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
-                spg.root.expand(spg_policy, spg_action)
+                spg.root.expand(spg_policy, spg_action, self.env_fn, list(context_id))
 
         # dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
@@ -292,19 +347,29 @@ class MCTSParallel:
                     depth += 1
 
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
-                text = self.get_text(node)
-                value, is_terminal, ends_properly = self.get_value_and_terminated(text, spg.data_id, depth)
+                all_tokens = node.get_all_tokens()
+                text = self.decode_text(all_tokens)
+                value, is_terminal, ends_properly, has_answer = self.get_value_and_terminated(
+                    text, spg.data_id, depth, all_tokens
+                )
 
                 if is_terminal:
                     if not self.args["oracle"]:
                         # if no oracle, then we need to run value inference to get the value
 
                         # cache the value for this node
-                        all_tokens = tuple(node.get_all_tokens())
-                        if all_tokens in self.cache:
-                            value = self.cache[all_tokens]
+                        all_tokens_tuple = tuple(all_tokens)
+                        if all_tokens_tuple in self.cache:
+                            value = self.cache[all_tokens_tuple]
                         else:
-                            spg.node = (node, ends_properly)
+                            # spg.node is a dictory
+                            spg.node = {
+                                "node": node,
+                                "ends_properly": ends_properly,
+                                "all_tokens": all_tokens,
+                                "text": text,
+                                "is_terminal": is_terminal,
+                            }
                             # skip the backpropagation and run inference later to get the value
                             continue
 
@@ -313,11 +378,18 @@ class MCTSParallel:
                     # collect the memory from the root to the terminal node
                     if ends_properly:
                         # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                        spg.value_memory.add((tuple(node.get_all_tokens()), value))
+                        spg.value_memory.add((tuple(node.get_all_tokens()), value, node))
 
                 else:
                     # if not terminal, then expand the node in the later part of the code
-                    spg.node = node
+                    # spg.node is a dictory
+                    spg.node = {
+                        "node": node,
+                        "ends_properly": ends_properly,
+                        "all_tokens": all_tokens,
+                        "text": text,
+                        "is_terminal": is_terminal,
+                    }
 
             # index of search instances that are expandable
             expandable_search = [mappingIdx for mappingIdx in range(len(ps)) if ps[mappingIdx].node is not None]
@@ -330,30 +402,38 @@ class MCTSParallel:
 
                 actions = result_dict["action"]
                 policy = result_dict["policy"]  # [batch, top_k]
-                value = result_dict["value"]  # [batch]
+                if self.has_value:
+                    value = result_dict["value"]  # [batch]
+                else:
+                    value = [None] * len(policy)
 
             for i, mappingIdx in enumerate(expandable_search):
                 # node to expand
-                node = ps[mappingIdx].node
+                result_dict = ps[mappingIdx].node
+                node = result_dict["node"]
                 # corresponding policy and value
                 spg_policy, spg_value, spg_action = policy[i], value[i], actions[i]
-                value_head_output = spg_value.item()
+                if spg_value is not None:
+                    value_head_output = spg_value.item()
+                else:
+                    value_head_output = node.prior
                 if self.args["turn_off_value"]:
-                    value_head_output = 0.0
+                    value_head_output = node.prior
 
-                if isinstance(node, tuple):
+                if result_dict["is_terminal"]:
                     # if the node is a tuple, then it means the node is terminal
                     # backpropagate the value
-                    node, ends_properly = node
+                    ends_properly = result_dict["ends_properly"]
+                    all_tokens = result_dict["all_tokens"]
                     node.backpropagate(value_head_output)
                     if ends_properly:
                         # collect the memory from the root to the terminal node
                         # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                        all_tokens = tuple(node.get_all_tokens())
-                        ps[mappingIdx].value_memory.add((all_tokens, value_head_output))
+                        all_tokens = tuple(all_tokens)
+                        ps[mappingIdx].value_memory.add((all_tokens, value_head_output, node))
                         self.cache[all_tokens] = value_head_output
                 else:
-                    node.expand(spg_policy, spg_action)
+                    node.expand(spg_policy, spg_action, self.env_fn, result_dict["all_tokens"])
 
                     node.backpropagate(value_head_output)
 
@@ -367,6 +447,7 @@ class DeepSearch:
         strategy=None,
         timer_seconds: int = 10.0,
         cache_dir: str = None,
+        inference_only: bool = False,
     ):
         self.mcts = mcts
         self.max_steps = max_steps
@@ -374,12 +455,29 @@ class DeepSearch:
         self.strategy = strategy
         self.save_flag = False
         self.cache_dir = cache_dir
+        # if inference_only is True, then the search will only run the inference and not the self play
+        self.inference_only = inference_only
         # Start the timer
         self.timer = threading.Timer(timer_seconds, self.save_data)
         self.timer.start()
 
     def save_data(self):
+        print("### TIMER TRIGGER")
         self.save_flag = True
+
+    def clear_search_db_cache(self, backup_root_node):
+        if self.strategy is not None and self.strategy.use_kv_cache:
+            # clean up the cache
+            context_id = tuple(backup_root_node.state)
+            # depth first search to go through all the notes
+            stack = [(backup_root_node, context_id)]
+            while len(stack) > 0:
+                node, c_id = stack.pop()
+                self.strategy.clean_up_cache_for_context(self.mcts.session, c_id)
+                for child_action in node.children:
+                    child = node.children[child_action]
+                    if len(child.children) != 0:
+                        stack.append((child, c_id + tuple(child.state)))
 
     def search(self, parallel_searches: List[ParallelSearch], filename):
         dp_rank = parallel_state.get_data_parallel_rank()
@@ -425,21 +523,26 @@ class DeepSearch:
             # start to do the mcts search
             self.mcts.search(parallel_searches)
 
+            if count == 1:
+                backup_root_nodes = [spg.root for spg in parallel_searches]
             # loop from large to small so that we can remove search instances as we go
             for i in range(len(parallel_searches))[::-1]:
                 spg = parallel_searches[i]
                 action_size = len(spg.root.children)
                 action_probs = np.zeros(action_size, dtype=np.float32)
-                actions = np.zeros(action_size, dtype=np.int32)
+                actions = []
                 use_value_sum = False
                 for child_id, child_action in enumerate(spg.root.children.keys()):
                     child = spg.root.children[child_action]
-                    assert child_action == child.action
+                    if isinstance(child.action, list):
+                        assert child_action == child.action[0]
+                    else:
+                        assert child_action == child.action
                     if use_value_sum:
                         action_probs[child_id] = child.value_sum
                     else:
                         action_probs[child_id] = child.visit_count
-                    actions[child_id] = child.action
+                    actions.append(child.action)
                 action_probs /= np.sum(action_probs)
 
                 # the spg.root.state is the neutral state set at the beginning of the search
@@ -450,12 +553,17 @@ class DeepSearch:
                 action_index = np.random.choice(
                     action_size, p=temperature_action_probs
                 )  # Divide temperature_action_probs with its sum in case of an error
-                action = actions[action_index].item()
+                action = actions[action_index]
 
-                spg.state = spg.state + [action]
-                fake_node = Node(spg.state, parent=None, action=action, prior=0.0, visit_count=0)
                 # pass in the states from selected child node to the fake node
-                child_node = spg.root.children[action]
+                if isinstance(action, list):
+                    child_node = spg.root.children[action[0]]
+                    spg.state = spg.state + action
+                else:
+                    child_node = spg.root.children[action]
+                    spg.state = spg.state + [action]
+                fake_node = Node(spg.state, parent=None, action=action, prior=0.0, visit_count=0)
+
                 assert child_node.action == fake_node.action
                 fake_node.children = child_node.children
                 spg.node = fake_node
@@ -463,12 +571,42 @@ class DeepSearch:
                 #  get the value and termination condition from the current taken `action`
                 text = self.mcts.decode_text(spg.state)
                 pb.write(text)
-                value, is_terminal, ends_properly = self.mcts.get_value_and_terminated(text, spg.data_id, count)
+                value, is_terminal, ends_properly, has_answer = self.mcts.get_value_and_terminated(
+                    text, spg.data_id, count, spg.state
+                )
 
                 if is_terminal:
+                    if self.inference_only:
+                        # if inference only, we only collect the best tokens from the inference
+                        all_tokens = tuple(spg.state)
+                        if all_tokens in self.mcts.cache:
+                            value = self.mcts.cache[all_tokens]
+                        else:
+                            value = -1
+                        return_memory.append(
+                            {
+                                "tokens": spg.state,
+                                "reward": value,
+                                "data_id": spg.data_id,
+                                "context_length": len(backup_root_states[i]),
+                                "full_text": self.mcts.decode_text(spg.state),
+                                "context": self.mcts.decode_text(backup_root_states[i]),
+                            }
+                        )
+                        # need to clean up the mcts cache starting from backup root states
+                        backup_root_node = backup_root_nodes[i]
+                        assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
+                        self.clear_search_db_cache(backup_root_node)
+                        # we can remove the search instance
+                        del parallel_searches[i]
+                        del backup_root_states[i]
+                        del backup_root_nodes[i]
+                        continue
                     # loop through all the steps and add to the memory
                     # need to update the value based on the game play at the end of the games
-                    if ends_properly:
+                    # collects the value buffer if the response ends properly with <extra_id> or byte token
+                    # or if the response has the answer inside it
+                    if ends_properly or has_answer:
                         # only collect the memory if it ends properly
                         for tokens, hist_action_probs, actions in spg.memory:
                             hist_outcome = value
@@ -483,17 +621,38 @@ class DeepSearch:
                                     "context_length": len(backup_root_states[i]),
                                 }
                             )
+
+                    # process the value memory to get the value for each of the tokens
+                    value_mems = []
+                    for tokens, value, node in spg.value_memory:
+                        all_values = []
+                        all_tokens = []
+                        all_tokens += node.state[::-1]
+                        for _ in range(len(node.state)):
+                            all_values.append(node.value_sum / node.visit_count)
+                        while node.parent is not None:
+                            node = node.parent
+                            for _ in range(len(node.state)):
+                                all_values.append(node.value_sum / node.visit_count)
+                            all_tokens += node.state[::-1]
+                        all_tokens = all_tokens[::-1]
+                        all_values = all_values[::-1]
+                        assert tuple(all_tokens) == tuple(tokens)
+                        value_mems.append((tokens, all_values, value))
                     return_value_memory.append(
                         {
-                            "value_memory": list(spg.value_memory),
+                            "value_memory": value_mems,
                             "data_id": spg.data_id,
                             "backup_root_states": backup_root_states[i],
                         }
                     )
 
+                    backup_root_node = backup_root_nodes[i]
+                    assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
+                    self.clear_search_db_cache(backup_root_node)
                     del parallel_searches[i]
                     del backup_root_states[i]
-
+                    del backup_root_nodes[i]
             if self.save_flag:
                 if self.strategy is not None:
                     pb.write(f"saving the search to disk {filename}")
