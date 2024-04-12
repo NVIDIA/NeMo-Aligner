@@ -100,5 +100,4 @@ class GPTGenerateTRTLLM():
     def free(self): 
         if not self.unload_engine_train:
             return      
-        self.trt_llm_exporter.unload_engine(keep_generate_session=True)
-        torch.cuda.empty_cache()
+        del self.trt_llm_exporter.model_runner.session
