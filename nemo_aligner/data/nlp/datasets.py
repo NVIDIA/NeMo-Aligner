@@ -25,6 +25,7 @@ import torch
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.core import Dataset
 from nemo.utils import logging
+import jsonlines
 
 
 class RLHFDataset(Dataset):
