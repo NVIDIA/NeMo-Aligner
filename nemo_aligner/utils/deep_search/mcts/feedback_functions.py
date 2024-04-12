@@ -104,7 +104,7 @@ class LLMJudgementFeedback(Feedback):
         print("prompt_to_sent", prompt_to_sent)
         try:
             eval_output = self.get_generation(
-                prompt_to_sent, True, False, self.len, 1, 1.0, 1.0, 0, 1.0
+                prompt_to_sent, True, False, 1000, 1, 1.0, 1.0, 0, 1.0
             )  # get_reward([response], False, self.host, self.port)[0]
             if eval_output.find("<extra_id_0>") < 0:
                 # hack due to the problem that huggingface's tokenizer strips out the <extra_id_x> token
