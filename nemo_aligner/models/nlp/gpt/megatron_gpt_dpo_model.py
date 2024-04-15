@@ -196,7 +196,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         )
         chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards)
 
-        loss = -torch.nn.functional.logsigmoid(chosen_rewards - reject_rewards)
+        loss = -torch.nn.functional.logsigmoid(chosen_rewards - reject_rewards).mean(0)
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
