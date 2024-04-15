@@ -1,13 +1,11 @@
 import torch 
 import tensorrt_llm
-from typing import List
 
 from nemo_aligner.utils.distributed import broadcast_2d_tensor
-from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo.export import TensorRTLLM
 from nemo.export.trt_llm.nemo_utils import to_word_list_format
 from nemo.export.trt_llm.nemo.nemo_ckpt_convert import build_tokenizer
-from megatron.core import parallel_state
+from nemo_aligner.utils import parallel_state
 
 
 class GPTGenerateTRTLLM():
@@ -78,8 +76,8 @@ class GPTGenerateTRTLLM():
         output_ids = torch.squeeze(output_dict['output_ids'], dim=1).long()
         resp_lens = torch.squeeze(output_dict['sequence_lengths'], dim=1).long()
 
-        #broadcast output to all PP ranks
-        if not self.reshard_model and parallel_state.get_pipeline_model_parallel_world_size() > 1:  
+        # broadcast output to all PP ranks
+        if not self.reshard_model:  
             group = parallel_state.get_pipeline_model_parallel_group()
             src = parallel_state.get_pipeline_model_parallel_first_rank()
             output_ids = broadcast_2d_tensor(output_ids, src, group, dtype=output_ids.dtype)
