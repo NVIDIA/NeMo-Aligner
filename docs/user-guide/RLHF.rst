@@ -5,7 +5,7 @@
 Model Alignment by RLHF
 @@@@@@@@@@@@@@@@@@@@@@@
 
-For the purposes of this tutorial, we will go through the entire RLHF pipeline using models from the NeMo Framework. These can be models such as LLaMa2 or Mistral. The scripts will work the same way.
+For the purposes of this tutorial, we will go through the entire RLHF pipeline using models from the NeMo Framework. These can be models such as LLaMa2 or Mistral. Our scripts will work the same way.
 
 RLHF is usually preceded by a Supervised Fine-Tuning (SFT). We should first follow the :ref:`Prerequisite guide <prerequisite>` and the :ref:`SFT guide <sft>`. After obtaining the SFT model, we will use this to start the RLHF process. We will use the `PPO <https://arxiv.org/abs/1707.06347>`__ algorithm for the reinforcement learning on the `Anthropic-HH-RLHF <https://huggingface.co/datasets/Anthropic/hh-rlhf>`__ dataset.
 
