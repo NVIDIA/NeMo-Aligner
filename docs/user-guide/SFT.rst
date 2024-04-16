@@ -18,12 +18,12 @@ To start, we must first get a pretrained model to align. There are 2 models we r
 
         #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
         #. Extract the NeMo File to a folder with ``mkdir model_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C model_checkpoint``
-        #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/86b198ff93438d454f9c7f3550bcfb7d4e59feab/scripts/nlp_language_modeling/convert_nemo_gpt_to_mcore.py>`__.
+        #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/468d5b6d369733909524d42b80a514f33bc19263/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             .. code-block:: bash 
 
-               python convert_nemo_gpt_to_mcore.py \
-                  --in-folder ./model_checkpoint \
-                  --out-file ./mcore_gpt.nemo
+               python convert_gpt_nemo_to_mcore.py \
+                  --input_name_or_path ./model_checkpoint \
+                  --output_path ./mcore_gpt.nemo
 
     .. tab-item:: LLaMa2 7B
         :sync: key2
