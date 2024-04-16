@@ -33,6 +33,20 @@ from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
+_SAVE_TOP_K = False
+
+def is_save_top_k():
+    global _SAVE_TOP_K
+    return _SAVE_TOP_K
+
+@contextmanager
+def saving_top_k():
+    global _SAVE_TOP_K
+    try:
+        _SAVE_TOP_K = True
+        yield
+    finally:
+        _SAVE_TOP_K = False
 
 def preemptable_save(obj, save_path):
     save_path = Path(save_path).resolve()
@@ -48,7 +62,6 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     """A save connector that will ask the Reward model to not try to load
         the rm head if load_base_model_only is True
     """
-
     def __init__(self, *args, load_base_model_only=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.__load_base_model_only = load_base_model_only
@@ -71,6 +84,13 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
     if save_top_only:
         return
 
+    if torch.distributed.get_rank() == 0:
+        for item in self._saved_checkpoint_paths:
+            if str(item).endswith("-last"):
+                self._remove_checkpoint(trainer, item)
+                print("### DELETING", item)
+
+    torch.distributed.barrier()
     super(NeMoModelCheckpoint, self)._save_last_checkpoint(trainer, monitor_candidates)
 
     if is_train_end:
