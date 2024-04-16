@@ -30,3 +30,4 @@
    DPO.rst
    SPIN.rst
    DRaFTP.rst
+   CAI.rst
