@@ -78,7 +78,7 @@ This section is a step-by-step tutorial that walks you through how to run a full
 
       python3 -c "from datasets import load_dataset; load_dataset('Anthropic/hh-rlhf', data_dir='red-team-attempts' split='train').to_json('/path/to/anthropic_red_team_attempts_train.json')"
    
-   This will download the dataset to ``anthropic_hh_red_team_attempts/anthropic_red_team_attempts_train.jsonl``
+   This will download the dataset to ``/path/to/anthropic_red_team_attempts_train.json``
 
 
 3. Download SFT helpfulness dataset:
@@ -86,6 +86,8 @@ This section is a step-by-step tutorial that walks you through how to run a full
    .. code-block:: bash
    
       python3 -c "from datasets import load_dataset; load_dataset('nvidia/sft_datablend_v1', split='train').to_json('/path/to/nvidia_sft_datablend_v1_train.json')"
+
+  This will download the dataset to ``/path/to/nvidia_sft_datablend_v1_train.json``
 
 
 4. Download and process preference helpfulness dataset:
@@ -104,16 +106,16 @@ Step 2: Generate and revise responses to harmfulness prompts creating the SL-CAI
 .. code-block:: bash
 
    python examples/nlp/cai/generate_sl_cai_dataset.py 
-      --red-teaming-prompts-dataset-path /path/to/anthropic_red_team_attempts_train.jsonl 
+      --red-teaming-prompts-dataset-path /path/to/anthropic_red_team_attempts_train.json
       --few-shot-prompts-dataset-path mistral7b_few_shot_samples 
       --critique-revision-instructions-path CritiqueRevisionInstructions.json 
       --max-seq-length 4096 
       --tokenizer-library sentencepiece 
       --tokenizer-model /models/mistral/mistral-7b-instruct/tokenizer.model
       --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json
-      --output-filepath cai_revisions_aligner_chat_template.jsonl
+      --output-filepath cai_revisions_aligner_chat_template.json
 
-This will generate an SL-CAI dataset of prompts and revised responses as `cai_revisions_aligner_chat_template.jsonl`
+This will generate an SL-CAI dataset of prompts and revised responses as `cai_revisions_aligner_chat_template.json`
 
 Step 3: Finetune Mistral-7B on the revised responses to create a Mistral-7B-SL-CAI model
 ######################################################################################################
