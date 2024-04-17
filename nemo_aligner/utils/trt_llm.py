@@ -1,7 +1,7 @@
 import torch 
 import tensorrt_llm
 
-from nemo_aligner.utils.distributed import broadcast_2d_tensor
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
 from nemo.export import TensorRTLLM
 from nemo.export.trt_llm.nemo_utils import to_word_list_format
 from nemo.export.trt_llm.nemo.nemo_ckpt_convert import build_tokenizer
@@ -15,7 +15,6 @@ class GPTGenerateTRTLLM():
         self.max_generation_length = self.cfg.ppo.length_params.get('max_length', 1024)
         self.max_context_length = self.cfg.ppo.trt_llm.get('max_context_len', 1024)
         self.generation_batch_size = self.cfg.ppo.get('rollout_micro_batch_size', 4)
-        self.reshard_model = self.cfg.ppo.trt_llm.get('reshard', False)
         self.unload_engine_train = self.cfg.ppo.trt_llm.get('unload_engine_train', False)
         self.trt_model_type = self.cfg.ppo.trt_llm.get('model_type', 'LLaMAForCausalLM')
 
@@ -51,7 +50,7 @@ class GPTGenerateTRTLLM():
                 max_input_len=self.max_context_length,
                 max_output_len=self.max_generation_length,
                 max_batch_size=self.generation_batch_size,
-                reshard_model=self.reshard_model)
+                reshard_model=self.cfg.ppo.trt_llm.get('reshard', True))
             self._trtllm_model_compiled = True
         else:
             self.trt_llm_exporter.refit(
@@ -77,10 +76,8 @@ class GPTGenerateTRTLLM():
         resp_lens = torch.squeeze(output_dict['sequence_lengths'], dim=1).long()
 
         # broadcast output to all PP ranks
-        if not self.reshard_model:  
-            group = parallel_state.get_pipeline_model_parallel_group()
-            src = parallel_state.get_pipeline_model_parallel_first_rank()
-            output_ids = broadcast_2d_tensor(output_ids, src, group, dtype=output_ids.dtype)
+        if not self.trt_llm_exporter.reshard_model:  
+            output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
 
         max_len = (prompt_lengths + resp_lens).max().item()
         output_ids = output_ids[...,:max_len]

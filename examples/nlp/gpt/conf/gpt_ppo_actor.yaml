@@ -35,14 +35,18 @@ trainer:
     # but will not crash and training will still proceed
     rollout_batch_seq_length: null
 
+    # Accelerate training times by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
-      reshard: False # if True then reshard the model into TP only for inf
+      reshard: True # if True then reshard the model into TP only for inference
       max_context_len: ${int_div:${model.encoder_seq_length}, 2}
-      model_type: LLaMAForCausalLM
 
-      # Unload the TRTLLM engine during the training stage 
-      # (TODO: Current not supported)
+      # The model type TRTLLM will build, supported models are listed at:
+      # https://github.com/NVIDIA/TensorRT-LLM/blob/v0.9.0/tensorrt_llm/models/__init__.py#L75
+      model_type: LLaMAForCausalLM 
+
+      # Unload and reload the TRTLLM engine before and after the training stage 
+      # Reloading the engine incurs a constant time overhead
       unload_engine_train: False
 
     flask_server:
