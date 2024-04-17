@@ -87,7 +87,7 @@ This section is a step-by-step tutorial that walks you through how to run a full
    
       python3 -c "from datasets import load_dataset; load_dataset('nvidia/sft_datablend_v1', split='train').to_json('/path/to/nvidia_sft_datablend_v1_train.json')"
 
-  This will download the dataset to ``/path/to/nvidia_sft_datablend_v1_train.json``
+   This will download the dataset to ``/path/to/nvidia_sft_datablend_v1_train.json``
 
 
 4. Download and process preference helpfulness dataset:
