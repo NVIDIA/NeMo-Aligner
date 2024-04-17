@@ -75,17 +75,17 @@ This section is a step-by-step tutorial that walks you through how to run a full
 2. Download the red teaming dataset:
 
    .. code-block:: bash
-   
-      python3 -c "from datasets import load_dataset; dataset = load_dataset('Anthropic/hh-rlhf', data_dir='red-team-attempts')"
+
+      python3 -c "from datasets import load_dataset; load_dataset('Anthropic/hh-rlhf', data_dir='red-team-attempts' split='train').to_json('/path/to/anthropic_red_team_attempts_train.json')"
    
    This will download the dataset to ``anthropic_hh_red_team_attempts/anthropic_red_team_attempts_train.jsonl``
 
 
-3. Download and process SFT helpfulness dataset:
+3. Download SFT helpfulness dataset:
    
    .. code-block:: bash
    
-     [bash code]
+      python3 -c "from datasets import load_dataset; load_dataset('nvidia/sft_datablend_v1', split='train').to_json('/path/to/nvidia_sft_datablend_v1_train.json')"
 
 
 4. Download and process preference helpfulness dataset:
@@ -109,8 +109,8 @@ Step 2: Generate and revise responses to harmfulness prompts creating the SL-CAI
       --critique-revision-instructions-path CritiqueRevisionInstructions.json 
       --max-seq-length 4096 
       --tokenizer-library sentencepiece 
-      --tokenizer-model /models/mistral/mistral-7b-instruct/tokenizer.model 
-      --helpfulness-dataset-path /path/to/ultrachat_200k_sft/ultrachat_200k_train_sft_chat_template.jsonl 
+      --tokenizer-model /models/mistral/mistral-7b-instruct/tokenizer.model
+      --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json
       --output-filepath cai_revisions_aligner_chat_template.jsonl
 
 This will generate an SL-CAI dataset of prompts and revised responses as `cai_revisions_aligner_chat_template.jsonl`
