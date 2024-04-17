@@ -444,7 +444,7 @@ def main():
         helpfulness_dataset_path=args.helpfulness_dataset_path,
         cai_samples_filepath=cai_samples_filepath,
         blended_sl_cai_filename=args.output_filepath,
-        summary_filename=args.output_filepath.replace(".jsonl", ".summary.jsonl"),
+        summary_filename=args.output_filepath.replace(".json", ".summary.json"),
     )
     print("Done")
 
