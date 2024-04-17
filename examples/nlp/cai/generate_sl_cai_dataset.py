@@ -230,7 +230,6 @@ def generate_cai_dataset(
     assert save_file_path is not None and save_file_path != ""
     assert not os.path.exists(save_file_path), f"{save_file_path} already exists"
 
-    num_examples = min(num_examples, len(red_teaming_dataset_path))
     # load constitution critique/revision instructions
     critique_revision_instructions_set = load_critique_revision_instructions(critique_revision_instructions_filepath)
 
@@ -244,6 +243,10 @@ def generate_cai_dataset(
         return a_critique_list, a_revision_list
 
     red_teaming_prompts = get_red_team_train_human_prompts(red_teaming_dataset_path)
+
+    num_examples = len(red_teaming_prompts) if num_examples < 0 else min(num_examples, len(red_teaming_prompts))
+    assert num_examples > 0
+
     cai_samples = []
     num_batches = 0
     for index in tqdm.tqdm(range(0, num_examples, batch_size), desc="Generating CAI samples, batch #"):
