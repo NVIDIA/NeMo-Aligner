@@ -45,13 +45,14 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
 from nemo_aligner.utils.utils import configure_batch_sizes, cpu_weight_swap, masked_mean, offload_distributed_adam
 
 try:
-    from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
     from tensorrt_llm.bindings import GptSession
-    GptSession.refit_engine #check if TRTLLM Cpp runtime was compiled with engine refitting
+
+    from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
+
+    GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
     HAVE_TRTLLM = True
 except (ImportError, ModuleNotFoundError):
     HAVE_TRTLLM = False
@@ -330,8 +331,8 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
         if self.use_trtllm_generation:
             actor_output = self.trtllm_generate.generate(inputs)
-            response_tokens = actor_output['response_tokens']
-            response_lengths = actor_output['response_lengths']
+            response_tokens = actor_output["response_tokens"]
+            response_lengths = actor_output["response_lengths"]
         else:
             strategy = TrackLengthGPTModelTextGenerationStrategy(
                 model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
@@ -346,8 +347,10 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
             response_tokens = None
             if actor_output is not None:
-                response_tokens = torch.as_tensor(actor_output["token_ids"], dtype=torch.long, device=torch.cuda.current_device())
-            
+                response_tokens = torch.as_tensor(
+                    actor_output["token_ids"], dtype=torch.long, device=torch.cuda.current_device()
+                )
+
             response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
 
