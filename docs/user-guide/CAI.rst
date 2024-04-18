@@ -63,14 +63,16 @@ This section is a step-by-step tutorial that walks you through how to run a full
 
 Step 1: Download models and datasets
 #############################################################################
-1. Download ``Mistral-7B-Instruct`` and ``Mistral-7B`` LLM models from **TODO:fill-me** into the models folder.
+1. Download ``Mistral-7B-Instruct`` and ``Mistral-7B`` LLM models from https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 and https://huggingface.co/mistralai/Mistral-7B-v0.1 into the models folder.
 
    Then convert into .nemo format:
    
    .. code-block:: bash
    
       mkdir -p /models/mistral-7b/
-      python /opt/NeMo/scripts/nlp_language_modeling/convert_hf_llama_to_nemo.py --in-file /path/to/mistral --out-file /models/mistral/mistral-7b.nemo
+      mkdir -p /models/mistral-7b-instruct/
+      python /opt/NeMo/scripts/checkpoint_converters/convert_mistral_7b_hf_to_nemo.py --in-file /path/to/mistral-7b --out-file /models/mistral/mistral-7b.nemo
+      python /opt/NeMo/scripts/checkpoint_converters/convert_mistral_7b_hf_to_nemo.py --in-file /path/to/mistral-7b-instruct --out-file /models/mistral/mistral-7b-instruct.nemo
 
 
 2. Download the red teaming dataset:
