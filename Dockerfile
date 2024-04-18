@@ -68,12 +68,12 @@ RUN pip uninstall -y megatron-core && \
     pip install -e .
 
 # NeMo Aligner
-RUN git clone https://github.com/JimmyZhang12/NeMo-Aligner.git && \
+RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
     cd NeMo-Aligner && \
     git pull && \
     if [ ! -z $ALIGNER_COMMIT ]; then \
         git fetch origin $ALIGNER_COMMIT && \
-        git checkout jiemingz/trtllm_dockerfile; \
+        git checkout FETCH_HEAD;
     fi && \
     pip install --no-deps -e .
 
@@ -93,4 +93,3 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
 RUN cd TensorRT-LLM && \
     pip install ./build/tensorrt_llm*.whl
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.3/compat/lib.real/
-
