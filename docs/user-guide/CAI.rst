@@ -104,6 +104,24 @@ Step 1: Download models and datasets
 Step 2: Generate and revise responses to harmfulness prompts creating the SL-CAI dataset
 ###################################################################################################
 
+Run an inference server in the background using the following command:
+
+.. code-block:: bash
+
+   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py 
+           gpt_model_file=/models/mistral/mistral-7b-Instruct.nemo 
+           pipeline_model_parallel_split_rank=0 
+           server=True 
+           tensor_model_parallel_size=8 
+           pipeline_model_parallel_size=1 
+           trainer.precision=bf16 
+           trainer.devices=8 
+           trainer.num_nodes=1 
+           web_server=False 
+           port=5999 
+
+Please wait for the server to be ready before proceeeding.
+
 .. code-block:: bash
 
    python examples/nlp/cai/generate_sl_cai_dataset.py 
@@ -115,6 +133,7 @@ Step 2: Generate and revise responses to harmfulness prompts creating the SL-CAI
       --tokenizer-model /models/mistral/mistral-7b-instruct/tokenizer.model
       --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json
       --output-filepath cai_revisions_aligner_chat_template.json
+      --port-num 5999
 
 This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
 
