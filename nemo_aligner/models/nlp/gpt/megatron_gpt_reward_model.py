@@ -317,22 +317,24 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         """NOTE: Have to set strict to False because we have a rm head
         """
         # mcore uses distributed checkpointing
-        if "state_dict" in checkpoint and checkpoint["state_dict"]:
-            for index, module in enumerate(self.get_model_module_list()):
-                if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-                    checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
-                else:
-                    checkpoint_state_dict = checkpoint["state_dict"]
-                # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
-                checkpoint_state_dict = {
-                    key.replace("model.", ""): checkpoint_state_dict.pop(key)
-                    for key in list(checkpoint_state_dict.keys())
-                }
-                module.load_state_dict(checkpoint_state_dict, strict=False)
-        else:
-            # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
-            # see NLPModel.on_load_checkpoint
-            checkpoint["state_dict"] = {}
+        # FSDP supports the lagecy checkpointing or torch-FSDP-native sharded checkpointing
+        if not self.use_fsdp:
+            if "state_dict" in checkpoint and checkpoint["state_dict"]:
+                for index, module in enumerate(self.get_model_module_list()):
+                    if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+                        checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
+                    else:
+                        checkpoint_state_dict = checkpoint["state_dict"]
+                    # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
+                    checkpoint_state_dict = {
+                        key.replace("model.", ""): checkpoint_state_dict.pop(key)
+                        for key in list(checkpoint_state_dict.keys())
+                    }
+                    module.load_state_dict(checkpoint_state_dict, strict=False)
+            else:
+                # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
+                # see NLPModel.on_load_checkpoint
+                checkpoint["state_dict"] = {}
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
