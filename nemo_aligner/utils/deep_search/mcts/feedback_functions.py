@@ -122,7 +122,7 @@ class LLMJudgementFeedback(Feedback):
             print("evaluation", evaluation)
             rating_matches = re.findall(r"\[\[(\d+)\]\]", evaluation)
             score = float(rating_matches[-1])  # Get the last match
-            score = score / 10  # scale it to 0-1
+            score = score / 5  # scale it to 0-1
             print("score", score)
         except Exception as e:
             print("############ Inference failed ############")
@@ -163,8 +163,19 @@ class LLMJudgementFeedback(Feedback):
 <|The Start of Assistant's Conversation with User|>
 {response}
 <|The End of Assistant's Conversation with User|>"""
-
-        formatted = self.template.format(prompt=mt_bench_multi_turn)
+        self_rewarding_prompt = """Given the conversation below, review the assistant's response to the user's question using the additive 5-point scoring system described below. Points are accumulated based on the satisfaction of each criterion:
+- Add 1 point if the response is relevant and provides some information related to the user’s inquiry, even if it is incomplete or contains some irrelevant content.
+- Add another point if the response addresses a substantial portion of the user’s question, but does not completely resolve the query or provide a direct answer.
+- Award a third point if the response answers the basic elements of the user’s question in a useful way, regardless of whether it seems to have been written by an AI Assistant or if it has elements typically found in blogs or search results.
+- Grant a fourth point if the response is clearly written from an AI Assistant’s perspective, addressing the user’s question directly and comprehensively, and is well-organized and helpful, even if there is slight room for improvement in clarity, conciseness or focus.
+- Bestow a fifth point for a response that is impeccably tailored to the user’s question by an AI Assistant, without extraneous information, reflecting expert knowledge, and demonstrating a high-quality, engaging, and insightful answer.
+<|The Start of Assistant's Conversation with User|>
+{response}
+<|The End of Assistant's Conversation with User|>
+After examining the assistant's response:
+- Briefly justify your total score, up to 100 words.
+- Conclude with the score using the format: \"[[rating]]\", for example: \"Rating: [[5]]\""""
+        formatted = self.template.format(prompt=self_rewarding_prompt)
         return formatted
 
 
