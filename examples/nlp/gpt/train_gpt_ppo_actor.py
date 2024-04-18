@@ -35,6 +35,7 @@ from nemo_aligner.utils.train_script_utils import (
     add_custom_checkpoint_callback,
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
+    init_peft,
     init_using_ptl,
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
@@ -70,10 +71,12 @@ def main(cfg) -> None:
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
+    init_peft(ptl_model, cfg.model)
+
     init_policy_state_dict = None
 
-    # only need this if we are running with inital kl penalty
-    if cfg.trainer.ppo.initial_policy_kl_penalty > 0:
+    # only need this if we are running with inital kl penalty & full-parameter tuning
+    if cfg.trainer.ppo.initial_policy_kl_penalty > 0 and cfg.model.peft.peft_scheme == "none":
         init_policy_state_dict = retrieve_model_state_dict_in_cpu(
             ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
