@@ -60,7 +60,7 @@ This section is a step-by-step tutorial that walks you through how to run a full
 
 .. image:: ../assets/cai_flow.png
 
-:textcolor:`(WIP)` Step 1: Download models and datasets 
+Step 1: Download models and datasets
 #############################################################################
 1. Download the Mistral-7B-Instruct and Mistral-7B LLM models from **TODO:fill-me** into the models folder.
 
