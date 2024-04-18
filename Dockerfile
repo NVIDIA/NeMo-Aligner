@@ -73,7 +73,7 @@ RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
     git pull && \
     if [ ! -z $ALIGNER_COMMIT ]; then \
         git fetch origin $ALIGNER_COMMIT && \
-        git checkout FETCH_HEAD;
+        git checkout FETCH_HEAD; \
     fi && \
     pip install --no-deps -e .
 
