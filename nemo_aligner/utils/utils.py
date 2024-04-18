@@ -86,20 +86,28 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
     if save_top_only:
         return
 
+    from pathlib import Path
+
     if torch.distributed.get_rank() == 0:
+        mark_for_deletion = None
         for item in self._saved_checkpoint_paths:
             if str(item).endswith("-last"):
-                self._remove_checkpoint(trainer, item)
-                print("### DELETING", item)
+                mark_for_deletion = item
+    super(NeMoModelCheckpoint, self)._save_last_checkpoint(trainer, monitor_candidates)
+
+    if torch.distributed.get_rank() == 0 and mark_for_deletion is not None:
+        print("WANT TO DELETE", mark_for_deletion)
+
+        if Path(mark_for_deletion).exists():
+            mark_for_deletion = Path(mark_for_deletion).replace("_to_delete")
+            self._remove_checkpoint(trainer, mark_for_deletion)
 
     torch.distributed.barrier()
-    super(NeMoModelCheckpoint, self)._save_last_checkpoint(trainer, monitor_candidates)
 
     if is_train_end:
         # stop the checkpoint logic from saving another last checkpoint
         with patch.object(trainer, "val_check_interval", 0):
             self.on_train_end(trainer, pl_module)
-
 
 def load_from_nemo(
     cls, model_cfg, trainer, strict=True, modify_config_fn=None, restore_path=None, load_base_model_only=False
