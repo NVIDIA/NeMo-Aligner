@@ -6,11 +6,12 @@ Constitutional AI: Harmlessness from AI Feedback
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 
-Constitutional AI (CAI) is an approach by Anthropic to train AI systems that are helpful, honest, and harmless, without relying on human feedback labels for harmlessness.
+`Constitutional AI (CAI)`_ is an approach by Anthropic to train AI systems that are helpful, honest, and harmless, without relying on human feedback labels for harmlessness.
 CAI uses a set of natural language principles to guide AI behavior and self-improvement.
 The method consists of two stages: a supervised learning stage, where the AI critiques and revises its own responses according to the principles, and a reinforcement learning stage, where the AI learns from its own feedback based on the principles.
 CAI allows training a harmless but non-evasive AI assistant that engages with harmful queries by explaining its objections to them.
 
+.. _Constitutional AI (CAI): https://arxiv.org/abs/2212.08073
 
 CAI
 ###############
@@ -39,22 +40,22 @@ Reducing iteration time: obviating the need to collect new human feedback labels
 Train a CAI model
 #####################
 
-This section is a step-by-step tutorial that walks you through how to run a full CAI pipeline with a Mistral-7B LLM model. It includes the following:
+This section is a step-by-step tutorial that walks you through how to run a full CAI pipeline with a ``Mistral-7B`` LLM model. It includes the following:
 
 1. Data download and preprocessing.
 
 2. Generate responses to harmfulness prompts using a helpful-only AI assistant. Ask the model to critique its response according to a principle in the constitution, and then revise the original response in light of the critique.
 
-3. Finetune Mistral-7B with SFT on the revised responses to create a Mistral-7B-SL-CAI model.
+3. Finetune ``Mistral-7B`` with SFT on the revised responses to create a ``Mistral-7B-SL-CAI`` model.
 
 4. 
-   a. Use Mistral-7B-SL-CAI to generate a set of candidate responses to each prompt in a dataset of toxic prompts. 
-   b. Formulate each prompt and pair into a multiple choice question, where we ask Mixtral-8x7B which response is best according to the constitution.
+   a. Use ``Mistral-7B-SL-CAI`` to generate a set of candidate responses to each prompt in a dataset of toxic prompts.
+   b. Formulate each prompt and pair into a multiple choice question, where we ask ``Mixtral-8x7B`` which response is best according to the constitution.
    c. Blend the AI feedback preference dataset (prompts and pairs) with human feedback helpfulness dataset.
 
 5. Train a RM.
 
-6. Finetune the Mistral-7B-SL-CAI with PPO and the RM to train a Mistral-7B-RL-CAI model.
+6. Finetune the ``Mistral-7B-SL-CAI`` with PPO and the RM to train a ``Mistral-7B-RL-CAI`` model.
 
 7. Inference.
 
@@ -62,7 +63,7 @@ This section is a step-by-step tutorial that walks you through how to run a full
 
 Step 1: Download models and datasets
 #############################################################################
-1. Download the Mistral-7B-Instruct and Mistral-7B LLM models from **TODO:fill-me** into the models folder.
+1. Download ``Mistral-7B-Instruct`` and ``Mistral-7B`` LLM models from **TODO:fill-me** into the models folder.
 
    Then convert into .nemo format:
    
@@ -115,7 +116,7 @@ Step 2: Generate and revise responses to harmfulness prompts creating the SL-CAI
       --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json
       --output-filepath cai_revisions_aligner_chat_template.json
 
-This will generate an SL-CAI dataset of prompts and revised responses as `cai_revisions_aligner_chat_template.json`
+This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
 
 Step 3: Finetune Mistral-7B on the revised responses to create a Mistral-7B-SL-CAI model
 ######################################################################################################
@@ -160,7 +161,7 @@ Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
       --output-dir .
       --output-filename-prefix cai_rlaif
 
-This will create the rl-cai dataset files in the defined output folder with the given output filename prefix. 
+This will create the ``rl-cai`` dataset files in the defined output folder with the given output filename prefix.
 
 
 Step 5: Train the RM
@@ -187,7 +188,7 @@ Step 5: Train the RM
       trainer.rm.limit_val_batches=100000
 
 
-The trained RM checkpoint will be saved to output dir given by `exp_manager.explicit_log_dir`. 
+The trained RM checkpoint will be saved to output dir given by ``exp_manager.explicit_log_dir``.
 
 Step 6: Finetune Mistral-7B-SL-CAI with PPO and the RM to train a Mistral-7B-RL-CAI model
 ##############################################################################################
@@ -227,7 +228,7 @@ Run the following command to launch actor training and reference policy server:
       remote_critic_rm.critic.ip=<ip to critic service>
       remote_critic_rm.critic.port=5567
 
-The trained policy (LLM) checkpoint will be saved to output dir given by `exp_manager.explicit_log_dir`. 
+The trained policy (LLM) checkpoint will be saved to output dir given by ``exp_manager.explicit_log_dir``.
 
 Step 7: Inference
 ##################
