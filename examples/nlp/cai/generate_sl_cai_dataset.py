@@ -230,6 +230,11 @@ def generate_cai_dataset(
     assert save_file_path is not None and save_file_path != ""
     assert not os.path.exists(save_file_path), f"{save_file_path} already exists"
 
+    log_dir = os.path.join(os.path.dirname(save_file_path), "cai_output")
+    os.makedirs(log_dir, exist_ok=True)
+    output_path_critique_revision = os.path.join(log_dir, f"cai_critique_revision_samples.json")
+    output_path_cai_samples = os.path.join(log_dir, f"cai_samples.json")
+
     # load constitution critique/revision instructions
     critique_revision_instructions_set = load_critique_revision_instructions(critique_revision_instructions_filepath)
 
@@ -248,6 +253,7 @@ def generate_cai_dataset(
     assert num_examples > 0
 
     cai_samples = []
+    critique_revision_samples = []
     num_batches = 0
     for index in tqdm.tqdm(range(0, num_examples, batch_size), desc="Generating CAI samples, batch #"):
         red_teaming_prompts_list = red_teaming_prompts[index : index + batch_size]
@@ -273,6 +279,7 @@ def generate_cai_dataset(
         for sample in cai_batch_sample:
             chat_formatted_cai_sample = generate_chat_prompt(sample=sample)
             cai_samples.append(chat_formatted_cai_sample)
+            critique_revision_samples.append(sample)
         print("Done")
 
         num_batches += 1
@@ -289,6 +296,15 @@ def generate_cai_dataset(
             json_line = json.dumps(sample)
             f.write(json_line + "\n")
 
+    # logs (saving all raw files)
+    with open(output_path_critique_revision, "w") as f:
+        json.dump(critique_revision_samples, f, indent=4)
+
+    with open(output_path_cai_samples, "w") as f:
+        for sample in cai_samples:
+            json_line = json.dumps(sample)
+            f.write(json_line + "\n")
+
     return cai_samples
 
 
@@ -301,15 +317,30 @@ def remove_long_dialogs_wrapper(
     assert tokenizer_library is not None
 
     remove_long_out_dir = os.path.join(os.path.dirname(input_file_path), "removed_long_dialogs")
+    statistics_file_path = os.path.join(remove_long_out_dir, "remove_long_dialogs_statistics.json")
     os.makedirs(remove_long_out_dir, exist_ok=True)
+
+    import shutil
+    copy_input_file_path = os.path.join(remove_long_out_dir, os.path.basename(input_file_path))
+    shutil.copy(input_file_path, copy_input_file_path)
+
     d = remove_long_dialogs(
-        input_file_path=input_file_path,
+        input_file_path=copy_input_file_path,
         max_seq_length=max_seq_length,
         tokenizer_model=tokenizer_model,
         tokenizer_library=tokenizer_library,
         output_dir=remove_long_out_dir,
         use_pool=True,
     )
+
+    # save output statistics
+    with open(statistics_file_path, 'w') as f:
+        json.dump(d, f, indent=4)
+
+    # delete files
+    if os.path.exists(copy_input_file_path):
+        os.remove(copy_input_file_path)
+
     return d["output_file"]
 
 
@@ -371,8 +402,7 @@ def blend_cai_sft_dataset(helpfulness_dataset_path, cai_samples_filepath, blende
     # create a summary file
     with open(summary_filename, "w") as f:
         summary_dict = dict(input_files=input_files, output_file=blended_sl_cai_filename, prompt_template="chat")
-
-        json.dump(summary_dict, f)
+        json.dump(summary_dict, f, indent=4)
 
 
 def prepare_args():
@@ -417,6 +447,7 @@ def main():
     random.seed(args.seed)
     np.random.seed(args.seed)
 
+    print("Generating CAI samples...")
     generate_cai_dataset(
         red_teaming_dataset_path=args.red_teaming_prompts_dataset_path,
         few_shot_samples_filepath=args.few_shot_prompts_dataset_path,
@@ -428,24 +459,23 @@ def main():
         port_num=args.port_num,
     )
 
-    cai_samples_filepath = (
-        args.output_filepath
-        if args.max_seq_length is None
-        else remove_long_dialogs_wrapper(
+    print("Blending CAI samples with the helpfulness dataset...")
+    blend_cai_sft_dataset(
+        helpfulness_dataset_path=args.helpfulness_dataset_path,
+        cai_samples_filepath=args.output_filepath,
+        blended_sl_cai_filename=args.output_filepath,
+        summary_filename=args.output_filepath.replace(".json", ".summary.json"),
+    )
+
+    if args.max_seq_length is not None:
+        print("Removing long dialogs from dataset...")
+        remove_long_dialogs_wrapper(
             input_file_path=args.output_filepath,
             max_seq_length=args.max_seq_length,
             tokenizer_model=args.tokenizer_model,
             tokenizer_library=args.tokenizer_library,
         )
-    )
 
-    print("Blending CAI samples with the helpfulness dataset...")
-    blend_cai_sft_dataset(
-        helpfulness_dataset_path=args.helpfulness_dataset_path,
-        cai_samples_filepath=cai_samples_filepath,
-        blended_sl_cai_filename=args.output_filepath,
-        summary_filename=args.output_filepath.replace(".json", ".summary.json"),
-    )
     print("Done")
 
 
