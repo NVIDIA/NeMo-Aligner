@@ -321,6 +321,7 @@ def remove_long_dialogs_wrapper(
     os.makedirs(remove_long_out_dir, exist_ok=True)
 
     import shutil
+
     copy_input_file_path = os.path.join(remove_long_out_dir, os.path.basename(input_file_path))
     shutil.copy(input_file_path, copy_input_file_path)
 
@@ -334,7 +335,7 @@ def remove_long_dialogs_wrapper(
     )
 
     # save output statistics
-    with open(statistics_file_path, 'w') as f:
+    with open(statistics_file_path, "w") as f:
         json.dump(d, f, indent=4)
 
     # delete files

@@ -81,7 +81,9 @@ def remove_long_dialogs(
                 continue
             o.write(line)
 
-    return dict(output_file=output_file_name,
-                num_removed_ids=len(removed_ids),
-                removed_ids=list(removed_ids),
-                length_statistics=length_statistics)
+    return dict(
+        output_file=output_file_name,
+        num_removed_ids=len(removed_ids),
+        removed_ids=list(removed_ids),
+        length_statistics=length_statistics,
+    )
