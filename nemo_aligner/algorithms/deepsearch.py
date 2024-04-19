@@ -382,8 +382,8 @@ class DeepSearchTrainer:
 
                 if inner_step == self.max_steps:
                     self.epoch += 1
-                    forced_run_val = self.cfg.val_check_interval > 0
-                    forced_save_model = self.cfg.save_interval > 0
+                    forced_run_val = self.cfg.val_check_interval > 0 and (self.epoch % self.cfg.epoch_per_val == 0)
+                    forced_save_model = self.cfg.save_interval > 0 and (self.epoch % self.cfg.epoch_per_val == 0)
 
                 run_time_exceeded = self.run_timer.is_finished()
 
