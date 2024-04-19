@@ -70,6 +70,10 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
 
+  # if the inference microbatch size is big, it's possible
+  # to split it using forward mbs and run inference iteratively
+  forward_mbs: ${trainer.ppo.inference_micro_batch_size}
+
   encoder_seq_length: 4096
   max_position_embeddings: ${model.encoder_seq_length}
 
