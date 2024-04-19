@@ -27,7 +27,7 @@ def _str_list2numpy(str_list: List[str]) -> np.ndarray:
 
 
 def get_reward(
-    sentences: List[str], add_EOS=False, host="localhost", port=5555, model_name="reward_model",
+    sentences: List[str], add_EOS=False, host="localhost", port=5555, model_name="reward_model", round_to_int=True
 ):
     sentences = _str_list2numpy(sentences)
 
@@ -52,8 +52,11 @@ def get_reward(
     # return all_rewards, all_exceeded
     outputs = []
     for reward in all_rewards:
-        reward_each = [min(4.0, max(0.0, float(r))) for r in reward]
-        reward_each = [round(r) for r in reward_each]
+        if round_to_int:
+            reward_each = [min(4.0, max(0.0, float(r))) for r in reward]
+            reward_each = [round(r) for r in reward_each]
+        else:
+            reward_each = reward
         outputs.append(reward_each)
     return outputs
 

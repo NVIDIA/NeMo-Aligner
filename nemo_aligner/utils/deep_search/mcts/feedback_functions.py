@@ -118,10 +118,10 @@ class RegressionRMFeedback(Feedback):
         # response = "\n".join([i for i in response.split("\n") if not i.startswith("<extra_id_2>")])
         response = response + "<extra_id_2>"
         try:
-            evaluate = get_reward([response], False, self.host, self.port)[0]
+            evaluate = get_reward([response], False, self.host, self.port, round_to_int=False)[0]
 
-            print(evaluate)
-            score = (evaluate[0] - 1) / 4  # score from 1 to 5
+            score = (evaluate[4] - 1) / 4  # score from 1 to 5
+            print(evaluate, score)
             # compute the distance between the two vectors
             # distance = sum([int(bool(a - b)) for a, b in zip(numbers, evaluate)])
 
