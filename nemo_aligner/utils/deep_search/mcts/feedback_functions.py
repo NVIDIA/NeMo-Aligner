@@ -96,6 +96,47 @@ class SteerLMFeedback(Feedback):
             return score
 
 
+class RegressionRMFeedback(Feedback):
+    def __init__(self):
+        # local_rank = os.getenv("local_rank", "0")
+        self.host = os.getenv("REWARD_SERVER_HOST", "localhost")
+        self.port = os.getenv("REWARD_SERVER_PORT", "1234")
+
+    def score(self, response, data_id):
+        """
+        score the response
+        """
+        # remove the trailing extra_id_1
+        if response.endswith("<extra_id_1>"):
+            response = response[: -len("<extra_id_1>")]
+        # # get the expected answer, e.g. 'quality:4,toxicity:0,humor:0,creativity:0,helpfulness:4,correctness:4,coherence:4,complexity:4,verbosity:2'
+        # attribute_str = response.split("<extra_id_2>")[-1].split("\n")[0]
+        # # extract the numbers
+        # attributes = attribute_str.split(",")
+        # numbers = [int(attr.split(":")[-1]) for attr in attributes]
+        # # remove the <extra_id_2> line
+        # response = "\n".join([i for i in response.split("\n") if not i.startswith("<extra_id_2>")])
+        response = response + "<extra_id_2>"
+        try:
+            evaluate = get_reward([response], False, self.host, self.port)[0]
+
+            print(evaluate)
+            score = (evaluate[0] - 1) / 4  # score from 1 to 5
+            # compute the distance between the two vectors
+            # distance = sum([int(bool(a - b)) for a, b in zip(numbers, evaluate)])
+
+            # normalize the distance to be between 0 and 1
+            # distance = distance / (len(numbers))
+
+            # score = 1 - distance
+        except Exception as e:
+            print("############ Inference failed ############")
+            print(e)
+            score = 0.0
+        finally:
+            return score
+
+
 class LLMJudgementFeedback(Feedback):
     def __init__(self, template="extra_sft_empty_sys"):
         # local_rank = os.getenv("local_rank", "0")

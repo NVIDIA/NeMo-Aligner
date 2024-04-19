@@ -45,6 +45,7 @@ from nemo_aligner.utils.deep_search.mcts.feedback_functions import (
     GSK8KFeedbackDataset,
     GSK8KFeedbackHF,
     LLMJudgementFeedback,
+    RegressionRMFeedback,
     SteerLMFeedback,
 )
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
@@ -269,6 +270,8 @@ def get_dataset(cfg):
         score_fn = SteerLMFeedback()
     elif cfg.model.mcts.feedback == "llm_as_a_judge":
         score_fn = LLMJudgementFeedback()
+    elif cfg.model.mcts.feedback == "regression_rm":
+        score_fn = RegressionRMFeedback()
     elif cfg.model.mcts.feedback == "dummy":
         score_fn = DummyScore()
     else:
