@@ -180,9 +180,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             token_values = batch["token_values"]
 
             # TODO(geshen): change to cross entropy
-            value_loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                values, token_values, reduction="none"
-            )
+            value_loss = torch.nn.functional.binary_cross_entropy_with_logits(values, token_values, reduction="none")
             value_loss = compute_masked_per_sample_average(self.value_loss_weight * value_loss, mask, dim=-1)
 
         return value_loss
@@ -234,7 +232,9 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                     required_keys.update(("tokens", "position_ids", "train_mode"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("tokens", "actions", "action_probs", "reward", "mcts_mask", "train_mode", "token_values"))
+                    required_keys.update(
+                        ("tokens", "actions", "action_probs", "reward", "mcts_mask", "train_mode", "token_values")
+                    )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 

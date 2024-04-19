@@ -35,9 +35,11 @@ from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
 _SAVE_TOP_K = False
 
+
 def is_save_top_k():
     global _SAVE_TOP_K
     return _SAVE_TOP_K
+
 
 @contextmanager
 def saving_top_k():
@@ -47,6 +49,7 @@ def saving_top_k():
         yield
     finally:
         _SAVE_TOP_K = False
+
 
 def preemptable_save(obj, save_path):
     save_path = Path(save_path).resolve()
@@ -62,6 +65,7 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     """A save connector that will ask the Reward model to not try to load
         the rm head if load_base_model_only is True
     """
+
     def __init__(self, *args, load_base_model_only=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.__load_base_model_only = load_base_model_only
@@ -108,6 +112,7 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
         # stop the checkpoint logic from saving another last checkpoint
         with patch.object(trainer, "val_check_interval", 0):
             self.on_train_end(trainer, pl_module)
+
 
 def load_from_nemo(
     cls, model_cfg, trainer, strict=True, modify_config_fn=None, restore_path=None, load_base_model_only=False
