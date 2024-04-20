@@ -35,7 +35,7 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.data.nlp.builders import build_dataloader
-from nemo_aligner.data.nlp.datasets import MCTSDataset
+from nemo_aligner.data.nlp.datasets import LLaMa3ChatDataset
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, MathSandBoxedFeedBack
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
@@ -137,16 +137,10 @@ def collate_fn(batch):
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
-    val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
-    test_ds = MCTSDataset(cfg.dataset.data_prefix["test"], cfg.dataset.prompt_template_name)
-
     feedback = MathSandBoxedFeedBack(
         host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT")
     )
-
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
-
     cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
 
     logging.info("\n\n************** Experiment configuration ***********")
@@ -167,6 +161,14 @@ def main(cfg) -> None:
         load_base_model_only=not cfg.pretrained_checkpoint.from_mcts_trained,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
+
+    train_ds = LLaMa3ChatDataset(
+        cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name, ptl_model.tokenizer
+    )
+    val_ds = LLaMa3ChatDataset(
+        cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name, ptl_model.tokenizer
+    )
+    test_ds = LLaMa3ChatDataset(cfg.dataset.data_prefix["test"], cfg.dataset.prompt_template_name, ptl_model.tokenizer)
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 

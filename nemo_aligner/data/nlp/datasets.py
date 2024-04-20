@@ -17,7 +17,7 @@
 import os
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import List
+from typing import Any, List
 
 import jsonlines
 import numpy as np
@@ -484,12 +484,22 @@ Assistant:
 
 raw = """{prompt}"""
 
+# llama3 = [
+# {"role": "system", "content": "You are a pirate chatbot who always responds in pirate speak!"},
+# {"role": "user", "content": ""}, #TODO: to fill
+# ]
+llama3 = {
+    "role": "system",
+    "content": "You're an expert Python programmer and mathematician. Help the user to solve this problem as accurate as possible. Make sure to put the answer (and only answer) inside \\boxed{{}}.",
+}
+
 TEMPLATES = {
     "steerlm": steerlm_template,
     "mistral": mistral_template,
     "sft": prompt_template,
     "mathtool": mathtool_template,
     "raw": raw,
+    "llama3": llama3,
 }
 
 
@@ -514,6 +524,39 @@ class MCTSDataset:
     def __getitem__(self, idx):
         item = deepcopy(self.ds[idx])
         item["question"] = self.template.format(prompt=item["question"])
+        item["data_id"] = item["data_id"]
+        return item
+
+    def __len__(self):
+        return len(self.ds)
+
+
+@dataclass
+class LLaMa3ChatDataset:
+    jsonl_file_path: str
+    prompt_template: str
+    tokenizer: Any
+
+    def __post_init__(self):
+        assert self.prompt_template in TEMPLATES, "{} is not in templates. templates has these {}".format(
+            self.prompt_template, TEMPLATES.keys()
+        )
+        assert self.jsonl_file_path, "jsonl_file_path={} path must exist".format(self.jsonl_file_path)
+
+        with jsonlines.open(self.jsonl_file_path) as reader:
+            ds = [obj for obj in reader]
+
+        self.template = TEMPLATES[self.prompt_template]
+        self.ds = ds
+
+    def __getitem__(self, idx):
+        item = deepcopy(self.ds[idx])
+
+        user_msg = {"role": "system", "content": item["question"]}
+        message = self.tokenizer.tokenizer.apply_chat_template(
+            [llama3, user_msg], add_generation_prompt=True, tokenize=False
+        )
+        item["question"] = message
         item["data_id"] = item["data_id"]
         return item
 
