@@ -39,7 +39,11 @@ trainer:
     trt_llm:
       enable: False
       reshard: True # if True then reshard the model into TP only for inference
-      max_context_len: ${int_div:${model.encoder_seq_length}, 2}
+
+      # TRTLLM preallocates activation memory according to the number of input tokens
+      # By default, assume the max input length is half of the model sequence length
+      max_input_len: ${int_div:${model.encoder_seq_length}, 2}
+      max_input_tokens: ${multiply:${trainer.ppo.trt_llm.max_input_len}, ${model.ppo.rollout_micro_batch_size}}
 
       # The model type TRTLLM will build, supported models are listed at:
       # https://github.com/NVIDIA/TensorRT-LLM/blob/v0.9.0/tensorrt_llm/models/__init__.py#L75

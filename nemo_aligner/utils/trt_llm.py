@@ -15,7 +15,8 @@ class GPTGenerateTRTLLM:
         self.cfg = cfg
         self.tokenizer = tokenizer
         self.max_generation_length = self.cfg.ppo.length_params.get("max_length", 1024)
-        self.max_context_length = self.cfg.ppo.trt_llm.get("max_context_len", 1024)
+        self.max_input_len = self.cfg.ppo.trt_llm.get("max_input_len", 1024)
+        self.max_input_tokens = self.cfg.ppo.trt_llm.get("max_input_tokens", 4096)
         self.generation_batch_size = self.cfg.ppo.get("rollout_micro_batch_size", 4)
         self.unload_engine_train = self.cfg.ppo.trt_llm.get("unload_engine_train", False)
         self.trt_model_type = self.cfg.ppo.trt_llm.get("model_type", "LLaMAForCausalLM")
@@ -48,7 +49,8 @@ class GPTGenerateTRTLLM:
                 nemo_model_config=self.cfg,
                 trt_model_type=self.trt_model_type,
                 tokenizer=self.tokenizer,
-                max_input_len=self.max_context_length,
+                max_input_len=self.max_input_len,
+                max_input_tokens=self.max_input_tokens,
                 max_output_len=self.max_generation_length,
                 max_batch_size=self.generation_batch_size,
                 reshard_model=self.cfg.ppo.trt_llm.get("reshard", True),
