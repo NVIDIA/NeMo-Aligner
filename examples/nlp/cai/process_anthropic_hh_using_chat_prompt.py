@@ -28,16 +28,13 @@ example for preprocessing Anthropic helpful-only dataset:
 python process_anthropic_hh_using_chat_prompt.py
     --output-dir <output-dir>
     --dataset-dir-name helpful-base helpful-online helpful-rejection-sampled
-    --output-file-name-prefix anthropic_helpful_only
-    --add-eos False
-    
+    --output-file-name-prefix anthropic_helpful_only    
     
 example for preprocessing Anthropic HH full dataset:
 
 python process_anthropic_hh_using_chat_prompt.py
     --output-dir <output-dir>
     --output-file-name-prefix anthropic_hh_full
-    --add-eos False
 """
 
 
@@ -51,7 +48,7 @@ def prepare_args():
     parser.add_argument(
         "--add-eos",
         type=str,
-        default="False",
+        default="True",
         choices=["False", "True"],
         help="add <extra_id_1> token at the end of a comparison prompt?",
     )
