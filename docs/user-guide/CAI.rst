@@ -176,11 +176,13 @@ Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
 
 .. code-block:: bash
 
-   python examples/nlp/cai/generate_rl_cai_dataset.py 
-      --batch-size 128 
+   python examples/nlp/cai/generate_rl_cai_dataset.py
+      --batch-size 128
       --ngc-api-key nvapi-**_YOUR-NGC-KEY-GOES-IN-HERE_**
-      --output-dir .
-      --output-filename-prefix cai_rlaif
+      --red-teaming-file-path /path/to/anthropic_red_team_attempts_train.json
+      --output-dir /path/to/blend_preference_dataset_with_anthropic_helpful_only
+      --output-filename-prefix blend_mistral_7b_cai_preference_dataset_with_anthropic_helpful_only
+      --blend-with "{'name': 'anthropic_helpful_only', 'train': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_comparisons_with_chat_prompt.jsonl']}, 'test': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_comparisons_with_chat_prompt.jsonl']}}"
 
 This will create the ``rl-cai`` dataset files in the defined output folder with the given output filename prefix.
 
