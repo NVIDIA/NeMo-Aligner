@@ -165,7 +165,7 @@ Note that you would need to set up multi-node training run in your cluster env, 
       model.data.chat_prompt_tokens.system_turn_start="'<extra_id_0>'"
       model.data.chat_prompt_tokens.turn_start="'<extra_id_1>'"
       model.data.chat_prompt_tokens.label_start="'<extra_id_2>'"
-      exp_manager.explicit_log_dir=<path to output dir>
+      exp_manager.explicit_log_dir=/path/to/sft_log_dir
       model.optim.lr=1e-6
       model.answer_only_loss=True
       trainer.sft.limit_val_batches=40
@@ -178,6 +178,25 @@ Note that you would need to set up multi-node training run in your cluster env, 
 Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
 ##############################################################################################################
 
+Run an inference server in the background using the following command:
+
+.. code-block:: bash
+
+   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py
+           gpt_model_file=/path/to/sft_log_dir/checkpoints/megatron_gpt_sft.nemo
+           pipeline_model_parallel_split_rank=0
+           server=True
+           tensor_model_parallel_size=8
+           pipeline_model_parallel_size=1
+           trainer.precision=bf16
+           trainer.devices=8
+           trainer.num_nodes=1
+           web_server=False
+           port=5999
+
+Please wait for the server to be ready before proceeding.
+
+
 .. code-block:: bash
 
    python examples/nlp/cai/generate_rl_cai_dataset.py
@@ -187,6 +206,7 @@ Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
       --output-dir /path/to/blend_preference_dataset_with_anthropic_helpful_only
       --output-filename-prefix blend_mistral_7b_cai_preference_dataset_with_anthropic_helpful_only
       --blend-with "{'name': 'anthropic_helpful_only', 'train': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_comparisons_with_chat_prompt.jsonl']}, 'test': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_comparisons_with_chat_prompt.jsonl']}}"
+      --port-num 5999
 
 This will create the ``rl-cai`` dataset files in the defined output folder with the given output filename prefix.
 
