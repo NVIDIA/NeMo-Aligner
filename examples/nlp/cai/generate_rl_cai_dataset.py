@@ -305,7 +305,7 @@ def prepare_args():
         type=str,
         default=None,
         help="template:"
-        "{'name': '<some-name-for the blending>', '<split-name>': {'prompts': ['<path>', '<path-2>'], 'comparisons': ['<path-1>', '<path-2>']}"
+        "{'name': '<some-name-for the blending>', '<split-name>': {'prompts': ['<path>', '<path-2>'], 'comparisons': ['<path-1>', '<path-2>']}}"
         ""
         "you must set a valid name and one or more keys of <split-name>, one for each split in '--splits' argument",
     )
