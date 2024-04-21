@@ -98,7 +98,7 @@ Step 1: Download models and datasets
    .. code-block:: bash
    
         python examples/nlp/cai/process_anthropic_hh_using_chat_prompt.py
-           --output-dir <output-dir>
+           --output-dir /path/to/anthropic_helpful_only
            --dataset-dir-name helpful-base helpful-online helpful-rejection-sampled
            --output-file-name-prefix anthropic_helpful_only
 
