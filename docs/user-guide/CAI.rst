@@ -122,7 +122,7 @@ Run an inference server in the background using the following command:
            web_server=False 
            port=5999 
 
-Please wait for the server to be ready before proceeeding.
+Please wait for the server to be ready before proceeding.
 
 .. code-block:: bash
 
@@ -295,4 +295,4 @@ To start inference, run an inference server in the background using the followin
            web_server=False 
            port=1427 
 
-Please wait for the server to be ready before proceeeding, and follow the on-screen directive.
+Please wait for the server to be ready before proceeding, and follow the on-screen directive.
