@@ -134,7 +134,7 @@ Please wait for the server to be ready before proceeeding.
       --tokenizer-library sentencepiece 
       --tokenizer-model /models/mistral/mistral-7b-instruct/tokenizer.model
       --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json
-      --output-filepath cai_revisions_aligner_chat_template.jsonl
+      --output-filepath /path/to/cai_revisions_aligner_chat_template.jsonl
       --port-num 5999
 
 This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
@@ -152,11 +152,11 @@ Note that you would need to set up multi-node training run in your cluster env, 
       model.data.num_workers=0
       model.data.train_ds.micro_batch_size=1
       model.data.train_ds.global_batch_size=128
-      model.data.train_ds.file_path=<path to sl cai training dataset, e.g. `cai_revisions_aligner_chat_template.jsonl`>
+      model.data.train_ds.file_path=/path/to/cai_revisions_aligner_chat_template.jsonl
       model.data.train_ds.max_seq_length=4096
       model.data.validation_ds.micro_batch_size=1
       model.data.validation_ds.global_batch_size=128
-      model.data.validation_ds.file_path=<path to validation dataset, can be same as 'model.data.train_ds.file_path'>
+      model.data.validation_ds.file_path=/path/to/cai_revisions_aligner_chat_template.jsonl
       model.data.chat=True
       model.data.chat_prompt_tokens.system_turn_start="'<extra_id_0>'"
       model.data.chat_prompt_tokens.turn_start="'<extra_id_1>'"
