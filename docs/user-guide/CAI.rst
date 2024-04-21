@@ -79,7 +79,7 @@ Step 1: Download models and datasets
 
    .. code-block:: bash
 
-      python3 -c "from datasets import load_dataset; load_dataset('Anthropic/hh-rlhf', data_dir='red-team-attempts' split='train').to_json('/path/to/anthropic_red_team_attempts_train.json')"
+      python3 -c "from datasets import load_dataset; load_dataset('Anthropic/hh-rlhf', data_dir='red-team-attempts', split='train').to_json('/path/to/anthropic_red_team_attempts_train.json')"
    
    This will download the dataset to ``/path/to/anthropic_red_team_attempts_train.json``
 
@@ -113,7 +113,7 @@ Run an inference server in the background using the following command:
    python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py 
            gpt_model_file=/models/mistral/mistral-7b-Instruct.nemo 
            pipeline_model_parallel_split_rank=0 
-           server=True 
+           server=True
            tensor_model_parallel_size=8 
            pipeline_model_parallel_size=1 
            trainer.precision=bf16 
