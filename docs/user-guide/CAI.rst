@@ -134,7 +134,7 @@ Please wait for the server to be ready before proceeeding.
       --tokenizer-library sentencepiece 
       --tokenizer-model /models/mistral/mistral-7b-instruct/tokenizer.model
       --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json
-      --output-filepath cai_revisions_aligner_chat_template.json
+      --output-filepath cai_revisions_aligner_chat_template.jsonl
       --port-num 5999
 
 This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
