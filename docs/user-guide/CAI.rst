@@ -132,12 +132,16 @@ Please wait for the server to be ready before proceeeding.
       --critique-revision-instructions-path CritiqueRevisionInstructions.json 
       --max-seq-length 4096 
       --tokenizer-library sentencepiece 
-      --tokenizer-model /models/mistral/mistral-7b-instruct/tokenizer.model
+      --tokenizer-model /path/to/<TOKENIZER_FILE_NAME>.model
       --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json
       --output-filepath /path/to/cai_revisions_aligner_chat_template.jsonl
       --port-num 5999
 
 This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
+
+*NOTE: The tokenizer file can be found by extracting the .nemo checkpoint using `tar -xf /models/mistral/mistral-7b-Instruct.nemo`.
+There are 2 tokenizer files that end with `*.model` in the model checkpoint and they are the same, so you can use either one for data processing.*
+
 
 Step 3: Finetune Mistral-7B on the revised responses to create a Mistral-7B-SL-CAI model
 ######################################################################################################
