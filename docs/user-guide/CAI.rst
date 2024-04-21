@@ -148,7 +148,7 @@ Note that you would need to set up multi-node training run in your cluster env, 
 
    python examples/nlp/gpt/train_gpt_sft.py
       model.megatron_amp_O2=True
-      model.restore_from_path=<path to pretrained mistral 7B model, e.g. mistral-7b.nemo>
+      model.restore_from_path=/models/mistral/mistral-7b.nemo
       model.data.num_workers=0
       model.data.train_ds.micro_batch_size=1
       model.data.train_ds.global_batch_size=128
