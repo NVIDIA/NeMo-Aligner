@@ -235,5 +235,8 @@ class GPTRewardModel(GPTModel):
 
         if not self.return_rm_head_in_state_dict:
             sharded_state_dict = {k: v for k, v in sharded_state_dict.items() if "rm_head" not in k}
+        else:
+            # RM doesn't support fp8, no need for the extra state for backwards compatability
+            sharded_state_dict = {k: v for k, v in sharded_state_dict.items() if "rm_head._extra_state" not in k}
 
         return sharded_state_dict
