@@ -233,7 +233,7 @@ def generate_cai_dataset(
     log_dir = os.path.join(os.path.dirname(save_file_path), "cai_output")
     os.makedirs(log_dir, exist_ok=True)
     output_path_critique_revision = os.path.join(log_dir, f"cai_critique_revision_samples.json")
-    output_path_cai_samples = os.path.join(log_dir, f"cai_samples.json")
+    output_path_cai_samples = os.path.join(log_dir, f"cai_samples.jsonl")
 
     # load constitution critique/revision instructions
     critique_revision_instructions_set = load_critique_revision_instructions(critique_revision_instructions_filepath)
