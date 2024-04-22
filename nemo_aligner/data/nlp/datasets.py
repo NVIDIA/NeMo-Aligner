@@ -552,7 +552,7 @@ class LLaMa3ChatDataset:
     def __getitem__(self, idx):
         item = deepcopy(self.ds[idx])
 
-        user_msg = {"role": "system", "content": item["question"]}
+        user_msg = {"role": "user", "content": item["question"]}
         message = self.tokenizer.tokenizer.apply_chat_template(
             [llama3, user_msg], add_generation_prompt=True, tokenize=False
         )
