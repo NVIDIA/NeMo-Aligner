@@ -79,35 +79,12 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
             def loss_func(output_tensor):
                 # Loss per micro batch (ub).
                 loss_for_ub = self.loss_func(output_tensor, batch["labels"])
-                if validation_step and not self.cfg.data.get("validation_drop_last", True):
-                    num_valid_tokens_in_ub = batch["loss_mask"].sum()
-                    if loss_for_ub.isnan():
-                        assert batch["loss_mask"].count_nonzero() == 0, "Got NaN loss with non-empty input"
-                        loss_sum_for_ub = torch.zeros_like(num_valid_tokens_in_ub)
-                    else:
-                        loss_sum_for_ub = num_valid_tokens_in_ub * loss_for_ub
+                reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
 
-                    loss_sum_and_ub_size_all_gpu = torch.cat(
-                        [
-                            loss_sum_for_ub.clone().detach().view(1),
-                            torch.tensor([num_valid_tokens_in_ub]).cuda().clone().detach(),
-                        ]
-                    )
-                    torch.distributed.all_reduce(
-                        loss_sum_and_ub_size_all_gpu, group=parallel_state.get_data_parallel_group()
-                    )
-
-                    return (
-                        loss_for_ub,
-                        {"loss_sum_and_ub_size": loss_sum_and_ub_size_all_gpu,},
-                    )
-                else:
-                    reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
-
-                    return (
-                        loss_for_ub,
-                        {"avg": reduced_loss,},
-                    )
+                return (
+                    loss_for_ub,
+                    {"avg": reduced_loss,},
+                )
 
             return output_tensor, loss_func
 

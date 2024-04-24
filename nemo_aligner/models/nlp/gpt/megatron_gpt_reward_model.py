@@ -23,7 +23,12 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel, get_specs
+from nemo.collections.common.parts.utils import extend_instance
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import (
+    EmbeddingScalingMixin,
+    MegatronGPTModel,
+    get_specs,
+)
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
@@ -45,6 +50,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
+from nemo_aligner.utils.utils import cpu_dict
 
 
 class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
@@ -89,7 +95,12 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         model = GPTRewardModel(
             config=self.transformer_config,
-            transformer_layer_spec=get_specs(self.spec_name, self.transformer_config.num_moe_experts),
+            transformer_layer_spec=get_specs(
+                self.spec_name,
+                self.transformer_config.num_moe_experts,
+                self.transformer_config.moe_grouped_gemm,
+                self.transformer_engine,
+            ),
             vocab_size=self.cfg.get("override_vocab_size", self.padded_vocab_size),
             max_sequence_length=self.cfg.get("encoder_seq_length", 512),
             pre_process=pre_process,
@@ -107,6 +118,10 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             attribute_weights=self.cfg.get("regression", {}).get("attribute_weights", None),
             merge_attributes=self.cfg.get("regression", {}).get("merge_attributes", False),
         )
+
+        if self.cfg.get("apply_embedding_scaling", False) and parallel_state.is_pipeline_first_stage():
+            extend_instance(model.embedding, EmbeddingScalingMixin)
+
         return model
 
     def get_forward_output_and_loss_func(self, validation_step=False):
@@ -181,49 +196,36 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
             def loss_func(output_tensor):
                 # Loss per micro batch (ub).
-                loss_for_ub, acc_chosen = self.loss_func(output_tensor)
-                if validation_step and not self.cfg.data.get("validation_drop_last", True):
-                    num_valid_tokens_in_ub = batch["loss_mask"].sum()
-                    if loss_for_ub.isnan():
-                        assert batch["loss_mask"].count_nonzero() == 0, "Got NaN loss with non-empty input"
-                        loss_sum_for_ub = torch.zeros_like(num_valid_tokens_in_ub)
-                    else:
-                        loss_sum_for_ub = num_valid_tokens_in_ub * loss_for_ub
+                loss_for_ub, num_correct, num_total = self.loss_func(output_tensor)
+                reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
 
-                    loss_sum_and_ub_size_all_gpu = torch.cat(
-                        [
-                            loss_sum_for_ub.clone().detach().view(1),
-                            torch.tensor([num_valid_tokens_in_ub]).cuda().clone().detach(),
-                        ]
-                    )
-                    torch.distributed.all_reduce(
-                        loss_sum_and_ub_size_all_gpu, group=parallel_state.get_data_parallel_group()
-                    )
-                    out_chosen, out_rejected = gather_and_split_rewards(output_tensor)
+                print(
+                    "BEFORE SYNC ### RANK",
+                    torch.distributed.get_rank(),
+                    "NUM CORRECT",
+                    num_correct,
+                    "NUM TOTAL",
+                    num_total,
+                )
+                # compute accuracy at the end to not average acccuracies
+                summed_tensor = torch.as_tensor(
+                    [num_correct, num_total], dtype=torch.long, device=torch.cuda.current_device()
+                )
+                torch.distributed.all_reduce(summed_tensor, group=parallel_state.get_data_parallel_group())
+                num_correct, num_total = summed_tensor.tolist()
+                print("### RANK", torch.distributed.get_rank(), "NUM CORRECT", num_correct, "NUM TOTAL", num_total)
 
-                    return (
-                        loss_for_ub,
-                        {
-                            "loss_sum_and_ub_size": loss_sum_and_ub_size_all_gpu,
-                            "out_chosen": out_chosen,
-                            "out_rejected": out_rejected,
-                        },
-                    )
-                else:
-                    reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
-                    reduced_acc = average_losses_across_data_parallel_group([acc_chosen])
-
-                    out_chosen, out_rejected = gather_and_split_rewards(output_tensor)
-
-                    return (
-                        loss_for_ub,
-                        {
-                            "avg": reduced_loss,
-                            "acc": reduced_acc,
-                            "out_chosen": out_chosen,
-                            "out_rejected": out_rejected,
-                        },
-                    )
+                out_chosen, out_rejected = gather_and_split_rewards(output_tensor)
+                return (
+                    loss_for_ub,
+                    {
+                        "avg": reduced_loss,
+                        "num_correct": num_correct,
+                        "num_total": num_total,
+                        "out_chosen": out_chosen,
+                        "out_rejected": out_rejected,
+                    },
+                )
 
             return output_tensor, loss_func
 
@@ -235,10 +237,10 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
     def loss_func(self, output_tensor):
         out_chosen, out_rejected = self.split_output_tensor(output_tensor)
-        comp = out_chosen > out_rejected
-        acc_chosen = torch.sum(comp) / comp.shape[0]
+        num_correct = (out_chosen > out_rejected).sum()
+        num_total = out_chosen.numel()
         loss = -torch.nn.functional.logsigmoid(out_chosen - out_rejected).mean()
-        return loss, acc_chosen
+        return loss, num_correct, num_total
 
     def get_loss_and_metrics(self, batch, forward_only):
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
@@ -248,7 +250,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_forward_output_and_loss_func(forward_only),
-            data_iterator=data_iter,
+            data_iterator=self._make_data_iterator_list(data_iter),
             model=self.model,
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
@@ -256,6 +258,16 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             micro_batch_size=self.cfg.micro_batch_size
             * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
         )
+
+        # compute the accuracy
+        if losses_reduced_per_micro_batch:
+            num_correct = sum([x["num_correct"] for x in losses_reduced_per_micro_batch])
+            num_total = sum([x["num_total"] for x in losses_reduced_per_micro_batch])
+            acc = torch.as_tensor(num_correct / num_total, dtype=torch.float32, device=torch.cuda.current_device())
+        else:
+            acc = torch.tensor(0.0, device=torch.cuda.current_device(), dtype=torch.float32)
+
+        torch.distributed.broadcast(acc, get_last_rank())
 
         # only the last stages of the pipeline return losses
         if losses_reduced_per_micro_batch:
@@ -273,17 +285,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
             loss_tensor = torch.concat(loss_tensors_list)
             loss_mean = loss_tensor.mean()
-            acc_tensors_list = [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch]
-
-            if len(acc_tensors_list) == 1:
-                acc_tensor = acc_tensors_list[0]
-            elif len(acc_tensors_list) > 1:
-                acc_tensor = torch.concat(acc_tensors_list)
-            acc_mean = acc_tensor.mean()
         else:
-
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            acc_mean = torch.tensor(0.0, device=torch.cuda.current_device())
 
             rewards_chosen_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             rewards_rejected_mean = torch.tensor(0.0, device=torch.cuda.current_device())
@@ -292,7 +295,6 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
-        torch.distributed.broadcast(acc_mean, get_last_rank())
 
         torch.distributed.broadcast(rewards_chosen_mean, get_last_rank())
         torch.distributed.broadcast(rewards_rejected_mean, get_last_rank())
@@ -301,17 +303,14 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         metrics = {
             "loss": loss_mean,
-            "acc": acc_mean,
+            "acc": acc,
             "rewards_chosen_mean": rewards_chosen_mean,
             "rewards_rejected_mean": rewards_rejected_mean,
             "rewards_all_mean": rewards_all_mean,
             "rewards_all_std": rewards_all_std,
         }
 
-        # move to CPU
-        metrics = {k: v.item() for k, v in metrics.items()}
-
-        return loss_mean.item(), metrics
+        return loss_mean.item(), {k: v.item() for k, v in metrics.items()}
 
     def on_load_checkpoint(self, checkpoint) -> None:
         """NOTE: Have to set strict to False because we have a rm head
