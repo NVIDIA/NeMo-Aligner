@@ -209,15 +209,14 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
         outputs = []
         for fn in call_order:
-            output, exceeded = fn(*args, **kwargs)
+            output = fn(*args, **kwargs)
             outputs.append(output)
 
         if original_state == StateDictState.CRITIC:
             # reverse the output back
             outputs = reversed(outputs)
 
-        # always return rewards, value, exceeded
-        return (*outputs, exceeded)
+        return outputs
 
     def set_output_sequence_flag(self, value_to_set):
         if isinstance(self.model, Float16Module):

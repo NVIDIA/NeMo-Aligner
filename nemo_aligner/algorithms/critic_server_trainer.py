@@ -28,9 +28,9 @@ from tqdm import tqdm
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
 from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.servers.server_callables import run_rm_or_critic_inference
+from nemo_aligner.servers.server_callables import process_inference_request
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, rebalance_nd_tensor
 from nemo_aligner.utils.server_utils import lock_method, pad_input
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import apply_func_to_dict
@@ -49,7 +49,7 @@ class CriticServerTrainer:
         ranks what to do
     """
 
-    def __init__(self, cfg, model, optimizer, scheduler, logger, ckpt_callback, gbs):
+    def __init__(self, cfg, model, optimizer, scheduler, logger, ckpt_callback):
         self.lock = threading.Lock()
         self.logger = logger
         self.cfg = cfg
@@ -57,7 +57,8 @@ class CriticServerTrainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.ckpt_callback = ckpt_callback
-        self.gbs = gbs
+        self.gbs = cfg.gbs
+        self.forward_mbs = cfg.forward_mbs
         self.step = 0
 
         # server parameters
@@ -75,7 +76,6 @@ class CriticServerTrainer:
         )
         self.infer_outputs = [
             Tensor(name="values", shape=(-1,), dtype=np.float32),
-            Tensor(name="exceeded", shape=(1,), dtype=np.int32),
         ]
         if self.combine_rm_and_critic_server:
             self.infer_outputs.append(Tensor(name="rewards", shape=(-1,), dtype=np.float32))
@@ -108,17 +108,21 @@ class CriticServerTrainer:
             )
         )
         start_time = time.time()
-        rewards, values, exceeded = self.run_inference(inputs=inputs)
+        inputs, extra = process_inference_request(
+            inputs, pad_to=self.forward_mbs * parallel_state.get_data_parallel_world_size()
+        )
+        rewards, values = self.run_inference(inputs=inputs, extra=extra)
+
         end_time = time.time()
         print("#### INFER TOOK", end_time - start_time)
 
         output = {
             "values": values,
-            "exceeded": exceeded,
         }
         if self.combine_rm_and_critic_server:
             output["rewards"] = rewards
-        return output
+
+        return {k: v[: v.shape[0] - extra] for k, v in output.items()}
 
     @sample
     @lock_method("self.lock")
@@ -172,10 +176,18 @@ class CriticServerTrainer:
                 http_address=ENDPOINT_BIND_ADDRESS,
                 http_port=self.port,
             )
-            dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
-            infer_model_config = ModelConfig(
-                batching=True, max_batch_size=self.max_inference_batch_size, batcher=dynamic_batcher
+            # try to find a common multiple of forward mbs and dp so we don't need to pad
+            dp_size = parallel_state.get_data_parallel_world_size()
+
+            preferred_batch_size = [dp_size * self.forward_mbs * (i + 1) for i in range(1000)]
+            # 1 second latency max
+            dynamic_batcher = DynamicBatcher(
+                max_queue_delay_microseconds=self.cfg.max_queue_delay_microseconds,
+                preferred_batch_size=preferred_batch_size,
             )
+
+            # we cut the batch into pieces so we don't need to have a max batch size
+            infer_model_config = ModelConfig(batching=True, max_batch_size=9999999, batcher=dynamic_batcher)
             # the model will split the train batch by itself
             train_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
             save_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
@@ -223,27 +235,39 @@ class CriticServerTrainer:
                 raise RuntimeError(f"Invalid operation: {op}")
 
     @torch.no_grad()
-    def run_inference(self, inputs=None):
+    def run_inference(self, inputs=None, extra=None):
         """only rank 0 has valid data
         """
         self.model.prepare_for_inference()
+        tokens, lengths = None, None
+        dp_rank = parallel_state.get_data_parallel_rank()
+        dp_size = parallel_state.get_data_parallel_world_size()
+        is_rank_0 = torch.distributed.get_rank() == 0
 
-        if torch.distributed.get_rank() == 0:
-            outputs = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
+        if is_rank_0:
+            tokens = torch.as_tensor(inputs["inputs"], dtype=torch.long, device=torch.cuda.current_device())
+            lengths = torch.as_tensor(inputs["sequence_length"], dtype=torch.long, device=torch.cuda.current_device())
 
-            if self.combine_rm_and_critic_server:
-                rewards, values, exceeded = outputs
-            else:
-                values, exceeded = outputs
-                rewards = None
+        tokens = broadcast_2d_tensor(tokens, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank]
+        lengths = broadcast_2d_tensor(lengths, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank].squeeze(-1)
+
+        outputs = self.infer_fn(inputs=(tokens, lengths))
+
+        if self.combine_rm_and_critic_server:
+            rewards, values = outputs
+            rewards = (
+                rebalance_nd_tensor(rewards, group=parallel_state.get_data_parallel_group()).squeeze().cpu().numpy()
+            )
+
         else:
-            self.infer_fn()
-            rewards, values, exceeded = None, None, None
+            values = outputs
+            rewards = None
+
+        values = rebalance_nd_tensor(values, group=parallel_state.get_data_parallel_group()).cpu().numpy()
 
         self.model.finish_inference()
         torch.distributed.barrier()
-
-        return rewards, values, exceeded
+        return rewards, values
 
     def run_training(self, tokens=None, returns=None, prev_values=None, mask=None):
         """assume that the batch is already padded

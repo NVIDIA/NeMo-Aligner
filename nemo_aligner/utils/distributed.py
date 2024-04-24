@@ -59,19 +59,6 @@ def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distri
     return dict(zip(keys, tensor.tolist()))
 
 
-def gather_tensor(tensor, dst, group, dtype=torch.float32):
-    """Gather any 2d tensor to the dst rank from every other rank in the given group.
-    All the ranks that send or receive data must call this function."""
-    tensor = tensor.to(device=torch.cuda.current_device(), dtype=dtype)
-    if torch.distributed.get_rank() == dst:
-        gather_list = [torch.empty_like(tensor) for _ in range(torch.distributed.get_world_size(group))]
-    else:
-        gather_list = None
-
-    torch.distributed.gather(tensor, gather_list=gather_list, dst=dst, group=group)
-    return gather_list
-
-
 def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
     """Broadcast any 2d tensor from the src rank to every other rank in the given group.
     All the ranks that send or receive data must call this function."""
@@ -299,6 +286,19 @@ def from_parallel_logits_to_logprobs(vocab_parallel_logits, target, inference_on
     return DistributedLogprob.apply(vocab_parallel_logits, target, inference_only, higher_stability)[
         :, :-1
     ].contiguous()
+
+
+def gather_tensor(tensor, dst, group, dtype=torch.float32):
+    """Gather any 2d tensor to the dst rank from every other rank in the given group.
+    All the ranks that send or receive data must call this function."""
+    tensor = tensor.to(device=torch.cuda.current_device(), dtype=dtype)
+    if torch.distributed.get_rank() == dst:
+        gather_list = [torch.empty_like(tensor) for _ in range(torch.distributed.get_world_size(group))]
+    else:
+        gather_list = None
+
+    torch.distributed.gather(tensor, gather_list=gather_list, dst=dst, group=group)
+    return gather_list
 
 
 class SyncTimer(NamedTimer):
