@@ -81,6 +81,7 @@ model:
   gradient_as_bucket_view: False
   seq_len_interpolation_factor: null # if not None, seq_len_interpolation_factor will match the base model's value
   use_flash_attention: null # if not None, will match the base model's value
+  rotary_base: null # use this value if not None
 
   hidden_dropout: 0.0
   attention_dropout: 0.0
