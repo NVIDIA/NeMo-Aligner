@@ -344,7 +344,8 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
         dataset=ds,
         cache_dir=cfg.model.mcts.cache_dir,
     )
-    searcher.search([0, 1, 4, 5])
+# searcher.search([0, 1, 4, 5])
+    searcher.search([5])
 
 
 if __name__ == "__main__":

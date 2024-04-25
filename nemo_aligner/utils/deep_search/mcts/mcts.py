@@ -247,7 +247,7 @@ class MCTSParallel:
         max_length = max(action_length)
         # padding in the end
         for action in actions:
-            action.extend([self.tokenizer.pad_id()] * (max_length - len(action)))
+            action.extend([self.tokenizer.eos_token_id] * (max_length - len(action)))
         # convert to tensor
         actions = np.array(actions, dtype=np.int32)
         # get the context ids for the search nodes

@@ -189,6 +189,4 @@ class MathSandBoxedFeedBackID:
     def score(self, response, idx):
         # NOTE: response must be in boxed format
         response = extract_answer(response)
-        breakpoint()
-
         return self.sandbox.is_output_correct(response, self.ds[idx]["expected_answer"])

@@ -88,7 +88,7 @@ class EnvironmentStateTransitionFunction(LocalStateTransitionFunction):
             actions = [[]] * len(context_ids)
         else:
             # only need the action that is not the pad token
-            pad_id = self.model.tokenizer.pad_id
+            pad_id = self.model.tokenizer.eos_token_id
             actions = [action[action != pad_id].tolist() for action in actions]
         update_actions = []
         for next_action, context_id_tuple, action_taken in zip(next_actions, context_ids, actions):

@@ -119,7 +119,7 @@ def dp_search(
                 context_tokens_tensor,
                 context_length_tensor,
                 true_context_length,
-            ) = inference_strategy.compute_inference_params(session_info, context_ids, action, tokenizer.pad_id)
+            ) = inference_strategy.compute_inference_params(session_info, context_ids, action, tokenizer.eos_id)
 
         output_actions, output_policys, output_values = sample_sequence_batch(
             model,
@@ -272,7 +272,7 @@ def search(
                 context_tokens_tensor,
                 context_length_tensor,
                 true_context_length,
-            ) = inference_strategy.compute_inference_params(session_info, context_ids, action, tokenizer.pad_id)
+            ) = inference_strategy.compute_inference_params(session_info, context_ids, action, tokenizer.eos_token_id)
 
         output_actions, output_policys, output_values = sample_sequence_batch(
             model,
@@ -405,7 +405,7 @@ def sample_sequence_batch(
         for batch_id in range(batch_size):
             batch_token = tokens[batch_id]
             for last_pos in range(token_len - 1, -1, -1):
-                if batch_token[last_pos] == tokenizer.pad_id:
+                if batch_token[last_pos] == tokenizer.eos_id:
                     pass
                 else:
                     break

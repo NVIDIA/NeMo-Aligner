@@ -134,7 +134,8 @@ class TextGenerationStrategy:
             context_tokens = [[tokenizer.bos_id] + tokenizer.text_to_ids(s) for s in sentences]
         else:
             context_tokens = [tokenizer.text_to_ids(s) for s in sentences]
-        context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.pad_id, max_len)
+
+        context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.eos, max_len)
         context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
         context_length_tensor = torch.cuda.LongTensor(context_lengths)
         return context_tokens_tensor, context_length_tensor
