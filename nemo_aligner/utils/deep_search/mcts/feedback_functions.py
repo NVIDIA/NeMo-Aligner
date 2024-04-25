@@ -175,3 +175,20 @@ class MathSandBoxedFeedBack:
         response = extract_answer(response)
 
         return self.sandbox.is_output_correct(response, answer)
+
+
+class MathSandBoxedFeedBackID:
+    def __init__(self, host, port, ds, test_on_init=True):
+        self.sandbox = LocalSandbox(host=host, port=port)
+        self.ds = ds
+
+        if test_on_init:
+            assert self.sandbox.is_output_correct("123", 123), "sandbox output should be correct! on 123 string vs 123"
+            assert self.sandbox.is_output_correct("\\frac{1}{4}", "\\frac{2}{8}"), "sandbox should reduce fractions!"
+
+    def score(self, response, idx):
+        # NOTE: response must be in boxed format
+        response = extract_answer(response)
+        breakpoint()
+
+        return self.sandbox.is_output_correct(response, self.ds[idx]["expected_answer"])

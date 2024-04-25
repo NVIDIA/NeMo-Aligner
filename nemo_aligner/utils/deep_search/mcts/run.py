@@ -62,7 +62,6 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_val
     )
 
     ps = []
-
     for question, data_id in zip(batch["question"], batch["data_id"]):
         if mcts_cfg.add_bos_token:
             ps.append(
