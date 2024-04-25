@@ -686,7 +686,7 @@ if __name__ == "__main__":
         port_num=args.port_num,
     )
 
-    with open(os.path.join(args.output_dir, "cai_candidate_dataset.json"), 'w') as file:
+    with open(os.path.join(args.output_dir, "cai_candidate_dataset.json"), "w") as file:
         json.dump(dataset, file, indent=4)
 
     print("\nGenerating AI preferences...\n")
@@ -702,7 +702,7 @@ if __name__ == "__main__":
         if preference is not None:
             preference_dataset.append(preference)
 
-    with open(os.path.join(args.output_dir, "cai_preference_dataset.json"), 'w') as file:
+    with open(os.path.join(args.output_dir, "cai_preference_dataset.json"), "w") as file:
         json.dump(preference_dataset, file, indent=4)
 
     print(
