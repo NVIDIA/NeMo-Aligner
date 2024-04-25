@@ -40,6 +40,8 @@ class LocalStateTransitionFunction(StateTransitionFunction):
             add_bos_token=self.add_bos_token,
             **self.strategy_args,
         )
+        # convert action into list type
+        output["action"] = output["action"].tolist()
         return output
 
 

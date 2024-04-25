@@ -353,22 +353,36 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
         # 5 hrs timeout
         app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
 
-        @app.task(autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, retry_kwargs={"max_retries": 10})
-        def search_for_batch(batch_idx):
-            batch_size = torch.tensor([len(batch_idx)], dtype=torch.int64).cuda()
-            torch.distributed.broadcast(batch_size, 0)
-            batch_idx = torch.tensor(batch_idx, dtype=torch.int64).cuda()
-            torch.distributed.broadcast(batch_idx, 0)
-            batch_idx = batch_idx.tolist()
-            # braodcast the
-            searcher = MCTSSearchOneBatch(
-                search_func=search_func,
-                collate_func=collate_func,
-                save_path=save_path,
-                dataset=ds,
-                cache_dir=cfg.model.mcts.cache_dir,
-            )
-            searcher.search(batch_idx)
+        @app.task(
+            bind=True,
+            autoretry_for=(Exception,),
+            retry_backoff=True,
+            retry_jitter=True,
+            retry_kwargs={"max_retries": 10},
+        )
+        def search_for_batch(self, batch_idx):
+            try:
+                batch_size = torch.tensor([len(batch_idx)], dtype=torch.int64).cuda()
+                torch.distributed.broadcast(batch_size, 0)
+                batch_idx = torch.tensor(batch_idx, dtype=torch.int64).cuda()
+                torch.distributed.broadcast(batch_idx, 0)
+                batch_idx = batch_idx.tolist()
+                # braodcast the
+                searcher = MCTSSearchOneBatch(
+                    search_func=search_func,
+                    collate_func=collate_func,
+                    save_path=save_path,
+                    dataset=ds,
+                    cache_dir=cfg.model.mcts.cache_dir,
+                )
+                searcher.search(batch_idx)
+            except Exception as e:
+                print("ERROR", e)
+                # print the stack trace
+                import traceback
+
+                traceback.print_exc()
+                raise self.retry(exc=e)
             return batch_idx
 
         RAND_ID = os.environ.get("local_rank", random.randint(0, 10000))
