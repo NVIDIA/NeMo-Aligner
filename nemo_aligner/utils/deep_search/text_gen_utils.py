@@ -426,8 +426,8 @@ def sample_sequence_batch(
             # make sure it won't sample outside the vocab_size range
             logits[:, tokenizer.vocab_size :] = -float("Inf")
 
-            updated_logits, actions = torch.topk(logits, top_k)
-            probs = F.softmax(updated_logits, dim=-1)
+            update_probs = F.softmax(logits, dim=-1)
+            probs, actions = torch.topk(update_probs, top_k)
 
             output_actions = actions.type(torch.int32)
             output_policy = probs

@@ -142,14 +142,17 @@ class Node:
             q_value = child.value_sum / child.visit_count  # assume the q_value is probability of winning
         return q_value + C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
 
-    def expand(self, policy, actions, env, context_tokens):
+    def expand(self, policy, actions):
         for action, prob in zip(actions, policy):
-            action = action.item()
             prob = prob.item()
-            child = Node([action], parent=self, action=action, prior=prob, visit_count=0)
+            if isinstance(action, list):
+                child = Node(action, parent=self, action=action, prior=prob, visit_count=0)
+                action = action[0]
+            else:
+                child = Node([action], parent=self, action=action, prior=prob, visit_count=0)
             self.children[action] = child
             # environment is going to decide whether to add observation tokens
-            env.state_transtion(child, context_tokens)
+            # env.state_transtion(child, context_tokens)
 
     def backpropagate(self, value):
         self.value_sum += value
@@ -174,7 +177,6 @@ class MCTSParallel:
         tokenizer,
         session_info="session",
         score_fn=None,
-        env_fn=None,
         terminate_fns=None,
         client_fun: Callable = None,
         has_value=True,
@@ -183,7 +185,6 @@ class MCTSParallel:
         self.tokenizer = tokenizer
         self.session = session_info
         self.score_fn = score_fn
-        self.env_fn = env_fn
         self.terminate_fns = terminate_fns
         self.client_fun = client_fun
         self.cache = {}
@@ -320,7 +321,7 @@ class MCTSParallel:
                 c_ids.append(context_id)
 
             for spg, spg_policy, spg_action, context_id in zip(ps, spg_policys, spg_actions, c_ids):
-                action_size = spg_action.shape[0]
+                action_size = len(spg_action)
 
                 spg_policy = (1 - self.args["dirichlet_epsilon"]) * spg_policy + self.args[
                     "dirichlet_epsilon"
@@ -328,7 +329,7 @@ class MCTSParallel:
                 # no need to handle the case that no valid moves
                 # because the we search the states[i] which has at least one valid move
                 spg.root = Node(spg.state, parent=None, action=-1, prior=0.0, visit_count=1)
-                spg.root.expand(spg_policy, spg_action, self.env_fn, list(context_id))
+                spg.root.expand(spg_policy, spg_action)
 
         # dp_rank = parallel_state.get_data_parallel_rank()
         # use tqdm to show the progresso of the self play
@@ -398,7 +399,7 @@ class MCTSParallel:
                 # compute the batched policy and value for the expandable search nodes
                 actions, context_ids = self.get_input_action_depth(ps, expandable_search)
                 #             result_dict = self.client.infer_batch(action=actions, depth=depths, context_ids=context_data, parameters={"session": self.session})
-                result_dict = self.client_fun(action=actions, context_ids=context_ids, session_info=self.session)
+                result_dict = self.client_fun(actions=actions, context_ids=context_ids, session_info=self.session)
 
                 actions = result_dict["action"]
                 policy = result_dict["policy"]  # [batch, top_k]
@@ -433,7 +434,7 @@ class MCTSParallel:
                         ps[mappingIdx].value_memory.add((all_tokens, value_head_output, node))
                         self.cache[all_tokens] = value_head_output
                 else:
-                    node.expand(spg_policy, spg_action, self.env_fn, result_dict["all_tokens"])
+                    node.expand(spg_policy, spg_action)
 
                     node.backpropagate(value_head_output)
 
@@ -446,6 +447,7 @@ class DeepSearch:
         temperature: float,
         strategy=None,
         timer_seconds: int = 10.0,
+        top_k: int = 50,
         cache_dir: str = None,
         inference_only: bool = False,
     ):
@@ -457,6 +459,7 @@ class DeepSearch:
         self.cache_dir = cache_dir
         # if inference_only is True, then the search will only run the inference and not the self play
         self.inference_only = inference_only
+        self.top_k = top_k
         # Start the timer
         self.timer = threading.Timer(timer_seconds, self.save_data)
         self.timer.start()
@@ -528,7 +531,7 @@ class DeepSearch:
             # loop from large to small so that we can remove search instances as we go
             for i in range(len(parallel_searches))[::-1]:
                 spg = parallel_searches[i]
-                action_size = len(spg.root.children)
+                action_size = self.top_k
                 action_probs = np.zeros(action_size, dtype=np.float32)
                 actions = []
                 use_value_sum = False
@@ -543,6 +546,9 @@ class DeepSearch:
                     else:
                         action_probs[child_id] = child.visit_count
                     actions.append(child.action)
+                if len(actions) != self.top_k:
+                    # padd the actions
+                    actions += [-1] * (self.top_k - len(actions))
                 action_probs /= np.sum(action_probs)
 
                 # the spg.root.state is the neutral state set at the beginning of the search
@@ -554,6 +560,7 @@ class DeepSearch:
                     action_size, p=temperature_action_probs
                 )  # Divide temperature_action_probs with its sum in case of an error
                 action = actions[action_index]
+                assert action != -1
 
                 # pass in the states from selected child node to the fake node
                 if isinstance(action, list):
