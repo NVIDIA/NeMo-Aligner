@@ -378,7 +378,7 @@ class MCTSParallel:
 
                     # if terminal, then backpropagate the value, and skip the expansion of the node because spg.node is None
                     # convert the value into log value
-                    node.backpropagate(math.log(value) if value !=0 else -100000.0)
+                    node.backpropagate(math.log(value) if value !=0 else -10.0)
                     # collect the memory from the root to the terminal node
                     if ends_properly:
                         # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
@@ -429,7 +429,7 @@ class MCTSParallel:
                     # backpropagate the value
                     ends_properly = result_dict["ends_properly"]
                     all_tokens = result_dict["all_tokens"]
-                    node.backpropagate(math.log(value_head_output) if value_head_output !=0 else -100000.0)
+                    node.backpropagate(math.log(value_head_output) if value_head_output !=0 else -10.0)
 
                     if ends_properly:
                         # collect the memory from the root to the terminal node
@@ -439,7 +439,7 @@ class MCTSParallel:
                         self.cache[all_tokens] = value_head_output
                 else:
                     node.expand(spg_policy, spg_action)
-                    node.backpropagate(math.log(value_head_output) if value_head_output !=0 else -100000.0)
+                    node.backpropagate(math.log(value_head_output) if value_head_output !=0 else -10.0)
 
 
 class DeepSearch:
