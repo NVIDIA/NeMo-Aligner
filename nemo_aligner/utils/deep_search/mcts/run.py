@@ -56,6 +56,7 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_val
         mcts_cfg.temperature,
         strategy,
         mcts_cfg.save_timer,
+        mcts_cfg.top_k,
         mcts_cfg.cache_dir,
         inference_only=inference_only,
     )

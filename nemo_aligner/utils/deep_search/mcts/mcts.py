@@ -450,6 +450,7 @@ class DeepSearch:
         temperature: float,
         strategy=None,
         timer_seconds: int = 10.0,
+        top_k: int = 50,
         cache_dir: str = None,
         inference_only: bool = False,
     ):
@@ -461,6 +462,7 @@ class DeepSearch:
         self.cache_dir = cache_dir
         # if inference_only is True, then the search will only run the inference and not the self play
         self.inference_only = inference_only
+        self.top_k = top_k
         # Start the timer
         self.timer = threading.Timer(timer_seconds, self.save_data)
         self.timer.start()
@@ -532,7 +534,7 @@ class DeepSearch:
             # loop from large to small so that we can remove search instances as we go
             for i in range(len(parallel_searches))[::-1]:
                 spg = parallel_searches[i]
-                action_size = len(spg.root.children)
+                action_size = self.top_k
                 action_probs = np.zeros(action_size, dtype=np.float32)
                 actions = []
                 use_value_sum = False
@@ -547,6 +549,9 @@ class DeepSearch:
                     else:
                         action_probs[child_id] = child.visit_count
                     actions.append(child.action)
+                if len(actions) != self.top_k:
+                    # padd the actions
+                    actions += [-1] * (self.top_k - len(actions))
                 action_probs /= np.sum(action_probs)
 
                 # the spg.root.state is the neutral state set at the beginning of the search
@@ -558,6 +563,7 @@ class DeepSearch:
                     action_size, p=temperature_action_probs
                 )  # Divide temperature_action_probs with its sum in case of an error
                 action = actions[action_index]
+                assert action != -1
 
                 # pass in the states from selected child node to the fake node
                 if isinstance(action, list):
