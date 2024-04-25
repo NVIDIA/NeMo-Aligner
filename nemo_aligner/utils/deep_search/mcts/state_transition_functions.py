@@ -42,7 +42,7 @@ class LocalStateTransitionFunction(StateTransitionFunction):
         )
         threshold = 0.01  # min probability threshold
         probablities = output["policy"]
-        actions = output["action"]
+        actions = output["action"].tolist()
         update_probablities = []
         update_actions = []
         for prob, one_actions in zip(probablities, actions):
