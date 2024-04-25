@@ -576,7 +576,7 @@ def save_dataset(dataset, split: str, output_dir: str, output_filename_prefix: s
     prompts_file_name = f"{split}_prompts_with_chat_prompt"
     if output_filename_prefix is not None and output_filename_prefix != "":
         prompts_file_name = f"{output_filename_prefix}_{prompts_file_name}"
-    prompts_file_name += ".json"
+    prompts_file_name += ".jsonl"
 
     prompts_full_path = Path(output_dir) / prompts_file_name
     print(f"Saving {len(prompts_to_save)} prompts to {prompts_full_path}")
@@ -592,7 +592,7 @@ def save_dataset(dataset, split: str, output_dir: str, output_filename_prefix: s
     comparisons_file_name = f"{split}_comparisons_with_chat_prompt"
     if output_filename_prefix is not None and output_filename_prefix != "":
         comparisons_file_name = f"{output_filename_prefix}_{comparisons_file_name}"
-    comparisons_file_name += ".json"
+    comparisons_file_name += ".jsonl"
 
     comparisons_full_path = Path(output_dir) / comparisons_file_name
     print(f"Saving {len(comparisons_to_save)} comparisons to {comparisons_full_path}")
@@ -685,6 +685,10 @@ if __name__ == "__main__":
         red_teaming_dataset_path=args.red_teaming_file_path,
         port_num=args.port_num,
     )
+
+    with open(os.path.join(args.output_dir, "cai_candidate_dataset.json"), 'w') as file:
+        json.dump(dataset, file, indent=4)
+
     print("\nGenerating AI preferences...\n")
     preference_dataset = []
     for ds_index in tqdm(range(len(dataset))):
@@ -697,6 +701,9 @@ if __name__ == "__main__":
 
         if preference is not None:
             preference_dataset.append(preference)
+
+    with open(os.path.join(args.output_dir, "cai_preference_dataset.json"), 'w') as file:
+        json.dump(preference_dataset, file, indent=4)
 
     print(
         f"\nGenerated {len(preference_dataset)} AI preferences. "
