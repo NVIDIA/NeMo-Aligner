@@ -140,6 +140,8 @@ class Node:
             q_value = child.prior  # # use prior as initial value
         else:
             q_value = child.value_sum / child.visit_count  # assume the q_value is probability of winning
+            # convert logp into p
+            q_value = math.exp(q_value)
         return q_value + C * (math.sqrt(self.visit_count) / (child.visit_count + 1)) * child.prior
 
     def expand(self, policy, actions):
@@ -375,7 +377,8 @@ class MCTSParallel:
                             continue
 
                     # if terminal, then backpropagate the value, and skip the expansion of the node because spg.node is None
-                    node.backpropagate(value)
+                    # convert the value into log value
+                    node.backpropagate(math.log(value) if value !=0 else -100000.0)
                     # collect the memory from the root to the terminal node
                     if ends_properly:
                         # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
@@ -426,7 +429,8 @@ class MCTSParallel:
                     # backpropagate the value
                     ends_properly = result_dict["ends_properly"]
                     all_tokens = result_dict["all_tokens"]
-                    node.backpropagate(value_head_output)
+                    node.backpropagate(math.log(value_head_output) if value_head_output !=0 else -100000.0)
+
                     if ends_properly:
                         # collect the memory from the root to the terminal node
                         # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
@@ -435,8 +439,7 @@ class MCTSParallel:
                         self.cache[all_tokens] = value_head_output
                 else:
                     node.expand(spg_policy, spg_action)
-
-                    node.backpropagate(value_head_output)
+                    node.backpropagate(math.log(value_head_output) if value_head_output !=0 else -100000.0)
 
 
 class DeepSearch:
