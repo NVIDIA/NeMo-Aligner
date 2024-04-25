@@ -163,7 +163,7 @@ class LLMJudgementFeedback(Feedback):
             print("evaluation", evaluation)
             rating_matches = re.findall(r"\[\[(\d+)\]\]", evaluation)
             score = float(rating_matches[-1])  # Get the last match
-            score = score / 5  # scale it to 0-1
+            score = score / 10  # scale it to 0-1
             print("score", score)
         except Exception as e:
             print("############ Inference failed ############")
@@ -216,7 +216,7 @@ class LLMJudgementFeedback(Feedback):
 After examining the assistant's response:
 - Briefly justify your total score, up to 100 words.
 - Conclude with the score using the format: \"[[rating]]\", for example: \"Rating: [[5]]\""""
-        formatted = self.template.format(prompt=self_rewarding_prompt)
+        formatted = self.template.format(prompt=mt_bench_multi_turn)
         return formatted
 
 
