@@ -40,6 +40,26 @@ class LocalStateTransitionFunction(StateTransitionFunction):
             add_bos_token=self.add_bos_token,
             **self.strategy_args,
         )
+        threshold = 0.01  # min probability threshold
+        probablities = output["policy"]
+        actions = output["action"]
+        update_probablities = []
+        update_actions = []
+        for prob, one_actions in zip(probablities, actions):
+            selected = prob >= threshold
+            if sum(selected) > 0:
+                # not empty
+                select_prob = prob[selected]
+                select_action = one_actions[selected]
+                update_probablities.append(select_prob)
+                update_actions.append(select_action)
+            else:
+                # if all the probablities are less than the threshold
+                # use all the probablities
+                update_probablities.append(prob)
+                update_actions.append(one_actions)
+        output["policy"] = update_probablities
+        output["action"] = update_actions
         return output
 
 
