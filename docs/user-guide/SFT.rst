@@ -38,6 +38,9 @@ To start, we must first get a pretrained model to align. There are 2 models we r
 After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Aligner.
 
 .. note::
+   If you bring your own .nemo model, make sure to change the `model.encoder_seq_length` in the aligner configs to match the sequence length of your own model.
+
+.. note::
    Mcore models use Transformer engine as a backend, and it tries to find efficient kernels. But depending on the GPU you have it may not find them. If you ever face errors that relate to kernel finding set these variables on top of your script.
 
    .. code-block:: bash
