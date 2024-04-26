@@ -199,21 +199,12 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                 loss_for_ub, num_correct, num_total = self.loss_func(output_tensor)
                 reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
 
-                print(
-                    "BEFORE SYNC ### RANK",
-                    torch.distributed.get_rank(),
-                    "NUM CORRECT",
-                    num_correct,
-                    "NUM TOTAL",
-                    num_total,
-                )
                 # compute accuracy at the end to not average acccuracies
                 summed_tensor = torch.as_tensor(
                     [num_correct, num_total], dtype=torch.long, device=torch.cuda.current_device()
                 )
                 torch.distributed.all_reduce(summed_tensor, group=parallel_state.get_data_parallel_group())
                 num_correct, num_total = summed_tensor.tolist()
-                print("### RANK", torch.distributed.get_rank(), "NUM CORRECT", num_correct, "NUM TOTAL", num_total)
 
                 out_chosen, out_rejected = gather_and_split_rewards(output_tensor)
                 return (
@@ -237,6 +228,10 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
     def loss_func(self, output_tensor):
         out_chosen, out_rejected = self.split_output_tensor(output_tensor)
+
+        assert torch.all(torch.isfinite(out_chosen)), "out chosen is not finite! {}".format(out_chosen)
+        assert torch.all(torch.isfinite(out_rejected)), "out rejected is not finite! {}".format(out_rejected)
+
         num_correct = (out_chosen > out_rejected).sum()
         num_total = out_chosen.numel()
         loss = -torch.nn.functional.logsigmoid(out_chosen - out_rejected).mean()
