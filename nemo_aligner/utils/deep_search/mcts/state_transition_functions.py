@@ -50,6 +50,7 @@ class LocalStateTransitionFunction(StateTransitionFunction):
             selected = prob >= threshold
             if sum(selected) > 0:
                 # not empty
+                print(sum(selected))
                 select_prob = prob[selected]
                 select_action = one_actions[selected].tolist()
                 update_probablities.append(select_prob)
