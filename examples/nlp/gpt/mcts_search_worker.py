@@ -14,7 +14,9 @@
 
 import torch.multiprocessing as mp
 
-from nemo_aligner.data.nlp.datasets import MCTSDataset
+from celery import Celery
+
+"""Script to start Reward Model training"""
 
 mp.set_start_method("spawn", force=True)
 import os
@@ -28,7 +30,6 @@ from typing import List, Union
 
 import pandas as pd
 import torch
-from celery import Celery
 from datasets import load_dataset
 from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf
@@ -39,11 +40,13 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
+from nemo_aligner.data.nlp.datasets import LLaMa3ChatDataset
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import (
     DummyScore,
     GSK8KFeedbackDataset,
     GSK8KFeedbackHF,
+    MathSandBoxedFeedBackID,
     SteerLMFeedback,
 )
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
@@ -87,13 +90,14 @@ def compute_metric_from_output(output):
     }
 
 
-def collate_func(batch):
+def collate_fn(batch):
     # applies the steerlm format and
     # transposes the list of dict to dict of lists
     new_dict = defaultdict(list)
 
     for b in batch:
         new_dict["question"].append(b["question"])
+        new_dict["answer"].append(b["expected_answer"])
         new_dict["data_id"].append(b["data_id"])
 
     return new_dict
@@ -247,37 +251,26 @@ def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, floa
 @dataclass
 class DatasetWrapper:
     ds: torch.utils.data.Dataset
-    template: str
 
     # just like a dataset but return idx
     def __getitem__(self, idx):
         data_item = self.ds[idx]
-        data_item["question"] = self.template.format(prompt=data_item["question"])
         return {**data_item, "data_id": idx}
 
     def __len__(self):
         return len(self.ds)
 
 
-def get_dataset(cfg):
-    train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
-    ds = train_ds.data_lookup
-    if cfg.model.mcts.feedback == "math":
-        score_fn = GSK8KFeedbackDataset(ds)
-    elif cfg.model.mcts.feedback == "steerlm":
-        score_fn = SteerLMFeedback()
-    elif cfg.model.mcts.feedback == "dummy":
-        score_fn = DummyScore()
-    else:
-        raise ValueError(f"Invalid feedback function {cfg.model.mcts.feedback}")
-    return train_ds, score_fn
+def get_dataset(cfg, split, tokenizer):
+    ds = DatasetWrapper(LLaMa3ChatDataset(cfg.dataset.data_prefix[split], cfg.dataset.prompt_template_name, tokenizer))
+    feedback = MathSandBoxedFeedBackID(
+        host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT"), ds=ds
+    )
+    return ds, feedback
 
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    ds, score_fn = get_dataset(cfg)
-    logging.info(f"loaded {ds}")
-
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
     if cfg.pretrained_checkpoint.has_value_head:
@@ -304,6 +297,9 @@ def main(cfg) -> None:
         load_base_model_only=not cfg.pretrained_checkpoint.from_mcts_trained,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
+
+    ds, score_fn = get_dataset(cfg, split="train", tokenizer=ptl_model.tokenizer)
+    logging.info(f"loaded {ds}")
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
@@ -339,7 +335,7 @@ def main(cfg) -> None:
     )
 
     # start the worker on the rank
-    start_worker(search_func, collate_func, save_dir, ds, cfg, cfg.server_url, cfg.backend_url)
+    start_worker(search_func, collate_fn, save_dir, ds, cfg, cfg.server_url, cfg.backend_url)
 
 
 def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url):
