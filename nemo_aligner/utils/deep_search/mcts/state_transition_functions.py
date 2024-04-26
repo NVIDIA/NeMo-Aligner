@@ -21,12 +21,13 @@ class StateTransitionFunction:
 
 
 class LocalStateTransitionFunction(StateTransitionFunction):
-    def __init__(self, model, top_k, max_depth, add_bos_token, **strategy_args):
+    def __init__(self, model, top_k, max_depth, add_bos_token, threshold, **strategy_args):
         self.model = model
         self.top_k = top_k
         self.max_depth = max_depth
         self.add_bos_token = add_bos_token
         self.strategy_args = strategy_args
+        self.threshold = threshold
 
     def __call__(self, sentences=None, actions=None, context_ids=None, session_info=None):
         output = dp_search(
@@ -40,7 +41,7 @@ class LocalStateTransitionFunction(StateTransitionFunction):
             add_bos_token=self.add_bos_token,
             **self.strategy_args,
         )
-        threshold = 0.01  # min probability threshold
+        threshold = self.threshold  # min probability threshold
         probablities = output["policy"]
         actions = output["action"]
         update_probablities = []
@@ -106,8 +107,8 @@ class EnvironmentStateTransitionFunction(LocalStateTransitionFunction):
 
 
 class MathtoolLocalStateTransitionFunction(EnvironmentStateTransitionFunction):
-    def __init__(self, model, top_k, max_depth, add_bos_token, **strategy_args):
-        super().__init__(model, top_k, max_depth, add_bos_token, **strategy_args)
+    def __init__(self, model, top_k, max_depth, add_bos_token, threshold, **strategy_args):
+        super().__init__(model, top_k, max_depth, add_bos_token, threshold, **strategy_args)
         host = os.getenv("NEMO_SKILLS_SANDBOX_HOST", "localhost")
         port = os.getenv("NEMO_SKILLS_SANDBOX_PORT", "1034")
         self.sandbox = LocalSandbox(host=host, port=port)
