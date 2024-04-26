@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Fixed crash when calling the `generate()` method of an SFT model with pipeline parallelism greater than two
 - Fixed crash when calling the `generate()` method of an SFT model with `compute_logprob=True` and string inputs
 - Fixed crash when `model.micro_batch_size` > 1 in DPO
+- Fixed issue when `model.encoder_seq_length` is mismatched with `model.data.train_ds.max_seq_length` in SFT and SPIN.
 
 ## [0.2.0] - 2024-02
 ### New features and optimizations
