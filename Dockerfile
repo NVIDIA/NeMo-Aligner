@@ -53,7 +53,7 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
         git checkout FETCH_HEAD; \
     fi && \
     pip uninstall -y nemo_toolkit sacrebleu && \
-    rm -rf .git && pip install -e ".[nlp]" && \
+    pip install -e ".[nlp]" && \
     cd nemo/collections/nlp/data/language_modeling/megatron && make
 
 # MLM
