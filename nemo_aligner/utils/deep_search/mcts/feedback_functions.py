@@ -165,7 +165,7 @@ class LLMJudgementFeedback(Feedback):
             if len(rating_matches) == 0:
                 rating_matches = re.findall(r"(\d+) out of 10", evaluation)
             score = float(rating_matches[-1])  # Get the last match
-            score = 0.0 if score < 8 else 1.0  # score / 10  # scale it to 0-1
+            score = 0.0 if score < 8 else score / 10  # scale it to 0-1
             print("score", score)
         except Exception as e:
             print("############ Inference failed ############")
