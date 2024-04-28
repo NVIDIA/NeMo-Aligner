@@ -94,7 +94,7 @@ class EnvironmentStateTransitionFunction(LocalStateTransitionFunction):
         update_actions = []
         for next_action, context_id_tuple, action_taken in zip(next_actions, context_ids, actions):
             new_actions = []
-            actions_list = next_action.tolist()
+            actions_list = next_action
             for i, action in enumerate(actions_list):
                 # combine the context tokens with the current node state
                 past_tokens = list(context_id_tuple) + action_taken + [action]

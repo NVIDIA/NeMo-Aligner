@@ -20,6 +20,7 @@ mp.set_start_method("spawn", force=True)
 import os
 import random
 import tempfile
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
@@ -362,6 +363,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
         )
         def search_for_batch(self, batch_idx):
             try:
+                beg_time = time.time()
                 batch_size = torch.tensor([len(batch_idx)], dtype=torch.int64).cuda()
                 torch.distributed.broadcast(batch_size, 0)
                 batch_idx = torch.tensor(batch_idx, dtype=torch.int64).cuda()
@@ -376,6 +378,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
                     cache_dir=cfg.model.mcts.cache_dir,
                 )
                 searcher.search(batch_idx)
+                end_time = time.time()
             except Exception as e:
                 print("ERROR", e)
                 # print the stack trace
@@ -383,7 +386,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
 
                 traceback.print_exc()
                 raise self.retry(exc=e)
-            return batch_idx
+            return {"batch_ids": batch_idx, "time": end_time - beg_time}
 
         RAND_ID = os.environ.get("local_rank", random.randint(0, 10000))
         app.worker_main(

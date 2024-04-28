@@ -128,13 +128,21 @@ def main(cfg):
 
     results = [search_for_batch.delay(data.tolist()) for data in data_id_list]
     global_pbar = tqdm(total=len(non_processed_ids), desc="Search Global Progress")
+    total_time = 0
+    total_finished = 0
     while len(results) > 0:
         for subtask in results:  # Iterate over a copy of the list
             try:
                 if subtask.ready():
                     args = subtask.get()
+                    finished_ids = args["batch_ids"]
+                    time_spent = args["time"]
+                    total_time += time_spent
+                    total_finished += len(finished_ids)
                     global_pbar.update(cfg.model.mcts.rollout_micro_batch_size)
-                    global_pbar.write(f"Finished {args}")
+                    global_pbar.write(
+                        f"Finished {finished_ids} in {time_spent} seconds, total_time: {total_time}, average time: {total_time / total_finished}"
+                    )
                     results.remove(subtask)
                     # results.children.remove(subtask)  # Remove the subtask from the list
             except TimeoutError:
