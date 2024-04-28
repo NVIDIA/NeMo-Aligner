@@ -204,7 +204,7 @@ Please wait for the server to be ready before proceeding.
       --ngc-api-key nvapi-**_YOUR-NGC-KEY-GOES-IN-HERE_**
       --red-teaming-file-path /path/to/anthropic_red_team_attempts_train.json
       --output-dir /path/to/blend_preference_dataset_with_anthropic_helpful_only
-      --output-filename-prefix blend_mistral_7b_cai_preference_dataset_with_anthropic_helpful_only
+      --output-filename-prefix mistral_7b_cai_preference_dataset
       --blend-with "{'name': 'anthropic_helpful_only', 'train': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_comparisons_with_chat_prompt.jsonl']}, 'test': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_comparisons_with_chat_prompt.jsonl']}}"
       --port-num 5999
 
