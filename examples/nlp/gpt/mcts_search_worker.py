@@ -27,10 +27,9 @@ from functools import partial
 from pathlib import Path
 from typing import List, Union
 
-import pandas as pd
+import numpy as np
 import torch
 from celery import Celery
-from datasets import load_dataset
 from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf
 from tqdm import tqdm
@@ -41,14 +40,9 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import (
-    DummyScore,
-    GSK8KFeedbackDataset,
-    GSK8KFeedbackHF,
-    SteerLMFeedback,
-)
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import DummyScore, GSK8KFeedbackDataset, SteerLMFeedback
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
-from nemo_aligner.utils.distributed import Timer
+from nemo_aligner.utils.distributed import broadcast_2d_tensor
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, preemptable_save
 
@@ -178,12 +172,26 @@ class MCTSSearchOneBatch:
         # search for the files here
         self.step = 0
 
-    def search(self, batch_idx: List[int]):
+    def search(self, batch_idx: List[int], replica_idx: List[int]):
         self.data_ids = set()
         self.outputs = []
         print("###### START", batch_idx)
-        batch_file_name = "-".join([str(b) for b in batch_idx])
-        batch = self.collate_func([self.dataset[idx] for idx in batch_idx])
+        # compute seed number based on batch_idx and replica_idx and timestamp using hash function
+        timestamp = time.time()
+        # mode a large prime number
+        large_prime = 2147462143
+        seed = hash(str(batch_idx) + str(replica_idx) + str(timestamp)) % large_prime
+        # seed seed for math, pytorch and numpy, random
+        torch.manual_seed(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+        batch_file_name = "-".join([str(b) + "@" + str(r) for b, r in zip(batch_idx, replica_idx)])
+        batch_data = []
+        for idx, replica_id in zip(batch_idx, replica_idx):
+            dp = self.dataset[idx]
+            dp["data_id"] = str(dp["data_id"]) + "@" + str(replica_id)
+            batch_data.append(dp)
+        batch = self.collate_func(batch_data)
 
         metrics = {}
         self.timer.start("mcts_search_time")
@@ -204,7 +212,8 @@ class MCTSSearchOneBatch:
         self.outputs.extend(output)
         self.step += 1
 
-        self.data_ids.update(batch_idx)
+        ids = batch["data_id"]
+        self.data_ids.update(ids)
         print("###### DONE", batch_idx)
 
         print("### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx, "at step", self.step)
@@ -361,15 +370,14 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
             retry_jitter=True,
             retry_kwargs={"max_retries": 10},
         )
-        def search_for_batch(self, batch_idx):
+        def search_for_batch(self, job):
             try:
                 beg_time = time.time()
-                batch_size = torch.tensor([len(batch_idx)], dtype=torch.int64).cuda()
-                torch.distributed.broadcast(batch_size, 0)
-                batch_idx = torch.tensor(batch_idx, dtype=torch.int64).cuda()
-                torch.distributed.broadcast(batch_idx, 0)
-                batch_idx = batch_idx.tolist()
-                # braodcast the
+                # job exmaple [(0, 0), (0, 1), (1, 0), (1, 1)], list of (batch_idx, replica_idx)
+                job = torch.tensor(job)
+                job = broadcast_2d_tensor(job, 0, None, dtype=torch.int64)
+                batch_idx = job[:, 0].tolist()
+                replicat_idx = job[:, 1].tolist()
                 searcher = MCTSSearchOneBatch(
                     search_func=search_func,
                     collate_func=collate_func,
@@ -377,7 +385,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
                     dataset=ds,
                     cache_dir=cfg.model.mcts.cache_dir,
                 )
-                searcher.search(batch_idx)
+                searcher.search(batch_idx, replicat_idx)
                 end_time = time.time()
             except Exception as e:
                 print("ERROR", e)
@@ -402,12 +410,9 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
         )
     else:
         while True:
-            batch_size = torch.tensor([0], dtype=torch.int64).cuda()
-            torch.distributed.broadcast(batch_size, 0)
-            batch_size = batch_size.tolist()[0]
-            batch_idx = torch.tensor([0] * batch_size, dtype=torch.int64).cuda()
-            torch.distributed.broadcast(batch_idx, 0)
-            batch_idx = batch_idx.tolist()
+            job = broadcast_2d_tensor(job, 0, None, dtype=torch.int64)
+            batch_idx = job[:, 0].tolist()
+            replicat_idx = job[:, 1].tolist()
             searcher = MCTSSearchOneBatch(
                 search_func=search_func,
                 collate_func=collate_func,
@@ -415,7 +420,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
                 dataset=ds,
                 cache_dir=cfg.model.mcts.cache_dir,
             )
-            searcher.search(batch_idx)
+            searcher.search(batch_idx, replicat_idx)
 
 
 if __name__ == "__main__":

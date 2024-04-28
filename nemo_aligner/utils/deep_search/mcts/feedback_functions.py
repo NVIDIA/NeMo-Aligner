@@ -37,9 +37,10 @@ class GSK8KFeedbackDataset(Feedback):
         """
         score the response
         """
-        assert self.ds[data_id]["data_id"] == data_id
+        key = int(data_id.split("@")[0])
+        assert self.ds[key]["data_id"] == key
         response = response.lower()
-        answer = self.ds[data_id]["expected_answer"]
+        answer = self.ds[key]["expected_answer"]
         # this needs to be on a seperate server for anything
         # complicated but for GSM8K this is fine
         response = extract_answer(response)

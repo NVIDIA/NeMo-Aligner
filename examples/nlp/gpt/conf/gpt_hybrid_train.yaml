@@ -40,6 +40,7 @@ dataset:
   name: gsm8k
   split: train
   prompt_template_name: ''
+  parallel_responses_per_prompt: 2 # for each prompt, how many number of parallel responses to search
  
 model:
   from_mcts_trained: ${pretrained_checkpoint.from_mcts_trained}
