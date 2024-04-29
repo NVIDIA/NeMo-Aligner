@@ -29,11 +29,21 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_val
 
     if mcts_cfg.environment == "code":
         client_fun = MathtoolLocalStateTransitionFunction(
-            ptl_model, mcts_cfg.top_k, mcts_cfg.max_depth, mcts_cfg.add_bos_token, **strategy_args
+            ptl_model,
+            mcts_cfg.top_k,
+            mcts_cfg.max_depth,
+            mcts_cfg.add_bos_token,
+            mcts_cfg.child_threshold,
+            **strategy_args
         )
     else:
         client_fun = LocalStateTransitionFunction(
-            ptl_model, mcts_cfg.top_k, mcts_cfg.max_depth, mcts_cfg.add_bos_token, **strategy_args
+            ptl_model,
+            mcts_cfg.top_k,
+            mcts_cfg.max_depth,
+            mcts_cfg.add_bos_token,
+            mcts_cfg.child_threshold,
+            **strategy_args
         )
 
     termination_condition = TerminationCondition(

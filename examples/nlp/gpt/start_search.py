@@ -1,17 +1,18 @@
 import functools
+import itertools
 import os
 import pathlib
 import sys
 from typing import Any, Callable, Optional
 
 import amqp
-import torch
-from datasets import load_dataset
+import numpy as np
 from hydra import TaskFunction
 from hydra._internal.utils import _run_hydra, get_args_parser
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig
 from tqdm import tqdm
+
 from tasks import get_search_for_batch
 
 
@@ -108,6 +109,8 @@ def main(cfg):
     # calculate the number of lines of the file cfg.dataset.data_prefix["train"]
     with open(cfg.dataset.data_prefix["train"]) as f:
         number_of_lines = sum(1 for line in f)
+
+    parallel_responses_per_prompt = cfg.dataset.parallel_responses_per_prompt
     total = number_of_lines
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
 
@@ -115,26 +118,48 @@ def main(cfg):
     ids = set()
     for file_name in existing_files:
         id_str = file_name.name.split("_")[0].split("-")
-        ids.update([int(id) for id in id_str])
+        ids.update([id for id in id_str])
 
-    all_ids = set(range(total))
+    all_ids = set(
+        [
+            str(bid) + "@" + str(replica)
+            for bid, replica in itertools.product(range(total), range(parallel_responses_per_prompt))
+        ]
+    )
     non_processed_ids = all_ids - ids
 
-    data_id_list = torch.tensor(list(non_processed_ids)).split(
-        cfg.model.mcts.rollout_micro_batch_size
-    )  # list of data to process
+    non_processed_ids = list(non_processed_ids)
+    non_processed_ids.sort(key=lambda x: int(x.split("@")[0]))
+
+    data_id_list_np = np.array(non_processed_ids)
+    data_id_list = np.array_split(data_id_list_np, len(data_id_list_np) // cfg.model.mcts.rollout_micro_batch_size)
 
     search_for_batch = get_search_for_batch(cfg.server_url, cfg.backend_url)
 
-    results = [search_for_batch.delay(data.tolist()) for data in data_id_list]
+    results = []
+    for data in data_id_list:
+        jobs = []
+        for item in data:
+            bid = int(item.split("@")[0])
+            replica = int(item.split("@")[1])
+            jobs.append((bid, replica))
+        results.append(search_for_batch.delay(jobs))
     global_pbar = tqdm(total=len(non_processed_ids), desc="Search Global Progress")
+    total_time = 0
+    total_finished = 0
     while len(results) > 0:
         for subtask in results:  # Iterate over a copy of the list
             try:
                 if subtask.ready():
                     args = subtask.get()
+                    finished_ids = args["batch_ids"]
+                    time_spent = args["time"]
+                    total_time += time_spent
+                    total_finished += len(finished_ids)
                     global_pbar.update(cfg.model.mcts.rollout_micro_batch_size)
-                    global_pbar.write(f"Finished {args}")
+                    global_pbar.write(
+                        f"Finished {finished_ids} in {time_spent} seconds, total_time: {total_time}, average time: {total_time / total_finished}"
+                    )
                     results.remove(subtask)
                     # results.children.remove(subtask)  # Remove the subtask from the list
             except TimeoutError:
