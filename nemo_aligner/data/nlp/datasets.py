@@ -557,7 +557,7 @@ class LLaMa3ChatDataset:
             [llama3, user_msg], add_generation_prompt=True, tokenize=False
         )
         item["question"] = message
-        item["data_id"] = item["data_id"]
+        item["data_id"] = idx
         return item
 
     def __len__(self):
