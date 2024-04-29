@@ -83,10 +83,10 @@ index 6e232f85d..81a5ef6ab 100644
  {
      TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
 diff --git a/cpp/tensorrt_llm/runtime/tllmRuntime.cpp b/cpp/tensorrt_llm/runtime/tllmRuntime.cpp
-index 09261697c..e5c804220 100644
+index 09261697c..87fe0a303 100644
 --- a/cpp/tensorrt_llm/runtime/tllmRuntime.cpp
 +++ b/cpp/tensorrt_llm/runtime/tllmRuntime.cpp
-@@ -217,6 +217,22 @@ void TllmRuntime::setOutputTensors(SizeType contextIndex, TensorMap& tensorMap)
+@@ -217,6 +217,24 @@ void TllmRuntime::setOutputTensors(SizeType contextIndex, TensorMap& tensorMap)
      }
  }
  
@@ -104,6 +104,8 @@ index 09261697c..e5c804220 100644
 +            "Failed to refit %s", param.first.c_str());
 +    }
 +    TLLM_CHECK_WITH_INFO(refitter->refitCudaEngine(), "Refit failed!");
++
++    delete refitter;
 +}
 +
  CudaStream const& TllmRuntime::getStream() const
