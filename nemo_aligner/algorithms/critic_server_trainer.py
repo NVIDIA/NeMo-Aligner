@@ -120,7 +120,7 @@ class CriticServerTrainer:
             "values": values,
         }
         if self.combine_rm_and_critic_server:
-            output["rewards"] = rewards
+            output["rewards"] = rewards[:, None]
 
         return {k: v[: v.shape[0] - extra] for k, v in output.items()}
 
