@@ -59,10 +59,13 @@ def calculate_entropy(log_probs, mask=None):
 
 def calculate_ppo_rewards(values, rewards, response_lengths, init_policy_kl, penalty_factor=0.0):
     """the reward should be defined on the last valid action"""
+
     rewards_sequence = torch.zeros_like(values)
 
     idx = (response_lengths - 2).clamp(min=0, max=None)
+
     rewards_sequence[torch.arange(rewards_sequence.size(0)), idx] = rewards.flatten()
+
     return rewards_sequence - penalty_factor * init_policy_kl
 
 
@@ -81,7 +84,6 @@ def create_mask(values, prompt_lengths, response_lengths):
     This results in removing the prompt tokens, and removing the padding at the end of the sequence.
     """
     mask = torch.zeros_like(values)
-
     for i in range(mask.size(0)):
         # Do prompt_length - 1 to remove the first log prob. But keep sentence_length
         # as it is because we want to include one EOS token.

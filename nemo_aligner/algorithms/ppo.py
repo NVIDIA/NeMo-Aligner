@@ -12,24 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections import defaultdict
+import itertools
+import json
+import threading
+import time
+from collections import UserDict, defaultdict
+from collections.abc import Iterator, Mapping
+from contextlib import nullcontext
+from dataclasses import dataclass
+from functools import partial
+from typing import Callable
 
 import pandas as pd
+import requests
 import torch
-from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
+from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo.utils import logging
+from nemo_aligner.data.nlp.builders import collate_with_pad_to_max_batch
 from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     SyncTimer,
+    all_reduce_dict,
+    broadcast_2d_tensor,
+    broadcast_2d_tensor_within_mp,
     masked_global_mean_var,
     normalize_tensor,
-    pad_tensors_to_max_global_seq_len,
+    rebalance_nd_tensor,
+    run_if_model_parallel_src,
 )
+from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.utils.ppo_utils import (
     calculate_advantages_and_returns,
     calculate_kl_penalty,
@@ -40,6 +57,165 @@ from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
+
+
+@dataclass
+class SharedSet:
+    lock: threading.Lock
+
+    def __post_init__(self):
+        self.data = set()
+
+    def clear(self):
+        with self.lock:
+            self.data.clear()
+
+    def set_idx(self, ids):
+        with self.lock:
+            self.data.update(ids)
+
+    def get_idx(self, batch_size):
+        with self.lock:
+            to_ret = [self.data.pop() for _ in range(batch_size) if len(self.data) > 0]
+
+        return to_ret
+
+
+@dataclass
+class DefaultBatchIterator:
+    sampler_iter: Iterator[int]
+    num_microbatches: int
+    dataset: Mapping
+    collate_fn: Callable
+
+    def __iter__(self):
+        for _, ids in zip(range(self.num_microbatches), self.sampler_iter):
+            batch = self.collate_fn([self.dataset[index] for index in ids])
+            yield batch
+
+
+@dataclass
+class HTTPBatchIterator:
+    shared_set: SharedSet
+    host: str
+    port: int
+    sampler_iter: Iterator[int]
+    num_microbatches: int
+    dataset: Mapping
+    collate_fn: Callable
+
+    def __post_init__(self):
+        local_ids = [ids for _, ids in zip(range(self.num_microbatches), self.sampler_iter)]
+        self.desired_batch_size = len(local_ids[0]) if len(local_ids) > 0 else 1
+
+        local_ids = set(itertools.chain.from_iterable(local_ids))
+        global_ids = get_global_set(local_ids)
+
+        if torch.distributed.get_rank() == 0:
+            self.shared_set.clear()
+            self.shared_set.set_idx(global_ids)
+
+        torch.distributed.barrier()
+
+    def __iter__(self):
+        ids = send_request(host=self.host, port=self.port, batch_size=self.desired_batch_size)
+
+        while len(ids) > 0:
+            batch = self.collate_fn([self.dataset[idx] for idx in ids])
+            yield batch
+            ids = send_request(host=self.host, port=self.port, batch_size=self.desired_batch_size)
+
+
+class PPORolloutBatch(UserDict):
+    @classmethod
+    def from_rollout_batches(cls, rollout_batches, eos_id, rollout_batch_seq_length):
+        stacked_dict = cls()
+
+        if len(rollout_batches) == 0:
+            return stacked_dict
+
+        keys = rollout_batches[0].keys()
+
+        for k in sorted(keys):
+
+            list_of_tensors = [item[k] for item in rollout_batches]
+
+            if all(map(lambda x: x.ndim == 1, list_of_tensors)):
+                tensor = torch.cat(list_of_tensors)
+            else:
+                pad_value = eos_id if k == "response_tokens" else 0
+
+                list_of_tensors = list(
+                    itertools.chain(*(map(lambda x: x.flatten(), item.split(1, dim=0)) for item in list_of_tensors))
+                )
+                tensor = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
+
+                # find the max sequence length
+                max_seqlen = torch.tensor([tensor.size(-1)], dtype=torch.long, device=torch.cuda.current_device())
+                torch.distributed.all_reduce(max_seqlen, op=torch.distributed.ReduceOp.MAX)
+
+                if rollout_batch_seq_length is None or max_seqlen > rollout_batch_seq_length:
+                    pad_seq_len = max_seqlen.item()
+                else:
+                    pad_seq_len = rollout_batch_seq_length if k == "response_tokens" else rollout_batch_seq_length - 1
+
+                tensor = torch.nn.functional.pad(tensor, (0, pad_seq_len - tensor.size(-1)), value=pad_value)
+
+            stacked_dict[k] = tensor
+
+        return stacked_dict
+
+    def gather_and_balance_globally(self):
+        global_rollout_batch = type(self)()
+
+        for k, tensor in self.data.items():
+            if is_trt_llm_reshard():
+                tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_pipeline_model_parallel_group())
+
+            tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_data_parallel_group())
+            global_rollout_batch[k] = tensor
+
+        return global_rollout_batch
+
+    def chunk(self, rank, split_size, seed):
+        chunked_rollout_batch = type(self)()
+
+        batch_set = set(tensor.size(0) for tensor in self.data.values())
+        assert len(batch_set) == 1, "batch sizes are not the same across rollout batch"
+        B = batch_set.pop()
+
+        g_cpu = torch.Generator()
+        g_cpu.manual_seed(seed)
+        indices = torch.randperm(B, generator=g_cpu).tensor_split(split_size)[rank]
+
+        for k in self.data:
+            chunked_rollout_batch[k] = self.data[k][indices].clone()
+
+        return chunked_rollout_batch
+
+
+def send_request(host, port, endpoint="/get_idx", batch_size=1):
+    output = run_if_model_parallel_src(
+        requests.put,
+        url=f"http://{host}:{port}/{endpoint}",
+        data=json.dumps({"batch_size": batch_size}),
+        headers={"Content-Type": "application/json"},
+    )
+
+    if output is not None:
+        output = output.json()
+        output = torch.as_tensor(output).view(1, -1)
+
+    output = broadcast_2d_tensor_within_mp(output, dtype=torch.long)
+    return output.flatten().tolist()
+
+
+def get_global_set(local_data_ids):
+    output = [None for _ in range(torch.distributed.get_world_size())]
+    torch.distributed.all_gather_object(output, local_data_ids)
+    global_set = set().union(*output)
+
+    return global_set
 
 
 def compute_num_rollout_microbatches(dataloader):
@@ -59,9 +235,11 @@ class PPOTrainer:
         model,
         optimizer,
         scheduler,
-        train_dataloader,
-        val_dataloader,
+        train_dataloader_builder,
+        val_dataloader_builder,
+        collate_fn,
         rm_critic,
+        batch_iterator_cls,
         logger,
         ckpt_callback,
         run_timer,
@@ -70,14 +248,19 @@ class PPOTrainer:
         self.model = model
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
+        self.train_dataloader_builder = train_dataloader_builder
+        self.val_dataloader_builder = val_dataloader_builder
+        self.collate_fn = collate_fn
         self.rm_critic = rm_critic
+        self.batch_iterator_cls = batch_iterator_cls
         self.logger = logger
         self.ckpt_callback = ckpt_callback
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
+
+        # TODO: need to knob it so we can actually disable it on nemo export side
+        self.trtllm_reshard = cfg.trt_llm.enable and cfg.trt_llm.reshard
 
         self.consumed_samples = 0
         # the step here is PPO step
@@ -86,7 +269,8 @@ class PPOTrainer:
         self.ppo_optimization_step = 0
 
         # compute `max_steps`
-        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
+        train_dataloader = self.train_dataloader_builder(consumed_samples=0)
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(train_dataloader.batch_sampler)
         self.set_max_steps()
 
         self.compute_init_policy_kl = self.cfg.initial_policy_kl_penalty > 0
@@ -101,86 +285,65 @@ class PPOTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-    def generate_ppo_data(self, rollout_batches):
+    def generate_ppo_data(self, rollout_batch):
         """generate ppo specific data for training
         """
-        ppo_rollout_data = defaultdict(list)
-        ppo_rollout_metrics = defaultdict(lambda: 0)
-        num_samples = 0
+        ppo_rollout_data = {}
+        ppo_rollout_metrics = {}
 
-        def post_process_tensor(tensor):
-            return map(lambda x: x.flatten(), tensor.cpu().split(1, dim=0))
+        prompt_lengths = rollout_batch["prompt_lengths"]
+        response_lengths = rollout_batch["response_lengths"]
+        response_tokens = rollout_batch["response_tokens"]
+        values = rollout_batch["values"]
+        rewards = rollout_batch["rewards"]
+        logprobs = rollout_batch["logprobs"]
 
-        for rollout_batch in rollout_batches:
-            # NOTE: all items in rollout batch or out of this computation
-            # must have a leading B dimension
-            prompt_lengths = rollout_batch["prompt_lengths"]
-            response_lengths = rollout_batch["response_lengths"]
-            response_tokens = rollout_batch["response_tokens"]
-            values = rollout_batch["values"]
-            rewards = rollout_batch["rewards"]
-            logprobs = rollout_batch["logprobs"]
-
-            num_samples += prompt_lengths.size(0)
-
-            if self.compute_init_policy_kl:
-                init_policy_kl = calculate_kl_penalty(
-                    log_probs_a=rollout_batch["logprobs"],
-                    log_probs_b=rollout_batch["init_logprobs"],
-                    use_absolute_kl=self.cfg.use_absolute_kl,
-                )
-            else:
-                init_policy_kl = torch.tensor(0, dtype=logprobs.dtype, device=logprobs.device)
-
-            rewards_with_kl = calculate_ppo_rewards(
-                values, rewards, response_lengths, init_policy_kl, self.cfg.initial_policy_kl_penalty
+        if self.compute_init_policy_kl:
+            init_policy_kl = calculate_kl_penalty(
+                log_probs_a=rollout_batch["logprobs"],
+                log_probs_b=rollout_batch["init_logprobs"],
+                use_absolute_kl=self.cfg.use_absolute_kl,
             )
-            mask = create_mask(values=values, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
+        else:
+            init_policy_kl = torch.tensor(0, dtype=logprobs.dtype, device=logprobs.device)
 
-            # TODO(geshen): we may not need this mask
-            advantages, returns = calculate_advantages_and_returns(
-                values=values,
-                rewards=rewards_with_kl,
-                discount_factor=self.cfg.discount_factor,
-                gae_lambda=self.cfg.gae_lambda,
-                mask=mask,
-            )
+        rewards_with_kl = calculate_ppo_rewards(
+            values, rewards, response_lengths, init_policy_kl, self.cfg.initial_policy_kl_penalty
+        )
+        mask = create_mask(values=values, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
-            # collect everything we need to train PPO
-            ppo_rollout_data["mask"].extend(post_process_tensor(mask))
-            ppo_rollout_data["advantages"].extend(post_process_tensor(advantages))
-            ppo_rollout_data["prev_logprobs"].extend(post_process_tensor(logprobs))
-            ppo_rollout_data["response_tokens"].extend(post_process_tensor(response_tokens))
-            # for the critic
-            ppo_rollout_data["values"].extend(post_process_tensor(values))
-            ppo_rollout_data["returns"].extend(post_process_tensor(returns))
+        # TODO(geshen): we may not need this mask
+        advantages, returns = calculate_advantages_and_returns(
+            values=values,
+            rewards=rewards_with_kl,
+            discount_factor=self.cfg.discount_factor,
+            gae_lambda=self.cfg.gae_lambda,
+            mask=mask,
+        )
 
-            # compute metrics
-            # NOTE: this metric is not accumulated globally so it will differ between DP ranks
-            ppo_rollout_metrics["init_policy_kl"] += (
-                masked_mean(init_policy_kl, mask, dim=-1).sum().item() if self.compute_init_policy_kl else 0
-            )
+        # collect everything we need to train PPO
+        ppo_rollout_data["mask"] = mask
+        ppo_rollout_data["advantages"] = advantages
+        ppo_rollout_data["prev_logprobs"] = logprobs
+        ppo_rollout_data["response_tokens"] = response_tokens
+        # for the critic
+        ppo_rollout_data["values"] = values
+        ppo_rollout_data["returns"] = returns
 
-        # average across the samples for the non global metrics
+        # compute metrics
+        # these are not global yet
+        ppo_rollout_metrics["init_policy_kl"] = (
+            masked_mean(init_policy_kl, mask, dim=-1).sum().item() if self.compute_init_policy_kl else 0
+        )
+        ppo_rollout_metrics["rewards_with_kl"] = masked_mean(rewards_with_kl, mask, dim=-1).sum().item()
+        ppo_rollout_metrics["num_samples"] = prompt_lengths.size(0)
+
+        # now the metrics are global
+        ppo_rollout_metrics = all_reduce_dict(
+            ppo_rollout_metrics, group=parallel_state.get_data_parallel_group(), op=torch.distributed.ReduceOp.SUM
+        )
+        num_samples = ppo_rollout_metrics.pop("num_samples")
         ppo_rollout_metrics = {k: v / num_samples for k, v in ppo_rollout_metrics.items()}
-
-        for k in ppo_rollout_data:
-            rollout_batch_seq_length = self.rollout_batch_seq_length
-            pad_value = self.model.tokenizer.eos_id
-
-            # all other tensors in the rollout batch
-            # will be B x S -1 (because we don't predict anything for the last token)
-            if k != "response_tokens":
-                pad_value = 0
-                if rollout_batch_seq_length is not None:
-                    rollout_batch_seq_length -= 1
-
-            ppo_rollout_data[k] = pad_tensors_to_max_global_seq_len(
-                ppo_rollout_data[k],
-                pad_value=pad_value,
-                group=parallel_state.get_data_parallel_group(),
-                sequence_length_to_pad_to=rollout_batch_seq_length,
-            )
 
         mask = ppo_rollout_data["mask"]
         for key in ["advantages", "returns", "values"]:
@@ -189,8 +352,8 @@ class PPOTrainer:
             global_mean, global_var = masked_global_mean_var(
                 tensor, mask, group=parallel_state.get_data_parallel_group(),
             )
-            ppo_rollout_metrics[f"global_{key}_mean"] = global_mean.item()
-            ppo_rollout_metrics[f"global_{key}_std"] = global_var.sqrt().item()
+            ppo_rollout_metrics[f"{key}_mean"] = global_mean.item()
+            ppo_rollout_metrics[f"{key}_std"] = global_var.sqrt().item()
 
         if self.cfg.normalize_advantages:
             ppo_rollout_data["advantages"] = normalize_tensor(
@@ -201,84 +364,115 @@ class PPOTrainer:
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
 
-    def _run_inference(self, dataloader_iter, num_microbatches, is_validation):
+    def _run_inference(self, dataloader_builder, consumed_samples, is_validation):
         """this function is run per DP so the metrics need to be computed globally
+        assumes that the dataloader is built with the proper consumed samples value
         """
-        rollout_batches = []
-        futures = []
+        reshard_context = trt_llm_reshard_region if self.trtllm_reshard else nullcontext
 
-        for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
-            rollout_batch = self.model.infer(inference_batch)
+        rollout_batches, futures = [], []
+        timer_metrics = {}
 
-            rollout_batches.append(rollout_batch)
-            futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+        with reshard_context():
+            # dataloader must be built within the reshard context because it uses DP rank and size
+            dataloader = dataloader_builder(consumed_samples=consumed_samples)
+            sampler_iter = iter(dataloader.batch_sampler)
 
-        if not is_validation and self.compute_init_policy_kl:
-            init_policy_logprobs = self.model.get_init_policy_logprobs(rollout_batches)
+            # must compute the number of microbatches in the reshard context
+            # so the DP groups are correct
+            num_microbatches = compute_num_rollout_microbatches(dataloader)
 
-            if init_policy_logprobs is not None:
-                assert len(init_policy_logprobs) == len(
-                    rollout_batches
-                ), "init policy log probs must be same size as rollout batches"
+            self.timer.start("batch_iterator_init")
+            batch_iterator = self.batch_iterator_cls(
+                sampler_iter, num_microbatches, dataloader.dataset, self.collate_fn
+            )
+            timer_metrics["batch_iterator_init"] = self.timer.stop_and_get_time("batch_iterator_init")
 
-                for init_logprobs, rollout_batch in zip(init_policy_logprobs, rollout_batches):
-                    rollout_batch["init_logprobs"] = init_logprobs
+            self.timer.start("generate")
+            for batch in batch_iterator:
+                rollout_batch = self.model.infer(batch)
+                rollout_batches.append(rollout_batch)
 
-        for future, rollout_batch in zip(futures, rollout_batches, strict=True):
-            rewards, values = future.result() if isinstance(future, FutureResult) else future
-            rollout_batch["rewards"] = rewards
-            rollout_batch["values"] = values
+                futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
 
-        return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
+            timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
-    def compute_global_rollout_metrics(self, rollout_batches):
-        metrics = defaultdict(lambda: 0)
+            unbalanced_local_batch = PPORolloutBatch.from_rollout_batches(
+                rollout_batches,
+                eos_id=self.model.tokenizer.eos_id,
+                rollout_batch_seq_length=self.cfg.rollout_batch_seq_length,
+            )
+            global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()
+
+        # the chunking must be outside of the TRT-LLM context because we do logprob calculation in nemo
+        balanced_local_batch = global_rollout_batch.chunk(
+            parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
+        )
+        # since we compute the logprobs in nemo we need to disable the resharding
+        batched_response_tokens = balanced_local_batch["response_tokens"]
+
+        self.timer.start("logprobs")
+        rollout_logprobs = self.model.get_logprobs(batched_response_tokens)
+        balanced_local_batch["logprobs"] = rollout_logprobs
+        timer_metrics["logprobs"] = self.timer.stop_and_get_time("logprobs")
+
+        compute_init_policy_kl = not is_validation and self.compute_init_policy_kl
+        if compute_init_policy_kl:
+            self.timer.start("init_logprobs")
+            rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens)
+            balanced_local_batch["init_logprobs"] = rollout_init_logprobs
+            timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
+
+        # we send the request in sharded context, so we need to keep this sharding and then undo it
+        with reshard_context():
+            self.timer.start("critic_wait")
+            rm_value_rollout_batches = []
+            for future in futures:
+                rewards, values = future.result() if isinstance(future, FutureResult) else future
+                rm_value_rollout_batches.append({"rewards": rewards, "values": values})
+            timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
+
+            unbalanced_rm_value_batch = PPORolloutBatch.from_rollout_batches(
+                rm_value_rollout_batches,
+                eos_id=self.model.tokenizer.eos_id,
+                rollout_batch_seq_length=self.cfg.rollout_batch_seq_length,
+            )
+            global_rm_value_batch = unbalanced_rm_value_batch.gather_and_balance_globally()
+
+        # chunking needs to be outside of reshard region
+        balanced_rm_value_batch = global_rm_value_batch.chunk(
+            parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
+        )
+        balanced_local_batch.update(balanced_rm_value_batch)
+
+        global_rollout_batch.update(global_rm_value_batch)
+
+        return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
+
+    def compute_rollout_metrics(self, rollout_batch):
         table = {}
 
-        num_samples = 0
-        for i, rollout_batch in enumerate(rollout_batches):
-            prompt_lengths = rollout_batch["prompt_lengths"]
-            response_lengths = rollout_batch["response_lengths"]
-            response_tokens = rollout_batch["response_tokens"]
-            rewards = rollout_batch["rewards"]
+        prompt_lengths = rollout_batch["prompt_lengths"]
+        response_lengths = rollout_batch["response_lengths"]
+        response_tokens = rollout_batch["response_tokens"]
+        rewards = rollout_batch["rewards"]
 
-            # table logging
-            if i == 0:
-                reward = rewards[0]
-                prompt_length = prompt_lengths[0]
-                response_length = response_lengths[0]
-                response_token = response_tokens[0]
+        reward = rewards[0]
+        prompt_length = prompt_lengths[0]
+        response_length = response_lengths[0]
+        response_token = response_tokens[0]
 
-                table["reward"] = reward.item()
-                table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
-                table["response"] = self.model.tokenizer.ids_to_text(
-                    response_token[prompt_length:response_length].tolist()
-                )
-
-            metrics["response_lengths"] += (response_lengths - prompt_lengths).sum()
-            metrics["prompt_lengths"] += prompt_lengths.sum()
-            metrics["rewards"] += rewards.sum()
-            num_samples += prompt_lengths.size(0)
-
-        tensor_to_accumulate = torch.tensor(
-            [metrics["response_lengths"], metrics["prompt_lengths"], metrics["rewards"], num_samples],
-            dtype=torch.float32,
-            device=torch.cuda.current_device(),
-        )
-        torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())
-
-        (
-            global_response_lengths,
-            global_prompt_lengths,
-            global_rewards,
-            global_num_samples,
-        ) = tensor_to_accumulate.tolist()
+        table["reward"] = reward.item()
+        table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
+        table["response"] = self.model.tokenizer.ids_to_text(response_token[prompt_length:response_length].tolist())
 
         metrics = {
             "table": table,
-            "global_response_lengths_mean": global_response_lengths / global_num_samples,
-            "global_prompt_lengths": global_prompt_lengths / global_num_samples,
-            "global_rewards": global_rewards / global_num_samples,
+            "consumed_samples": prompt_lengths.size(0),
+            "response_lengths": response_lengths.float().mean().item(),
+            "prompt_lengths": prompt_lengths.float().mean().item(),
+            "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
+            "rewards": rewards.mean().item(),
         }
 
         return metrics
@@ -287,27 +481,41 @@ class PPOTrainer:
     def run_validation(self):
         self.model.prepare_for_inference()
 
-        num_val_micro_batches = compute_num_rollout_microbatches(self.val_dataloader)
-        val_dataloader = iter(self.val_dataloader)
+        _, rollout_metrics, _ = self._run_inference(
+            self.val_dataloader_builder, consumed_samples=0, is_validation=True
+        )
 
-        _, rollout_metrics = self._run_inference(val_dataloader, num_val_micro_batches, is_validation=True)
         self.model.finish_inference()
         return rollout_metrics
 
     @torch.no_grad()
-    def generate_rollouts(self, dataloader_iter, num_microbatches):
+    def generate_rollouts(self):
+        timing_metrics = {}
+
+        self.timer.start("prepare_for_inference")
         self.model.prepare_for_inference()
+        timing_metrics["prepare_for_inference"] = self.timer.stop_and_get_time("prepare_for_inference")
 
-        rollout_batches, rollout_metrics = self._run_inference(dataloader_iter, num_microbatches, is_validation=False)
-
-        ppo_rollout_data, ppo_rollout_metrics = map(cpu_dict, self.generate_ppo_data(rollout_batches))
-
-        self.model.finish_inference()
-
-        self.consumed_samples += (
-            ppo_rollout_data["response_tokens"].size(0) * parallel_state.get_data_parallel_world_size()
+        rollout_batch, rollout_metrics, timer_metrics = self._run_inference(
+            self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False
         )
-        return ppo_rollout_data, rollout_metrics | ppo_rollout_metrics | {"consumed_samples": self.consumed_samples}
+
+        self.consumed_samples += rollout_metrics["consumed_samples"]
+
+        ppo_rollout_data, ppo_rollout_metrics = self.generate_ppo_data(rollout_batch)
+        ppo_rollout_metrics = cpu_dict(ppo_rollout_metrics)
+
+        self.timer.start("finish_inference")
+        self.model.finish_inference()
+        timing_metrics["finish_inference"] = self.timer.stop_and_get_time("finish_inference")
+
+        timing_metrics.update(timer_metrics)
+
+        return (
+            ppo_rollout_data,
+            rollout_metrics | ppo_rollout_metrics | {"consumed_samples": self.consumed_samples},
+            timing_metrics,
+        )
 
     def run_training(self, dataloader_iter):
         self.model.prepare_for_training()
@@ -348,9 +556,11 @@ class PPOTrainer:
         return loss_mean, metrics
 
     def fit(self):
-        if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomSampler)) and (
-            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
-        ):
+        if (
+            not isinstance(
+                self.train_dataloader_builder(consumed_samples=0).batch_sampler, MegatronPretrainingRandomSampler
+            )
+        ) and (self.cfg.max_epochs is not None and self.cfg.max_epochs > 1):
             # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
             # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
             # to fix this, you should use MegatronPretrainingRandomSampler instead, which alleviates this issue and allows
@@ -373,11 +583,8 @@ class PPOTrainer:
             if not loop_iter:
                 return  # training ended
 
-            dataloader_iter = iter(self.train_dataloader)
-
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
 
-            num_rollout_micro_batches = compute_num_rollout_microbatches(self.train_dataloader)
             dp_size = parallel_state.get_data_parallel_world_size()
 
             num_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
@@ -388,13 +595,19 @@ class PPOTrainer:
                 timing_metrics = {}
 
                 self.timer.start("rollout_time")
-                ppo_rollout_data, metrics = self.generate_rollouts(dataloader_iter, num_rollout_micro_batches)
+                ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
+
                 self.timer.stop("rollout_time")
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
                 # send critic train
                 clear_memory()
+                start_time = time.time()
                 self.rm_critic.train(ppo_rollout_data)
+                end_time = time.time()
+
+                timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
+                timing_metrics.update(timer_metrics)
 
                 # logging
                 table_metrics = metrics.pop("table")
@@ -422,6 +635,8 @@ class PPOTrainer:
                 self.run_training(rollout_dataloader_iter)
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
+
+                self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
 
                 self.step += 1
 
@@ -453,8 +668,6 @@ class PPOTrainer:
                     self.logger.log_table("table/val_rollouts", dataframe=self.val_df, step=self.step)
 
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
-
-                self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
 
                 step_metrics.update(timing_metrics)
                 step_metrics.update({f"train_{k}": v for k, v in metrics.items()})

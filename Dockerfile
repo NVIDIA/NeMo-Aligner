@@ -1,14 +1,14 @@
 # CUDA 12.3
-FROM nvcr.io/nvidia/pytorch:24.01-py3
+FROM nvcr.io/nvidia/pytorch:24.02-py3
 
 ### config tags
-ARG APEX_TAG=master
-ARG TE_TAG=release_v1.4
-ARG MLM_TAG=43792028f003ed25a3ee8c5a0d4cad82317d81b5
-ARG NEMO_TAG=9d86acd5ebf3cec020f84dfe7e25c109506803b1 
+ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
+ARG TE_TAG=bfe21c3d68b0a9951e5716fb520045db53419c5e
+ARG MLM_TAG=fbb375d4b5e88ce52f5f7125053068caff47f93f
+ARG NEMO_TAG=10274c941841c9cc30d1db50699d7523851d9fea
 ARG PYTRITON_VERSION=0.4.1
 ARG PROTOBUF_VERSION=4.24.4
-ARG ALIGNER_COMMIT=main
+ARG ALIGNER_COMMIT=trt_llm_beta_release
 
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
@@ -37,7 +37,7 @@ RUN pip uninstall -y apex && \
         git fetch origin $APEX_TAG && \
         git checkout FETCH_HEAD; \
     fi && \
-    pip install install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
+    pip install -e . -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam --group_norm"
 
 # place any util pkgs here
 RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==$PYTRITON_VERSION
@@ -77,4 +77,19 @@ RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
     fi && \
     pip install --no-deps -e .
 
-WORKDIR /workspace
+# Git LFS
+RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
+    apt-get install git-lfs && \
+    git lfs install
+
+# TRTLLM-0.9
+RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
+    cd TensorRT-LLM && \
+    git checkout v0.9.0 && \
+    git apply ../NeMo-Aligner/trtllm.patch && \
+    . docker/common/install_tensorrt.sh && \
+    python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
+
+RUN cd TensorRT-LLM && \
+    pip install ./build/tensorrt_llm*.whl
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.3/compat/lib.real/

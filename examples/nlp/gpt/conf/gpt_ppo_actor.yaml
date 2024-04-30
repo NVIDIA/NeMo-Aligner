@@ -27,11 +27,37 @@ trainer:
     model_gbs: ${model.global_batch_size}
     model_mbs: ${model.micro_batch_size}
 
-    # the sequence length to pad the rollout batch to
-    # this reduces fragmentation at the cost of using more
+    # the sequence length to pad the rollout batch for training to
+    # reduce fragmentation at the cost of using more
     # memory, set to null if we don't want to pad it
     # to a constant size
+    # if actual seq length is higher than this a warning will be raised
+    # but will not crash and training will still proceed
     rollout_batch_seq_length: null
+
+    # Accelerate training times by accelerating inference stage using TRTLLM
+    trt_llm:
+      enable: False
+      reshard: True # if True then reshard the model into TP only for inference
+
+      # TRTLLM preallocates activation memory according to the number of input tokens
+      # By default, assume the max input length is half of the model sequence length
+      max_input_len: ${int_div:${model.encoder_seq_length}, 2}
+      max_input_tokens: ${multiply:${trainer.ppo.trt_llm.max_input_len}, ${model.ppo.rollout_micro_batch_size}}
+
+      # The model type TRTLLM will build, supported models are listed at:
+      # https://github.com/NVIDIA/TensorRT-LLM/blob/v0.9.0/tensorrt_llm/models/__init__.py#L75
+      model_type: LLaMAForCausalLM 
+
+      # Unload and reload the TRTLLM engine before and after the training stage 
+      # Reloading the engine incurs a constant time overhead
+      unload_engine_train: False
+
+    flask_server:
+      # flask server that acts as a worker pool to balance out generation time
+      enable: False
+      port: 12345
+      host: null # if not provided, it will be automatically set
 
   # no need to change these
   logger: False # logger provided by exp_manager
@@ -92,6 +118,8 @@ pretrained_checkpoint:
 model:
 
   ppo:
+    trt_llm: ${trainer.ppo.trt_llm}
+
     # training generation mbs
     rollout_micro_batch_size: 8
     num_rollout_samples: 512
