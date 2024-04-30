@@ -130,7 +130,7 @@ model:
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
       shuffle: True
       memmap_workers: null
-      max_seq_length: 4096
+      max_seq_length: ${model.encoder_seq_length}
       min_seq_length: 1
       drop_last: True
       # Example of how to specify concat_sampling_probabilities
