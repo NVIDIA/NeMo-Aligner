@@ -184,6 +184,10 @@ class MathSandBoxedFeedBackID:
             assert self.sandbox.is_output_correct("\\frac{1}{4}", "\\frac{2}{8}"), "sandbox should reduce fractions!"
 
     def score(self, response, idx):
+        key = int(idx.split("@")[0])
+        assert self.ds[key]["data_id"] == key
+        answer = self.ds[key]["expected_answer"]
+
         # NOTE: response must be in boxed format
         response = extract_answer(response)
-        return self.sandbox.is_output_correct(response, self.ds[idx]["expected_answer"])
+        return self.sandbox.is_output_correct(response, answer)
