@@ -1,5 +1,9 @@
 # NVIDIA NeMo-Aligner
 
+# Latest News
+- We released a beta version of accelerated generation support in the RLHF pipeline. This is still very much work in process but adds significant speedup to the RLHF training. For more details see [Accelerated-RLHF](Accelerated-RLHF.md) and the special [Accelerated-RLHF-Release]().
+- [NeMo-Aligner Paper](https://arxiv.org/abs/2405.01481) is now out on arxiv!
+
 ## Introduction
 
 NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state of the art model alignment algorithms such as SteerLM, DPO and Reinforcement Learning from Human Feedback (RLHF). These algorithms enable users to align language models to be more safe, harmless and helpful. Users can do end-to-end model alignment on a wide range of model sizes and take advantage of all the parallelism techniques to ensure their model alignment is done in a performant and resource efficient manner.
@@ -55,7 +59,6 @@ Alternatively, you can build the NeMo Dockerfile here [NeMo Dockerfile](https://
 ## Future work
 - Add Rejection Sampling support
 - We will continue improving the stability of the PPO learning phase.
-- Improve the performance of RLHF
 
 ## Contributing
 We welcome community contributions! Please refer to [CONTRIBUTING.md](https://github.com/NVIDIA/NeMo-Aligner/blob/main/CONTRIBUTING.md) for guidelines.

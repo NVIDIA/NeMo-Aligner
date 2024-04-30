@@ -117,6 +117,9 @@ def load_checkpoint_model_config(restore_path):
         assert os.path.exists(cfg_path), f"tried to load cfg at {cfg_path=} but it does not exist"
         return OmegaConf.load(cfg_path)
 
+    if os.path.isdir(restore_path):
+        return OmegaConf.load(os.path.join(restore_path, config_name_in_ckpt))
+
     with tempfile.TemporaryDirectory() as tmpdir:
         NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, extract_config_only=True)
         cfg = OmegaConf.load(os.path.join(tmpdir, config_name_in_ckpt))
@@ -272,7 +275,13 @@ def batch_pad_to_fixed_len(batch, max_batch_len, pad_token):
 
 
 def collate_with_batch_max_sequence_length(
-    data_batch, response_token_length, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
+    data_batch,
+    response_token_length,
+    eos_id,
+    reset_position_ids,
+    reset_attention_mask,
+    eod_mask_loss,
+    generate_masks_and_position_ids,
 ):
     """collate function that batches by max sequence length
     """
@@ -283,19 +292,25 @@ def collate_with_batch_max_sequence_length(
 
     texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
-    # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
-    attention_masks, loss_masks, position_ids = get_ltor_masks_and_position_ids(
-        texts, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
-    )
-
-    return {
+    output = {
         "text": texts,
         "length": lengths,
-        "attention_mask": attention_masks,
-        # to preserve the loss mask from the dataset
-        "loss_mask": loss_masks * loss_multipliers,
-        "position_ids": position_ids,
     }
+
+    other = {}
+    if generate_masks_and_position_ids:
+        # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
+        attention_masks, loss_masks, position_ids = get_ltor_masks_and_position_ids(
+            texts, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
+        )
+        other = {
+            "attention_mask": attention_masks,
+            # to preserve the loss mask from the dataset
+            "loss_mask": loss_masks * loss_multipliers,
+            "position_ids": position_ids,
+        }
+
+    return output | other
 
 
 def apply_func_to_dict(func, dictionary):

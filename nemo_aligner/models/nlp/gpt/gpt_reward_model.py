@@ -18,7 +18,6 @@ from typing import Callable, List, Literal, Optional, Union
 from unittest.mock import patch
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.models.gpt import GPTModel
 from megatron.core.tensor_parallel.layers import RowParallelLinear
@@ -26,6 +25,8 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import make_sharded_tensor_for_checkpoint, make_tp_sharded_tensor_for_checkpoint
 from torch import Tensor
+
+from nemo_aligner.utils import parallel_state
 
 """Megatron Core based Reward Model"""
 
@@ -225,7 +226,6 @@ class GPTRewardModel(GPTModel):
 
         if self.post_process:
             return self.rm_head(hidden_states, lengths)
-
         return hidden_states
 
     def sharded_state_dict(self, prefix=""):
@@ -233,23 +233,10 @@ class GPTRewardModel(GPTModel):
         # from the parent
         sharded_state_dict = super().sharded_state_dict(prefix=prefix)
 
-        if self.post_process and self.return_rm_head_in_state_dict:
-            rm_head_prefix = f"{prefix}rm_head."
-            rm_head_state_dict = self.rm_head.state_dict(prefix=rm_head_prefix, keep_vars=True)
-
-            # weights are sharded row wise
-            weight_key = f"{rm_head_prefix}weight"
-
-            sharded_state_dict[weight_key] = make_tp_sharded_tensor_for_checkpoint(
-                tensor=rm_head_state_dict[weight_key],
-                key=weight_key,
-                replica_id=parallel_state.get_data_parallel_rank(),
-                allow_shape_mismatch=False,
-                tp_axis=1,
-            )
-
-            # biases are not sharded
-            bias_key = f"{rm_head_prefix}bias"
-            sharded_state_dict[bias_key] = make_sharded_tensor_for_checkpoint(rm_head_state_dict[bias_key], bias_key)
+        if not self.return_rm_head_in_state_dict:
+            sharded_state_dict = {k: v for k, v in sharded_state_dict.items() if "rm_head" not in k}
+        else:
+            assert self.config.fp8 is None, "fp8 is not supported for the reward model"
+            sharded_state_dict = {k: v for k, v in sharded_state_dict.items() if "rm_head._extra_state" not in k}
 
         return sharded_state_dict

@@ -126,6 +126,7 @@ class RLHFDataset(Dataset):
             "text": sample_tensor,
             "length": sample_tensor.shape[0],
             "loss_multiplier": loss_multiplier,
+            "idx": idx,
         }
         return output
 

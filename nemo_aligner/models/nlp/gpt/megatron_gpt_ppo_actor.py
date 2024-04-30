@@ -16,7 +16,6 @@ from contextlib import nullcontext
 
 import torch
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
-from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 from omegaconf import OmegaConf
@@ -31,7 +30,9 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo.utils import logging
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     broadcast_2d_tensor_within_pp,
     calculate_distributed_entropy,
@@ -53,6 +54,22 @@ from nemo_aligner.utils.utils import (
     offload_distributed_adam,
 )
 
+try:
+    from tensorrt_llm.bindings import GptSession
+
+    from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
+
+    GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
+    HAVE_TRTLLM = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TRTLLM = False
+
+
+def log_mem(prefix):
+    pyt = torch.cuda.memory_allocated() / (1024 ** 3)
+    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
+    logging.info(f"Mem Usage | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
+
 
 class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
@@ -67,37 +84,20 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         # sampling parameters for generation
         self._sampling_params = OmegaConf.to_container(self.cfg.ppo.sampling_params, resolve=True)
 
-        self.to_offload_adam_states = self.cfg.ppo.offload_adam_states
+        self.to_offload_adam_states = self.cfg.ppo.offload_adam_states and self.with_distributed_adam
         self.entropy_bonus = self.cfg.ppo.entropy_bonus
         self.ratio_eps = self.cfg.ppo.ratio_eps
         self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
+
+        self.use_trtllm_generation = self.cfg.ppo.trt_llm.enable
+        if self.use_trtllm_generation:
+            assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM was not able to be imported"
+            self.trtllm_generate = GPTGenerateTRTLLM(self.cfg, self.tokenizer)
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
         def fwd_output_and_loss_func(data_iterator, model):
             batch = next(data_iterator)
-            response_tokens = batch["response_tokens"]
-            advantages = batch["advantages"]
-            mask = batch["mask"]
-            prev_logprobs = batch["prev_logprobs"]
-
-            attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-                data=response_tokens,
-                eod_token=self.tokenizer.eos_id,
-                reset_position_ids=False,
-                reset_attention_mask=False,
-                eod_mask_loss=False,
-            )
-
-            batch = {
-                "tokens": response_tokens,
-                "attention_mask": attention_mask,
-                "position_ids": position_ids,
-                "advantages": advantages,
-                "prev_log_probs": prev_logprobs,
-                "mask": mask,
-            }
-
             required_keys = set()
             if parallel_state.get_pipeline_model_parallel_world_size() == 1:
                 required_keys.update(batch.keys())
@@ -105,20 +105,22 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 required_keys.add("attention_mask")
 
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("tokens", "position_ids"))
+                    required_keys.update(("response_tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("tokens", "advantages", "mask", "prev_log_probs"))
+                    required_keys.update(("response_tokens", "advantages", "mask", "prev_logprobs"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None,)
+            parallel_logits = model(
+                batch["response_tokens"], batch["position_ids"], batch["attention_mask"], labels=None,
+            )
 
             def loss_func(parallel_logits):
                 mask = batch["mask"]
                 advantages = batch["advantages"]
-                prev_log_probs = batch["prev_log_probs"]
-                tokens = batch["tokens"]
+                prev_log_probs = batch["prev_logprobs"]
+                tokens = batch["response_tokens"]
 
                 curr_log_probs = from_parallel_logits_to_logprobs(vocab_parallel_logits=parallel_logits, target=tokens)
 
@@ -140,7 +142,12 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     ppo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
                     scaled_entropy = scaled_entropy.detach()
 
-                reduced_actor_loss = average_losses_across_data_parallel_group([loss])
+                (
+                    reduced_actor_loss,
+                    ppo_ratio,
+                    ppo_ratio_clamped,
+                    scaled_entropy,
+                ) = average_losses_across_data_parallel_group([loss, ppo_ratio, ppo_ratio_clamped, scaled_entropy])
                 return (
                     loss,
                     {
@@ -168,7 +175,17 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         prepare_for_training_step(self, zero_grad=False)
 
     def get_loss_and_metrics(self, batch, forward_only):
-        sequence_length = batch["response_tokens"].size(-1)
+        batch_size, sequence_length = batch["response_tokens"].size()
+
+        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+            data=batch["response_tokens"],
+            eod_token=self.tokenizer.eos_id,
+            reset_position_ids=False,
+            reset_attention_mask=False,
+            eod_mask_loss=False,
+        )
+        batch["attention_mask"] = attention_mask.expand(batch_size, -1, -1, -1)
+        batch["position_ids"] = position_ids.expand(batch_size, -1)
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
@@ -176,7 +193,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_actor_forward_output_and_loss_func(),
-            data_iterator=data_iter,
+            data_iterator=self._make_data_iterator_list(data_iter),
             model=self.model,
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
@@ -239,7 +256,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         fwd_bwd_function = get_forward_backward_func()
         logprobs_list = fwd_bwd_function(
             forward_step_func=self.get_logprob_output_only_func(inference_only=True),
-            data_iterator=batch_iter,
+            data_iterator=self._make_data_iterator_list(batch_iter),
             model=self.model,
             num_microbatches=num_microbatches,
             forward_only=True,
@@ -263,80 +280,92 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         set_eval(self)
         self.offload_adam_states()
 
+        if self.use_trtllm_generation:
+            self.trtllm_generate.refit(self.model)
+
     @torch.no_grad()
     def infer(self, inference_batch):
         prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
 
-        strategy = TrackLengthGPTModelTextGenerationStrategy(
-            model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
-        )
-        actor_output = self.generate(
-            inputs=inputs, length_params=self._length_params, sampling_params=self._sampling_params, strategy=strategy
-        )
+        if self.use_trtllm_generation:
+            actor_output = self.trtllm_generate.generate(inputs)
+            response_tokens = actor_output["response_tokens"]
+            response_lengths = actor_output["response_lengths"]
+        else:
+            strategy = TrackLengthGPTModelTextGenerationStrategy(
+                model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
+            )
 
-        response_lengths = strategy.get_lengths()
-        max_response_length = response_lengths.max().item()
+            actor_output = self.generate(
+                inputs=inputs,
+                length_params=self._length_params,
+                sampling_params=self._sampling_params,
+                strategy=strategy,
+            )
 
-        response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
-
-        # Sanity check to validate response length.
-        if max_response_length != response_tokens.size(1):
-            # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
-            # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
-            # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
-            # and remove the `if` below.
-            if (
-                max_response_length >= response_tokens.size(1)
-                or response_tokens.size(1) != prompt_lengths.max().item() + self._length_params["max_length"]
-            ):
-                raise AssertionError(
-                    f"max response length ({max_response_length}) does not match the size of "
-                    f"`response_tokens` ({response_tokens.size(1)})"
+            response_tokens = None
+            if actor_output is not None:
+                response_tokens = torch.as_tensor(
+                    actor_output["token_ids"], dtype=torch.long, device=torch.cuda.current_device()
                 )
 
-        # TODO(geshen): get nemo generate to return the unaltered log probs
-        log_probs = self.get_inference_log_probs(
-            response_tokens, forward_micro_batch_size=self.forward_micro_batch_size
-        )
+            response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
+            response_lengths = strategy.get_lengths()
+
+            max_response_length = response_lengths.max().item()
+
+            # Sanity check to validate response length.
+            if max_response_length != response_tokens.size(1):
+                # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
+                # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
+                # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
+                # and remove the `if` below.
+                if (
+                    max_response_length >= response_tokens.size(1)
+                    or response_tokens.size(1) != prompt_lengths.max().item() + self._length_params["max_length"]
+                ):
+                    raise AssertionError(
+                        f"max response length ({max_response_length}) does not match the size of "
+                        f"`response_tokens` ({response_tokens.size(1)})"
+                    )
 
         rollout_batch = {
             "response_tokens": response_tokens,
             "response_lengths": response_lengths,
             "prompt_lengths": prompt_lengths,
-            "logprobs": log_probs,
         }
 
         # return in GPU, trainer needs to move to cpu
+
         return rollout_batch
 
-    def get_init_policy_logprobs(self, rollout_batches):
-        init_log_probs = []
-        if self.use_peft and self.init_policy_state_dict is None:
-            # when using adapters instead of full-tuning, the actor is init policy + adapters
-            with adapter_control(self):
-                # With adapters disabled (meaning using the init policy), calculate init_log_probs
-                for rollout_batch in rollout_batches:
-                    init_log_prob = self.get_inference_log_probs(
-                        rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
-                    )
-                    init_log_probs.append(init_log_prob)
-        else:
-            with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
-                for rollout_batch in rollout_batches:
-                    init_log_prob = self.get_inference_log_probs(
-                        rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
-                    )
-                    init_log_probs.append(init_log_prob)
+    def get_logprobs(self, response_tokens):
+        return self.get_inference_log_probs(response_tokens, forward_micro_batch_size=self.forward_micro_batch_size)
 
-        # return in GPU, trainer needs to move to cpu
-        return init_log_probs
+    def get_init_policy_logprobs(self, response_tokens):
+        use_peft_init_policy = self.use_peft and self.init_policy_state_dict is None
+
+        context_mgr = (
+            adapter_control(self)
+            if use_peft_init_policy
+            else cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2)
+        )
+
+        with context_mgr:
+            return self.get_logprobs(response_tokens)
 
     def finish_inference(self):
         # training will onload the adam states, no need to onload it here
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
+
+        log_mem("pre free")
+        if self.use_trtllm_generation:
+            self.trtllm_generate.free()
+        log_mem("post free")
+
         set_train(self)
 
     def offload_adam_states(self):

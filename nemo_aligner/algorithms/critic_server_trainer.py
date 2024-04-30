@@ -17,7 +17,6 @@ from typing import Dict
 
 import numpy as np
 import torch
-from megatron.core import parallel_state
 from megatron.core.utils import divide
 from pytriton.decorators import batch, sample
 from pytriton.model_config import ModelConfig, Tensor
@@ -29,6 +28,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_sp
 from nemo.utils import logging
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import run_rm_or_critic_inference
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor
 from nemo_aligner.utils.server_utils import lock_method, pad_input
 from nemo_aligner.utils.train_utils import clip_gradients
@@ -102,6 +102,7 @@ class CriticServerTrainer:
         torch.distributed.broadcast(choice, 0)
 
         rewards, values, exceeded = self.run_inference(inputs=inputs)
+
         output = {
             "values": values,
             "exceeded": exceeded,
@@ -245,6 +246,7 @@ class CriticServerTrainer:
             "prev_values": prev_values,
             "mask": mask,
         }
+
         batch["tokens"] = broadcast_2d_tensor(batch["tokens"], src=0, group=None, dtype=torch.int64)
         batch["returns"] = broadcast_2d_tensor(batch["returns"], src=0, group=None, dtype=torch.float32)
         batch["prev_values"] = broadcast_2d_tensor(batch["prev_values"], src=0, group=None, dtype=torch.float32)
@@ -297,9 +299,9 @@ class CriticServerTrainer:
             self.step += 1
 
         self.model.finish_training()
-
         torch.cuda.synchronize()
         torch.distributed.barrier()
+
         return loss_mean
 
     def save(self, extra_candidates=None, is_train_end=False, save_top_only=False):
