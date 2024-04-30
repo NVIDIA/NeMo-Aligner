@@ -16,11 +16,12 @@ class MistralInstructChatTemplate:
     eos_token = "</s>"
     user_prompt_start = "[INST]"
     user_prompt_end = "[/INST]"
-    prompt_template = """{USER_PROMPT_START} {prompt} {USER_PROMPT_END}"""
+    prompt_template = """{BOS_TOKEN}{USER_PROMPT_START} {prompt} {USER_PROMPT_END}"""
 
     @staticmethod
     def apply_prompt_template(prompt):
         return MistralInstructChatTemplate.prompt_template.format(
+            BOS_TOKEN=MistralInstructChatTemplate.bos_token,
             USER_PROMPT_START=MistralInstructChatTemplate.user_prompt_start,
             prompt=prompt,
             USER_PROMPT_END=MistralInstructChatTemplate.user_prompt_end,
