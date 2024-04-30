@@ -381,18 +381,3 @@ class Timer:
         # only respect rank 0 timing
         torch.distributed.broadcast(is_finished_tensor, 0)
         return is_finished_tensor.item()
-
-
-@contextmanager
-def print_timer(name=""):
-    torch.cuda.synchronize()
-
-    try:
-        print("### RANK {} {} START".format(torch.distributed.get_rank(), name))
-        start = time.time()
-        yield
-
-    finally:
-        torch.cuda.synchronize()
-        end = time.time()
-        print("### RANK {} TOOK TIME {} in FUNCTION {} END".format(torch.distributed.get_rank(), end - start, name))

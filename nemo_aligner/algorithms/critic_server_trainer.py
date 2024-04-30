@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import threading
-import time
 from typing import Dict
 
 import numpy as np
@@ -102,15 +101,7 @@ class CriticServerTrainer:
         choice = ServerSignal.FORWARD.cuda()
         torch.distributed.broadcast(choice, 0)
 
-        print(
-            "### RUNNING INFERENCE ON BATCH SIZE on step: {} batch size {}".format(
-                self.step, inputs["tokens"].shape[0]
-            )
-        )
-        start_time = time.time()
         rewards, values, exceeded = self.run_inference(inputs=inputs)
-        end_time = time.time()
-        print("#### INFER TOOK", end_time - start_time)
 
         output = {
             "values": values,
@@ -256,23 +247,13 @@ class CriticServerTrainer:
             "mask": mask,
         }
 
-        start_time = time.time()
-
         batch["tokens"] = broadcast_2d_tensor(batch["tokens"], src=0, group=None, dtype=torch.int64)
         batch["returns"] = broadcast_2d_tensor(batch["returns"], src=0, group=None, dtype=torch.float32)
         batch["prev_values"] = broadcast_2d_tensor(batch["prev_values"], src=0, group=None, dtype=torch.float32)
         batch["mask"] = broadcast_2d_tensor(batch["mask"], src=0, group=None, dtype=torch.float32)
         input_size = batch["tokens"].size(0)
 
-        end_time = time.time()
-        print("#### BROADCAST TRAIN TENSORS", end_time - start_time)
-
-        start_time = time.time()
-
         self.model.prepare_for_training()
-
-        end_time = time.time()
-        print("#### PREPARE FOR TRAINING", end_time - start_time)
 
         num_gbs = divide(input_size, self.gbs)
 
@@ -318,14 +299,8 @@ class CriticServerTrainer:
             self.step += 1
 
         self.model.finish_training()
-
-        start_time = time.time()
-
         torch.cuda.synchronize()
         torch.distributed.barrier()
-
-        end_time = time.time()
-        print("#### SYNC", end_time - start_time)
 
         return loss_mean
 

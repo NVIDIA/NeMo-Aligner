@@ -36,12 +36,7 @@ from nemo.utils.dtype import str_to_dtype
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import (
-    broadcast_2d_tensor,
-    broadcast_2d_tensor_within_pp,
-    gather_tensor,
-    print_timer,
-)
+from nemo_aligner.utils.distributed import broadcast_2d_tensor, broadcast_2d_tensor_within_pp, gather_tensor
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
@@ -417,17 +412,15 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             num_microbatches = divide(divisible_batch_size, self.forward_mbs)
             data_iter = get_iterator_k_split(inputs_divisible, num_microbatches)
 
-            with print_timer("forward step"):
-                rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches,)
+            rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches,)
 
         remainder_rewards = None
         if divisible_batch_size != input_batch_size:
             remainder_batch = [item[divisible_batch_size:] for item in inputs]
             data_iter = get_iterator_k_split(remainder_batch, 1)
-            with print_timer("forward step"):
-                remainder_rewards = self.forward_step(
-                    data_iter, input_batch_size - divisible_batch_size, sequence_length, 1,
-                )
+            remainder_rewards = self.forward_step(
+                data_iter, input_batch_size - divisible_batch_size, sequence_length, 1,
+            )
 
         if parallel_state.is_pipeline_last_stage():
             if rewards:

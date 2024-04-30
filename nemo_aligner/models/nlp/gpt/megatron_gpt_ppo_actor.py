@@ -30,6 +30,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo.utils import logging
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
@@ -64,10 +65,10 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TRTLLM = False
 
 
-def print_mem(prefix):
+def log_mem(prefix):
     pyt = torch.cuda.memory_allocated() / (1024 ** 3)
     el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
-    print(f"Mem Usage | {prefix} | {pyt} {el} | {el-pyt}")
+    logging.info(f"Mem Usage | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
 
 
 class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
@@ -97,8 +98,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
     def get_actor_forward_output_and_loss_func(self):
         def fwd_output_and_loss_func(data_iterator, model):
             batch = next(data_iterator)
-            print("### BATCH AT TRAINING", batch.keys())
-
             required_keys = set()
             if parallel_state.get_pipeline_model_parallel_world_size() == 1:
                 required_keys.update(batch.keys())
@@ -362,10 +361,10 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
 
-        print_mem("pre free")
+        log_mem("pre free")
         if self.use_trtllm_generation:
             self.trtllm_generate.free()
-        print_mem("post free")
+        log_mem("post free")
 
         set_train(self)
 

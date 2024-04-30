@@ -153,7 +153,6 @@ class PPORolloutBatch(UserDict):
                 # find the max sequence length
                 max_seqlen = torch.tensor([tensor.size(-1)], dtype=torch.long, device=torch.cuda.current_device())
                 torch.distributed.all_reduce(max_seqlen, op=torch.distributed.ReduceOp.MAX)
-                print("### STACKED SHAPE", k, tensor.shape)
 
                 if rollout_batch_seq_length is None or max_seqlen > rollout_batch_seq_length:
                     pad_seq_len = max_seqlen.item()
@@ -161,7 +160,6 @@ class PPORolloutBatch(UserDict):
                     pad_seq_len = rollout_batch_seq_length if k == "response_tokens" else rollout_batch_seq_length - 1
 
                 tensor = torch.nn.functional.pad(tensor, (0, pad_seq_len - tensor.size(-1)), value=pad_value)
-                print("### PADDED SHAPE", k, tensor.shape)
 
             stacked_dict[k] = tensor
 
@@ -292,9 +290,6 @@ class PPOTrainer:
         """
         ppo_rollout_data = {}
         ppo_rollout_metrics = {}
-
-        for k, v in rollout_batch.items():
-            print("## SHAPER", k, v.shape)
 
         prompt_lengths = rollout_batch["prompt_lengths"]
         response_lengths = rollout_batch["response_lengths"]
@@ -451,8 +446,6 @@ class PPOTrainer:
         balanced_local_batch.update(balanced_rm_value_batch)
 
         global_rollout_batch.update(global_rm_value_batch)
-        print("### GLOBAL ROLLOUTS SHAPE", {k: v.shape for k, v in global_rollout_batch.items()})
-        print("### LOCAL ROLLOUTS SHAPE", {k: v.shape for k, v in balanced_local_batch.items()})
 
         return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
 
@@ -532,7 +525,6 @@ class PPOTrainer:
             self.optimizer.zero_grad()
 
             self.model.prepare_for_training_step()
-            print("### BATCH SHAPE", {k: v.shape for k, v in batch.items()})
             loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
             self.model.finish_training_step()
 
@@ -599,7 +591,6 @@ class PPOTrainer:
 
             self.run_timer.start_time()
             for _ in global_pbar:
-                print(f"***STEP {self.step}")
                 step_metrics = {}
                 timing_metrics = {}
 
@@ -614,7 +605,6 @@ class PPOTrainer:
                 start_time = time.time()
                 self.rm_critic.train(ppo_rollout_data)
                 end_time = time.time()
-                print("### CRITIC TRAIN TIME", end_time - start_time)
 
                 timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
                 timing_metrics.update(timer_metrics)
@@ -661,7 +651,6 @@ class PPOTrainer:
                 )
 
                 if run_val:
-                    print(f"***VAL {self.step}")
                     self.timer.start("validation_time")
                     val_metrics = self.run_validation()
                     self.timer.stop("validation_time")

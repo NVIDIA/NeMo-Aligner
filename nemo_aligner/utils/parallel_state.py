@@ -93,8 +93,4 @@ def trt_llm_reshard_region():
 
 
 def __getattr__(name):
-    # DEBUG ONLY
-    if is_trt_llm_reshard():
-        print("#### TRT RESHARD IS ON BUT YOU USED THE DEFAULT PARALLEL STATE", name)
-    # DEBUG ONLY
     return getattr(mcore_parallel_state, name)
