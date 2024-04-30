@@ -11,8 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import socket
+import threading
+from functools import partial
+
 import torch
 import torch.multiprocessing as mp
+from flask import Flask, request
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf
@@ -21,7 +26,7 @@ from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerB
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.ppo import PPOTrainer
+from nemo_aligner.algorithms.ppo import DefaultBatchIterator, HTTPBatchIterator, PPOTrainer, SharedSet
 from nemo_aligner.data.nlp.builders import (
     build_dataloader,
     build_train_valid_test_rlhf_datasets,
@@ -30,6 +35,7 @@ from nemo_aligner.data.nlp.builders import (
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMCriticClient
 from nemo_aligner.utils.distributed import Timer
+from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -89,10 +95,8 @@ def main(cfg) -> None:
     # TODO: log this restore path
     if trainer_restore_path is not None:
         custom_trainer_state_dict = retrieve_custom_trainer_state_dict(trainer)
-        consumed_samples = custom_trainer_state_dict["consumed_samples"]
     else:
         custom_trainer_state_dict = None
-        consumed_samples = 0
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
@@ -113,22 +117,22 @@ def main(cfg) -> None:
     eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    collate_fn = collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg)
+    collate_fn = collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg, generate_masks_and_position_ids=False)
 
-    train_dataloader = build_dataloader(
+    train_dataloader_builder = partial(
+        build_dataloader,
         cfg=cfg,
         dataset=train_ds,
-        consumed_samples=consumed_samples,
         mbs=cfg.model.ppo.rollout_micro_batch_size,
         gbs=cfg.model.ppo.num_rollout_samples,
         collate_fn=collate_fn,
         load_gbs=False,
     )
 
-    val_dataloader = build_dataloader(
+    val_dataloader_builder = partial(
+        build_dataloader,
         cfg=cfg,
         dataset=validation_ds,
-        consumed_samples=0,
         mbs=cfg.model.ppo.val_rollout_micro_batch_size,
         gbs=cfg.model.ppo.num_val_samples,
         collate_fn=collate_fn,
@@ -160,14 +164,47 @@ def main(cfg) -> None:
     rm_critic = RemoteGPTRMCriticClient(cfg.remote_critic_rm)
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
+    batch_iterator_cls = DefaultBatchIterator
+    flask_cfg = cfg.trainer.ppo.flask_server
+    if flask_cfg.enable:
+        # only rank 0 has a not None shared set
+        shared_set = None
+
+        # TODO: we might be able to just broadcast the hostname
+        # so the user don't have to specify it
+        flask_host = flask_cfg.host
+        flask_port = flask_cfg.port
+        if flask_host is None:
+            # automatically get rank 0's host and broadcast it if not specified
+            ip_address = [socket.gethostbyname(socket.gethostname())]
+            torch.distributed.broadcast_object_list(ip_address, src=0, group=None, device=torch.cuda.current_device())
+            flask_host = ip_address[0]
+
+        if torch.distributed.get_rank() == 0:
+            lock = threading.Lock()
+            shared_set = SharedSet(lock)
+            app = Flask(__name__)
+
+            # TODO: add batch size
+            @app.route("/get_idx", methods=["PUT"])
+            def get_http_idx():
+                batch_size = request.get_json()["batch_size"]
+                return shared_set.get_idx(batch_size)
+
+            threading.Thread(target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False)).start()
+
+        batch_iterator_cls = partial(HTTPBatchIterator, shared_set, flask_host, flask_port)
+
     ppo_trainer = PPOTrainer(
         cfg=cfg.trainer.ppo,
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
-        train_dataloader=train_dataloader,
-        val_dataloader=val_dataloader,
+        train_dataloader_builder=train_dataloader_builder,
+        val_dataloader_builder=val_dataloader_builder,
+        collate_fn=collate_fn,
         rm_critic=rm_critic,
+        batch_iterator_cls=batch_iterator_cls,
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,

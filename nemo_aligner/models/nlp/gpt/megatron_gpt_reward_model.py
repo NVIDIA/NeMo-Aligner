@@ -18,8 +18,9 @@ from typing import List, Union
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
-from megatron.core import parallel_state
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -34,6 +35,7 @@ from nemo.utils import AppState, logging
 from nemo.utils.dtype import str_to_dtype
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, broadcast_2d_tensor_within_pp, gather_tensor
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
@@ -69,6 +71,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         if self.enable_standardization:
             self.rew_mean = cfg.reward_standardization.mean
             self.rew_std = cfg.reward_standardization.std
+
+        self.forward_mbs = self.cfg.forward_mbs
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
@@ -248,7 +252,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_forward_output_and_loss_func(forward_only),
-            data_iterator=data_iter,
+            data_iterator=self._make_data_iterator_list(data_iter),
             model=self.model,
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
@@ -317,22 +321,24 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         """NOTE: Have to set strict to False because we have a rm head
         """
         # mcore uses distributed checkpointing
-        if "state_dict" in checkpoint and checkpoint["state_dict"]:
-            for index, module in enumerate(self.get_model_module_list()):
-                if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-                    checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
-                else:
-                    checkpoint_state_dict = checkpoint["state_dict"]
-                # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
-                checkpoint_state_dict = {
-                    key.replace("model.", ""): checkpoint_state_dict.pop(key)
-                    for key in list(checkpoint_state_dict.keys())
-                }
-                module.load_state_dict(checkpoint_state_dict, strict=False)
-        else:
-            # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
-            # see NLPModel.on_load_checkpoint
-            checkpoint["state_dict"] = {}
+        # FSDP supports the lagecy checkpointing or torch-FSDP-native sharded checkpointing
+        if not self.use_fsdp:
+            if "state_dict" in checkpoint and checkpoint["state_dict"]:
+                for index, module in enumerate(self.get_model_module_list()):
+                    if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+                        checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
+                    else:
+                        checkpoint_state_dict = checkpoint["state_dict"]
+                    # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
+                    checkpoint_state_dict = {
+                        key.replace("model.", ""): checkpoint_state_dict.pop(key)
+                        for key in list(checkpoint_state_dict.keys())
+                    }
+                    module.load_state_dict(checkpoint_state_dict, strict=False)
+            else:
+                # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
+                # see NLPModel.on_load_checkpoint
+                checkpoint["state_dict"] = {}
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
@@ -390,26 +396,39 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             self.cfg.get("reset_attention_mask", False),
             self.cfg.get("eod_mask_loss", False),
         )
-        micro_batch_size = context_tokens_tensor.shape[0]
+
+        # TODO: maybe cut this?
+        input_batch_size = context_tokens_tensor.shape[0]
         sequence_length = context_tokens_tensor.shape[1]
 
-        app_state = AppState()
-        _reconfigure_microbatch_calculator(
-            rank=app_state.global_rank,
-            rampup_batch_size=None,
-            global_batch_size=micro_batch_size,
-            micro_batch_size=micro_batch_size,
-            data_parallel_size=1,
-        )
-        attention_mask_repeat = torch.concat([attention_mask for _ in range(micro_batch_size)])
-        rewards = self.forward_step(
-            [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat],
-            micro_batch_size,
-            sequence_length,
-        )
+        attention_mask_repeat = torch.concat([attention_mask for _ in range(input_batch_size)])
+
+        inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat]
+        divisible_batch_size = (input_batch_size // self.forward_mbs) * self.forward_mbs
+
+        rewards = None
+        if divisible_batch_size > 0:
+            inputs_divisible = [item[:divisible_batch_size] for item in inputs]
+            num_microbatches = divide(divisible_batch_size, self.forward_mbs)
+            data_iter = get_iterator_k_split(inputs_divisible, num_microbatches)
+
+            rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches,)
+
+        remainder_rewards = None
+        if divisible_batch_size != input_batch_size:
+            remainder_batch = [item[divisible_batch_size:] for item in inputs]
+            data_iter = get_iterator_k_split(remainder_batch, 1)
+            remainder_rewards = self.forward_step(
+                data_iter, input_batch_size - divisible_batch_size, sequence_length, 1,
+            )
 
         if parallel_state.is_pipeline_last_stage():
-            rewards = rewards[0]["reward"]
+            if rewards:
+                if remainder_rewards:
+                    rewards += remainder_rewards
+                rewards = torch.cat(rewards)
+            else:
+                rewards = torch.cat(remainder_rewards)
 
             # Standardize values to subtract a bias.
             if self.enable_standardization:
@@ -423,15 +442,15 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         return rewards_list, exceeded
 
-    def forward_step(self, batch, micro_batch_size, sequence_length):
+    def forward_step(self, data_iter, micro_batch_size, sequence_length, num_microbatches):
         set_sync_funcs(self, forward_only=True)
 
         fwd_bwd_function = get_forward_backward_func()
         output_tensor = fwd_bwd_function(
             forward_step_func=self.get_forward_output_only_func(),
-            data_iterator=iter([batch]),
+            data_iterator=self._make_data_iterator_list(data_iter),
             model=self.model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=sequence_length,
             micro_batch_size=micro_batch_size,
@@ -450,7 +469,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
             def id_func(output_tensor):
-                return output_tensor, {"reward": output_tensor}
+                return output_tensor, output_tensor
 
             return output_tensor, id_func
 

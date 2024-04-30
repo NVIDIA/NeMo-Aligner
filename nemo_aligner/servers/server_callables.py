@@ -17,12 +17,12 @@ from typing import Dict
 
 import numpy as np
 import torch
-from megatron.core import parallel_state
 from pytriton.decorators import batch
 from pytriton.exceptions import PyTritonUnrecoverableError
 from pytriton.model_config import Tensor
 
 from nemo_aligner.servers.constants import ServerSignal
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.server_utils import decode_bytes_ndarray, lock_method, pad_input
 
 
