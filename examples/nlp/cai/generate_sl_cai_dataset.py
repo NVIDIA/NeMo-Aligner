@@ -60,10 +60,20 @@ def generate_chat_prompt(sample: dict):
 def model_remote_inference(
     prompt,
     port_num: int,
+    host: str,
     temperature: Optional[float] = 1.0,
     greedy: Optional[bool] = True,
     tokens_to_generate: Optional[int] = 1024,
 ):
+    """
+    @param prompt:
+    @param port_num: The port number on which the inference service is running.
+    @param host: The hostname or IP address of the inference service.
+    @param temperature:
+    @param greedy:
+    @param tokens_to_generate:
+    @return:
+    """
     assert port_num >= 0
     assert prompt is not None and isinstance(prompt, (str, list))
     if not isinstance(prompt, list):
@@ -73,7 +83,7 @@ def model_remote_inference(
     headers = {"Content-Type": "application/json"}
 
     def request_data(request):
-        resp = requests.put("http://localhost:{}/generate".format(port_num), data=json.dumps(request), headers=headers)
+        resp = requests.put(f"http://{host}:{port_num}/generate", data=json.dumps(request), headers=headers)
         resp_json = resp.json()
         resp_sentences = resp_json["sentences"]
         return resp_sentences
@@ -105,7 +115,7 @@ def model_remote_inference(
 
 
 def generate_cai_batch_sample(
-    prompt_list: list, few_shot_dataset_path: str, critique_list, revision_list, port_num: int
+    prompt_list: list, few_shot_dataset_path: str, critique_list, revision_list, port_num: int, host: str
 ):
     assert isinstance(prompt_list, list)
     if not isinstance(critique_list, list):
@@ -125,7 +135,7 @@ def generate_cai_batch_sample(
     initial_prompt_batch = [
         " ".join([few_shot_samples, MistralInstructChatTemplate.apply_prompt_template(p)]) for p in prompt_list
     ]
-    chat_batch = model_remote_inference(initial_prompt_batch, port_num=port_num)
+    chat_batch = model_remote_inference(initial_prompt_batch, port_num=port_num, host=host)
     assert len(chat_batch) == num_prompts
     initial_response_batch = [MistralInstructChatTemplate.extract_response(chat) for chat in chat_batch]
     print("Done")
@@ -136,7 +146,7 @@ def generate_cai_batch_sample(
         " ".join([chat_batch[i], MistralInstructChatTemplate.apply_prompt_template(cr_p)])
         for i, cr_p in enumerate(critique_list)
     ]
-    chat_batch = model_remote_inference(critique_request_batch, port_num=port_num)
+    chat_batch = model_remote_inference(critique_request_batch, port_num=port_num, host=host)
     assert len(chat_batch) == num_prompts
     critique_response_batch = [MistralInstructChatTemplate.extract_response(chat) for chat in chat_batch]
     print("Done")
@@ -147,7 +157,7 @@ def generate_cai_batch_sample(
         " ".join([chat_batch[i], MistralInstructChatTemplate.apply_prompt_template(rev_p)])
         for i, rev_p in enumerate(revision_list)
     ]
-    chat_batch = model_remote_inference(revision_request_prompt_batch, port_num=port_num)
+    chat_batch = model_remote_inference(revision_request_prompt_batch, port_num=port_num, host=host)
     assert len(chat_batch) == num_prompts
     revision_response_batch = [MistralInstructChatTemplate.extract_response(chat) for chat in chat_batch]
     print("Done")
@@ -214,6 +224,7 @@ def generate_cai_dataset(
     save_to_file_interval: int,
     save_file_path: str,
     port_num: int,
+    host: str
 ):
     """
     @param batch_size: inference batch size
@@ -223,7 +234,8 @@ def generate_cai_dataset(
     @param few_shot_samples_filepath:
     @param critique_revision_instructions_filepath:
     @param num_examples:
-    @param port_num: inference service port number.
+    @param port_num: The port number on which the inference service is running.
+    @param host: The hostname or IP address of the inference service.
     @return:
     """
     assert batch_size > 0
@@ -273,6 +285,7 @@ def generate_cai_dataset(
             critique_list=critique_list,
             revision_list=revision_list,
             port_num=port_num,
+            host=host
         )
         assert len(cai_batch_sample) == len(red_teaming_prompts_list)
 
@@ -429,7 +442,10 @@ def prepare_args():
     )
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--helpfulness-dataset-path", type=str, required=True, default=None)
-    parser.add_argument("--port-num", type=int, default=5656, help="inference service port number")
+    parser.add_argument("--port-num", type=int, default=5656,
+                        help="The port number on which the inference service is running")
+    parser.add_argument("--host", type=str, default="localhost",
+                        help="The hostname or IP address of the inference service")
 
     args = parser.parse_args()
     assert os.path.isfile(args.red_teaming_prompts_dataset_path)
@@ -460,6 +476,7 @@ def main():
         save_to_file_interval=args.save_to_file_interval,
         save_file_path=args.output_filepath,
         port_num=args.port_num,
+        host=args.host
     )
 
     print("Blending CAI samples with the helpfulness dataset...")
