@@ -19,12 +19,12 @@ The basic steps of CAI, as illustrated in Figure 1 of the paper (below):
 
 (Supervised Stage) Critique → Revision → Supervised Learning: The AI generates responses to harmfulness prompts using a helpful-only AI assistant, then critiques and revises its own responses according to a principle in the constitution, and then finetunes the original model on the revised responses.
 
-(RL Stage) AI Comparison Evaluations → Reward Model → Reinforcement Learning: The AI generates pairs of responses to harmfulness prompts using the finetuned model, then evaluates which response is better according to a principle in the constitution, and then trains a reward model from this dataset of AI preferences. The AI then trains with RL using the learned reward model.
+(RL Stage) AI Comparison Evaluations → Reward Model → Reinforcement Learning: The AI generates pairs of responses to harmfulness prompts using the finetuned model, then evaluates which response is better according to a principle in the constitution, and then trains a reward model based on this dataset of AI preferences and a human helpfulness preferences. The AI then trains with RL using the learned reward model.
 
 .. image:: ../assets/cai_diagram.png
    :alt: basic steps of the CAI process
 
-Both the critiques and the AI feedback are steered by a small set of principles drawn from a ‘constitution’. The supervised stage significantly improves the initial model, and gives some control over the initial behavior at the start of the RL phase, addressing potential exploration problems. The RL stage significantly improves performance and reliability.
+Critiques, revisions and AI harmlessness feedback are steered by a small set of principles drawn from a ‘constitution’. The supervised stage significantly improves the initial model, and gives some control over the initial behavior at the start of the RL phase, addressing potential exploration problems. The RL stage significantly improves performance and reliability.
 
 Motivation
 ###############
@@ -97,9 +97,9 @@ Step 1: Download models and datasets
    
    .. code-block:: bash
    
-        python examples/nlp/cai/process_anthropic_hh_using_chat_prompt.py
-           --output-dir /path/to/anthropic_helpful_only
-           --dataset-dir-name helpful-base helpful-online helpful-rejection-sampled
+        python examples/nlp/cai/process_anthropic_hh_using_chat_prompt.py \
+           --output-dir /path/to/anthropic_helpful_only \
+           --dataset-dir-name helpful-base helpful-online helpful-rejection-sampled \
            --output-file-name-prefix anthropic_helpful_only
 
 
@@ -110,32 +110,32 @@ Run an inference server in the background using the following command:
 
 .. code-block:: bash
 
-   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py 
-           gpt_model_file=/models/mistral/mistral-7b-Instruct.nemo 
-           pipeline_model_parallel_split_rank=0 
-           server=True
-           tensor_model_parallel_size=8 
-           pipeline_model_parallel_size=1 
-           trainer.precision=bf16 
-           trainer.devices=8 
-           trainer.num_nodes=1 
-           web_server=False 
+   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py \
+           gpt_model_file=/models/mistral/mistral-7b-Instruct.nemo \
+           pipeline_model_parallel_split_rank=0 \
+           server=True \
+           tensor_model_parallel_size=8 \
+           pipeline_model_parallel_size=1 \
+           trainer.precision=bf16 \
+           trainer.devices=8 \
+           trainer.num_nodes=1 \
+           web_server=False \
            port=5999 
 
 Please wait for the server to be ready before proceeding.
 
 .. code-block:: bash
 
-   python examples/nlp/cai/generate_sl_cai_dataset.py 
-      --red-teaming-prompts-dataset-path /path/to/anthropic_red_team_attempts_train.json
-      --few-shot-prompts-dataset-path mistral7b_few_shot_samples 
-      --critique-revision-instructions-path CritiqueRevisionInstructions.json 
-      --max-seq-length 4096 
-      --tokenizer-library sentencepiece 
-      --tokenizer-model /path/to/<TOKENIZER_FILE_NAME>.model
-      --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json
-      --output-filepath /path/to/cai_revisions_aligner_chat_template.jsonl
-      --port-num 5999
+   python examples/nlp/cai/generate_sl_cai_dataset.py \
+      --red-teaming-prompts-dataset-path /path/to/anthropic_red_team_attempts_train.json \
+      --few-shot-prompts-dataset-path mistral7b_few_shot_samples \
+      --critique-revision-instructions-path CritiqueRevisionInstructions.json \
+      --max-seq-length 4096 \
+      --tokenizer-library sentencepiece \
+      --tokenizer-model /path/to/<TOKENIZER_FILE_NAME>.model \
+      --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json \
+      --output-filepath /path/to/cai_revisions_aligner_chat_template.jsonl \
+      --port-num 5999 \
       --host <hostname or IP address of the inference service>
 
 This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
@@ -151,26 +151,26 @@ Note that you would need to set up multi-node training run in your cluster env, 
 
 .. code-block:: bash
 
-   python examples/nlp/gpt/train_gpt_sft.py
-      model.megatron_amp_O2=True
-      model.restore_from_path=/models/mistral/mistral-7b.nemo
-      model.data.num_workers=0
-      model.data.train_ds.micro_batch_size=1
-      model.data.train_ds.global_batch_size=128
-      model.data.train_ds.file_path=/path/to/cai_revisions_aligner_chat_template.jsonl
-      model.data.train_ds.max_seq_length=4096
-      model.data.validation_ds.micro_batch_size=1
-      model.data.validation_ds.global_batch_size=128
-      model.data.validation_ds.file_path=/path/to/cai_revisions_aligner_chat_template.jsonl
-      model.data.chat=True
-      model.data.chat_prompt_tokens.system_turn_start="'<extra_id_0>'"
-      model.data.chat_prompt_tokens.turn_start="'<extra_id_1>'"
-      model.data.chat_prompt_tokens.label_start="'<extra_id_2>'"
-      exp_manager.explicit_log_dir=/path/to/sft_log_dir
-      model.optim.lr=1e-6
-      model.answer_only_loss=True
-      trainer.sft.limit_val_batches=40
-      trainer.sft.val_check_interval=50
+   python examples/nlp/gpt/train_gpt_sft.py \
+      model.megatron_amp_O2=True \
+      model.restore_from_path=/models/mistral/mistral-7b.nemo \
+      model.data.num_workers=0 \
+      model.data.train_ds.micro_batch_size=1 \
+      model.data.train_ds.global_batch_size=128 \
+      model.data.train_ds.file_path=/path/to/cai_revisions_aligner_chat_template.jsonl \
+      model.data.train_ds.max_seq_length=4096 \
+      model.data.validation_ds.micro_batch_size=1 \
+      model.data.validation_ds.global_batch_size=128 \
+      model.data.validation_ds.file_path=/path/to/cai_revisions_aligner_chat_template.jsonl \
+      model.data.chat=True \
+      model.data.chat_prompt_tokens.system_turn_start="'<extra_id_0>'" \
+      model.data.chat_prompt_tokens.turn_start="'<extra_id_1>'" \
+      model.data.chat_prompt_tokens.label_start="'<extra_id_2>'" \
+      exp_manager.explicit_log_dir=/path/to/sft_log_dir \
+      model.optim.lr=1e-6 \
+      model.answer_only_loss=True \
+      trainer.sft.limit_val_batches=40 \
+      trainer.sft.val_check_interval=50 \
       trainer.sft.save_interval=50
 
 
@@ -179,34 +179,38 @@ Note that you would need to set up multi-node training run in your cluster env, 
 Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
 ##############################################################################################################
 
-Run an inference server in the background using the following command:
+The following section runs an inference server with the SL-CAI model that we've previously trained, and queries it with red teaming prompts asking for several responses per prompt.
+These will then be ranked by a judge LLM being run from NVIDIA's NGC. An NGC API key can be acquired `here`_.
+The following will run the inference server:
+.. _here: https://org.ngc.nvidia.com/setup/api-key
 
 .. code-block:: bash
 
-   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py
-           gpt_model_file=/path/to/sft_log_dir/checkpoints/megatron_gpt_sft.nemo
-           pipeline_model_parallel_split_rank=0
-           server=True
-           tensor_model_parallel_size=8
-           pipeline_model_parallel_size=1
-           trainer.precision=bf16
-           trainer.devices=8
-           trainer.num_nodes=1
-           web_server=False
+   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py \
+           gpt_model_file=/path/to/sft_log_dir/checkpoints/megatron_gpt_sft.nemo \
+           pipeline_model_parallel_split_rank=0 \
+           server=True \
+           tensor_model_parallel_size=8 \
+           pipeline_model_parallel_size=1 \
+           trainer.precision=bf16 \
+           trainer.devices=8 \
+           trainer.num_nodes=1 \
+           web_server=False \
            port=5999
 
 Please wait for the server to be ready before proceeding.
 
 
+Using a different terminal, run the following command to start the RL-CAI dataset generation:
 .. code-block:: bash
 
-   python examples/nlp/cai/generate_rl_cai_dataset.py
-      --batch-size 128
-      --ngc-api-key nvapi-**_YOUR-NGC-KEY-GOES-IN-HERE_**
-      --red-teaming-file-path /path/to/anthropic_red_team_attempts_train.json
-      --output-dir /path/to/blend_preference_dataset_with_anthropic_helpful_only
-      --output-filename-prefix mistral_7b_cai_preference_dataset
-      --blend-with "{'name': 'anthropic_helpful_only', 'train': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_comparisons_with_chat_prompt.jsonl']}, 'test': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_comparisons_with_chat_prompt.jsonl']}}"
+   python examples/nlp/cai/generate_rl_cai_dataset.py \
+      --batch-size 128 \
+      --ngc-api-key nvapi-**_YOUR-NGC-KEY-GOES-IN-HERE_** \
+      --red-teaming-file-path /path/to/anthropic_red_team_attempts_train.json \
+      --output-dir /path/to/blend_preference_dataset_with_anthropic_helpful_only \
+      --output-filename-prefix mistral_7b_cai_preference_dataset \
+      --blend-with "{'name': 'anthropic_helpful_only', 'train': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_comparisons_with_chat_prompt.jsonl']}, 'test': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_comparisons_with_chat_prompt.jsonl']}}" \
       --port-num 5999
 
 This will create the ``rl-cai`` dataset files in the defined output folder with the given output filename prefix.
@@ -217,22 +221,22 @@ Step 5: Train the RM
 
 .. code-block:: bash
 
-   python examples/nlp/gpt/train_reward_model.py
-      pretrained_checkpoint.restore_from_path='/lustre/fsw/coreai_dlalgo_llm/nemo_aligner_cai/cai_tutorial/cai_mistral_7b/3_sl_cai_model/mistral_7b_sl_cai_model.nemo'
-      "++model.data.data_prefix={train: [<path to cai_preference_dataset_comparisons_train.jsonl>], validation: [<path to cai_preference_dataset_comparisons_test.jsonl>], test: [<path to cai_preference_dataset_comparisons_test.jsonl>]}"
-      ++model.micro_batch_size=1
-      ++model.global_batch_size=512
-      ++model.activations_checkpoint_granularity="full"
-      ++model.activations_checkpoint_method="uniform"
-      ++model.activations_checkpoint_num_layers=1
-      ++model.optim.bucket_cap_mb=200
-      ++model.data.seq_length=4096
-      ++model.data.data_impl=json
-      exp_manager.explicit_log_dir=<path to output dir>
-      exp_manager.checkpoint_callback_params.save_top_k=1
-      exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True
-      trainer.rm.save_interval=25
-      trainer.rm.val_check_interval=25
+   python examples/nlp/gpt/train_reward_model.py \
+      pretrained_checkpoint.restore_from_path=/path/to/sft_log_dir/checkpoints/megatron_gpt_sft.nemo \
+      "++model.data.data_prefix={train: [<path to cai_preference_dataset_comparisons_train.jsonl>], validation: [<path to cai_preference_dataset_comparisons_test.jsonl>], test: [<path to cai_preference_dataset_comparisons_test.jsonl>]}" \
+      ++model.micro_batch_size=1 \
+      ++model.global_batch_size=512 \
+      ++model.activations_checkpoint_granularity="full" \
+      ++model.activations_checkpoint_method="uniform" \
+      ++model.activations_checkpoint_num_layers=1 \
+      ++model.optim.bucket_cap_mb=200 \
+      ++model.data.seq_length=4096 \
+      ++model.data.data_impl=json \
+      exp_manager.explicit_log_dir=<path to output dir> \
+      exp_manager.checkpoint_callback_params.save_top_k=1 \
+      exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True \
+      trainer.rm.save_interval=25 \
+      trainer.rm.val_check_interval=25 \
       trainer.rm.limit_val_batches=100000
 
 
@@ -244,36 +248,36 @@ Run the following command in the background to launch a RM and PPO critic traini
 
 .. code-block:: bash
 
-   python examples/nlp/gpt/serve_ppo_critic.py
-      pretrained_checkpoint.restore_from_path=<path to pretrained model, e.g., mistral_7b_sl_cai_rm_model.nemo>
-      trainer.ppo.inference_micro_batch_size=4
-      trainer.ppo.port=5567
-      ++model.offload_adam_states=True
-      ++model.micro_batch_size=1
-      ++model.global_batch_size=64
-      ++model.seed=1234
+   python examples/nlp/gpt/serve_ppo_critic.py \
+      pretrained_checkpoint.restore_from_path=<path to pretrained model, e.g., mistral_7b_sl_cai_rm.nemo> \
+      trainer.ppo.inference_micro_batch_size=4 \
+      trainer.ppo.port=5567 \
+      ++model.offload_adam_states=True \
+      ++model.micro_batch_size=1 \
+      ++model.global_batch_size=64 \
+      ++model.seed=1234 \
       exp_manager.explicit_log_dir=<path to critic output dir>
 
 Run the following command to launch actor training and reference policy server:
 
 .. code-block:: bash
 
-   python -u examples/nlp/gpt/train_gpt_ppo_actor.py
-      pretrained_checkpoint.restore_from_path=<path to pretrained model, e.g., mistral_7b_sl_cai_model.nemo>
-      ++model.data.data_impl=json
-      "++model.data.data_prefix{train: [<path to cai_preference_dataset_prompts_train.jsonl>], validation: [<path to cai_preference_dataset_prompts_test.jsonl>], test: [<path to cai_preference_dataset_prompts_test.jsonl>]}"
-      exp_manager.explicit_log_dir=<path to actor output dir>
-      ++model.micro_batch_size=1
-      ++model.global_batch_size=64
-      ++model.activations_checkpoint_granularity=selective
-      ++model.activations_checkpoint_method=uniform
-      ++model.optim.lr=9e-8
-      ++model.optim.sched.min_lr=9e-9
-      ++model.ppo.num_rollout_samples=512
-      ++model.ppo.rollout_micro_batch_size=8
-      ++model.ppo.length_params.max_length=1024
-      trainer.ppo.initial_policy_kl_penalty=0.02
-      remote_critic_rm.critic.ip=<ip to critic service>
+   python -u examples/nlp/gpt/train_gpt_ppo_actor.py \
+      pretrained_checkpoint.restore_from_path=/path/to/sft_log_dir/checkpoints/megatron_gpt_sft.nemo \
+      ++model.data.data_impl=json \
+      "++model.data.data_prefix{train: [<path to cai_preference_dataset_prompts_train.jsonl>], validation: [<path to cai_preference_dataset_prompts_test.jsonl>], test: [<path to cai_preference_dataset_prompts_test.jsonl>]}" \
+      exp_manager.explicit_log_dir=<path to actor output dir> \
+      ++model.micro_batch_size=1 \
+      ++model.global_batch_size=64 \
+      ++model.activations_checkpoint_granularity=selective \
+      ++model.activations_checkpoint_method=uniform \
+      ++model.optim.lr=9e-8 \
+      ++model.optim.sched.min_lr=9e-9 \
+      ++model.ppo.num_rollout_samples=512 \
+      ++model.ppo.rollout_micro_batch_size=8 \
+      ++model.ppo.length_params.max_length=1024 \
+      trainer.ppo.initial_policy_kl_penalty=0.02 \
+      remote_critic_rm.critic.ip=<ip to critic service> \
       remote_critic_rm.critic.port=5567
 
 The trained policy (LLM) checkpoint will be saved to output dir given by ``exp_manager.explicit_log_dir``.
@@ -284,16 +288,16 @@ To start inference, run an inference server in the background using the followin
 
 .. code-block:: bash
 
-   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py 
-           gpt_model_file=/results/mistral-7b-rl-cai-aligned.nemo 
-           pipeline_model_parallel_split_rank=0 
-           server=True 
-           tensor_model_parallel_size=8 
-           pipeline_model_parallel_size=1 
-           trainer.precision=bf16 
-           trainer.devices=8 
-           trainer.num_nodes=1 
-           web_server=False 
-           port=1427 
+   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py \
+           gpt_model_file=/results/mistral-7b-rl-cai-aligned.nemo \
+           pipeline_model_parallel_split_rank=0 \
+           server=True \
+           tensor_model_parallel_size=8 \
+           pipeline_model_parallel_size=1 \
+           trainer.precision=bf16 \
+           trainer.devices=8 \
+           trainer.num_nodes=1 \
+           web_server=False \
+           port=1427
 
 Please wait for the server to be ready before proceeding, and follow the on-screen directive.
