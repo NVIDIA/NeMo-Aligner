@@ -103,7 +103,7 @@ Step 1: Download models and datasets
            --output-file-name-prefix anthropic_helpful_only
 
 
-Step 2: Generate and revise responses to harmfulness prompts creating the SL-CAI dataset
+Step 2: Generate and revise responses to harmful prompts creating the SL-CAI dataset
 ###################################################################################################
 
 Run an inference server in the background using the following command:
