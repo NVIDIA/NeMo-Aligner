@@ -440,6 +440,7 @@ def prepare_args():
     if args.max_seq_length is not None:
         assert args.max_seq_length > 0
         assert os.path.isfile(args.tokenizer_model)
+        assert args.tokenizer_library is not None
 
     return args
 

@@ -196,7 +196,7 @@ def generate_cai_rlaif_candidate_dataset(
     return all_samples
 
 
-def generate_responses_batch(prompt_list: list, temperature: int, port_num: int):
+def generate_responses_batch(prompt_list: list, temperature: float, port_num: int):
     assert isinstance(prompt_list, list)
     num_prompts = len(prompt_list)
 
@@ -363,8 +363,7 @@ def run_model_with_ngc(
     else:
         raise f"unknown model name: {model_name}"
 
-    assert prompt is not None or messages is not None
-    assert prompt is None or messages is None
+    assert (prompt is None) ^ (messages is None)
 
     if prompt is not None:
         assert isinstance(prompt, str)
