@@ -147,7 +147,6 @@ model:
     use_checkpoint: False
     legacy: False
     use_flash_attention: False
-    enable_amp_o2_fp16: False
     resblock_gn_groups: 32
     lora_network_alpha: null
 
