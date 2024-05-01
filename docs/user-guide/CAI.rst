@@ -181,7 +181,9 @@ Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
 
 The following section runs an inference server with the SL-CAI model that we've previously trained, and queries it with red teaming prompts asking for several responses per prompt.
 These will then be ranked by a judge LLM being run from NVIDIA's NGC. An NGC API key can be acquired `here`_.
+
 The following will run the inference server:
+
 .. _here: https://org.ngc.nvidia.com/setup/api-key
 
 .. code-block:: bash
@@ -202,6 +204,7 @@ Please wait for the server to be ready before proceeding.
 
 
 Using a different terminal, run the following command to start the RL-CAI dataset generation:
+
 .. code-block:: bash
 
    python examples/nlp/cai/generate_rl_cai_dataset.py \

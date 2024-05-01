@@ -174,8 +174,6 @@ def generate_cai_rlaif_candidate_dataset(
         temperatures = [temperatures]
 
     red_teaming_prompts = get_red_team_train_human_prompts(red_teaming_dataset_path)
-    # DEBUG DEBUG DEBUG - TODO REMOVE
-    # red_teaming_prompts = red_teaming_prompts[:1 * batch_size]
 
     all_samples = []
     samples_per_temperature = {}
