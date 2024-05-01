@@ -34,11 +34,11 @@ class ChatPromptTemplate:
     def _apply_header_template(system_prompt: str):
         # header/system-message ('<extra_id_0>System\n<system_prompt>\n')
         header = (
-            ChatPromptTemplate.system_turn_token
-            + ChatPromptTemplate.system_token
-            + ChatPromptTemplate.end_name_signal
-            + system_prompt
-            + ChatPromptTemplate.end_signal
+                ChatPromptTemplate.system_turn_token
+                + ChatPromptTemplate.system_token
+                + ChatPromptTemplate.end_name_signal
+                + system_prompt
+                + ChatPromptTemplate.end_signal
         )
 
         return header
@@ -49,7 +49,7 @@ class ChatPromptTemplate:
 
         # assistant message ('<extra_id_1><role_name>\n<prompt>\n')
         assistant_message = (
-            ChatPromptTemplate.begin_signal + ChatPromptTemplate.turn_token + role + ChatPromptTemplate.end_name_signal
+                ChatPromptTemplate.begin_signal + ChatPromptTemplate.turn_token + role + ChatPromptTemplate.end_name_signal
         )
 
         if prompt is not None:
@@ -156,13 +156,16 @@ system_prompt = f"{prefix, constitution}"
 
 
 def generate_cai_rlaif_candidate_dataset(
-    batch_size: int, temperatures: Union[List, int], red_teaming_dataset_path: str, port_num: int
+        batch_size: int, temperatures: Union[List, int], red_teaming_dataset_path: str, port_num: int, host: str
 ):
     """
+    @param host:
+    @return:
     @param batch_size: inference batch size
     @param temperatures: how many temperatures to use for generation per prompt
     @param red_teaming_dataset_path: path to Anthropic red teaming prompt attempts.
-    @param port_num: inference service port number.
+    @param port_num: The port number on which the inference service is running.
+    @param host: The hostname or IP address of the inference service.
     @return:
     """
     assert batch_size > 0
@@ -178,7 +181,7 @@ def generate_cai_rlaif_candidate_dataset(
     samples_per_temperature = {}
 
     for batch_index in tqdm(range(0, len(red_teaming_prompts), batch_size), desc="Batch #"):
-        red_teaming_prompts_list = red_teaming_prompts[batch_index : batch_index + batch_size]
+        red_teaming_prompts_list = red_teaming_prompts[batch_index: batch_index + batch_size]
         if len(red_teaming_prompts_list) < batch_size:
             break
 
@@ -186,7 +189,8 @@ def generate_cai_rlaif_candidate_dataset(
             samples = []
 
             # call model
-            rlaif_batch_samples = generate_responses_batch(red_teaming_prompts_list, temperature=t, port_num=port_num)
+            rlaif_batch_samples = generate_responses_batch(red_teaming_prompts_list, temperature=t,
+                                                           port_num=port_num, host=host)
             samples.extend(rlaif_batch_samples)
 
             samples_per_temperature[str(t)] = samples
@@ -196,14 +200,14 @@ def generate_cai_rlaif_candidate_dataset(
     return all_samples
 
 
-def generate_responses_batch(prompt_list: list, temperature: float, port_num: int):
+def generate_responses_batch(prompt_list: list, temperature: float, port_num: int, host: str):
     assert isinstance(prompt_list, list)
     num_prompts = len(prompt_list)
 
     # get initial response
     prompts = [ChatPromptTemplate.apply_prompt_template(p) for p in prompt_list]
 
-    responses = model_remote_inference(prompts, temperature=temperature, port_num=port_num)
+    responses = model_remote_inference(prompts, temperature=temperature, port_num=port_num, host=host)
     assert len(responses) == num_prompts
     stripped_responses = [ChatPromptTemplate.extract_response(r) for r in responses]
 
@@ -215,14 +219,14 @@ def generate_responses_batch(prompt_list: list, temperature: float, port_num: in
     return s_batch
 
 
-def model_remote_inference(prompt, port_num=5656, temperature=1.0):
+def model_remote_inference(prompt, port_num, host: str, temperature=1.0):
     if not isinstance(prompt, list):
         prompt = [prompt]
 
     headers = {"Content-Type": "application/json"}
 
     def request_data(request):
-        resp = requests.put("http://localhost:{}/generate".format(port_num), data=json.dumps(request), headers=headers)
+        resp = requests.put(f"http://{host}:{port_num}/generate", data=json.dumps(request), headers=headers)
         resp_json = resp.json()
         resp_sentences = resp_json["sentences"]
         return resp_sentences
@@ -287,8 +291,8 @@ def join_responses(samples_per_temperature: dict) -> list:
 def prepare_args():
     parser = argparse.ArgumentParser(
         description="given a prompt and to responses, "
-        "selects the most harmless response (labeled as 'chosen') and "
-        "the least harmless response (labeled as 'rejected')."
+                    "selects the most harmless response (labeled as 'chosen') and "
+                    "the least harmless response (labeled as 'rejected')."
     )
     parser.add_argument("--batch-size", type=int, required=True, default=128)
     parser.add_argument("--ngc-api-key", type=str, required=True, default=None)
@@ -298,16 +302,19 @@ def prepare_args():
     parser.add_argument("--splits", type=str, default="{'train': 0.8, 'test': 0.2}", help="How to split the dataset")
     parser.add_argument("--shuffle", type=str, choices=["True", "False"], default="True")
     parser.add_argument("--red-teaming-file-path", type=str, required=True, default=None)
-    parser.add_argument("--port-num", type=int, default=5656, help="inference service port number")
+    parser.add_argument("--port-num", type=int, default=5656,
+                        help="The port number on which the inference service is running")
+    parser.add_argument("--host", type=str, default="localhost",
+                        help="The hostname or IP address of the inference service")
 
     parser.add_argument(
         "--blend-with",
         type=str,
         default=None,
         help="template:"
-        "{'name': '<some-name-for the blending>', '<split-name>': {'prompts': ['<path>', '<path-2>'], 'comparisons': ['<path-1>', '<path-2>']}}"
-        ""
-        "you must set a valid name and one or more keys of <split-name>, one for each split in '--splits' argument",
+             "{'name': '<some-name-for the blending>', '<split-name>': {'prompts': ['<path>', '<path-2>'], 'comparisons': ['<path-1>', '<path-2>']}}"
+             ""
+             "you must set a valid name and one or more keys of <split-name>, one for each split in '--splits' argument",
     )
 
     args = parser.parse_args()
@@ -321,10 +328,10 @@ def prepare_args():
         assert all(split_name in args.blend_with for split_name in args.splits)
         assert len(args.blend_with) - 1 == len(args.splits)
         assert (
-            "name" in args.blend_with
-            and isinstance(args.blend_with["name"], str)
-            and args.blend_with["name"] is not None
-            and args.blend_with["name"] != ""
+                "name" in args.blend_with
+                and isinstance(args.blend_with["name"], str)
+                and args.blend_with["name"] is not None
+                and args.blend_with["name"] != ""
         )
 
         for split_name, blend in args.blend_with.items():
@@ -346,12 +353,12 @@ def prepare_args():
 
 
 def run_model_with_ngc(
-    api_key: str,
-    prompt: str = None,
-    messages: list = None,
-    temperature: float = 1.0,
-    model_name: str = "mixtral_8x7b",
-    seed: int = 42,
+        api_key: str,
+        prompt: str = None,
+        messages: list = None,
+        temperature: float = 1.0,
+        model_name: str = "mixtral_8x7b",
+        seed: int = 42,
 ):
     fetch_url_format = "https://api.nvcf.nvidia.com/v2/nvcf/pexec/status/"
     if model_name == "mixtral_8x7b":
@@ -493,7 +500,7 @@ def split_dataset(dataset, splits: Dict[str, float], shuffle: bool):
 
     # ensure all splits have at least one sample
     dataset_splits = {split_name: [dataset[index[i]]] for i, split_name in enumerate(splits.keys())}
-    index = index[len(splits) :]
+    index = index[len(splits):]
     n = n - len(splits)
 
     i_offset = 0
@@ -501,7 +508,7 @@ def split_dataset(dataset, splits: Dict[str, float], shuffle: bool):
         split_n = max(1, round(n * split_p))
         if i == len(splits) - 1:
             split_n = n - i_offset
-        split_index = index[i_offset : min(i_offset + split_n, n)]
+        split_index = index[i_offset: min(i_offset + split_n, n)]
         dataset_splits[split_name] += [dataset[i] for i in split_index]
         i_offset += split_n
 
@@ -646,7 +653,7 @@ def blend_preference_datasets(files: list, output_file: str, blend_type: str):
 
                     # Assuming an even number of lines, pair them
                     for i in range(0, len(lines), 2):
-                        paired_lines.append(lines[i : i + 2])
+                        paired_lines.append(lines[i: i + 2])
 
                 if not paired_lines[-1][-1].endswith("\n"):
                     paired_lines[-1][-1] += "\n"
@@ -683,6 +690,7 @@ if __name__ == "__main__":
         temperatures=np.arange(0.01, 2.01, 0.5).tolist(),
         red_teaming_dataset_path=args.red_teaming_file_path,
         port_num=args.port_num,
+        host=args.host
     )
 
     with open(os.path.join(args.output_dir, "cai_candidate_dataset.json"), "w") as file:
