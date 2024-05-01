@@ -226,15 +226,15 @@ Step 5: Train the RM
 
    python examples/nlp/gpt/train_reward_model.py \
       pretrained_checkpoint.restore_from_path=/path/to/sft_log_dir/checkpoints/megatron_gpt_sft.nemo \
-      "++model.data.data_prefix={train: [<path to cai_preference_dataset_comparisons_train.jsonl>], validation: [<path to cai_preference_dataset_comparisons_test.jsonl>], test: [<path to cai_preference_dataset_comparisons_test.jsonl>]}" \
-      ++model.micro_batch_size=1 \
-      ++model.global_batch_size=512 \
+      "model.data.data_prefix={train: [<path to cai_preference_dataset_comparisons_train.jsonl>], validation: [<path to cai_preference_dataset_comparisons_test.jsonl>], test: [<path to cai_preference_dataset_comparisons_test.jsonl>]}" \
+      model.micro_batch_size=1 \
+      model.global_batch_size=512 \
       ++model.activations_checkpoint_granularity="full" \
       ++model.activations_checkpoint_method="uniform" \
       ++model.activations_checkpoint_num_layers=1 \
-      ++model.optim.bucket_cap_mb=200 \
-      ++model.data.seq_length=4096 \
-      ++model.data.data_impl=json \
+      model.optim.bucket_cap_mb=200 \
+      model.data.seq_length=4096 \
+      model.data.data_impl=json \
       exp_manager.explicit_log_dir=<path to output dir> \
       exp_manager.checkpoint_callback_params.save_top_k=1 \
       exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True \
@@ -255,10 +255,10 @@ Run the following command in the background to launch a RM and PPO critic traini
       pretrained_checkpoint.restore_from_path=<path to pretrained model, e.g., mistral_7b_sl_cai_rm.nemo> \
       trainer.ppo.inference_micro_batch_size=4 \
       trainer.ppo.port=5567 \
-      ++model.offload_adam_states=True \
-      ++model.micro_batch_size=1 \
-      ++model.global_batch_size=64 \
-      ++model.seed=1234 \
+      model.offload_adam_states=True \
+      model.micro_batch_size=1 \
+      model.global_batch_size=64 \
+      model.seed=1234 \
       exp_manager.explicit_log_dir=<path to critic output dir>
 
 Run the following command to launch actor training and reference policy server:
@@ -267,18 +267,18 @@ Run the following command to launch actor training and reference policy server:
 
    python -u examples/nlp/gpt/train_gpt_ppo_actor.py \
       pretrained_checkpoint.restore_from_path=/path/to/sft_log_dir/checkpoints/megatron_gpt_sft.nemo \
-      ++model.data.data_impl=json \
-      "++model.data.data_prefix{train: [<path to cai_preference_dataset_prompts_train.jsonl>], validation: [<path to cai_preference_dataset_prompts_test.jsonl>], test: [<path to cai_preference_dataset_prompts_test.jsonl>]}" \
+      model.data.data_impl=json \
+      "model.data.data_prefix={train: [<path to cai_preference_dataset_prompts_train.jsonl>], validation: [<path to cai_preference_dataset_prompts_test.jsonl>], test: [<path to cai_preference_dataset_prompts_test.jsonl>]}" \
       exp_manager.explicit_log_dir=<path to actor output dir> \
-      ++model.micro_batch_size=1 \
-      ++model.global_batch_size=64 \
+      model.micro_batch_size=1 \
+      model.global_batch_size=64 \
       ++model.activations_checkpoint_granularity=selective \
       ++model.activations_checkpoint_method=uniform \
-      ++model.optim.lr=9e-8 \
-      ++model.optim.sched.min_lr=9e-9 \
-      ++model.ppo.num_rollout_samples=512 \
-      ++model.ppo.rollout_micro_batch_size=8 \
-      ++model.ppo.length_params.max_length=1024 \
+      model.optim.lr=9e-8 \
+      model.optim.sched.min_lr=9e-9 \
+      model.ppo.num_rollout_samples=512 \
+      model.ppo.rollout_micro_batch_size=8 \
+      model.ppo.length_params.max_length=1024 \
       trainer.ppo.initial_policy_kl_penalty=0.02 \
       remote_critic_rm.critic.ip=<ip to critic service> \
       remote_critic_rm.critic.port=5567
