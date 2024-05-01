@@ -224,7 +224,7 @@ def generate_cai_dataset(
     save_to_file_interval: int,
     save_file_path: str,
     port_num: int,
-    host: str
+    host: str,
 ):
     """
     @param batch_size: inference batch size
@@ -285,7 +285,7 @@ def generate_cai_dataset(
             critique_list=critique_list,
             revision_list=revision_list,
             port_num=port_num,
-            host=host
+            host=host,
         )
         assert len(cai_batch_sample) == len(red_teaming_prompts_list)
 
@@ -442,10 +442,12 @@ def prepare_args():
     )
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--helpfulness-dataset-path", type=str, required=True, default=None)
-    parser.add_argument("--port-num", type=int, default=5656,
-                        help="The port number on which the inference service is running")
-    parser.add_argument("--host", type=str, default="localhost",
-                        help="The hostname or IP address of the inference service")
+    parser.add_argument(
+        "--port-num", type=int, default=5656, help="The port number on which the inference service is running"
+    )
+    parser.add_argument(
+        "--host", type=str, default="localhost", help="The hostname or IP address of the inference service"
+    )
 
     args = parser.parse_args()
     assert os.path.isfile(args.red_teaming_prompts_dataset_path)
@@ -476,7 +478,7 @@ def main():
         save_to_file_interval=args.save_to_file_interval,
         save_file_path=args.output_filepath,
         port_num=args.port_num,
-        host=args.host
+        host=args.host,
     )
 
     print("Blending CAI samples with the helpfulness dataset...")
