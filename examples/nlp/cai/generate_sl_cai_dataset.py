@@ -405,6 +405,7 @@ def prepare_args():
     group.add_argument("--temperature", type=float, default=1.0)
     group.add_argument("--greedy", type=str, choices=["True", "False"], default="True")
     group.add_argument("--tokens_to_generate", type=int, default=1024)
+    group.add_argument("--end_strings", type=str, nargs="*", default=None)
     group.add_argument(
         "--port", type=int, default=5656, help="The port number on which the inference service is running"
     )
@@ -443,6 +444,7 @@ def prepare_args():
             "temperature",
             "greedy",
             "tokens_to_generate",
+            "end_strings",
             "port",
             "host",
         }
