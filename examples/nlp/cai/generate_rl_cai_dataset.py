@@ -657,7 +657,7 @@ def main():
 
     print("\nGenerating AI preferences...\n")
 
-    with open(args.sys_prompt_constitution_file_path, 'r') as f:
+    with open(args.sys_prompt_constitution_file_path, "r") as f:
         constitution_as_sys_prompt = f.read()
 
     preference_dataset = []
@@ -665,9 +665,7 @@ def main():
         sample = dataset[ds_index]
 
         try:
-            preference = generate_ai_preference(sample, args.ngc_api_key,
-                                                constitution_as_sys_prompt,
-                                                seed=args.seed)
+            preference = generate_ai_preference(sample, args.ngc_api_key, constitution_as_sys_prompt, seed=args.seed)
         except Exception as e:
             preference = None
 
