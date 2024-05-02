@@ -10,9 +10,8 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 import requests
-from tqdm import tqdm
-
 from examples.nlp.cai.utils import remote_inference
+from tqdm import tqdm
 
 
 class ChatPromptTemplate:
@@ -189,7 +188,7 @@ def generate_cai_rlaif_candidate_dataset(
             samples = []
 
             # call model
-            inference_config['temperature'] = t
+            inference_config["temperature"] = t
             rlaif_batch_samples = generate_responses_batch(red_teaming_prompts_list, inference_config=inference_config)
             samples.extend(rlaif_batch_samples)
 
@@ -288,30 +287,32 @@ def prepare_args():
         "you must set a valid name and one or more keys of <split-name>, one for each split in '--splits' argument",
     )
 
-    group = parser.add_argument_group('inference', 'inference (service) arguments')
-    group.add_argument("--add_bos", type=str, choices=['True', 'False'], default='True')
+    group = parser.add_argument_group("inference", "inference (service) arguments")
+    group.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
     group.add_argument("--top_k", type=int, default=50)
     group.add_argument("--top_p", type=float, default=0.95)
-    group.add_argument("--all_probs", type=str, choices=['True', 'False'], default='False')
+    group.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
     group.add_argument("--repetition_penalty", type=float, default=1.0)
     group.add_argument("--min_tokens_to_generate", type=int, default=1)
     group.add_argument("--temperature", type=float, default=1.0)
-    group.add_argument("--greedy", type=str, choices=['True', 'False'], default='False')
+    group.add_argument("--greedy", type=str, choices=["True", "False"], default="False")
     group.add_argument("--tokens_to_generate", type=int, default=1024)
     group.add_argument("--end_strings", type=str, nargs="*", default=["<extra_id_1>"])
-    group.add_argument("--port", type=int, default=5656,
-                       help="The port number on which the inference service is running")
-    group.add_argument("--host", type=str, default="localhost",
-                       help="The hostname or IP address of the inference service")
+    group.add_argument(
+        "--port", type=int, default=5656, help="The port number on which the inference service is running"
+    )
+    group.add_argument(
+        "--host", type=str, default="localhost", help="The hostname or IP address of the inference service"
+    )
 
     args = parser.parse_args()
     assert os.path.isfile(args.red_teaming_file_path)
     args.splits = ast.literal_eval(args.splits)
     args.shuffle = args.shuffle in ["True", "true"]
 
-    args.add_bos = (args.add_bos == 'True')
-    args.all_probs = (args.all_probs == 'True')
-    args.greedy = (args.greedy == 'True')
+    args.add_bos = args.add_bos == "True"
+    args.all_probs = args.all_probs == "True"
+    args.greedy = args.greedy == "True"
 
     # blending argument validation
     if args.blend_with is not None:
@@ -342,10 +343,25 @@ def prepare_args():
 
     # Convert parsed arguments to dictionary
     args_dict = vars(args)
-    inference_config = {k: v for k, v in args_dict.items()
-                        if k in {'add_bos', 'top_k', 'top_p', 'all_probs', 'repetition_penalty',
-                                 'min_tokens_to_generate', 'temperature', 'greedy', 'tokens_to_generate', 'end_strings',
-                                 'port', 'host'}}
+    inference_config = {
+        k: v
+        for k, v in args_dict.items()
+        if k
+        in {
+            "add_bos",
+            "top_k",
+            "top_p",
+            "all_probs",
+            "repetition_penalty",
+            "min_tokens_to_generate",
+            "temperature",
+            "greedy",
+            "tokens_to_generate",
+            "end_strings",
+            "port",
+            "host",
+        }
+    }
 
     return args, inference_config
 
@@ -687,7 +703,7 @@ def main():
         batch_size=args.batch_size,
         temperatures=np.arange(0.01, 2.01, 0.5).tolist(),
         red_teaming_dataset_path=args.red_teaming_file_path,
-        inference_config=inference_config
+        inference_config=inference_config,
     )
 
     with open(os.path.join(args.output_dir, "cai_candidate_dataset.json"), "w") as file:
