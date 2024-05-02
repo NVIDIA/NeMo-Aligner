@@ -56,9 +56,7 @@ def generate_chat_prompt(sample: dict):
     return _conversation_formatter(messages=[prompt, revision])
 
 
-def model_remote_inference(
-    prompt, inference_config: dict
-):
+def model_remote_inference(prompt, inference_config: dict):
     sentences = remote_inference(prompt=prompt, **inference_config)
 
     sentences = [
@@ -178,7 +176,7 @@ def generate_cai_dataset(
     batch_size: int,
     save_to_file_interval: int,
     save_file_path: str,
-    inference_config: dict
+    inference_config: dict,
 ):
     """
     @param batch_size: inference batch size
@@ -237,7 +235,7 @@ def generate_cai_dataset(
             few_shot_dataset_path=few_shot_samples_filepath,
             critique_list=critique_list,
             revision_list=revision_list,
-            inference_config=inference_config
+            inference_config=inference_config,
         )
         assert len(cai_batch_sample) == len(red_teaming_prompts_list)
 
@@ -397,25 +395,27 @@ def prepare_args():
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--helpfulness-dataset-path", type=str, required=True, default=None)
 
-    group = parser.add_argument_group('inference', 'inference (service) arguments')
-    group.add_argument("--add_bos", type=str, choices=['True', 'False'], default='True')
+    group = parser.add_argument_group("inference", "inference (service) arguments")
+    group.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
     group.add_argument("--top_k", type=int, default=1)
     group.add_argument("--top_p", type=float, default=0.9)
-    group.add_argument("--all_probs", type=str, choices=['True', 'False'], default='False')
+    group.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
     group.add_argument("--repetition_penalty", type=float, default=1.2)
     group.add_argument("--min_tokens_to_generate", type=int, default=1)
     group.add_argument("--temperature", type=float, default=1.0)
-    group.add_argument("--greedy", type=str, choices=['True', 'False'], default='True')
+    group.add_argument("--greedy", type=str, choices=["True", "False"], default="True")
     group.add_argument("--tokens_to_generate", type=int, default=1024)
-    group.add_argument("--port", type=int, default=5656,
-                       help="The port number on which the inference service is running")
-    group.add_argument("--host", type=str, default="localhost",
-                       help="The hostname or IP address of the inference service")
+    group.add_argument(
+        "--port", type=int, default=5656, help="The port number on which the inference service is running"
+    )
+    group.add_argument(
+        "--host", type=str, default="localhost", help="The hostname or IP address of the inference service"
+    )
 
     args = parser.parse_args()
-    args.add_bos = (args.add_bos == 'True')
-    args.all_probs = (args.all_probs == 'True')
-    args.greedy = (args.greedy == 'True')
+    args.add_bos = args.add_bos == "True"
+    args.all_probs = args.all_probs == "True"
+    args.greedy = args.greedy == "True"
 
     assert os.path.isfile(args.red_teaming_prompts_dataset_path)
     assert os.path.isfile(args.few_shot_prompts_dataset_path)
@@ -429,10 +429,24 @@ def prepare_args():
 
     # Convert parsed arguments to dictionary
     args_dict = vars(args)
-    inference_config = {k: v for k, v in args_dict.items()
-                        if k in {'add_bos', 'top_k', 'top_p', 'all_probs', 'repetition_penalty',
-                                 'min_tokens_to_generate', 'temperature', 'greedy', 'tokens_to_generate',
-                                 'port', 'host'}}
+    inference_config = {
+        k: v
+        for k, v in args_dict.items()
+        if k
+        in {
+            "add_bos",
+            "top_k",
+            "top_p",
+            "all_probs",
+            "repetition_penalty",
+            "min_tokens_to_generate",
+            "temperature",
+            "greedy",
+            "tokens_to_generate",
+            "port",
+            "host",
+        }
+    }
 
     return args, inference_config
 
@@ -451,7 +465,7 @@ def main():
         batch_size=args.batch_size,
         save_to_file_interval=args.save_to_file_interval,
         save_file_path=args.output_filepath,
-        inference_config=inference_config
+        inference_config=inference_config,
     )
 
     print("Blending CAI samples with the helpfulness dataset...")

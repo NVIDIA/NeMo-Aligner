@@ -1,7 +1,7 @@
 import os
 from collections import defaultdict
 from multiprocessing import Pool
-from typing import Optional, List, Union
+from typing import List, Optional, Union
 
 
 def _pool_process_item(item_index: int, max_seq_length: int):
@@ -22,9 +22,10 @@ def remove_long_dialogs(
     output_dir: str,
     use_pool: bool,
 ):
+    from tqdm import tqdm
+
     from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
     from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenizer
-    from tqdm import tqdm
 
     assert os.path.isfile(input_file_path)
     input_file_name, input_file_extension = os.path.splitext(os.path.basename(input_file_path))
@@ -102,8 +103,7 @@ def remote_inference(
     top_p: Optional[float] = None,
     all_probs: Optional[bool] = None,
     repetition_penalty: Optional[float] = None,
-    end_strings: Optional[Union[List[str], str]] = None
-
+    end_strings: Optional[Union[List[str], str]] = None,
 ):
     """
     @param prompt:
@@ -121,8 +121,9 @@ def remote_inference(
     @param end_strings:
     @return:
     """
-    import requests
     import json
+
+    import requests
 
     assert port >= 0
     assert prompt is not None and isinstance(prompt, (str, list))
