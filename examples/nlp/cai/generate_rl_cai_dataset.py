@@ -12,6 +12,8 @@ import numpy as np
 import requests
 from tqdm import tqdm
 
+from examples.nlp.cai.utils import remote_inference
+
 
 class ChatPromptTemplate:
     system_token = "System"
@@ -156,7 +158,7 @@ system_prompt = f"{prefix, constitution}"
 
 
 def generate_cai_rlaif_candidate_dataset(
-    batch_size: int, temperatures: Union[List, int], red_teaming_dataset_path: str, port_num: int, host: str
+    batch_size: int, temperatures: Union[List, int], red_teaming_dataset_path: str, inference_config: dict
 ):
     """
     @param host:
@@ -164,8 +166,7 @@ def generate_cai_rlaif_candidate_dataset(
     @param batch_size: inference batch size
     @param temperatures: how many temperatures to use for generation per prompt
     @param red_teaming_dataset_path: path to Anthropic red teaming prompt attempts.
-    @param port_num: The port number on which the inference service is running.
-    @param host: The hostname or IP address of the inference service.
+    @param inference_config:
     @return:
     """
     assert batch_size > 0
@@ -173,6 +174,7 @@ def generate_cai_rlaif_candidate_dataset(
     if isinstance(temperatures, int):
         temperatures = [temperatures]
 
+    inference_config = inference_config.copy()
     red_teaming_prompts = get_red_team_train_human_prompts(red_teaming_dataset_path)
 
     all_samples = []
@@ -187,9 +189,8 @@ def generate_cai_rlaif_candidate_dataset(
             samples = []
 
             # call model
-            rlaif_batch_samples = generate_responses_batch(
-                red_teaming_prompts_list, temperature=t, port_num=port_num, host=host
-            )
+            inference_config['temperature'] = t
+            rlaif_batch_samples = generate_responses_batch(red_teaming_prompts_list, inference_config=inference_config)
             samples.extend(rlaif_batch_samples)
 
             samples_per_temperature[str(t)] = samples
@@ -199,14 +200,13 @@ def generate_cai_rlaif_candidate_dataset(
     return all_samples
 
 
-def generate_responses_batch(prompt_list: list, temperature: float, port_num: int, host: str):
+def generate_responses_batch(prompt_list: list, inference_config: dict):
     assert isinstance(prompt_list, list)
     num_prompts = len(prompt_list)
 
     # get initial response
     prompts = [ChatPromptTemplate.apply_prompt_template(p) for p in prompt_list]
-
-    responses = model_remote_inference(prompts, temperature=temperature, port_num=port_num, host=host)
+    responses = model_remote_inference(prompts, inference_config=inference_config)
     assert len(responses) == num_prompts
     stripped_responses = [ChatPromptTemplate.extract_response(r) for r in responses]
 
@@ -218,33 +218,9 @@ def generate_responses_batch(prompt_list: list, temperature: float, port_num: in
     return s_batch
 
 
-def model_remote_inference(prompt, port_num, host: str, temperature=1.0):
-    if not isinstance(prompt, list):
-        prompt = [prompt]
+def model_remote_inference(prompt, inference_config: dict):
+    sentences = remote_inference(prompt=prompt, **inference_config)
 
-    headers = {"Content-Type": "application/json"}
-
-    def request_data(request):
-        resp = requests.put(f"http://{host}:{port_num}/generate", data=json.dumps(request), headers=headers)
-        resp_json = resp.json()
-        resp_sentences = resp_json["sentences"]
-        return resp_sentences
-
-    data = {
-        "sentences": prompt,
-        "tokens_to_generate": 1024,
-        "temperature": temperature,
-        "add_BOS": True,
-        "top_k": 50,
-        "top_p": 0.95,
-        "greedy": False,
-        "all_probs": False,
-        "repetition_penalty": 1,
-        "min_tokens_to_generate": 1,
-        "end_strings": ["<extra_id_1>"],
-    }
-
-    sentences = request_data(data)
     sentences = [
         s + ChatPromptTemplate.turn_token if not s.endswith(ChatPromptTemplate.turn_token) else s for s in sentences
     ]
@@ -301,12 +277,6 @@ def prepare_args():
     parser.add_argument("--splits", type=str, default="{'train': 0.8, 'test': 0.2}", help="How to split the dataset")
     parser.add_argument("--shuffle", type=str, choices=["True", "False"], default="True")
     parser.add_argument("--red-teaming-file-path", type=str, required=True, default=None)
-    parser.add_argument(
-        "--port-num", type=int, default=5656, help="The port number on which the inference service is running"
-    )
-    parser.add_argument(
-        "--host", type=str, default="localhost", help="The hostname or IP address of the inference service"
-    )
 
     parser.add_argument(
         "--blend-with",
@@ -318,10 +288,30 @@ def prepare_args():
         "you must set a valid name and one or more keys of <split-name>, one for each split in '--splits' argument",
     )
 
+    group = parser.add_argument_group('inference', 'inference (service) arguments')
+    group.add_argument("--add_bos", type=str, choices=['True', 'False'], default='True')
+    group.add_argument("--top_k", type=int, default=50)
+    group.add_argument("--top_p", type=float, default=0.95)
+    group.add_argument("--all_probs", type=str, choices=['True', 'False'], default='False')
+    group.add_argument("--repetition_penalty", type=float, default=1.0)
+    group.add_argument("--min_tokens_to_generate", type=int, default=1)
+    group.add_argument("--temperature", type=float, default=1.0)
+    group.add_argument("--greedy", type=str, choices=['True', 'False'], default='False')
+    group.add_argument("--tokens_to_generate", type=int, default=1024)
+    group.add_argument("--end_strings", type=str, nargs="*", default=["<extra_id_1>"])
+    group.add_argument("--port", type=int, default=5656,
+                       help="The port number on which the inference service is running")
+    group.add_argument("--host", type=str, default="localhost",
+                       help="The hostname or IP address of the inference service")
+
     args = parser.parse_args()
     assert os.path.isfile(args.red_teaming_file_path)
     args.splits = ast.literal_eval(args.splits)
     args.shuffle = args.shuffle in ["True", "true"]
+
+    args.add_bos = (args.add_bos == 'True')
+    args.all_probs = (args.all_probs == 'True')
+    args.greedy = (args.greedy == 'True')
 
     # blending argument validation
     if args.blend_with is not None:
@@ -350,7 +340,14 @@ def prepare_args():
                         file
                     ), f"split={split_name}, blend-type={blend_type}. error => invalid file path: {file}"
 
-    return args
+    # Convert parsed arguments to dictionary
+    args_dict = vars(args)
+    inference_config = {k: v for k, v in args_dict.items()
+                        if k in {'add_bos', 'top_k', 'top_p', 'all_probs', 'repetition_penalty',
+                                 'min_tokens_to_generate', 'temperature', 'greedy', 'tokens_to_generate', 'end_strings',
+                                 'port', 'host'}}
+
+    return args, inference_config
 
 
 def run_model_with_ngc(
@@ -680,8 +677,8 @@ def blend_preference_datasets(files: list, output_file: str, blend_type: str):
     print("done")
 
 
-if __name__ == "__main__":
-    args = prepare_args()
+def main():
+    args, inference_config = prepare_args()
     os.makedirs(args.output_dir, exist_ok=True)
     random.seed(args.seed)
 
@@ -690,8 +687,7 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         temperatures=np.arange(0.01, 2.01, 0.5).tolist(),
         red_teaming_dataset_path=args.red_teaming_file_path,
-        port_num=args.port_num,
-        host=args.host,
+        inference_config=inference_config
     )
 
     with open(os.path.join(args.output_dir, "cai_candidate_dataset.json"), "w") as file:
@@ -747,3 +743,7 @@ if __name__ == "__main__":
                 output_file=output_file_path,
                 blend_type=blend_type,
             )
+
+
+if __name__ == "__main__":
+    main()
