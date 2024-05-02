@@ -1,11 +1,11 @@
 # CUDA 12.3
-FROM nvcr.io/nvidia/pytorch:24.01-py3
+FROM nvcr.io/nvidia/pytorch:24.02-py3
 
 ### config tags
-ARG APEX_TAG=master
-ARG TE_TAG=release_v1.4
-ARG MLM_TAG=43792028f003ed25a3ee8c5a0d4cad82317d81b5
-ARG NEMO_TAG=9d86acd5ebf3cec020f84dfe7e25c109506803b1 
+ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
+ARG TE_TAG=1ec33ae1191ae6644365155f8e8f618145c44cd7
+ARG MLM_TAG=main
+ARG NEMO_TAG=main 
 ARG PYTRITON_VERSION=0.4.1
 ARG PROTOBUF_VERSION=4.24.4
 ARG ALIGNER_COMMIT=main
@@ -37,12 +37,17 @@ RUN pip uninstall -y apex && \
         git fetch origin $APEX_TAG && \
         git checkout FETCH_HEAD; \
     fi && \
-    pip install install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
+    pip install install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam --group_norm" ./
 
 # place any util pkgs here
 RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==$PYTRITON_VERSION
 RUN pip install -U --no-deps protobuf==$PROTOBUF_VERSION
 RUN pip install --upgrade-strategy only-if-needed jsonlines
+Run pip install open-clip-torch
+Run pip install taming-transformers
+Run pip install transformers
+RUN pip install accelerate
+RUN python -c "from transformers import AutoModel, AutoTokenizer; from transformers import CLIPImageProcessor; vit_l_tokenizer=AutoTokenizer.from_pretrained('openai/clip-vit-large-patch14'); vit_l=AutoModel.from_pretrained('openai/clip-vit-large-patch14'); vit_l_336=AutoModel.from_pretrained('openai/clip-vit-large-patch14-336'); vit_p=CLIPImageProcessor.from_pretrained('openai/clip-vit-large-patch14'); vit_p_336=CLIPImageProcessor.from_pretrained('openai/clip-vit-large-patch14-336');"
 
 # NeMo
 RUN git clone https://github.com/NVIDIA/NeMo.git && \
