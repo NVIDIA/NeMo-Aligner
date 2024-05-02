@@ -17,6 +17,7 @@
 import os
 from copy import deepcopy
 from dataclasses import dataclass
+from typing import List
 
 import jsonlines
 import numpy as np

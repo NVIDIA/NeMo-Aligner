@@ -33,6 +33,23 @@ from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_hybrid_model import GPTHybridModel
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
+_SAVE_TOP_K = False
+
+
+def is_save_top_k():
+    global _SAVE_TOP_K
+    return _SAVE_TOP_K
+
+
+@contextmanager
+def saving_top_k():
+    global _SAVE_TOP_K
+    try:
+        _SAVE_TOP_K = True
+        yield
+    finally:
+        _SAVE_TOP_K = False
+
 
 def preemptable_save(obj, save_path):
     save_path = Path(save_path).resolve()
@@ -67,11 +84,29 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
 
 def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train_end=False, save_top_only=False):
     """work around used so we can save models manually"""
-    super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
+    with saving_top_k():
+        super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
+
     if save_top_only:
         return
 
+    from pathlib import Path
+
+    if torch.distributed.get_rank() == 0:
+        mark_for_deletion = None
+        for item in self._saved_checkpoint_paths:
+            if str(item).endswith("-last"):
+                mark_for_deletion = item
     super(NeMoModelCheckpoint, self)._save_last_checkpoint(trainer, monitor_candidates)
+
+    if torch.distributed.get_rank() == 0 and mark_for_deletion is not None:
+        print("WANT TO DELETE", mark_for_deletion)
+
+        if Path(mark_for_deletion).exists():
+            mark_for_deletion = Path(mark_for_deletion).replace("_to_delete")
+            self._remove_checkpoint(trainer, mark_for_deletion)
+
+    torch.distributed.barrier()
 
     if is_train_end:
         # stop the checkpoint logic from saving another last checkpoint
