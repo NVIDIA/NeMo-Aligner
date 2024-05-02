@@ -135,7 +135,7 @@ Please wait for the server to be ready before proceeding.
       --tokenizer-model /path/to/<TOKENIZER_FILE_NAME>.model \
       --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json \
       --output-filepath /path/to/cai_revisions_aligner_chat_template.jsonl \
-      --port-num 5999 \
+      --port 5999 \
       --host <hostname or IP address of the inference service>
 
 This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``

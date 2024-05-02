@@ -1,11 +1,7 @@
 import os
 from collections import defaultdict
 from multiprocessing import Pool
-
-from tqdm import tqdm
-
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
-from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenizer
+from typing import Optional, List, Union
 
 
 def _pool_process_item(item_index: int, max_seq_length: int):
@@ -26,6 +22,10 @@ def remove_long_dialogs(
     output_dir: str,
     use_pool: bool,
 ):
+    from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
+    from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenizer
+    from tqdm import tqdm
+
     assert os.path.isfile(input_file_path)
     input_file_name, input_file_extension = os.path.splitext(os.path.basename(input_file_path))
 
@@ -87,3 +87,84 @@ def remove_long_dialogs(
         removed_ids=list(removed_ids),
         length_statistics=length_statistics,
     )
+
+
+def remote_inference(
+    prompt: Union[List[str], str],
+    port: int,
+    host: str,
+    temperature: Optional[float] = None,
+    greedy: Optional[bool] = None,
+    tokens_to_generate: Optional[int] = None,
+    min_tokens_to_generate: Optional[int] = None,
+    add_bos: Optional[bool] = None,
+    top_k: Optional[int] = None,
+    top_p: Optional[float] = None,
+    all_probs: Optional[bool] = None,
+    repetition_penalty: Optional[float] = None,
+    end_strings: Optional[Union[List[str], str]] = None
+
+):
+    """
+    @param prompt:
+    @param port: The port number on which the inference service is running.
+    @param host: The hostname or IP address of the inference service.
+    @param temperature:
+    @param greedy:
+    @param tokens_to_generate:
+    @param min_tokens_to_generate:
+    @param add_bos:
+    @param top_k:
+    @param top_p:
+    @param all_probs:
+    @param repetition_penalty:
+    @param end_strings:
+    @return:
+    """
+    import requests
+    import json
+
+    assert port >= 0
+    assert prompt is not None and isinstance(prompt, (str, list))
+    if not isinstance(prompt, list):
+        prompt = [prompt]
+    assert all(isinstance(p, str) for p in prompt)
+
+    if end_strings is not None:
+        if not isinstance(end_strings, list):
+            end_strings = [end_strings]
+
+    def request_data(request):
+        headers = {"Content-Type": "application/json"}
+        resp = requests.put(f"http://{host}:{port}/generate", data=json.dumps(request), headers=headers)
+        resp_json = resp.json()
+        resp_sentences = resp_json["sentences"]
+        return resp_sentences
+
+    data = {
+        "sentences": prompt,
+    }
+
+    if tokens_to_generate is not None:
+        data["tokens_to_generate"] = tokens_to_generate
+    if temperature is not None:
+        data["temperature"] = temperature
+    if add_bos is not None:
+        data["add_BOS"] = add_bos
+    if top_k is not None:
+        data["top_k"] = top_k
+    if top_p is not None:
+        data["top_p"] = top_p
+    if greedy is not None:
+        data["greedy"] = greedy
+    if all_probs is not None:
+        data["all_probs"] = all_probs
+    if repetition_penalty is not None:
+        data["repetition_penalty"] = repetition_penalty
+    if min_tokens_to_generate is not None:
+        data["min_tokens_to_generate"] = min_tokens_to_generate
+    if end_strings is not None:
+        data["end_strings"] = end_strings
+
+    sentences = request_data(data)
+    return sentences
