@@ -9,6 +9,9 @@ from tqdm import tqdm
 
 CACHE_DIR = sys.argv[1]
 OUTPUT_DIR = sys.argv[2]
+# if OUTPUT_DIR does not exist, create it
+if not os.path.exists(OUTPUT_DIR):
+    os.makedirs(OUTPUT_DIR)
 VALUE_DATA_FILE = "value_data_{data_id}.pt"
 POLICY_DATA_FILE = "policy_data_{data_id}.pt"
 
@@ -185,10 +188,6 @@ print("length of policies after filtering", length_of_policy_after_filter)
 print("not finished ids", total_data_ids - finished_ids)
 
 print("total data ids", len(total_data_ids))
-
-
-correct_ids = set()
-finished_ids = set()
 
 data_metrics = {
     "num_questions_correct": num_questions_correct,
