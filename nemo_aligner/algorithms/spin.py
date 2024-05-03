@@ -16,6 +16,7 @@ from collections import defaultdict
 from statistics import mean
 
 import torch
+from megatron.core import parallel_state
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
@@ -127,6 +128,12 @@ class SPINTrainer:
         self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
         self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
+        dp_batch_size = self.model.cfg.global_batch_size // parallel_state.get_data_parallel_world_size()
+        assert (
+            self.model.cfg.spin.rollout_micro_batch_size % dp_batch_size == 0
+        ), f"rollout_micro_batch_size [{self.model.cfg.spin.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
+        self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
+        assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -195,10 +202,10 @@ class SPINTrainer:
         return loss_mean, {**metrics, **trainer_metrics}
 
     @torch.no_grad()
-    def get_generations(self, batch):
+    def get_generations(self, list_of_batches):
         self.model.prepare_for_inference()
 
-        prompt_lengths = batch["prompt_lengths"]
+        prompt_lengths = torch.cat([b["prompt_lengths"] for b in list_of_batches], dim=0)
         batch_max_length = prompt_lengths.max().item()
         max_possible_length = min(self.model.cfg.encoder_seq_length, batch_max_length + self.max_gen_seq_len)
         # in case the prompt length exceeds encoder_seq_length - max_gen_seq_len, we need to truncate how many
@@ -206,8 +213,12 @@ class SPINTrainer:
         # errors inside model.generate()
         adj_generation_length = min(self.max_gen_seq_len, self.model.cfg.encoder_seq_length - batch_max_length)
 
-        prompt_tokens = batch_pad_to_fixed_len(
-            batch["prompts_only"], max_possible_length, pad_token=self.model.tokenizer.eos_id
+        prompt_tokens = torch.cat(
+            [
+                batch_pad_to_fixed_len(b["prompts_only"], max_possible_length, pad_token=self.model.tokenizer.eos_id)
+                for b in list_of_batches
+            ],
+            dim=0,
         )
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
@@ -405,65 +416,81 @@ class SPINTrainer:
     def augment_dataloader(self, dataloader):
         """Augment dataloader with generations and ref policy log probs"""
         iter_dataloader = iter(dataloader)
+        buffer = []
         done = False
         while not done:
             try:
                 batch = next(iter_dataloader)
-
+            except StopIteration:
+                done = True
+            else:
+                buffer.append(batch)
+            if (done and buffer) or sum(
+                [len(b["prompts_and_answers"]) for b in buffer]
+            ) == self.rollout_micro_batch_size:
                 # generations use the reference model weights, as per the paper
                 with cpu_weight_swap(
                     self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
                 ):
                     # Generation happens on GPU but the returned tensors are on CPU.
-                    gen_tokens, gen_lengths = self.get_generations(batch)
-                act_tokens = batch["prompts_and_answers"]
-                act_lengths = batch["combined_lengths"]
-                max_batch_len = max(act_tokens.shape[1], gen_tokens.shape[1])
+                    gen_tokens_buf, gen_lengths_buf = self.get_generations(buffer)
 
-                act_tokens_pad = batch_pad_to_fixed_len(
-                    act_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id
-                )
-                gen_tokens_pad = batch_pad_to_fixed_len(
-                    gen_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id
-                )
+                start = 0
+                for batch in buffer:
+                    batch_size = len(batch["prompts_and_answers"])
 
-                act_mask = create_mask(act_tokens_pad, batch["prompt_lengths"], act_lengths)
-                gen_mask = create_mask(gen_tokens_pad, batch["prompt_lengths"], gen_lengths)
+                    gen_tokens = gen_tokens_buf[start : start + batch_size]
+                    gen_lengths = gen_lengths_buf[start : start + batch_size]
 
-                attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-                    act_tokens_pad,
-                    self.model.tokenizer.eos_id,
-                    self.model.cfg.data.reset_position_ids,
-                    self.model.cfg.data.reset_attention_mask,
-                    self.model.cfg.data.eod_mask_loss,
-                )
-                assert attention_mask.ndim == 4, "attention_mask is incorrect shape"
-                if attention_mask.shape[0] == 1:
-                    # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
-                    # attention_mask = attention_mask.expand(len(act_tokens_pad), *((-1,) * (len(attention_mask.shape) - 1)))
-                    attention_mask = attention_mask.repeat(
-                        len(act_tokens_pad), *((1,) * (len(attention_mask.shape) - 1))
+                    act_tokens = batch["prompts_and_answers"]
+                    act_lengths = batch["combined_lengths"]
+                    max_batch_len = max(act_tokens.shape[1], gen_tokens.shape[1])
+
+                    act_tokens_pad = batch_pad_to_fixed_len(
+                        act_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id
+                    )
+                    gen_tokens_pad = batch_pad_to_fixed_len(
+                        gen_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id
                     )
 
-                new_batch = {}
-                new_batch["actual"] = act_tokens_pad
-                new_batch["generated"] = gen_tokens_pad
-                new_batch["attention_mask"] = attention_mask
-                new_batch["position_ids"] = position_ids
-                new_batch["actual_mask"] = act_mask
-                new_batch["generated_mask"] = gen_mask
+                    act_mask = create_mask(act_tokens_pad, batch["prompt_lengths"], act_lengths)
+                    gen_mask = create_mask(gen_tokens_pad, batch["prompt_lengths"], gen_lengths)
 
-                logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
-                act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
+                    attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+                        act_tokens_pad,
+                        self.model.tokenizer.eos_id,
+                        self.model.cfg.data.reset_position_ids,
+                        self.model.cfg.data.reset_attention_mask,
+                        self.model.cfg.data.eod_mask_loss,
+                    )
+                    assert attention_mask.ndim == 4, "attention_mask is incorrect shape"
+                    if attention_mask.shape[0] == 1:
+                        # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+                        # attention_mask = attention_mask.expand(len(act_tokens_pad), *((-1,) * (len(attention_mask.shape) - 1)))
+                        attention_mask = attention_mask.repeat(
+                            len(act_tokens_pad), *((1,) * (len(attention_mask.shape) - 1))
+                        )
 
-                new_batch["ref_policy_log_probs_actual"] = act_logps
-                new_batch["ref_policy_log_probs_generated"] = gen_logps
+                    new_batch = {}
+                    new_batch["actual"] = act_tokens_pad
+                    new_batch["generated"] = gen_tokens_pad
+                    new_batch["attention_mask"] = attention_mask
+                    new_batch["position_ids"] = position_ids
+                    new_batch["actual_mask"] = act_mask
+                    new_batch["generated_mask"] = gen_mask
 
-                yield new_batch
+                    logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
+                    act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
 
-                del logprobs, act_logps, gen_logps, new_batch
-            except StopIteration:
-                done = True
+                    new_batch["ref_policy_log_probs_actual"] = act_logps
+                    new_batch["ref_policy_log_probs_generated"] = gen_logps
+
+                    start += batch_size
+
+                    yield new_batch
+                    del logprobs, act_logps, gen_logps, new_batch
+
+                buffer.clear()
 
     @property
     def epoch(self):
