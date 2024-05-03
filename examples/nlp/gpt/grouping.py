@@ -192,7 +192,7 @@ print("total data ids", len(total_data_ids))
 data_metrics = {
     "num_questions_correct": num_questions_correct,
     "num_questions": length_of_policy_after_filter,
-    "accuracy": num_questions_correct / length_of_policy_after_filter,
+    "accuracy": num_questions_correct / len(total_data_ids),
 }
 
 print(data_metrics)
