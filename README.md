@@ -23,7 +23,8 @@ The toolkit is currently in it's early stages, and we are committed to improving
 * **Reinforcement Learning from Human Feedback using the [PPO](https://arxiv.org/pdf/1707.06347.pdf) Algorithm**
     * Try [NV-Llama2-70B-RLHF model](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/nv-llama2-70b-rlhf) aligned with NeMo Aligner on NVIDIA AI Foundation for free (no registration required).
     * Corresponding reward model [NV-Llama2-13B-RLHF-RM](https://huggingface.co/nvidia/NV-Llama2-13B-RLHF-RM)
-* **Direct Preference Optimization** as described in [Direct Preference Optimization: Your Language Model is Secretly a Reward Model](https://arxiv.org/pdf/2305.18290.pdf)
+* **Direct Preference Optimization** as described in [Direct Preference Optimization: Your Language Model is Secretly a Reward Model](https://arxiv.org/pdf/2305.18290)
+* **Self-Play Fine-Tuning (SPIN)** as described in [Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models](https://arxiv.org/pdf/2401.01335)
 
 ## Learn More
 * [Documentation](https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/README.md)
