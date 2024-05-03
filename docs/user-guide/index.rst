@@ -17,6 +17,9 @@
 :ref:`Model Alignment by Direct Preference Optimisation (DPO) <model-aligner-dpo>`
    DPO is a simpler alignment method compared to RLHF. DPO introduces a novel parameterization of the reward model in RLHF. This parameterization allows us to extract the corresponding optimal 
 
+:ref:`Fine-tuning Stable Diffusion with DRaFT+ <model-aligner-draftp>`
+   DRaFT+ is an algorithm for fine-tuning text-to-image generative diffusion models by directly backpropagating through a reward model which alleviates the mode collapse issues from DRaFT algorithm and improves diversity through regularization. 
+
 .. toctree::
    :maxdepth: 4
    :titlesonly:
@@ -26,3 +29,4 @@
    SteerLM.rst
    DPO.rst
    SPIN.rst
+   DRaFTP.rst

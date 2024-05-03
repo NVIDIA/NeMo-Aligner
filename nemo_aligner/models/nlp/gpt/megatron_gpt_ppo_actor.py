@@ -29,6 +29,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
     get_iterator_k_split,
     get_ltor_masks_and_position_ids,
 )
+from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
 from nemo_aligner.utils.distributed import (
@@ -44,10 +45,16 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.utils import configure_batch_sizes, cpu_weight_swap, masked_mean, offload_distributed_adam
+from nemo_aligner.utils.utils import (
+    adapter_control,
+    configure_batch_sizes,
+    cpu_weight_swap,
+    masked_mean,
+    offload_distributed_adam,
+)
 
 
-class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
+class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
         self.automatic_optimization = False
@@ -306,12 +313,22 @@ class MegatronGPTActorModel(MegatronGPTModel, AlignableGenerativeInterface):
 
     def get_init_policy_logprobs(self, rollout_batches):
         init_log_probs = []
-        with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
-            for rollout_batch in rollout_batches:
-                init_log_prob = self.get_inference_log_probs(
-                    rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
-                )
-                init_log_probs.append(init_log_prob)
+        if self.use_peft and self.init_policy_state_dict is None:
+            # when using adapters instead of full-tuning, the actor is init policy + adapters
+            with adapter_control(self):
+                # With adapters disabled (meaning using the init policy), calculate init_log_probs
+                for rollout_batch in rollout_batches:
+                    init_log_prob = self.get_inference_log_probs(
+                        rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
+                    )
+                    init_log_probs.append(init_log_prob)
+        else:
+            with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
+                for rollout_batch in rollout_batches:
+                    init_log_prob = self.get_inference_log_probs(
+                        rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
+                    )
+                    init_log_probs.append(init_log_prob)
 
         # return in GPU, trainer needs to move to cpu
         return init_log_probs

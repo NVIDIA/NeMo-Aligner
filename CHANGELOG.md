@@ -8,7 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
         previously the generation batch size was automatically set to the data parallel size (DP) of the model
 
 ### New features and optimizations
-
+- Add MoE Support for our reward models.
+- SFT/SteerLM: LoRA can now be enabled on all model layers
+- DPO: Enable LoRA on all model layers (In this case the actor will be reference model + LoRA weights, we can switch between actor/reference model by enabling/disabling LoRA)
+- PPO: Enable LoRA on all model layers (In this case the actor will be init policy + LoRA weights, we can switch between actor/init_policy model by enabling/disabling LoRA)
 ### Breaking changes
 
 ### Bug Fixes
@@ -16,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Fixed crash with float val check interval in DPOTrainer
 - Fixed crash with float val check interval when checking progress in DPOTrainer
 - Fixed potential crash in SPIN when prompts are longer than encoder_seq_len - generation.max_length
+- Fixed crash when calling the `generate()` method of an SFT model with pipeline parallelism greater than two
+- Fixed crash when calling the `generate()` method of an SFT model with `compute_logprob=True` and string inputs
+- Fixed crash when `model.micro_batch_size` > 1 in DPO
+- Fixed issue when `model.encoder_seq_length` is mismatched with `model.data.train_ds.max_seq_length` in SFT and SPIN.
 
 ## [0.2.0] - 2024-02
 ### New features and optimizations

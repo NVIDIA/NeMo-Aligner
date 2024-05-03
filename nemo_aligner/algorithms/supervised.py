@@ -28,6 +28,8 @@ from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 
+IMAGE_CAPTION_KEY = "images_and_captions"
+
 
 class SupervisedTrainer:
     """trainer that implements the supervised training loop
@@ -107,6 +109,11 @@ class SupervisedTrainer:
             if self.inference_metrics_handler.has_metrics():
                 generation_output = self.run_generation(batch)
                 self.inference_metrics_handler.update(batch, generation_output)
+
+            # for stable diffusion logging
+            if IMAGE_CAPTION_KEY in metrics:
+                images, captions = metrics.pop(IMAGE_CAPTION_KEY)
+                self.logger.log_image(key="validation images", images=images, caption=captions)
 
             loss_means.append(loss_mean)
             for k, v in metrics.items():

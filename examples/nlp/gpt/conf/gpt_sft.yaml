@@ -114,7 +114,7 @@ model:
     restore_from_path: null
 
     lora_tuning:
-      target_modules: ['attention_qkv'] # currently only support attention_qkv
+      target_modules: ['attention_qkv'] # this can either be 'attention_qkv','attention_dense','mlp_fc1','mlp_fc2', 'attention' (qkv & dense), 'mlp' (fc1 & fc2), 'all'
       adapter_dim: 32
       adapter_dropout: 0.0
       column_init_method: 'xavier' # IGNORED if linear_adapter is used, options: xavier, zero or normal
@@ -149,9 +149,9 @@ model:
       micro_batch_size: 1
       shuffle: True
       memmap_workers: null
-      max_seq_length: 2048
+      max_seq_length: ${model.encoder_seq_length}
       min_seq_length: 1
-      drop_last: True
+      drop_last: True  # note that `False` is not currently supported
       # Example of how to specify concat_sampling_probabilities
       # concat_sampling_probabilities:
       #   - 0.5
@@ -175,7 +175,7 @@ model:
       memmap_workers: ${model.data.train_ds.memmap_workers}
       max_seq_length: ${model.data.train_ds.max_seq_length}
       min_seq_length: 1
-      drop_last: False
+      drop_last: True  #  note that `False` is not currently supported
       label_key: ${model.data.train_ds.label_key}
       add_eos: ${model.data.train_ds.add_eos}
       add_sep: ${model.data.train_ds.add_sep}
