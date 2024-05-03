@@ -64,5 +64,17 @@ Alternatively, you can build the NeMo Dockerfile here [NeMo Dockerfile](https://
 ## Contributing
 We welcome community contributions! Please refer to [CONTRIBUTING.md](https://github.com/NVIDIA/NeMo-Aligner/blob/main/CONTRIBUTING.md) for guidelines.
 
+## Citing NeMo-Aligner
+```
+@misc{shen2024nemoaligner,
+      title={NeMo-Aligner: Scalable Toolkit for Efficient Model Alignment},
+      author={Gerald Shen and Zhilin Wang and Olivier Delalleau and Jiaqi Zeng and Yi Dong and Daniel Egert and Shengyang Sun and Jimmy Zhang and Sahil Jain and Ali Taghibakhshi and Markel Sanz Ausin and Ashwath Aithal and Oleksii Kuchaiev},
+      year={2024},
+      eprint={2405.01481},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+```
+
 ## License
 This toolkit is licensed under the [Apache License, Version 2.0.](https://github.com/NVIDIA/NeMo-Aligner/blob/main/LICENSE)
