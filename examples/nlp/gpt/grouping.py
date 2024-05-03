@@ -1,3 +1,4 @@
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -7,7 +8,9 @@ import torch
 from tqdm import tqdm
 
 CACHE_DIR = sys.argv[1]
-DATA_FILE = "data.pt"
+OUTPUT_DIR = sys.argv[2]
+VALUE_DATA_FILE = "value_data_{data_id}.pt"
+POLICY_DATA_FILE = "policy_data_{data_id}.pt"
 
 GLOBAL_CONTEXT_LENGTH_DICT = {}
 
@@ -126,6 +129,13 @@ def batch_value_memory(output_value):
 
 
 total_data_ids = set()
+length_of_value_before_filter = 0
+length_of_policy_before_filter = 0
+length_of_value_after_filter = 0
+length_of_policy_after_filter = 0
+length_of_policy_after_wrong_question_filter = 0
+finished_ids = set()
+num_questions_correct = 0
 for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
     print(p)
     save_file = torch.load(p)
@@ -136,47 +146,60 @@ for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
     assert len(x[1::2]) == len(x[::2])
 
     for output_policy, output_value in zip(x[::2], x[1::2]):
-        values.extend(batch_value_memory(output_value))
-        policies.extend(batch_policy_memory(output_policy))
+        # values.extend(batch_value_memory(output_value))
+        # policies.extend(batch_policy_memory(output_policy))
+        values = batch_value_memory(output_value)
+        length_of_value_before_filter += len(values)
+        values = [v for v in values if len(v["tokens"]) > 0]
+        length_of_value_after_filter += len(values)
+
+        policies = batch_policy_memory(output_policy)
+        length_of_policy_before_filter += len(policies)
+        policies = [p for p in policies if len(p["tokens"]) > 0]
+        length_of_policy_after_filter += len(policies)
+        policies = [p for p in policies if all(r > 0 for r in p["reward"])]
+        length_of_policy_after_wrong_question_filter += len(policies)
+
+        finished_ids.update([i["data_id"] for i in policies])
+
+        for policy in policies:
+            if all(x == 1 for x in policy["reward"]):
+                num_questions_correct += 1
+
+            filename = os.path.join(OUTPUT_DIR, POLICY_DATA_FILE.format(data_id=policy["data_id"]))
+            torch.save(policy, filename)
+
+        for value in values:
+            filename = os.path.join(OUTPUT_DIR, VALUE_DATA_FILE.format(data_id=value["data_id"]))
+            torch.save(value, filename)
+
 
 print("### FILTERING OUT empty lists")
 
-print("length of value before filtering", len(values))
-values = [v for v in values if len(v["tokens"]) > 0]
-print("length of value after filtering", len(values))
+print("length of value before filtering", length_of_value_before_filter)
+print("length of value after filtering", length_of_value_after_filter)
 
-print("length of policies before filtering", len(policies))
-policies = [p for p in policies if len(p["tokens"]) > 0]
-print("length of policies after filtering", len(policies))
-print("not finished ids", total_data_ids - set([i["data_id"] for i in policies]))
+print("length of policies before filtering", length_of_policy_before_filter)
+print("length of policies after filtering", length_of_policy_after_filter)
+
+print("not finished ids", total_data_ids - finished_ids)
 
 print("total data ids", len(total_data_ids))
 
-# TODO(geshen): should we shuffle the data?
-policy_data, value_data = policies, values
-
-num_questions_correct = 0
 
 correct_ids = set()
 finished_ids = set()
-for p in policy_data:
-    if all(x == 1 for x in p["reward"]):
-        num_questions_correct += 1
-        finished_ids = set()
-    finished_ids = set()
-print("wrong ids", finished_ids - correct_ids)
 
 data_metrics = {
     "num_questions_correct": num_questions_correct,
-    "num_questions": len(policy_data),
-    "accuracy": num_questions_correct / len(policy_data),
+    "num_questions": length_of_policy_after_filter,
+    "accuracy": num_questions_correct / length_of_policy_after_filter,
 }
 
 print(data_metrics)
 
-print("filtering out the negative reward cases in the policy")
-before_filter_len = len(policies)
-policies = [p for p in policies if all(r > 0 for r in p["reward"])]
-print("questions before filter {} questions after filter {}".format(before_filter_len, len(policies)))
-
-torch.save({"policies": policies, "values": values}, DATA_FILE)
+print(
+    "questions before filter {} questions after filter {}".format(
+        length_of_policy_after_filter, length_of_policy_after_wrong_question_filter
+    )
+)
