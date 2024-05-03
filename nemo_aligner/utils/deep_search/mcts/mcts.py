@@ -17,12 +17,14 @@ import math
 import os
 import sys
 import threading
+import time
 from typing import Callable, List
 
 import numpy as np
 import torch
 import tqdm
 from megatron.core import InferenceParams, parallel_state
+
 from nemo_aligner.utils.utils import preemptable_save
 
 sys.setrecursionlimit(10000)  # Increase the recursion limit to 10000
@@ -505,13 +507,18 @@ class DeepSearch:
         # load the partial result from disk
         if os.path.exists(filename) and self.strategy is not None:
             print("### LOADING CACHE FROM", filename)
+            load_beg = time.time()
             cache = torch.load(filename)
             parallel_searches = cache["parallel_searches"]
             count = cache["count"]
             backup_root_states = cache["backup_root_states"]
             return_memory = cache["return_memory"]
             return_value_memory = cache["return_value_memory"]
-            self.strategy.load_state_dict(cache)
+            backup_root_nodes = cache["backup_root_nodes"]
+            if "search_db" in cache:
+                self.strategy.load_state_dict(cache)
+            load_end = time.time()
+            print(f"### LOADING CACHE TOOK {load_end - load_beg} SECONDS")
 
         # add a progress bar to show the progress of the self play
         total_steps = self.max_steps
@@ -661,22 +668,26 @@ class DeepSearch:
                     del backup_root_states[i]
                     del backup_root_nodes[i]
             if self.save_flag:
-                if self.strategy is not None:
-                    pb.write(f"saving the search to disk {filename}")
 
-                    preemptable_save(
-                        {
-                            "parallel_searches": parallel_searches,
-                            "count": count,
-                            "backup_root_states": backup_root_states,
-                            "return_memory": return_memory,
-                            "return_value_memory": return_value_memory,
-                        }
-                        | self.strategy.state_dict(),
-                        filename,
-                    )
-                    print("#### SAVING CACHE TO", filename)
-                    # only save one
+                pb.write(f"saving the search to disk {filename}")
+                save_obj = {
+                    "parallel_searches": parallel_searches,
+                    "count": count,
+                    "backup_root_states": backup_root_states,
+                    "backup_root_nodes": backup_root_nodes,
+                    "return_memory": return_memory,
+                    "return_value_memory": return_value_memory,
+                }
+                if self.strategy is not None:
+                    save_obj = {**save_obj, **self.strategy.state_dict()}
+                print("#### SAVING CACHE TO", filename)
+                save_beg = time.time()
+                preemptable_save(
+                    save_obj, filename,
+                )
+                # only save one
+                save_end = time.time()
+                print(f"### SAVING CACHE TOOK {save_end - save_beg} SECONDS")
                 self.save_flag = False
 
         return return_memory, return_value_memory
