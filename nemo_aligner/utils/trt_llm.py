@@ -11,22 +11,37 @@ from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
 
 class GPTGenerateTRTLLM:
     def __init__(
-        self, cfg, tokenizer, trt_model_dir="/tmp/trt_llm_model",
+        self,
+        model_cfg,
+        max_generation_length=1024,
+        max_input_len=1024,
+        max_input_tokens=4096,
+        generation_batch_size=4,
+        unload_engine_train=False,
+        trt_model_type="GPTForCausalLM",
+        end_strings=None,
+        reshard_model=False,
+        sample_temperature=None,
+        sample_top_k=None,
+        sample_top_p=None,
+        tokenizer=None,
+        trt_model_dir="/tmp/trt_llm_model",
     ):
-        self.cfg = cfg
+        self.model_cfg = model_cfg
         self.tokenizer = tokenizer
-        self.max_generation_length = self.cfg.ppo.length_params.get("max_length", 1024)
-        self.max_input_len = self.cfg.ppo.trt_llm.get("max_input_len", 1024)
-        self.max_input_tokens = self.cfg.ppo.trt_llm.get("max_input_tokens", 4096)
-        self.generation_batch_size = self.cfg.ppo.get("rollout_micro_batch_size", 4)
-        self.unload_engine_train = self.cfg.ppo.trt_llm.get("unload_engine_train", False)
-        self.trt_model_type = self.cfg.ppo.trt_llm.get("model_type", "LLaMAForCausalLM")
+        self.max_generation_length = max_generation_length
+        self.max_input_len = max_input_len
+        self.max_input_tokens = max_input_tokens
+        self.generation_batch_size = generation_batch_size
+        self.unload_engine_train = unload_engine_train
+        self.trt_model_type = trt_model_type
+        self.reshard_model = reshard_model
 
         self.trt_llm_exporter = TensorRTLLM(trt_model_dir, load_model=False)
         self._trtllm_model_compiled = False
 
         # TODO: Move this logic to nemo.export after TRTLLM0.9 support
-        end_strings = list(self.cfg.ppo.sampling_params.get("end_strings"))
+        end_strings = list(end_strings)
         end_strings = [[",".join(end_strings)] for _ in range(self.generation_batch_size)]
         stop_list = to_word_list_format(end_strings, build_tokenizer(self.tokenizer), ref_str="green tea icecream")
         stop_list = torch.from_numpy(stop_list).cuda().contiguous()
@@ -34,9 +49,9 @@ class GPTGenerateTRTLLM:
         self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
             end_id=tokenizer.eos_id,
             pad_id=tokenizer.eos_id,  # TODO
-            temperature=self.cfg.ppo.sampling_params.get("temperature"),
-            top_k=self.cfg.ppo.sampling_params.get("top_k"),
-            top_p=self.cfg.ppo.sampling_params.get("top_p"),
+            temperature=sample_temperature,
+            top_k=sample_top_k,
+            top_p=sample_top_p,
             max_new_tokens=self.max_generation_length,
             stop_words_list=stop_list,
             return_dict=True,
@@ -47,19 +62,19 @@ class GPTGenerateTRTLLM:
         if not self._trtllm_model_compiled:
             self.trt_llm_exporter.build(
                 nemo_model=model,
-                nemo_model_config=self.cfg,
+                nemo_model_config=self.model_cfg,
                 trt_model_type=self.trt_model_type,
                 tokenizer=self.tokenizer,
                 max_input_len=self.max_input_len,
                 max_input_tokens=self.max_input_tokens,
                 max_output_len=self.max_generation_length,
                 max_batch_size=self.generation_batch_size,
-                reshard_model=self.cfg.ppo.trt_llm.get("reshard", True),
+                reshard_model=self.reshard_model,
             )
             self._trtllm_model_compiled = True
         else:
             self.trt_llm_exporter.refit(
-                nemo_model=model, nemo_model_config=self.cfg,
+                nemo_model=model, nemo_model_config=self.model_cfg,
             )
 
     def generate(self, inputs):
