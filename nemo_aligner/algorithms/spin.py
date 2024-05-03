@@ -132,7 +132,8 @@ class SPINTrainer:
         assert (
             self.model.cfg.spin.rollout_micro_batch_size % dp_batch_size == 0
         ), f"rollout_micro_batch_size [{self.model.cfg.spin.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
-        self.rollout_micro_batch_size = max(self.model.cfg.spin.rollout_micro_batch_size, dp_batch_size)
+        self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
+        assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
