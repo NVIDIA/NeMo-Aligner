@@ -2,6 +2,7 @@ import os
 from collections import defaultdict
 from multiprocessing import Pool
 from typing import List, Optional, Union
+import requests
 
 
 def _pool_process_item(item_index: int, max_seq_length: int):
@@ -15,15 +16,14 @@ def _pool_process_item(item_index: int, max_seq_length: int):
 
 
 def remove_long_dialogs(
-    input_file_path: str,
-    max_seq_length: int,
-    tokenizer_model: str,
-    tokenizer_library: str,
-    output_dir: str,
-    use_pool: bool,
+        input_file_path: str,
+        max_seq_length: int,
+        tokenizer_model: str,
+        tokenizer_library: str,
+        output_dir: str,
+        use_pool: bool,
 ):
     from tqdm import tqdm
-
     from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
     from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenizer
 
@@ -36,7 +36,7 @@ def remove_long_dialogs(
     )
 
     # load tokenizer model
-    tokenizer = get_nmt_tokenizer(library=tokenizer_library, tokenizer_model=tokenizer_model,)
+    tokenizer = get_nmt_tokenizer(library=tokenizer_library, tokenizer_model=tokenizer_model)
 
     # create dataset object
     dataset = GPTSFTChatDataset(
@@ -91,19 +91,19 @@ def remove_long_dialogs(
 
 
 def remote_inference(
-    prompt: Union[List[str], str],
-    port: int,
-    host: str,
-    temperature: Optional[float] = None,
-    greedy: Optional[bool] = None,
-    tokens_to_generate: Optional[int] = None,
-    min_tokens_to_generate: Optional[int] = None,
-    add_bos: Optional[bool] = None,
-    top_k: Optional[int] = None,
-    top_p: Optional[float] = None,
-    all_probs: Optional[bool] = None,
-    repetition_penalty: Optional[float] = None,
-    end_strings: Optional[Union[List[str], str]] = None,
+        prompt: Union[List[str], str],
+        port: int,
+        host: str,
+        temperature: Optional[float] = None,
+        greedy: Optional[bool] = None,
+        tokens_to_generate: Optional[int] = None,
+        min_tokens_to_generate: Optional[int] = None,
+        add_bos: Optional[bool] = None,
+        top_k: Optional[int] = None,
+        top_p: Optional[float] = None,
+        all_probs: Optional[bool] = None,
+        repetition_penalty: Optional[float] = None,
+        end_strings: Optional[Union[List[str], str]] = None,
 ):
     """
     @param prompt:
@@ -169,3 +169,80 @@ def remote_inference(
 
     sentences = request_data(data)
     return sentences
+
+
+def remote_inference_with_ngc(
+        api_key: str,
+        prompt: str = None,
+        messages: list = None,
+        url: str = "https://integrate.api.nvidia.com/v1/chat/completions",
+        model: str = "mistralai/mixtral-8x7b-instruct-v0.1",
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        seed: Optional[int] = None,
+):
+    """
+    source: https://build.nvidia.com/mistralai/mixtral-8x7b-instruct
+
+    @param api_key:
+    @param prompt:
+    @param messages:
+    @param url: (default: "https://integrate.api.nvidia.com/v1/chat/completions")
+    @param model: (default: "mistralai/mixtral-8x7b-instruct-v0.1")
+    @param temperature:
+    @param top_p:
+    @param max_tokens:
+    @param seed:
+    @return:
+
+    examples:
+
+    single prompt:
+    remote_inference_with_ngc(api_key="<your-ngc-apu-key>",
+                              prompt="calculate 3+4=?")
+
+    a conversion:
+    remote_inference_with_ngc(api_key="<your-ngc-apu-key>",
+                              messages=[{"content": f"calculate 3+4=?", "role": "user"},
+                                        {"content": f"3+4=8", "role": "assistant"},
+                                        {"content": f"you are wrong, please correct your answer.", "role": "user"}])
+
+    """
+    assert (prompt is None) ^ (messages is None)
+
+    if prompt is not None:
+        assert isinstance(prompt, str)
+        messages = [{"content": f"{prompt}", "role": "user"}]
+    else:
+        assert isinstance(messages, list)
+        assert all([isinstance(a, dict) for a in messages])
+        assert all(["content" in a and "role" in a for a in messages])
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+    }
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+    }
+
+    if temperature is not None:
+        payload['temperature'] = 0.0000001 + temperature
+    if top_p is not None:
+        payload['top_p'] = 0.0000001 + top_p
+    if max_tokens is not None:
+        payload['max_tokens'] = max_tokens
+    if seed is not None:
+        payload['seed'] = seed
+
+    session = requests.Session()
+    response = session.post(url, headers=headers, json=payload)
+
+    response.raise_for_status()
+    response_body = response.json()
+    response_message = response_body["choices"][0]["message"]["content"]
+    return response_message

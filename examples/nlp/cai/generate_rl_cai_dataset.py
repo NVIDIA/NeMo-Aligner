@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 import requests
-from examples.nlp.cai.utils import remote_inference
+from examples.nlp.cai.utils import remote_inference, remote_inference_with_ngc
 from tqdm import tqdm
 
 
@@ -35,11 +35,11 @@ class ChatPromptTemplate:
     def _apply_header_template(system_prompt: str):
         # header/system-message ('<extra_id_0>System\n<system_prompt>\n')
         header = (
-            ChatPromptTemplate.system_turn_token
-            + ChatPromptTemplate.system_token
-            + ChatPromptTemplate.end_name_signal
-            + system_prompt
-            + ChatPromptTemplate.end_signal
+                ChatPromptTemplate.system_turn_token
+                + ChatPromptTemplate.system_token
+                + ChatPromptTemplate.end_name_signal
+                + system_prompt
+                + ChatPromptTemplate.end_signal
         )
 
         return header
@@ -50,7 +50,7 @@ class ChatPromptTemplate:
 
         # assistant message ('<extra_id_1><role_name>\n<prompt>\n')
         assistant_message = (
-            ChatPromptTemplate.begin_signal + ChatPromptTemplate.turn_token + role + ChatPromptTemplate.end_name_signal
+                ChatPromptTemplate.begin_signal + ChatPromptTemplate.turn_token + role + ChatPromptTemplate.end_name_signal
         )
 
         if prompt is not None:
@@ -96,7 +96,7 @@ class ChatPromptTemplate:
 
 
 def generate_cai_rlaif_candidate_dataset(
-    batch_size: int, temperatures: Union[List, int], red_teaming_dataset_path: str, inference_config: dict
+        batch_size: int, temperatures: Union[List, int], red_teaming_dataset_path: str, inference_config: dict
 ):
     """
     @param host:
@@ -119,7 +119,7 @@ def generate_cai_rlaif_candidate_dataset(
     samples_per_temperature = {}
 
     for batch_index in tqdm(range(0, len(red_teaming_prompts), batch_size), desc="Batch #"):
-        red_teaming_prompts_list = red_teaming_prompts[batch_index : batch_index + batch_size]
+        red_teaming_prompts_list = red_teaming_prompts[batch_index: batch_index + batch_size]
         if len(red_teaming_prompts_list) < batch_size:
             break
 
@@ -204,11 +204,10 @@ def join_responses(samples_per_temperature: dict) -> list:
 def prepare_args():
     parser = argparse.ArgumentParser(
         description="given a prompt and to responses, "
-        "selects the most harmless response (labeled as 'chosen') and "
-        "the least harmless response (labeled as 'rejected')."
+                    "selects the most harmless response (labeled as 'chosen') and "
+                    "the least harmless response (labeled as 'rejected')."
     )
     parser.add_argument("--batch-size", type=int, required=True, default=128)
-    parser.add_argument("--ngc-api-key", type=str, required=True, default=None)
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--output-dir", type=str, default=".")
     parser.add_argument("--output-filename-prefix", type=str, default="cai_rlaif")
@@ -222,26 +221,31 @@ def prepare_args():
         type=str,
         default=None,
         help="template:"
-        "{'name': '<some-name-for the blending>', '<split-name>': {'prompts': ['<path>', '<path-2>'], 'comparisons': ['<path-1>', '<path-2>']}}"
-        ""
-        "you must set a valid name and one or more keys of <split-name>, one for each split in '--splits' argument",
+             "{'name': '<some-name-for the blending>', '<split-name>': {'prompts': ['<path>', '<path-2>'], 'comparisons': ['<path-1>', '<path-2>']}}"
+             ""
+             "you must set a valid name and one or more keys of <split-name>, one for each split in '--splits' argument",
     )
 
-    group = parser.add_argument_group("inference", "inference (service) arguments")
-    group.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
-    group.add_argument("--top_k", type=int, default=50)
-    group.add_argument("--top_p", type=float, default=0.95)
-    group.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
-    group.add_argument("--repetition_penalty", type=float, default=1.0)
-    group.add_argument("--min_tokens_to_generate", type=int, default=1)
-    group.add_argument("--temperature", type=float, default=1.0)
-    group.add_argument("--greedy", type=str, choices=["True", "False"], default="False")
-    group.add_argument("--tokens_to_generate", type=int, default=1024)
-    group.add_argument("--end_strings", type=str, nargs="*", default=["<extra_id_1>"])
-    group.add_argument(
+    group_ngc = parser.add_argument_group("NGC", "NGC arguments")
+    group_ngc.add_argument("--ngc-api-key", type=str, required=True, default=None)
+    group_ngc.add_argument("--ngc-url", type=str, default="https://integrate.api.nvidia.com/v1/chat/completions")
+    group_ngc.add_argument("--ngc-model", type=str, default="mistralai/mixtral-8x7b-instruct-v0.1")
+
+    group_inference = parser.add_argument_group("inference", "inference (service) arguments")
+    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
+    group_inference.add_argument("--top_k", type=int, default=50)
+    group_inference.add_argument("--top_p", type=float, default=0.95)
+    group_inference.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
+    group_inference.add_argument("--repetition_penalty", type=float, default=1.0)
+    group_inference.add_argument("--min_tokens_to_generate", type=int, default=1)
+    group_inference.add_argument("--temperature", type=float, default=1.0)
+    group_inference.add_argument("--greedy", type=str, choices=["True", "False"], default="False")
+    group_inference.add_argument("--tokens_to_generate", type=int, default=1024)
+    group_inference.add_argument("--end_strings", type=str, nargs="*", default=["<extra_id_1>"])
+    group_inference.add_argument(
         "--port", type=int, default=5656, help="The port number on which the inference service is running"
     )
-    group.add_argument(
+    group_inference.add_argument(
         "--host", type=str, default="localhost", help="The hostname or IP address of the inference service"
     )
 
@@ -260,10 +264,10 @@ def prepare_args():
         assert all(split_name in args.blend_with for split_name in args.splits)
         assert len(args.blend_with) - 1 == len(args.splits)
         assert (
-            "name" in args.blend_with
-            and isinstance(args.blend_with["name"], str)
-            and args.blend_with["name"] is not None
-            and args.blend_with["name"] != ""
+                "name" in args.blend_with
+                and isinstance(args.blend_with["name"], str)
+                and args.blend_with["name"] is not None
+                and args.blend_with["name"] != ""
         )
 
         for split_name, blend in args.blend_with.items():
@@ -287,84 +291,31 @@ def prepare_args():
         k: v
         for k, v in args_dict.items()
         if k
-        in {
-            "add_bos",
-            "top_k",
-            "top_p",
-            "all_probs",
-            "repetition_penalty",
-            "min_tokens_to_generate",
-            "temperature",
-            "greedy",
-            "tokens_to_generate",
-            "end_strings",
-            "port",
-            "host",
-        }
+           in {
+               "add_bos",
+               "top_k",
+               "top_p",
+               "all_probs",
+               "repetition_penalty",
+               "min_tokens_to_generate",
+               "temperature",
+               "greedy",
+               "tokens_to_generate",
+               "end_strings",
+               "port",
+               "host",
+           }
     }
 
     return args, inference_config
 
 
-def run_model_with_ngc(
-    api_key: str,
-    prompt: str = None,
-    messages: list = None,
-    temperature: float = 1.0,
-    model_name: str = "mixtral_8x7b",
-    seed: int = 42,
-):
-    fetch_url_format = "https://api.nvcf.nvidia.com/v2/nvcf/pexec/status/"
-    if model_name == "mixtral_8x7b":
-        # mixtral_8x7b_instruct
-        invoke_url = "https://api.nvcf.nvidia.com/v2/nvcf/pexec/functions/8f4118ba-60a8-4e6b-8574-e38a4067a4a3"
-    elif model_name == "mistral_7b_instruct":
-        # Mistral 7B Instruct
-        invoke_url = "https://api.nvcf.nvidia.com/v2/nvcf/pexec/functions/35ec3354-2681-4d0e-a8dd-80325dcf7c63"
-    else:
-        raise f"unknown model name: {model_name}"
-
-    assert (prompt is None) ^ (messages is None)
-
-    if prompt is not None:
-        assert isinstance(prompt, str)
-        messages = [{"content": f"{prompt}", "role": "user"}]
-    else:
-        assert isinstance(messages, list)
-        assert all([isinstance(a, dict) for a in messages])
-        assert all(["content" in a and "role" in a for a in messages])
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Accept": "application/json",
-    }
-
-    payload = {
-        "messages": messages,
-        "temperature": temperature + 0.0000001,
-        "top_p": 0.0000001,
-        "max_tokens": 1024,
-        "seed": seed,
-        "stream": False,
-    }
-
-    # re-use connections
-    session = requests.Session()
-
-    response = session.post(invoke_url, headers=headers, json=payload)
-
-    while response.status_code == 202:
-        request_id = response.headers.get("NVCF-REQID")
-        fetch_url = fetch_url_format + request_id
-        response = session.get(fetch_url, headers=headers)
-
-    response.raise_for_status()
-    response_body = response.json()
-    response_message = response_body["choices"][0]["message"]["content"]
-    return response_message
-
-
-def generate_ai_preference(sample: dict, ngc_api_key: str, system_prompt: str, seed: int):
+def generate_ai_preference(sample: dict,
+                           ngc_api_key: str,
+                           system_prompt: str,
+                           seed: int,
+                           ngc_url: str,
+                           ngc_model: str):
     # NOTE: For generating AI preferences we deviate a bit from the paper and instead of feeding one (randomized)
     # constitution principle at a time, we feed the entire constitution at once. Also, instead of using normalized
     # logprobs of the candidate response number tokens, we just ask the judge LLM to choose what is the most harmless
@@ -390,7 +341,14 @@ def generate_ai_preference(sample: dict, ngc_api_key: str, system_prompt: str, s
         {"role": "user", "content": responses_to_choose_from_text},
     ]
 
-    res = run_model_with_ngc(api_key=ngc_api_key, messages=full_prompt_messages, temperature=0, seed=seed)
+    res = remote_inference_with_ngc(api_key=ngc_api_key,
+                                    url=ngc_url,
+                                    model=ngc_model,
+                                    messages=full_prompt_messages,
+                                    top_p=0,
+                                    max_tokens=1024,
+                                    temperature=0,
+                                    seed=seed)
 
     def _extract_decision_and_explanation(s):
         try:
@@ -460,7 +418,7 @@ def split_dataset(dataset, splits: Dict[str, float], shuffle: bool):
 
     # ensure all splits have at least one sample
     dataset_splits = {split_name: [dataset[index[i]]] for i, split_name in enumerate(splits.keys())}
-    index = index[len(splits) :]
+    index = index[len(splits):]
     n = n - len(splits)
 
     i_offset = 0
@@ -468,7 +426,7 @@ def split_dataset(dataset, splits: Dict[str, float], shuffle: bool):
         split_n = max(1, round(n * split_p))
         if i == len(splits) - 1:
             split_n = n - i_offset
-        split_index = index[i_offset : min(i_offset + split_n, n)]
+        split_index = index[i_offset: min(i_offset + split_n, n)]
         dataset_splits[split_name] += [dataset[i] for i in split_index]
         i_offset += split_n
 
@@ -613,7 +571,7 @@ def blend_preference_datasets(files: list, output_file: str, blend_type: str):
 
                     # Assuming an even number of lines, pair them
                     for i in range(0, len(lines), 2):
-                        paired_lines.append(lines[i : i + 2])
+                        paired_lines.append(lines[i: i + 2])
 
                 if not paired_lines[-1][-1].endswith("\n"):
                     paired_lines[-1][-1] += "\n"
@@ -665,7 +623,12 @@ def main():
         sample = dataset[ds_index]
 
         try:
-            preference = generate_ai_preference(sample, args.ngc_api_key, constitution_as_sys_prompt, seed=args.seed)
+            preference = generate_ai_preference(sample,
+                                                args.ngc_api_key,
+                                                constitution_as_sys_prompt,
+                                                seed=args.seed,
+                                                ngc_url=args.ngc_url,
+                                                ngc_model=args.ngc_model)
         except Exception as e:
             preference = None
 
