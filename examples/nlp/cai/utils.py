@@ -173,37 +173,50 @@ def remote_inference(
 
 def remote_inference_with_ngc(
     api_key: str,
-    prompt: str = None,
-    messages: list = None,
-    url: str = "https://integrate.api.nvidia.com/v1/chat/completions",
-    model: str = "mistralai/mixtral-8x7b-instruct-v0.1",
+    url: str,
+    model: str,
+    prompt: Optional[str] = None,
+    messages: Optional[List[dict]] = None,
     temperature: Optional[float] = None,
     top_p: Optional[float] = None,
     max_tokens: Optional[int] = None,
     seed: Optional[int] = None,
 ):
     """
-    source: https://build.nvidia.com/mistralai/mixtral-8x7b-instruct
+    This function is designed to interact with NVIDIA's GPU Cloud (NGC) to utilize a specific model hosted on the platform.
+    The function requires two main arguments: the NGC API key and the name of the model you wish to use.
 
-    @param api_key:
+    @param api_key: Your NGC API key.
+    This key is necessary for authentication and to gain access to the models hosted on NGC.
+    You can generate an API key by following the instructions provided in the NGC documentation.
+    @param url: e.g., https://integrate.api.nvidia.com/v1/chat/completions
+    @param model: The name of the model you want to access.
+    This should be the full name of the model as registered in NGC, such as "mistralai/mixtral-8x7b-instruct-v0.1".
+    The model name is used to specify which particular model you intend to interact with within the NGC repository.
     @param prompt:
     @param messages:
-    @param url: (default: "https://integrate.api.nvidia.com/v1/chat/completions")
-    @param model: (default: "mistralai/mixtral-8x7b-instruct-v0.1")
     @param temperature:
     @param top_p:
     @param max_tokens:
     @param seed:
     @return:
 
-    examples:
+    Here is an example of how to call the Mixtral-8x7B model:
+    https://build.nvidia.com/mistralai/mixtral-8x7b-instruct
 
-    single prompt:
+
+    Examples:
+
+    1. single prompt:
     remote_inference_with_ngc(api_key="<your-ngc-apu-key>",
+                              url="https://integrate.api.nvidia.com/v1/chat/completions",
+                              model: str = "mistralai/mixtral-8x7b-instruct-v0.1",
                               prompt="calculate 3+4=?")
 
-    a conversion:
+    2. a conversion prompt:
     remote_inference_with_ngc(api_key="<your-ngc-apu-key>",
+                              url="https://integrate.api.nvidia.com/v1/chat/completions",
+                              model: str = "mistralai/mixtral-8x7b-instruct-v0.1",
                               messages=[{"content": f"calculate 3+4=?", "role": "user"},
                                         {"content": f"3+4=8", "role": "assistant"},
                                         {"content": f"you are wrong, please correct your answer.", "role": "user"}])
