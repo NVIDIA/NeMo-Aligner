@@ -128,7 +128,7 @@ Please wait for the server to be ready before proceeding.
 
    python examples/nlp/cai/generate_sl_cai_dataset.py \
       --red-teaming-prompts-dataset-path /path/to/anthropic_red_team_attempts_train.json \
-      --few-shot-prompts-dataset-path mistral7b_few_shot_samples \
+      --few-shot-prompts-dataset-path few_shot_samples_example.json \
       --critique-revision-instructions-path CritiqueRevisionInstructions.json \
       --max-seq-length 4096 \
       --tokenizer-library sentencepiece \
@@ -139,6 +139,9 @@ Please wait for the server to be ready before proceeding.
       --host <hostname or IP address of the inference service>
 
 This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
+
+The few-shot samples should be provided following the template in ``few_shot_samples_example.json``, and should include a red teaming prompt, a response from the helpful model (e.g. ``Mistral-7B`` in this tutorial), critique and revision requests and responses. The Anthropic repo outlines an example `here`_.
+.. _here: https://github.com/anthropics/ConstitutionalHarmlessnessPaper/blob/main/prompts/CritiqueRevisionFewShotPrompts.json
 
 *NOTE: The tokenizer file can be found by extracting the .nemo checkpoint using `tar -xf /models/mistral/mistral-7b-Instruct.nemo`.
 There are 2 tokenizer files that end with `*.model` in the model checkpoint and they are the same, so you can use either one for data processing.*
