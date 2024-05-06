@@ -2,53 +2,53 @@
   "samples": [
     [
       {
-        "role": "user",
+        "role": "User",
         "content": "prompt"
       },
       {
-        "role": "assistant",
+        "role": "Assistant",
         "content": "response"
       },
       {
-        "role": "user",
+        "role": "User",
         "content": "critique request"
       },
       {
-        "role": "assistant",
+        "role": "Assistant",
         "content": "critique response"
       },
       {
-        "role": "user",
+        "role": "User",
         "content": "revision request"
       },
       {
-        "role": "assistant",
+        "role": "Assistant",
         "content": "revision response"
       }
     ],
     [
       {
-        "role": "user",
+        "role": "User",
         "content": "prompt"
       },
       {
-        "role": "assistant",
+        "role": "Assistant",
         "content": "response"
       },
       {
-        "role": "user",
+        "role": "User",
         "content": "critique request"
       },
       {
-        "role": "assistant",
+        "role": "Assistant",
         "content": "critique response"
       },
       {
-        "role": "user",
+        "role": "User",
         "content": "revision request"
       },
       {
-        "role": "assistant",
+        "role": "Assistant",
         "content": "revision response"
       }
     ]
