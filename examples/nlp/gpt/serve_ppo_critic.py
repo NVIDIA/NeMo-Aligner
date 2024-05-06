@@ -62,15 +62,6 @@ def main(cfg) -> None:
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
-    if cfg.trainer.ppo.combine_rm_and_critic_server:
-        # to run the critic and RM together
-        # we move to CPU and swap them
-        # so we need to retrieve the state here before PTL load
-        rm_state_dict = retrieve_model_state_dict_in_cpu(
-            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
-        )
-        ptl_model.rm_state_dict = rm_state_dict
-
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
 

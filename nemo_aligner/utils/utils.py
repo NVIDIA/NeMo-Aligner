@@ -454,3 +454,34 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
         tuple(model_param.shape) == reference_param.local_shape
     ), f"Model shape ({tuple(model_param.shape)} does not match reference shape ({reference_param.local_shape})"
     return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param, dtype=model_param.dtype)
+
+
+@torch.no_grad()
+def copy_model_weights_to_cpu(model, cpu_dict=None):
+    if cpu_dict is None:
+        cpu_dict = {}
+
+    for name, item in model.state_dict().items():
+        if isinstance(item, torch.Tensor):
+            if not (name in cpu_dict):
+                cpu_dict[name] = torch.empty(item.size(), 
+                    dtype=item.dtype, layout=item.layout, 
+                    device="cpu", pin_memory=True)
+            cpu_dict[name].copy_(item, non_blocking=False)
+    return cpu_dict
+
+@torch.no_grad()
+def copy_cpu_weights_to_model(resident_model, cpu_weights):
+    """
+    Copies cpu weights onto resident model using pinned memory
+    """
+    device_state_dict = resident_model.state_dict()
+    for key, cpu_weight in cpu_weights.items():
+        if torch.is_tensor(cpu_weight):
+            assert key in device_state_dict, f"{key} not in device state_dict"
+            device_weight = device_state_dict[key]
+
+            assert device_weight.shape == cpu_weight.shape
+            assert device_weight.dtype == cpu_weight.dtype
+            assert device_weight.layout == cpu_weight.layout 
+            device_state_dict[key].copy_(cpu_weight, non_blocking=False)

@@ -33,7 +33,7 @@ from nemo_aligner.models.alignable_interface import CriticModelInterface
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import set_sync_funcs
-from nemo_aligner.utils.utils import masked_mean, offload_distributed_adam, swap_dict
+from nemo_aligner.utils.utils import masked_mean, offload_distributed_adam, copy_cpu_weights_to_model, copy_model_weights_to_cpu
 
 
 class StateDictState(Enum):
@@ -48,11 +48,8 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
 
-        # filled by the examples script
-        self.rm_state_dict = None
-
-        # for the critic states on cpu
-        self.cpu_state_dict = None
+        self.rm_state_dict_cpu = copy_model_weights_to_cpu(self)
+        self.critic_state_dict_cpu = copy_model_weights_to_cpu(self)
 
         # for distributed adam offload
         self.distributed_adam_offload_manager = None
@@ -76,6 +73,10 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         )
         self.onload_adam_states()
         self._load_critic()
+
+    def finish_training(self):
+        self.critic_state_dict_cpu = copy_model_weights_to_cpu(
+            self, self.critic_state_dict_cpu)
 
     def get_loss_and_metrics(self, batch, forward_only):
         sequence_length = batch["tokens"].size(-1)
@@ -230,16 +231,14 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def _load_critic(self):
         if self.loaded_state_dict == StateDictState.REWARD:
-            # no need to put the RM back to cpu, we already have it
-            swap_dict(self, self.cpu_state_dict, offload_onto_cpu=False, megatron_amp_O2=self.megatron_amp_O2)
+            copy_cpu_weights_to_model(self, self.critic_state_dict_cpu)
 
             self.set_output_sequence_flag(True)
-
             self.loaded_state_dict = StateDictState.CRITIC
 
     def _load_rm(self):
         if self.loaded_state_dict == StateDictState.CRITIC:
-            self.cpu_state_dict = swap_dict(self, self.rm_state_dict, megatron_amp_O2=self.megatron_amp_O2)
+            copy_cpu_weights_to_model(self, self.rm_state_dict_cpu)
 
             self.set_output_sequence_flag(False)
             self.loaded_state_dict = StateDictState.REWARD
