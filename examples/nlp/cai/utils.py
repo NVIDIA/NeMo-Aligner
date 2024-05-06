@@ -1,7 +1,7 @@
 import os
 from collections import defaultdict
 from multiprocessing import Pool
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Tuple
 import requests
 
 
@@ -16,12 +16,12 @@ def _pool_process_item(item_index: int, max_seq_length: int):
 
 
 def remove_long_dialogs(
-    input_file_path: str,
-    max_seq_length: int,
-    tokenizer_model: str,
-    tokenizer_library: str,
-    output_dir: str,
-    use_pool: bool,
+        input_file_path: str,
+        max_seq_length: int,
+        tokenizer_model: str,
+        tokenizer_library: str,
+        output_dir: str,
+        use_pool: bool,
 ):
     from tqdm import tqdm
     from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
@@ -91,19 +91,19 @@ def remove_long_dialogs(
 
 
 def remote_inference(
-    prompt: Union[List[str], str],
-    port: int,
-    host: str,
-    temperature: Optional[float] = None,
-    greedy: Optional[bool] = None,
-    tokens_to_generate: Optional[int] = None,
-    min_tokens_to_generate: Optional[int] = None,
-    add_bos: Optional[bool] = None,
-    top_k: Optional[int] = None,
-    top_p: Optional[float] = None,
-    all_probs: Optional[bool] = None,
-    repetition_penalty: Optional[float] = None,
-    end_strings: Optional[Union[List[str], str]] = None,
+        prompt: Union[List[str], str],
+        port: int,
+        host: str,
+        temperature: Optional[float] = None,
+        greedy: Optional[bool] = None,
+        tokens_to_generate: Optional[int] = None,
+        min_tokens_to_generate: Optional[int] = None,
+        add_bos: Optional[bool] = None,
+        top_k: Optional[int] = None,
+        top_p: Optional[float] = None,
+        all_probs: Optional[bool] = None,
+        repetition_penalty: Optional[float] = None,
+        end_strings: Optional[Union[List[str], str]] = None,
 ):
     """
     @param prompt:
@@ -172,15 +172,15 @@ def remote_inference(
 
 
 def remote_inference_with_ngc(
-    api_key: str,
-    url: str,
-    model: str,
-    prompt: Optional[str] = None,
-    messages: Optional[List[dict]] = None,
-    temperature: Optional[float] = None,
-    top_p: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    seed: Optional[int] = None,
+        api_key: str,
+        url: str,
+        model: str,
+        prompt: Optional[str] = None,
+        messages: Optional[List[dict]] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        seed: Optional[int] = None,
 ):
     """
     This function is designed to interact with NVIDIA's GPU Cloud (NGC) to utilize a specific model hosted on the platform.
@@ -259,3 +259,230 @@ def remote_inference_with_ngc(
     response_body = response.json()
     response_message = response_body["choices"][0]["message"]["content"]
     return response_message
+
+
+class PromptTemplate:
+    def __init__(self,
+                 role_message_format: Dict[str, str],
+                 bos_token: Optional[str] = None,
+                 eos_token: Optional[str] = None,
+                 response_extract_pattern: Optional[str] = None):
+        """
+
+        @param role_message_format: dict of (key:role-name, value:role-message-format).
+        example (for mistraL): dict(User="[INST] {MESSAGE} [/INST]", Assistant="{MESSAGE}</s> ")
+        @param bos_token: begin-of-sequence token (optional)
+        @param eos_token: end-of-sequence token (optional)
+        @response_extract_pattern: (optional)
+
+        example: Mistral
+
+        mistral_prompt_template = PromptTemplate(
+            dict(
+                User="[INST] {MESSAGE} [/INST]",
+                Assistant="{MESSAGE}</s> "
+            ),
+            bos_token="<s>",
+            eos_token="</s>",
+            response_extract_pattern="[/INST]"
+        )
+
+        # single message (e.g., user prompt)
+        prompt = mistral_prompt_template.format_message(
+            {"role": "User", "content": "Calculate the sum of 2 and 3."}
+        )
+
+        # a conversation
+        prompt = mistral_prompt_template.format_message(
+            [
+                {"role": "User", "content": "Calculate the sum of 2 and 3."},
+                {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+                {"role": "User", "content": "Thank you! Could you also calculate the sum of 5 and 7?"},
+            ]
+        )
+        """
+        assert role_message_format is not None and isinstance(role_message_format, dict)
+        assert len(set(role_message_format.keys())) == len(role_message_format)
+
+        self.roles = set(role_message_format.keys())
+        self.role_message_template = role_message_format.copy()
+        self.bos_token = bos_token
+        self.eos_token = eos_token
+        self.response_extract_pattern = response_extract_pattern
+
+    def format_message(self, messages: Union[List[dict], dict]):
+        assert messages is not None
+        assert isinstance(messages, (list, dict))
+        if not isinstance(messages, list):
+            messages = [messages]
+
+        assert all([isinstance(m, dict) for m in messages])
+        assert all(["content" in m and "role" in m for m in messages])
+        assert all([m['role'] in self.roles for m in messages])
+
+        for i in range(1, len(messages)):
+            assert messages[i]['role'] != messages[i - 1]['role']
+
+        prompt = self.bos_token if self.bos_token is not None else ""
+
+        for m in messages:
+            role = m['role']
+            content = m['content']
+            message = self.role_message_template[role].format(MESSAGE=content)
+            prompt += message
+
+        return prompt
+
+    def extract_response(self, message: str):
+        assert self.response_extract_pattern is not None
+        message = message.strip()
+
+        # Find the last occurrence of the pattern
+        last_occurrence = message.rfind(self.response_extract_pattern)
+
+        response = None
+        if last_occurrence >= 0:
+            index_after_pattern = last_occurrence + len(self.response_extract_pattern)
+            response = message[index_after_pattern:]
+            response = response.strip()
+
+            # Find eos-token
+            if self.eos_token is not None:
+                eos_token_index = response.rfind(self.eos_token)
+                if eos_token_index >= 0:
+                    response = response[:eos_token_index]
+
+        return response
+
+
+class UserAssistantPromptTemplate(PromptTemplate):
+    def __init__(self,
+                 user_format: str,
+                 assistant_format: str,
+                 system_format: Optional[str] = None,
+                 bos_token: Optional[str] = None,
+                 eos_token: Optional[str] = None,
+                 response_extract_pattern: Optional[str] = None):
+        """
+
+        @param user_format: user message format.
+        @param assistant_format: assistant message format.
+        @param system_format: system message format.
+        @param bos_token: begin-of-sequence token (optional)
+        @param eos_token: end-of-sequence token (optional)
+        @param response_extract_pattern: (optional)
+
+
+        example: Mistral
+
+        user_assistant_format = UserAssistantPromptTemplate(
+            user_format="[INST] {MESSAGE} [/INST]",
+            assistant_format="{MESSAGE}</s> ",
+            bos_token="<s>",
+            eos_token="</s>",
+            response_extract_pattern="[/INST]"
+        )
+
+        prompt = user_assistant_format.format_user_message("Calculate the sum of 2 and 3.")
+        """
+
+        role_message_format = {"user": user_format, "assistant": assistant_format}
+        if system_format is not None:
+            role_message_format['system'] = system_format
+
+        super().__init__(
+            role_message_format,
+            bos_token=bos_token,
+            eos_token=eos_token,
+            response_extract_pattern=response_extract_pattern)
+
+    def format_user_message(self, message: str, system_message: Optional[str] = None):
+        messages = []
+        if system_message is not None:
+            assert 'system' in self.role_message_template
+            messages.append({"role": "system", "content": system_message})
+        messages.append({"role": "user", "content": message})
+        return self.format_message(messages)
+
+
+if __name__ == '__main__':
+    extra_id_prompt_template = PromptTemplate(
+        dict(
+            System="<extra_id_0>System\n{MESSAGE}\n",
+            User="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
+            Assistant="{MESSAGE}\n"
+        ),
+        eos_token="<extra_id_1>",
+        response_extract_pattern="<extra_id_1>Assistant\n")
+
+    m11 = extra_id_prompt_template.format_message(
+        [
+            {'role': "System", 'content': ""},
+            {'role': "User", 'content': "Calculate the sum of 2 and 3."}
+        ])
+    print(f"{'-' * 20}\n{m11}\n{'-' * 20}")
+
+    m12 = extra_id_prompt_template.format_message(
+        [
+            {'role': "System", 'content': ""},
+            {'role': "User", 'content': "Calculate the sum of 2 and 3."},
+            {'role': "Assistant", 'content': "The sum of 2 and 3 is 5."}
+        ])
+    print(f"{'-' * 20}\n{m12}\n{'-' * 20}")
+
+    m13 = extra_id_prompt_template.format_message(
+        [
+            {'role': "System", 'content': ""},
+            {'role': "User", 'content': "Calculate the sum of 2 and 3."},
+            {'role': "Assistant", 'content': "The sum of 2 and 3 is 5."},
+            {'role': "User", 'content': "Thank you! Could you also calculate the sum of 5 and 7?"},
+        ])
+    print(f"{'-' * 20}\n{m13}\n{'-' * 20}")
+
+    extract_m12 = extra_id_prompt_template.extract_response(m12)
+    print(f"{'-' * 20}\n{extract_m12}\n{'-' * 20}")
+
+    # mistral example:
+    mistral_prompt_template = PromptTemplate(
+        dict(
+            User="[INST] {MESSAGE} [/INST]",
+            Assistant="{MESSAGE}</s> "
+        ),
+        bos_token="<s>",
+        eos_token="</s>",
+        response_extract_pattern="[/INST]")
+
+    m21 = mistral_prompt_template.format_message(
+        {'role': "User", 'content': "Calculate the sum of 2 and 3."}
+    )
+    print(f"{'-' * 20}\n{m21}\n{'-' * 20}")
+
+    m22 = mistral_prompt_template.format_message(
+        [
+            {'role': "User", 'content': "Calculate the sum of 2 and 3."},
+            {'role': "Assistant", 'content': "The sum of 2 and 3 is 5."}
+        ])
+    print(f"{'-' * 20}\n{m22}\n{'-' * 20}")
+
+    m23 = mistral_prompt_template.format_message(
+        [
+            {'role': "User", 'content': "Calculate the sum of 2 and 3."},
+            {'role': "Assistant", 'content': "The sum of 2 and 3 is 5."},
+            {'role': "User", 'content': "Thank you! Could you also calculate the sum of 5 and 7?"},
+        ])
+    print(f"{'-' * 20}\n{m23}\n{'-' * 20}")
+
+    extract_m22 = mistral_prompt_template.extract_response(m22)
+    print(f"{'-' * 20}\n{extract_m22}\n{'-' * 20}")
+
+    # example for using 'UserAssistantPromptTemplate'
+    user_assistant_format = UserAssistantPromptTemplate(
+        user_format="[INST] {MESSAGE} [/INST]",
+        assistant_format="{MESSAGE}</s> ",
+        bos_token="<s>",
+        eos_token="</s>",
+        response_extract_pattern="[/INST]")
+
+    m31 = user_assistant_format.format_user_message("Calculate the sum of 2 and 3.")
+    print(f"{'-' * 20}\n{m31}\n{'-' * 20}")
+
