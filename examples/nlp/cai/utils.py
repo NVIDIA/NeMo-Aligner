@@ -357,14 +357,16 @@ class PromptTemplate:
                     response = response[:eos_token_index]
 
         return response
+
     @staticmethod
     def create_user_assistant_prompt_template(
-            user_format: str,
-            assistant_format: str,
-            system_format: Optional[str] = None,
-            bos_token: Optional[str] = None,
-            eos_token: Optional[str] = None,
-            response_extract_pattern: Optional[str] = None):
+        user_format: str,
+        assistant_format: str,
+        system_format: Optional[str] = None,
+        bos_token: Optional[str] = None,
+        eos_token: Optional[str] = None,
+        response_extract_pattern: Optional[str] = None,
+    ):
         """
         @param user_format: user message format.
         @param assistant_format: assistant message format.
