@@ -7,7 +7,7 @@ from typing import Optional
 
 import numpy as np
 import tqdm
-from utils import remote_inference, PromptTemplate
+from utils import PromptTemplate, remote_inference
 
 
 def generate_chat_prompt(sample: dict):
@@ -36,17 +36,18 @@ def generate_chat_prompt(sample: dict):
 def model_remote_inference(prompt, inference_config: dict, eos_token: str):
     sentences = remote_inference(prompt=prompt, **inference_config)
 
-    sentences = [
-        s + eos_token if not s.endswith(eos_token) else s
-        for s in sentences
-    ]
+    sentences = [s + eos_token if not s.endswith(eos_token) else s for s in sentences]
 
     return sentences
 
 
 def generate_cai_batch_sample(
-    prompt_list: list, few_shot_dataset_path: str, critique_list, revision_list,
-        inference_config: dict, prompt_template_config: dict
+    prompt_list: list,
+    few_shot_dataset_path: str,
+    critique_list,
+    revision_list,
+    inference_config: dict,
+    prompt_template_config: dict,
 ):
     assert isinstance(prompt_list, list)
     if not isinstance(critique_list, list):
@@ -62,7 +63,7 @@ def generate_cai_batch_sample(
 
     with open(few_shot_dataset_path, "r") as f:
         few_shot_samples = json.load(f)
-        few_shot_prompts = [item for sublist in few_shot_samples['samples'] for item in sublist]
+        few_shot_prompts = [item for sublist in few_shot_samples["samples"] for item in sublist]
 
     # get initial response
     print(f"\nGenerating initial response for {num_prompts} prompts...")
@@ -71,7 +72,8 @@ def generate_cai_batch_sample(
     chat_batch = model_remote_inference(
         [prompt_template.format_message(p) for p in initial_prompt_batch],
         inference_config=inference_config,
-        eos_token=prompt_template.eos_token)
+        eos_token=prompt_template.eos_token,
+    )
 
     assert len(chat_batch) == num_prompts
     initial_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
@@ -89,7 +91,8 @@ def generate_cai_batch_sample(
     chat_batch = model_remote_inference(
         [prompt_template.format_message(p) for p in critique_request_batch],
         inference_config=inference_config,
-        eos_token=prompt_template.eos_token)
+        eos_token=prompt_template.eos_token,
+    )
     assert len(chat_batch) == num_prompts
     critique_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
     print("Done")
@@ -106,7 +109,8 @@ def generate_cai_batch_sample(
     chat_batch = model_remote_inference(
         [prompt_template.format_message(p) for p in revision_request_prompt_batch],
         inference_config=inference_config,
-        eos_token=prompt_template.eos_token)
+        eos_token=prompt_template.eos_token,
+    )
     assert len(chat_batch) == num_prompts
     revision_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
     print("Done")
@@ -173,7 +177,7 @@ def generate_cai_dataset(
     save_to_file_interval: int,
     save_file_path: str,
     inference_config: dict,
-    prompt_template_config: dict
+    prompt_template_config: dict,
 ):
     """
     @param batch_size: inference batch size
@@ -234,7 +238,7 @@ def generate_cai_dataset(
             critique_list=critique_list,
             revision_list=revision_list,
             inference_config=inference_config,
-            prompt_template_config=prompt_template_config
+            prompt_template_config=prompt_template_config,
         )
         assert len(cai_batch_sample) == len(red_teaming_prompts_list)
 
@@ -460,14 +464,7 @@ def prepare_args():
     prompt_template_config = {
         k: v
         for k, v in args_dict.items()
-        if k
-        in {
-            "user_format",
-            "assistant_format",
-            "bos_token",
-            "eos_token",
-            "response_extract_pattern"
-        }
+        if k in {"user_format", "assistant_format", "bos_token", "eos_token", "response_extract_pattern"}
     }
 
     return args, inference_config, prompt_template_config
@@ -488,7 +485,7 @@ def main():
         save_to_file_interval=args.save_to_file_interval,
         save_file_path=args.output_filepath,
         inference_config=inference_config,
-        prompt_template_config=prompt_template_config
+        prompt_template_config=prompt_template_config,
     )
 
     print("Blending CAI samples with the helpfulness dataset...")
