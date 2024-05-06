@@ -7,7 +7,7 @@ from typing import Optional
 
 import numpy as np
 import tqdm
-from utils import PromptTemplate, remote_inference
+from utils import UserAssistantPromptTemplate, remote_inference
 
 
 def generate_chat_prompt(sample: dict):
@@ -59,7 +59,7 @@ def generate_cai_batch_sample(
     assert len(critique_list) == num_prompts
     assert len(revision_list) == num_prompts
 
-    prompt_template = PromptTemplate.create_user_assistant_prompt_template(**prompt_template_config)
+    prompt_template = UserAssistantPromptTemplate(**prompt_template_config)
 
     with open(few_shot_dataset_path, "r") as f:
         few_shot_samples = json.load(f)
@@ -420,6 +420,8 @@ def prepare_args():
     group_prompt_template = parser.add_argument_group("prompt_template", "prompt template")
     group_prompt_template.add_argument("--user_format", type=str, default="[INST] {MESSAGE} [/INST]")
     group_prompt_template.add_argument("--assistant_format", type=str, default="{MESSAGE}</s> ")
+    group_prompt_template.add_argument("--system_format", type=str, default=None)
+    group_prompt_template.add_argument("--system_default_message", type=str, default=None)
     group_prompt_template.add_argument("--bos_token", type=str, default="<s>")
     group_prompt_template.add_argument("--eos_token", type=str, default="</s>")
     group_prompt_template.add_argument("--response_extract_pattern", type=str, default="[/INST]")
@@ -464,7 +466,14 @@ def prepare_args():
     prompt_template_config = {
         k: v
         for k, v in args_dict.items()
-        if k in {"user_format", "assistant_format", "bos_token", "eos_token", "response_extract_pattern"}
+        if k in {
+            "user_format",
+            "assistant_format",
+            "system_format",
+            "system_default_message",
+            "bos_token",
+            "eos_token",
+            "response_extract_pattern"}
     }
 
     return args, inference_config, prompt_template_config

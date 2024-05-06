@@ -358,11 +358,14 @@ class PromptTemplate:
 
         return response
 
-    @staticmethod
-    def create_user_assistant_prompt_template(
+
+class UserAssistantPromptTemplate(PromptTemplate):
+    def __init__(
+        self,
         user_format: str,
         assistant_format: str,
         system_format: Optional[str] = None,
+        system_default_message: Optional[str] = None,
         bos_token: Optional[str] = None,
         eos_token: Optional[str] = None,
         response_extract_pattern: Optional[str] = None,
@@ -371,6 +374,7 @@ class PromptTemplate:
         @param user_format: user message format.
         @param assistant_format: assistant message format.
         @param system_format: system message format.
+        @param system_default_message: system default message
         @param bos_token: begin-of-sequence token (optional)
         @param eos_token: end-of-sequence token (optional)
         @param response_extract_pattern: (optional)
@@ -390,13 +394,30 @@ class PromptTemplate:
         role_message_format = {"User": user_format, "Assistant": assistant_format}
         if system_format is not None:
             role_message_format["System"] = system_format
+        else:
+            assert system_default_message is None
 
-        return PromptTemplate(
+        super().__init__(
             role_message_format,
             bos_token=bos_token,
             eos_token=eos_token,
             response_extract_pattern=response_extract_pattern,
         )
+
+        self.system_default_message = system_default_message
+
+    def format_message(self, messages: Union[List[dict], dict]):
+        assert messages is not None
+        assert isinstance(messages, (list, dict))
+        if not isinstance(messages, list):
+            messages = [messages]
+
+        if self.system_default_message is not None and "System" in self.roles:
+            # NOTE: It is assumed that if a system message exists, it should be the first message.
+            if messages[0]['role'] != "System":
+                messages = [{"content": self.system_default_message, "role": "System"}] + messages
+
+        return super().format_message(messages)
 
 
 if __name__ == "__main__":
@@ -469,7 +490,19 @@ if __name__ == "__main__":
     print(f"{'-' * 20}\n{extract_m22}\n{'-' * 20}")
 
     # example for using 'UserAssistantPromptTemplate'
-    user_assistant_format = PromptTemplate.create_user_assistant_prompt_template(
+    extra_id_user_assistant_format = UserAssistantPromptTemplate(
+        user_format="<extra_id_1>User\n{MESSAGE}\n",
+        assistant_format="{MESSAGE}\n",
+        system_format="<extra_id_0>System\n{MESSAGE}\n",
+        system_default_message="",
+        eos_token="<extra_id_1>",
+        response_extract_pattern="<extra_id_1>Assistant\n",
+    )
+
+    m31 = extra_id_user_assistant_format.format_message({"role": "User", "content": "Calculate the sum of 2 and 3."})
+    print(f"{'-' * 20}\n{m31}\n{'-' * 20}")
+
+    mistral_user_assistant_format = UserAssistantPromptTemplate(
         user_format="[INST] {MESSAGE} [/INST]",
         assistant_format="{MESSAGE}</s> ",
         bos_token="<s>",
@@ -477,5 +510,5 @@ if __name__ == "__main__":
         response_extract_pattern="[/INST]",
     )
 
-    m31 = user_assistant_format.format_message({"role": "User", "content": "Calculate the sum of 2 and 3."})
-    print(f"{'-' * 20}\n{m31}\n{'-' * 20}")
+    m41 = mistral_user_assistant_format.format_message({"role": "User", "content": "Calculate the sum of 2 and 3."})
+    print(f"{'-' * 20}\n{m41}\n{'-' * 20}")
