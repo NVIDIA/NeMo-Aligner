@@ -7,30 +7,7 @@ from typing import Optional
 
 import numpy as np
 import tqdm
-from utils import remote_inference
-
-
-class MistralInstructChatTemplate:
-    bos_token = "<s>"
-    eos_token = "</s>"
-    user_prompt_start = "[INST]"
-    user_prompt_end = "[/INST]"
-    prompt_template = """{BOS_TOKEN}{USER_PROMPT_START} {prompt} {USER_PROMPT_END}"""
-
-    @staticmethod
-    def apply_prompt_template(prompt):
-        return MistralInstructChatTemplate.prompt_template.format(
-            BOS_TOKEN=MistralInstructChatTemplate.bos_token,
-            USER_PROMPT_START=MistralInstructChatTemplate.user_prompt_start,
-            prompt=prompt,
-            USER_PROMPT_END=MistralInstructChatTemplate.user_prompt_end,
-        )
-
-    @staticmethod
-    def extract_response(prompt: str):
-        response = prompt.rsplit(MistralInstructChatTemplate.user_prompt_end, 1)[-1]
-        response = response.strip().removesuffix(MistralInstructChatTemplate.eos_token)
-        return response
+from utils import remote_inference, PromptTemplate
 
 
 def generate_chat_prompt(sample: dict):
@@ -56,11 +33,11 @@ def generate_chat_prompt(sample: dict):
     return _conversation_formatter(messages=[prompt, revision])
 
 
-def model_remote_inference(prompt, inference_config: dict):
+def model_remote_inference(prompt, inference_config: dict, eos_token: str):
     sentences = remote_inference(prompt=prompt, **inference_config)
 
     sentences = [
-        s + MistralInstructChatTemplate.eos_token if not s.endswith(MistralInstructChatTemplate.eos_token) else s
+        s + eos_token if not s.endswith(eos_token) else s
         for s in sentences
     ]
 
@@ -68,7 +45,8 @@ def model_remote_inference(prompt, inference_config: dict):
 
 
 def generate_cai_batch_sample(
-    prompt_list: list, few_shot_dataset_path: str, critique_list, revision_list, inference_config: dict
+    prompt_list: list, few_shot_dataset_path: str, critique_list, revision_list,
+        inference_config: dict, prompt_template_config: dict
 ):
     assert isinstance(prompt_list, list)
     if not isinstance(critique_list, list):
@@ -80,39 +58,57 @@ def generate_cai_batch_sample(
     assert len(critique_list) == num_prompts
     assert len(revision_list) == num_prompts
 
+    prompt_template = PromptTemplate.create_user_assistant_prompt_template(**prompt_template_config)
+
     with open(few_shot_dataset_path, "r") as f:
-        few_shot_samples = f.read().rstrip("\n")
+        few_shot_samples = json.load(f)
+        few_shot_prompts = [item for sublist in few_shot_samples['samples'] for item in sublist]
 
     # get initial response
     print(f"\nGenerating initial response for {num_prompts} prompts...")
-    initial_prompt_batch = [
-        " ".join([few_shot_samples, MistralInstructChatTemplate.apply_prompt_template(p)]) for p in prompt_list
-    ]
-    chat_batch = model_remote_inference(initial_prompt_batch, inference_config=inference_config)
+    initial_prompt_batch = [few_shot_prompts + [{"content": p, "role": "User"}] for p in prompt_list]
+
+    chat_batch = model_remote_inference(
+        [prompt_template.format_message(p) for p in initial_prompt_batch],
+        inference_config=inference_config,
+        eos_token=prompt_template.eos_token)
+
     assert len(chat_batch) == num_prompts
-    initial_response_batch = [MistralInstructChatTemplate.extract_response(chat) for chat in chat_batch]
+    initial_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
     print("Done")
 
     # generate a single critique
     print(f"\nGenerating a critique for {num_prompts} initial responses...")
     critique_request_batch = [
-        " ".join([chat_batch[i], MistralInstructChatTemplate.apply_prompt_template(cr_p)])
+        initial_prompt_batch[i]
+        + [{"content": initial_response_batch[i], "role": "Assistant"}]
+        + [{"content": cr_p, "role": "User"}]
         for i, cr_p in enumerate(critique_list)
     ]
-    chat_batch = model_remote_inference(critique_request_batch, inference_config=inference_config)
+
+    chat_batch = model_remote_inference(
+        [prompt_template.format_message(p) for p in critique_request_batch],
+        inference_config=inference_config,
+        eos_token=prompt_template.eos_token)
     assert len(chat_batch) == num_prompts
-    critique_response_batch = [MistralInstructChatTemplate.extract_response(chat) for chat in chat_batch]
+    critique_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
     print("Done")
 
     # generate a single revision
     print(f"\nGenerating {num_prompts} revisions ...")
     revision_request_prompt_batch = [
-        " ".join([chat_batch[i], MistralInstructChatTemplate.apply_prompt_template(rev_p)])
+        critique_request_batch[i]
+        + [{"content": critique_response_batch[i], "role": "Assistant"}]
+        + [{"content": rev_p, "role": "User"}]
         for i, rev_p in enumerate(revision_list)
     ]
-    chat_batch = model_remote_inference(revision_request_prompt_batch, inference_config=inference_config)
+
+    chat_batch = model_remote_inference(
+        [prompt_template.format_message(p) for p in revision_request_prompt_batch],
+        inference_config=inference_config,
+        eos_token=prompt_template.eos_token)
     assert len(chat_batch) == num_prompts
-    revision_response_batch = [MistralInstructChatTemplate.extract_response(chat) for chat in chat_batch]
+    revision_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
     print("Done")
 
     s_batch = []
@@ -177,6 +173,7 @@ def generate_cai_dataset(
     save_to_file_interval: int,
     save_file_path: str,
     inference_config: dict,
+    prompt_template_config: dict
 ):
     """
     @param batch_size: inference batch size
@@ -187,6 +184,7 @@ def generate_cai_dataset(
     @param critique_revision_instructions_filepath:
     @param num_examples:
     @param inference_config:
+    @param prompt_template_config:
     @return:
     """
     assert batch_size > 0
@@ -236,6 +234,7 @@ def generate_cai_dataset(
             critique_list=critique_list,
             revision_list=revision_list,
             inference_config=inference_config,
+            prompt_template_config=prompt_template_config
         )
         assert len(cai_batch_sample) == len(red_teaming_prompts_list)
 
@@ -395,23 +394,31 @@ def prepare_args():
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--helpfulness-dataset-path", type=str, required=True, default=None)
 
-    group = parser.add_argument_group("inference", "inference (service) arguments")
-    group.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
-    group.add_argument("--top_k", type=int, default=1)
-    group.add_argument("--top_p", type=float, default=0.9)
-    group.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
-    group.add_argument("--repetition_penalty", type=float, default=1.2)
-    group.add_argument("--min_tokens_to_generate", type=int, default=1)
-    group.add_argument("--temperature", type=float, default=1.0)
-    group.add_argument("--greedy", type=str, choices=["True", "False"], default="True")
-    group.add_argument("--tokens_to_generate", type=int, default=1024)
-    group.add_argument("--end_strings", type=str, nargs="*", default=None)
-    group.add_argument(
+    group_inference = parser.add_argument_group("inference", "inference (service) arguments")
+    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
+    group_inference.add_argument("--top_k", type=int, default=1)
+    group_inference.add_argument("--top_p", type=float, default=0.9)
+    group_inference.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
+    group_inference.add_argument("--repetition_penalty", type=float, default=1.2)
+    group_inference.add_argument("--min_tokens_to_generate", type=int, default=1)
+    group_inference.add_argument("--temperature", type=float, default=1.0)
+    group_inference.add_argument("--greedy", type=str, choices=["True", "False"], default="True")
+    group_inference.add_argument("--tokens_to_generate", type=int, default=1024)
+    group_inference.add_argument("--end_strings", type=str, nargs="*", default=None)
+    group_inference.add_argument(
         "--port", type=int, default=5656, help="The port number on which the inference service is running"
     )
-    group.add_argument(
+    group_inference.add_argument(
         "--host", type=str, default="localhost", help="The hostname or IP address of the inference service"
     )
+
+    # prompt template
+    group_prompt_template = parser.add_argument_group("prompt_template", "prompt template")
+    group_prompt_template.add_argument("--user_format", type=str, default="[INST] {MESSAGE} [/INST]")
+    group_prompt_template.add_argument("--assistant_format", type=str, default="{MESSAGE}</s> ")
+    group_prompt_template.add_argument("--bos_token", type=str, default="<s>")
+    group_prompt_template.add_argument("--eos_token", type=str, default="</s>")
+    group_prompt_template.add_argument("--response_extract_pattern", type=str, default="[/INST]")
 
     args = parser.parse_args()
     args.add_bos = args.add_bos == "True"
@@ -450,11 +457,24 @@ def prepare_args():
         }
     }
 
-    return args, inference_config
+    prompt_template_config = {
+        k: v
+        for k, v in args_dict.items()
+        if k
+        in {
+            "user_format",
+            "assistant_format",
+            "bos_token",
+            "eos_token",
+            "response_extract_pattern"
+        }
+    }
+
+    return args, inference_config, prompt_template_config
 
 
 def main():
-    args, inference_config = prepare_args()
+    args, inference_config, prompt_template_config = prepare_args()
     random.seed(args.seed)
     np.random.seed(args.seed)
 
@@ -468,6 +488,7 @@ def main():
         save_to_file_interval=args.save_to_file_interval,
         save_file_path=args.output_filepath,
         inference_config=inference_config,
+        prompt_template_config=prompt_template_config
     )
 
     print("Blending CAI samples with the helpfulness dataset...")
