@@ -145,16 +145,16 @@ class SPINTrainer:
         self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
         assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
         
-        self.use_trtllm_generation = self.cfg.spin.trt_llm.get("enable", False) if 'trt_llm' in self.cfg.spin else False
+        self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if 'trt_llm' in self.cfg else False
         if self.use_trtllm_generation:
             assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
             self.trtllm_generate = GPTGenerateTRTLLM(model_cfg=self.model.cfg,
                                     max_generation_length=self.length_params["max_length"],
-                                    max_input_len=self.cfg.spin.trt_llm.get("max_input_len", 1024),
-                                    max_input_tokens=self.cfg.spin.trt_llm.get("max_input_tokens", 4096),
+                                    max_input_len=self.cfg.trt_llm.get("max_input_len", 1024),
+                                    max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", 4096),
                                     generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
-                                    unload_engine_train=self.cfg.spin.trt_llm.get("unload_engine_train", False),
-                                    trt_model_type=self.cfg.spin.trt_llm.get("model_type", "GPTForCausalLM"),
+                                    unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
+                                    trt_model_type=self.cfg.trt_llm.get("model_type", "GPTForCausalLM"),
                                     end_strings=self.sampling_params["end_strings"],
                                     reshard_model=False,
                                     sample_temperature=self.sampling_params["temperature"],
