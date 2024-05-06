@@ -18,6 +18,7 @@ from functools import partial
 import numpy as np
 import torch
 from omegaconf import DictConfig
+import time
 
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
@@ -34,6 +35,8 @@ def get_future_result(future, *keys):
     and broadcasts it to the model parallel group. Then it returns it as output.
     """
     output = None if future is None else future.result()
+    print(f"recv at {time.time()}")
+
 
     results = []
 
@@ -129,6 +132,9 @@ class RemoteGPTRMCriticClient:
         critic_future = run_if_model_parallel_src(
             self.communicator.send_data_to_server, server_name=self.cfg.critic.name.infer, data=send_data,
         )
+
+        import time
+        print(f"send at {time.time()}")
 
         rm_future = None
         if not self.combine_rm_and_critic_server:

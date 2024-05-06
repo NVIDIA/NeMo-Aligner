@@ -35,7 +35,6 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import set_sync_funcs
 from nemo_aligner.utils.utils import masked_mean, offload_distributed_adam, swap_dict
 
-
 class StateDictState(Enum):
     """Enum to determine which model state is loaded
     """
@@ -47,6 +46,8 @@ class StateDictState(Enum):
 class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
+        import time
+        self.timestamp = time.time()
 
         # filled by the examples script
         self.rm_state_dict = None
@@ -198,6 +199,11 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         self.distributed_adam_offload_manager = None
 
     def infer_rm_critic(self, *args, **kwargs):
+        import time
+        tic = time.time()
+        print(f"infer_rm_critic at {tic}, s since last: {tic-self.timestamp}")
+        self.timestamp = tic
+        
         call_order = (self._infer_rm, self._infer_critic)
 
         original_state = self.loaded_state_dict
@@ -209,7 +215,10 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
         outputs = []
         for fn in call_order:
+            tic = time.time()
             output, exceeded = fn(*args, **kwargs)
+            toc = time.time()
+            print(f"infer call took {toc-tic}")
             outputs.append(output)
 
         if original_state == StateDictState.CRITIC:
@@ -217,6 +226,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             outputs = reversed(outputs)
 
         # always return rewards, value, exceeded
+        print("------------------")
         return (*outputs, exceeded)
 
     def set_output_sequence_flag(self, value_to_set):
@@ -245,9 +255,18 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             self.loaded_state_dict = StateDictState.REWARD
 
     def _infer_critic(self, *args, **kwargs):
+        import time
+        tic = time.time()
         self._load_critic()
+        toc = time.time()
+        print(f"    _load_critic {toc-tic}")
         return self.infer(*args, **kwargs)
 
     def _infer_rm(self, *args, **kwargs):
+        import time
+        tic = time.time()
         self._load_rm()
+        toc = time.time()
+        print(f"    _load_rm {toc-tic}")
+
         return self.infer(*args, **kwargs)

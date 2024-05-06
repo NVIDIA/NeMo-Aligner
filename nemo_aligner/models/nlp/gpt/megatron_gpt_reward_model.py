@@ -405,7 +405,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat]
         divisible_batch_size = (input_batch_size // self.forward_mbs) * self.forward_mbs
-
+        print(f"    divisible_batch_size {divisible_batch_size} input_batch_size {input_batch_size}")
         rewards = None
         if divisible_batch_size > 0:
             inputs_divisible = [item[:divisible_batch_size] for item in inputs]

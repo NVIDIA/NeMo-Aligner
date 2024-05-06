@@ -33,6 +33,7 @@ from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor
 from nemo_aligner.utils.server_utils import lock_method, pad_input
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import apply_func_to_dict
+import time
 
 ENDPOINT_BIND_ADDRESS = "0.0.0.0"
 
@@ -58,6 +59,8 @@ class CriticServerTrainer:
         self.ckpt_callback = ckpt_callback
         self.gbs = gbs
         self.step = 0
+
+        self.timestamp = time.time()
 
         # server parameters
         self.combine_rm_and_critic_server = cfg.combine_rm_and_critic_server
@@ -217,6 +220,7 @@ class CriticServerTrainer:
     def run_inference(self, inputs=None):
         """only rank 0 has valid data
         """
+        print(f"----start infer at {time.time()}")
         self.model.prepare_for_inference()
 
         if torch.distributed.get_rank() == 0:
@@ -233,10 +237,14 @@ class CriticServerTrainer:
 
         self.model.finish_inference()
         torch.distributed.barrier()
+        print(f"----stop infer at {time.time()}")
 
         return rewards, values, exceeded
 
     def run_training(self, tokens=None, returns=None, prev_values=None, mask=None):
+        print(f"-----starting training {time.time()}--------")
+
+
         """assume that the batch is already padded
         """
         # broadcast to every rank and then split out the tensor after
@@ -301,6 +309,7 @@ class CriticServerTrainer:
         self.model.finish_training()
         torch.cuda.synchronize()
         torch.distributed.barrier()
+        print(f"-----finishing training {time.time()}--------")
 
         return loss_mean
 
