@@ -466,14 +466,16 @@ def prepare_args():
     prompt_template_config = {
         k: v
         for k, v in args_dict.items()
-        if k in {
+        if k
+        in {
             "user_format",
             "assistant_format",
             "system_format",
             "system_default_message",
             "bos_token",
             "eos_token",
-            "response_extract_pattern"}
+            "response_extract_pattern",
+        }
     }
 
     return args, inference_config, prompt_template_config

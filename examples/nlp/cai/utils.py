@@ -414,7 +414,7 @@ class UserAssistantPromptTemplate(PromptTemplate):
 
         if self.system_default_message is not None and "System" in self.roles:
             # NOTE: It is assumed that if a system message exists, it should be the first message.
-            if messages[0]['role'] != "System":
+            if messages[0]["role"] != "System":
                 messages = [{"content": self.system_default_message, "role": "System"}] + messages
 
         return super().format_message(messages)
