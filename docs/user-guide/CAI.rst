@@ -140,8 +140,7 @@ Please wait for the server to be ready before proceeding.
 
 This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
 
-The few-shot samples should be provided following the template in ``few_shot_samples_example.json``, and should include a red teaming prompt, a response from the helpful model (e.g. ``Mistral-7B`` in this tutorial), critique and revision requests and responses. The Anthropic repo outlines an example `here`_.
-.. _here: https://github.com/anthropics/ConstitutionalHarmlessnessPaper/blob/main/prompts/CritiqueRevisionFewShotPrompts.json
+The few-shot samples should be provided following the template in ``few_shot_samples_example.json``, and should include a red teaming prompt, a response from the helpful model (e.g. ``Mistral-7B`` in this tutorial), critique and revision requests and responses. The Anthropic repo outlines an example `here <https://github.com/anthropics/ConstitutionalHarmlessnessPaper/blob/main/prompts/CritiqueRevisionFewShotPrompts.json>`_.
 
 *NOTE: The tokenizer file can be found by extracting the .nemo checkpoint using `tar -xf /models/mistral/mistral-7b-Instruct.nemo`.
 There are 2 tokenizer files that end with `*.model` in the model checkpoint and they are the same, so you can use either one for data processing.*
