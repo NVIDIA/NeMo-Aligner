@@ -357,20 +357,15 @@ class PromptTemplate:
                     response = response[:eos_token_index]
 
         return response
-
-
-class UserAssistantPromptTemplate(PromptTemplate):
-    def __init__(
-        self,
-        user_format: str,
-        assistant_format: str,
-        system_format: Optional[str] = None,
-        bos_token: Optional[str] = None,
-        eos_token: Optional[str] = None,
-        response_extract_pattern: Optional[str] = None,
-    ):
+    @staticmethod
+    def create_user_assistant_prompt_template(
+            user_format: str,
+            assistant_format: str,
+            system_format: Optional[str] = None,
+            bos_token: Optional[str] = None,
+            eos_token: Optional[str] = None,
+            response_extract_pattern: Optional[str] = None):
         """
-
         @param user_format: user message format.
         @param assistant_format: assistant message format.
         @param system_format: system message format.
@@ -388,28 +383,18 @@ class UserAssistantPromptTemplate(PromptTemplate):
             eos_token="</s>",
             response_extract_pattern="[/INST]"
         )
-
-        prompt = user_assistant_format.format_user_message("Calculate the sum of 2 and 3.")
         """
 
         role_message_format = {"User": user_format, "Assistant": assistant_format}
         if system_format is not None:
             role_message_format["System"] = system_format
 
-        super().__init__(
+        return PromptTemplate(
             role_message_format,
             bos_token=bos_token,
             eos_token=eos_token,
             response_extract_pattern=response_extract_pattern,
         )
-
-    def format_user_message(self, message: str, system_message: Optional[str] = None):
-        messages = []
-        if system_message is not None:
-            assert "System" in self.role_message_template
-            messages.append({"role": "System", "content": system_message})
-        messages.append({"role": "User", "content": message})
-        return self.format_message(messages)
 
 
 if __name__ == "__main__":
@@ -482,7 +467,7 @@ if __name__ == "__main__":
     print(f"{'-' * 20}\n{extract_m22}\n{'-' * 20}")
 
     # example for using 'UserAssistantPromptTemplate'
-    user_assistant_format = UserAssistantPromptTemplate(
+    user_assistant_format = PromptTemplate.create_user_assistant_prompt_template(
         user_format="[INST] {MESSAGE} [/INST]",
         assistant_format="{MESSAGE}</s> ",
         bos_token="<s>",
@@ -490,5 +475,5 @@ if __name__ == "__main__":
         response_extract_pattern="[/INST]",
     )
 
-    m31 = user_assistant_format.format_user_message("Calculate the sum of 2 and 3.")
+    m31 = user_assistant_format.format_message({"role": "User", "content": "Calculate the sum of 2 and 3."})
     print(f"{'-' * 20}\n{m31}\n{'-' * 20}")
