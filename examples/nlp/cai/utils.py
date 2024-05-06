@@ -1,7 +1,8 @@
 import os
 from collections import defaultdict
 from multiprocessing import Pool
-from typing import List, Optional, Union, Dict, Tuple
+from typing import Dict, List, Optional, Tuple, Union
+
 import requests
 
 
@@ -16,14 +17,15 @@ def _pool_process_item(item_index: int, max_seq_length: int):
 
 
 def remove_long_dialogs(
-        input_file_path: str,
-        max_seq_length: int,
-        tokenizer_model: str,
-        tokenizer_library: str,
-        output_dir: str,
-        use_pool: bool,
+    input_file_path: str,
+    max_seq_length: int,
+    tokenizer_model: str,
+    tokenizer_library: str,
+    output_dir: str,
+    use_pool: bool,
 ):
     from tqdm import tqdm
+
     from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
     from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenizer
 
@@ -91,19 +93,19 @@ def remove_long_dialogs(
 
 
 def remote_inference(
-        prompt: Union[List[str], str],
-        port: int,
-        host: str,
-        temperature: Optional[float] = None,
-        greedy: Optional[bool] = None,
-        tokens_to_generate: Optional[int] = None,
-        min_tokens_to_generate: Optional[int] = None,
-        add_bos: Optional[bool] = None,
-        top_k: Optional[int] = None,
-        top_p: Optional[float] = None,
-        all_probs: Optional[bool] = None,
-        repetition_penalty: Optional[float] = None,
-        end_strings: Optional[Union[List[str], str]] = None,
+    prompt: Union[List[str], str],
+    port: int,
+    host: str,
+    temperature: Optional[float] = None,
+    greedy: Optional[bool] = None,
+    tokens_to_generate: Optional[int] = None,
+    min_tokens_to_generate: Optional[int] = None,
+    add_bos: Optional[bool] = None,
+    top_k: Optional[int] = None,
+    top_p: Optional[float] = None,
+    all_probs: Optional[bool] = None,
+    repetition_penalty: Optional[float] = None,
+    end_strings: Optional[Union[List[str], str]] = None,
 ):
     """
     @param prompt:
@@ -172,15 +174,15 @@ def remote_inference(
 
 
 def remote_inference_with_ngc(
-        api_key: str,
-        url: str,
-        model: str,
-        prompt: Optional[str] = None,
-        messages: Optional[List[dict]] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        seed: Optional[int] = None,
+    api_key: str,
+    url: str,
+    model: str,
+    prompt: Optional[str] = None,
+    messages: Optional[List[dict]] = None,
+    temperature: Optional[float] = None,
+    top_p: Optional[float] = None,
+    max_tokens: Optional[int] = None,
+    seed: Optional[int] = None,
 ):
     """
     This function is designed to interact with NVIDIA's GPU Cloud (NGC) to utilize a specific model hosted on the platform.
@@ -262,11 +264,13 @@ def remote_inference_with_ngc(
 
 
 class PromptTemplate:
-    def __init__(self,
-                 role_message_format: Dict[str, str],
-                 bos_token: Optional[str] = None,
-                 eos_token: Optional[str] = None,
-                 response_extract_pattern: Optional[str] = None):
+    def __init__(
+        self,
+        role_message_format: Dict[str, str],
+        bos_token: Optional[str] = None,
+        eos_token: Optional[str] = None,
+        response_extract_pattern: Optional[str] = None,
+    ):
         """
 
         @param role_message_format: dict of (key:role-name, value:role-message-format).
@@ -318,16 +322,16 @@ class PromptTemplate:
 
         assert all([isinstance(m, dict) for m in messages])
         assert all(["content" in m and "role" in m for m in messages])
-        assert all([m['role'] in self.roles for m in messages])
+        assert all([m["role"] in self.roles for m in messages])
 
         for i in range(1, len(messages)):
-            assert messages[i]['role'] != messages[i - 1]['role']
+            assert messages[i]["role"] != messages[i - 1]["role"]
 
         prompt = self.bos_token if self.bos_token is not None else ""
 
         for m in messages:
-            role = m['role']
-            content = m['content']
+            role = m["role"]
+            content = m["content"]
             message = self.role_message_template[role].format(MESSAGE=content)
             prompt += message
 
@@ -356,13 +360,15 @@ class PromptTemplate:
 
 
 class UserAssistantPromptTemplate(PromptTemplate):
-    def __init__(self,
-                 user_format: str,
-                 assistant_format: str,
-                 system_format: Optional[str] = None,
-                 bos_token: Optional[str] = None,
-                 eos_token: Optional[str] = None,
-                 response_extract_pattern: Optional[str] = None):
+    def __init__(
+        self,
+        user_format: str,
+        assistant_format: str,
+        system_format: Optional[str] = None,
+        bos_token: Optional[str] = None,
+        eos_token: Optional[str] = None,
+        response_extract_pattern: Optional[str] = None,
+    ):
         """
 
         @param user_format: user message format.
@@ -388,55 +394,57 @@ class UserAssistantPromptTemplate(PromptTemplate):
 
         role_message_format = {"user": user_format, "assistant": assistant_format}
         if system_format is not None:
-            role_message_format['system'] = system_format
+            role_message_format["system"] = system_format
 
         super().__init__(
             role_message_format,
             bos_token=bos_token,
             eos_token=eos_token,
-            response_extract_pattern=response_extract_pattern)
+            response_extract_pattern=response_extract_pattern,
+        )
 
     def format_user_message(self, message: str, system_message: Optional[str] = None):
         messages = []
         if system_message is not None:
-            assert 'system' in self.role_message_template
+            assert "system" in self.role_message_template
             messages.append({"role": "system", "content": system_message})
         messages.append({"role": "user", "content": message})
         return self.format_message(messages)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     extra_id_prompt_template = PromptTemplate(
         dict(
             System="<extra_id_0>System\n{MESSAGE}\n",
             User="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
-            Assistant="{MESSAGE}\n"
+            Assistant="{MESSAGE}\n",
         ),
         eos_token="<extra_id_1>",
-        response_extract_pattern="<extra_id_1>Assistant\n")
+        response_extract_pattern="<extra_id_1>Assistant\n",
+    )
 
     m11 = extra_id_prompt_template.format_message(
-        [
-            {'role': "System", 'content': ""},
-            {'role': "User", 'content': "Calculate the sum of 2 and 3."}
-        ])
+        [{"role": "System", "content": ""}, {"role": "User", "content": "Calculate the sum of 2 and 3."}]
+    )
     print(f"{'-' * 20}\n{m11}\n{'-' * 20}")
 
     m12 = extra_id_prompt_template.format_message(
         [
-            {'role': "System", 'content': ""},
-            {'role': "User", 'content': "Calculate the sum of 2 and 3."},
-            {'role': "Assistant", 'content': "The sum of 2 and 3 is 5."}
-        ])
+            {"role": "System", "content": ""},
+            {"role": "User", "content": "Calculate the sum of 2 and 3."},
+            {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+        ]
+    )
     print(f"{'-' * 20}\n{m12}\n{'-' * 20}")
 
     m13 = extra_id_prompt_template.format_message(
         [
-            {'role': "System", 'content': ""},
-            {'role': "User", 'content': "Calculate the sum of 2 and 3."},
-            {'role': "Assistant", 'content': "The sum of 2 and 3 is 5."},
-            {'role': "User", 'content': "Thank you! Could you also calculate the sum of 5 and 7?"},
-        ])
+            {"role": "System", "content": ""},
+            {"role": "User", "content": "Calculate the sum of 2 and 3."},
+            {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+            {"role": "User", "content": "Thank you! Could you also calculate the sum of 5 and 7?"},
+        ]
+    )
     print(f"{'-' * 20}\n{m13}\n{'-' * 20}")
 
     extract_m12 = extra_id_prompt_template.extract_response(m12)
@@ -444,32 +452,30 @@ if __name__ == '__main__':
 
     # mistral example:
     mistral_prompt_template = PromptTemplate(
-        dict(
-            User="[INST] {MESSAGE} [/INST]",
-            Assistant="{MESSAGE}</s> "
-        ),
+        dict(User="[INST] {MESSAGE} [/INST]", Assistant="{MESSAGE}</s> "),
         bos_token="<s>",
         eos_token="</s>",
-        response_extract_pattern="[/INST]")
-
-    m21 = mistral_prompt_template.format_message(
-        {'role': "User", 'content': "Calculate the sum of 2 and 3."}
+        response_extract_pattern="[/INST]",
     )
+
+    m21 = mistral_prompt_template.format_message({"role": "User", "content": "Calculate the sum of 2 and 3."})
     print(f"{'-' * 20}\n{m21}\n{'-' * 20}")
 
     m22 = mistral_prompt_template.format_message(
         [
-            {'role': "User", 'content': "Calculate the sum of 2 and 3."},
-            {'role': "Assistant", 'content': "The sum of 2 and 3 is 5."}
-        ])
+            {"role": "User", "content": "Calculate the sum of 2 and 3."},
+            {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+        ]
+    )
     print(f"{'-' * 20}\n{m22}\n{'-' * 20}")
 
     m23 = mistral_prompt_template.format_message(
         [
-            {'role': "User", 'content': "Calculate the sum of 2 and 3."},
-            {'role': "Assistant", 'content': "The sum of 2 and 3 is 5."},
-            {'role': "User", 'content': "Thank you! Could you also calculate the sum of 5 and 7?"},
-        ])
+            {"role": "User", "content": "Calculate the sum of 2 and 3."},
+            {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+            {"role": "User", "content": "Thank you! Could you also calculate the sum of 5 and 7?"},
+        ]
+    )
     print(f"{'-' * 20}\n{m23}\n{'-' * 20}")
 
     extract_m22 = mistral_prompt_template.extract_response(m22)
@@ -481,8 +487,8 @@ if __name__ == '__main__':
         assistant_format="{MESSAGE}</s> ",
         bos_token="<s>",
         eos_token="</s>",
-        response_extract_pattern="[/INST]")
+        response_extract_pattern="[/INST]",
+    )
 
     m31 = user_assistant_format.format_user_message("Calculate the sum of 2 and 3.")
     print(f"{'-' * 20}\n{m31}\n{'-' * 20}")
-
