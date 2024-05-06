@@ -1,6 +1,6 @@
 .. include:: /content/nemo.rsts
-.. role:: red
 
+.. _model-aligner-cai:
 
 Constitutional AI: Harmlessness from AI Feedback
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
