@@ -20,7 +20,7 @@ trainer:
     limit_val_batches: 1.0
     gradient_clip_val: 1.0
 
-	# Accelerate training times by accelerating inference stage using TRTLLM
+    # Accelerate training times by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
       #reshard: False # if True then reshard the model into TP only for inference
