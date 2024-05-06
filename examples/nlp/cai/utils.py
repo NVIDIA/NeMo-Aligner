@@ -392,9 +392,9 @@ class UserAssistantPromptTemplate(PromptTemplate):
         prompt = user_assistant_format.format_user_message("Calculate the sum of 2 and 3.")
         """
 
-        role_message_format = {"user": user_format, "assistant": assistant_format}
+        role_message_format = {"User": user_format, "Assistant": assistant_format}
         if system_format is not None:
-            role_message_format["system"] = system_format
+            role_message_format["System"] = system_format
 
         super().__init__(
             role_message_format,
@@ -406,9 +406,9 @@ class UserAssistantPromptTemplate(PromptTemplate):
     def format_user_message(self, message: str, system_message: Optional[str] = None):
         messages = []
         if system_message is not None:
-            assert "system" in self.role_message_template
-            messages.append({"role": "system", "content": system_message})
-        messages.append({"role": "user", "content": message})
+            assert "System" in self.role_message_template
+            messages.append({"role": "System", "content": system_message})
+        messages.append({"role": "User", "content": message})
         return self.format_message(messages)
 
 
