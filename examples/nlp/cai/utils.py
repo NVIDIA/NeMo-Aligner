@@ -491,7 +491,7 @@ if __name__ == "__main__":
 
     # example for using 'UserAssistantPromptTemplate'
     extra_id_user_assistant_format = UserAssistantPromptTemplate(
-        user_format="<extra_id_1>User\n{MESSAGE}\n",
+        user_format="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
         assistant_format="{MESSAGE}\n",
         system_format="<extra_id_0>System\n{MESSAGE}\n",
         system_default_message="",
