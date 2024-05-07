@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import threading
+import time
 from typing import Dict
 
 import numpy as np
@@ -33,7 +34,6 @@ from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor
 from nemo_aligner.utils.server_utils import lock_method, pad_input
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import apply_func_to_dict
-import time
 
 ENDPOINT_BIND_ADDRESS = "0.0.0.0"
 
@@ -243,7 +243,6 @@ class CriticServerTrainer:
 
     def run_training(self, tokens=None, returns=None, prev_values=None, mask=None):
         print(f"-----starting training {time.time()}--------")
-
 
         """assume that the batch is already padded
         """

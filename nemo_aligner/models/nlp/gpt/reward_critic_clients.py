@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from dataclasses import dataclass
 from functools import partial
 
 import numpy as np
 import torch
 from omegaconf import DictConfig
-import time
 
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
@@ -36,7 +36,6 @@ def get_future_result(future, *keys):
     """
     output = None if future is None else future.result()
     print(f"recv at {time.time()}")
-
 
     results = []
 
@@ -134,6 +133,7 @@ class RemoteGPTRMCriticClient:
         )
 
         import time
+
         print(f"send at {time.time()}")
 
         rm_future = None

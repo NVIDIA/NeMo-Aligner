@@ -19,6 +19,7 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import replace
 from functools import partial
 from typing import Iterator, List
@@ -333,6 +334,7 @@ def clear_memory():
 
 
 def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
+    # TODO(geshen): add something like this for the actor too
     """get a copy of the model states in CPU
     """
     cpu_dict = {}
@@ -347,6 +349,34 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
         cpu_dict = convert_to_amp_o2_format(cpu_dict)
 
     torch.cuda.synchronize()
+    return cpu_dict
+
+
+@torch.no_grad()
+def copy_model_states_to_cpu(model, cpu_dict=None, megatron_amp_O2=True, sync=True):
+    """NOTE: this mutates the input cpu_dict and for non tensors
+        it aliases the object
+    """
+    if cpu_dict is None:
+        cpu_dict = {}
+
+    for name, item in model.state_dict().items():
+        if isinstance(item, torch.Tensor):
+            if name not in cpu_dict:
+                # empty like has no pin_memory arg
+                cpu_dict[name] = torch.empty(
+                    item.size(), dtype=item.dtype, layout=item.layout, device="cpu", pin_memory=True
+                )
+            cpu_dict[name].copy_(item, non_blocking=False)
+        else:
+            cpu_dict[name] = deepcopy(item)
+
+    if megatron_amp_O2:
+        cpu_dict = convert_to_amp_o2_format(cpu_dict)
+
+    if sync:
+        torch.cuda.synchronize()
+
     return cpu_dict
 
 
@@ -454,3 +484,18 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
         tuple(model_param.shape) == reference_param.local_shape
     ), f"Model shape ({tuple(model_param.shape)} does not match reference shape ({reference_param.local_shape})"
     return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param, dtype=model_param.dtype)
+
+
+@torch.no_grad()
+def copy_model_weights_to_cpu(model, cpu_dict=None):
+    if cpu_dict is None:
+        cpu_dict = {}
+
+    for name, item in model.state_dict().items():
+        if isinstance(item, torch.Tensor):
+            if not (name in cpu_dict):
+                cpu_dict[name] = torch.empty(
+                    item.size(), dtype=item.dtype, layout=item.layout, device="cpu", pin_memory=True
+                )
+            cpu_dict[name].copy_(item, non_blocking=False)
+    return cpu_dict

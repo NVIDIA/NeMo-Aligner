@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from contextlib import nullcontext
 from enum import Enum
 
@@ -33,7 +34,8 @@ from nemo_aligner.models.alignable_interface import CriticModelInterface
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import set_sync_funcs
-from nemo_aligner.utils.utils import masked_mean, offload_distributed_adam, swap_dict
+from nemo_aligner.utils.utils import copy_model_states_to_cpu, masked_mean, offload_distributed_adam
+
 
 class StateDictState(Enum):
     """Enum to determine which model state is loaded
@@ -46,14 +48,15 @@ class StateDictState(Enum):
 class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
-        import time
+
         self.timestamp = time.time()
 
-        # filled by the examples script
-        self.rm_state_dict = None
+        # must be populated by the examples script
+        self.rm_state_dict_cpu = None
 
-        # for the critic states on cpu
-        self.cpu_state_dict = None
+        self.critic_state_dict_cpu = copy_model_states_to_cpu(
+            self, cpu_dict=None, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
+        )
 
         # for distributed adam offload
         self.distributed_adam_offload_manager = None
@@ -199,11 +202,11 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         self.distributed_adam_offload_manager = None
 
     def infer_rm_critic(self, *args, **kwargs):
-        import time
+
         tic = time.time()
         print(f"infer_rm_critic at {tic}, s since last: {tic-self.timestamp}")
         self.timestamp = tic
-        
+
         call_order = (self._infer_rm, self._infer_critic)
 
         original_state = self.loaded_state_dict
@@ -240,22 +243,26 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def _load_critic(self):
         if self.loaded_state_dict == StateDictState.REWARD:
-            # no need to put the RM back to cpu, we already have it
-            swap_dict(self, self.cpu_state_dict, offload_onto_cpu=False, megatron_amp_O2=self.megatron_amp_O2)
+            start_time = time.time()
+            print("### LOADING CRITIC")
+            self.load_state_dict(self.critic_state_dict_cpu)
+            print("### DONE LOADING CRITIC", time.time() - start_time)
 
             self.set_output_sequence_flag(True)
-
             self.loaded_state_dict = StateDictState.CRITIC
 
     def _load_rm(self):
         if self.loaded_state_dict == StateDictState.CRITIC:
-            self.cpu_state_dict = swap_dict(self, self.rm_state_dict, megatron_amp_O2=self.megatron_amp_O2)
+            start_time = time.time()
+            print("### LOADING RM")
+            self.load_state_dict(self.rm_state_dict_cpu)
+            print("### DONE LOADING RM", time.time() - start_time)
 
             self.set_output_sequence_flag(False)
             self.loaded_state_dict = StateDictState.REWARD
 
     def _infer_critic(self, *args, **kwargs):
-        import time
+
         tic = time.time()
         self._load_critic()
         toc = time.time()
@@ -263,10 +270,15 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         return self.infer(*args, **kwargs)
 
     def _infer_rm(self, *args, **kwargs):
-        import time
+
         tic = time.time()
         self._load_rm()
         toc = time.time()
         print(f"    _load_rm {toc-tic}")
 
         return self.infer(*args, **kwargs)
+
+    def finish_training(self):
+        self.critic_state_dict_cpu = copy_model_states_to_cpu(
+            self, cpu_dict=self.critic_state_dict_cpu, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
+        )

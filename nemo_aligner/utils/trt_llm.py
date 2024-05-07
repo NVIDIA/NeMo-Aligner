@@ -4,10 +4,9 @@ import torch
 from nemo.export import TensorRTLLM
 from nemo.export.trt_llm.nemo.nemo_ckpt_convert import build_tokenizer
 from nemo.export.trt_llm.nemo_utils import to_word_list_format
+from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
-
-from nemo.utils import logging
 
 
 class GPTGenerateTRTLLM:
@@ -87,18 +86,19 @@ class GPTGenerateTRTLLM:
 
         max_id = torch.max(output_ids).item()
         if max_id > self.tokenizer.vocab_size:
-            logging.warning(f"Generated token id greater than vocab size! \
-                Generated token: {max_id}")
-            output_ids = torch.clamp(
-                        output_ids, max=self.tokenizer.vocab_size - 1)
+            logging.warning(
+                f"Generated token id greater than vocab size! \
+                Generated token: {max_id}"
+            )
+            output_ids = torch.clamp(output_ids, max=self.tokenizer.vocab_size - 1)
 
         min_id = torch.min(output_ids).item()
         if min_id < 0:
-            logging.warning(f"Generated token id less than vocab size! \
-                Generated token: {min_id}")
-            output_ids = torch.clamp(
-                        output_ids, max=self.tokenizer.vocab_size - 1)
-
+            logging.warning(
+                f"Generated token id less than vocab size! \
+                Generated token: {min_id}"
+            )
+            output_ids = torch.clamp(output_ids, max=self.tokenizer.vocab_size - 1)
 
         sentences = [self.tokenizer.ids_to_text(output) for output in output_ids.tolist()]
         output = {
