@@ -65,6 +65,12 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         self.to_offload_adam_states = self.cfg.get("offload_adam_states")
         self.clip_val = self.cfg.get("loss_clip_val")
 
+    def on_load_checkpoint(self, *args, **kwargs):
+        super().on_load_checkpoint(*args, **kwargs)
+        self.critic_state_dict_cpu = copy_model_states_to_cpu(
+            self, cpu_dict=None, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
+        )
+
     def prepare_for_inference(self):
         super().prepare_for_inference()
         self.offload_adam_states()
@@ -244,7 +250,6 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def _load_critic(self):
         if self.loaded_state_dict == StateDictState.REWARD:
             start_time = time.time()
-            print("### LOADING CRITIC")
             self.load_state_dict(self.critic_state_dict_cpu)
             print("### DONE LOADING CRITIC", time.time() - start_time)
 
@@ -254,7 +259,6 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def _load_rm(self):
         if self.loaded_state_dict == StateDictState.CRITIC:
             start_time = time.time()
-            print("### LOADING RM")
             self.load_state_dict(self.rm_state_dict_cpu)
             print("### DONE LOADING RM", time.time() - start_time)
 
