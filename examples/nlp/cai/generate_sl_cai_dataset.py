@@ -67,7 +67,9 @@ def generate_cai_batch_sample(
 
     # get initial response
     print(f"\nGenerating initial response for {num_prompts} prompts...")
-    initial_prompt_batch = [few_shot_prompts + [{"content": p, "role": prompt_template.user_role_name}] for p in prompt_list]
+    initial_prompt_batch = [
+        few_shot_prompts + [{"content": p, "role": prompt_template.user_role_name}] for p in prompt_list
+    ]
 
     chat_batch = model_remote_inference(
         [prompt_template.format_messages(p) for p in initial_prompt_batch],
