@@ -124,11 +124,10 @@ def remote_inference(
     @return:
     """
     import json
-
     import requests
 
     assert port >= 0
-    assert prompt is not None and isinstance(prompt, (str, list))
+    assert isinstance(prompt, (str, list))
     if not isinstance(prompt, list):
         prompt = [prompt]
     assert all(isinstance(p, str) for p in prompt)
@@ -306,23 +305,22 @@ class PromptTemplate:
         )
         """
         assert role_message_format is not None and isinstance(role_message_format, dict)
-        assert len(set(role_message_format.keys())) == len(role_message_format)
+        assert all(PromptTemplate.is_valid_role_message_template(message_template)
+                   for message_template in role_message_format.values())
 
-        self.roles = set(role_message_format.keys())
         self.role_message_template = role_message_format.copy()
         self.bos_token = bos_token
         self.eos_token = eos_token
         self.response_extract_pattern = response_extract_pattern
 
-    def format_message(self, messages: Union[List[dict], dict]):
-        assert messages is not None
+    def format_messages(self, messages: Union[List[dict], dict]):
         assert isinstance(messages, (list, dict))
         if not isinstance(messages, list):
             messages = [messages]
 
         assert all([isinstance(m, dict) for m in messages])
         assert all(["content" in m and "role" in m for m in messages])
-        assert all([m["role"] in self.roles for m in messages])
+        assert all([m["role"] in self.role_message_template for m in messages])
 
         for i in range(1, len(messages)):
             assert messages[i]["role"] != messages[i - 1]["role"]
@@ -358,8 +356,29 @@ class PromptTemplate:
 
         return response
 
+    @staticmethod
+    def is_valid_role_message_template(message_template: str):
+        # checks for the presence of exactly one "{MESSAGE}" placeholder in the template
+        return message_template.count("{MESSAGE}") == 1
+
 
 class UserAssistantPromptTemplate(PromptTemplate):
+    _user_role_name = "User"
+    _assistant_role_name = "Assistant"
+    _system_role_name = "System"
+
+    @property
+    def user_role_name(self):
+        return UserAssistantPromptTemplate._user_role_name
+
+    @property
+    def assistant_role_name(self):
+        return UserAssistantPromptTemplate._assistant_role_name
+
+    @property
+    def system_role_name(self):
+        return UserAssistantPromptTemplate._system_role_name
+
     def __init__(
         self,
         user_format: str,
@@ -391,9 +410,14 @@ class UserAssistantPromptTemplate(PromptTemplate):
         )
         """
 
-        role_message_format = {"User": user_format, "Assistant": assistant_format}
+        role_message_format = {
+            self.user_role_name: user_format,
+            self.assistant_role_name: assistant_format
+        }
+
+        # optionally, add system message format
         if system_format is not None:
-            role_message_format["System"] = system_format
+            role_message_format[self.system_role_name] = system_format
         else:
             assert system_default_message is None
 
@@ -406,18 +430,21 @@ class UserAssistantPromptTemplate(PromptTemplate):
 
         self.system_default_message = system_default_message
 
-    def format_message(self, messages: Union[List[dict], dict]):
+    def has_system_role(self):
+        return self.system_role_name in self.role_message_template
+
+    def format_messages(self, messages: Union[List[dict], dict]):
         assert messages is not None
         assert isinstance(messages, (list, dict))
         if not isinstance(messages, list):
             messages = [messages]
 
-        if self.system_default_message is not None and "System" in self.roles:
+        if self.system_default_message is not None and self.has_system_role():
             # NOTE: It is assumed that if a system message exists, it should be the first message.
-            if messages[0]["role"] != "System":
-                messages = [{"content": self.system_default_message, "role": "System"}] + messages
+            if messages[0]["role"] != self.system_role_name:
+                messages = [{"content": self.system_default_message, "role": self.system_role_name}] + messages
 
-        return super().format_message(messages)
+        return super().format_messages(messages)
 
 
 if __name__ == "__main__":
@@ -431,12 +458,12 @@ if __name__ == "__main__":
         response_extract_pattern="<extra_id_1>Assistant\n",
     )
 
-    m11 = extra_id_prompt_template.format_message(
+    m11 = extra_id_prompt_template.format_messages(
         [{"role": "System", "content": ""}, {"role": "User", "content": "Calculate the sum of 2 and 3."}]
     )
     print(f"{'-' * 20}\n{m11}\n{'-' * 20}")
 
-    m12 = extra_id_prompt_template.format_message(
+    m12 = extra_id_prompt_template.format_messages(
         [
             {"role": "System", "content": ""},
             {"role": "User", "content": "Calculate the sum of 2 and 3."},
@@ -445,7 +472,7 @@ if __name__ == "__main__":
     )
     print(f"{'-' * 20}\n{m12}\n{'-' * 20}")
 
-    m13 = extra_id_prompt_template.format_message(
+    m13 = extra_id_prompt_template.format_messages(
         [
             {"role": "System", "content": ""},
             {"role": "User", "content": "Calculate the sum of 2 and 3."},
@@ -466,10 +493,10 @@ if __name__ == "__main__":
         response_extract_pattern="[/INST]",
     )
 
-    m21 = mistral_prompt_template.format_message({"role": "User", "content": "Calculate the sum of 2 and 3."})
+    m21 = mistral_prompt_template.format_messages({"role": "User", "content": "Calculate the sum of 2 and 3."})
     print(f"{'-' * 20}\n{m21}\n{'-' * 20}")
 
-    m22 = mistral_prompt_template.format_message(
+    m22 = mistral_prompt_template.format_messages(
         [
             {"role": "User", "content": "Calculate the sum of 2 and 3."},
             {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
@@ -477,7 +504,7 @@ if __name__ == "__main__":
     )
     print(f"{'-' * 20}\n{m22}\n{'-' * 20}")
 
-    m23 = mistral_prompt_template.format_message(
+    m23 = mistral_prompt_template.format_messages(
         [
             {"role": "User", "content": "Calculate the sum of 2 and 3."},
             {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
@@ -499,7 +526,7 @@ if __name__ == "__main__":
         response_extract_pattern="<extra_id_1>Assistant\n",
     )
 
-    m31 = extra_id_user_assistant_format.format_message({"role": "User", "content": "Calculate the sum of 2 and 3."})
+    m31 = extra_id_user_assistant_format.format_messages({"role": "User", "content": "Calculate the sum of 2 and 3."})
     print(f"{'-' * 20}\n{m31}\n{'-' * 20}")
 
     mistral_user_assistant_format = UserAssistantPromptTemplate(
@@ -510,5 +537,5 @@ if __name__ == "__main__":
         response_extract_pattern="[/INST]",
     )
 
-    m41 = mistral_user_assistant_format.format_message({"role": "User", "content": "Calculate the sum of 2 and 3."})
+    m41 = mistral_user_assistant_format.format_messages({"role": "User", "content": "Calculate the sum of 2 and 3."})
     print(f"{'-' * 20}\n{m41}\n{'-' * 20}")

@@ -70,7 +70,7 @@ def generate_cai_batch_sample(
     initial_prompt_batch = [few_shot_prompts + [{"content": p, "role": "User"}] for p in prompt_list]
 
     chat_batch = model_remote_inference(
-        [prompt_template.format_message(p) for p in initial_prompt_batch],
+        [prompt_template.format_messages(p) for p in initial_prompt_batch],
         inference_config=inference_config,
         eos_token=prompt_template.eos_token,
     )
@@ -89,7 +89,7 @@ def generate_cai_batch_sample(
     ]
 
     chat_batch = model_remote_inference(
-        [prompt_template.format_message(p) for p in critique_request_batch],
+        [prompt_template.format_messages(p) for p in critique_request_batch],
         inference_config=inference_config,
         eos_token=prompt_template.eos_token,
     )
@@ -107,7 +107,7 @@ def generate_cai_batch_sample(
     ]
 
     chat_batch = model_remote_inference(
-        [prompt_template.format_message(p) for p in revision_request_prompt_batch],
+        [prompt_template.format_messages(p) for p in revision_request_prompt_batch],
         inference_config=inference_config,
         eos_token=prompt_template.eos_token,
     )
@@ -463,19 +463,20 @@ def prepare_args():
         }
     }
 
+    def _process_string(s: str):
+        return s.encode('utf-8').decode('unicode_escape')
+
     prompt_template_config = {
-        k: v
+        k: _process_string(v) if v is not None else v
         for k, v in args_dict.items()
-        if k
-        in {
+        if k in {
             "user_format",
             "assistant_format",
             "system_format",
             "system_default_message",
             "bos_token",
             "eos_token",
-            "response_extract_pattern",
-        }
+            "response_extract_pattern"}
     }
 
     return args, inference_config, prompt_template_config
