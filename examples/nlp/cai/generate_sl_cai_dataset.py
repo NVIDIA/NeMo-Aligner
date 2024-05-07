@@ -464,19 +464,21 @@ def prepare_args():
     }
 
     def _process_string(s: str):
-        return s.encode('utf-8').decode('unicode_escape')
+        return s.encode("utf-8").decode("unicode_escape")
 
     prompt_template_config = {
         k: _process_string(v) if v is not None else v
         for k, v in args_dict.items()
-        if k in {
+        if k
+        in {
             "user_format",
             "assistant_format",
             "system_format",
             "system_default_message",
             "bos_token",
             "eos_token",
-            "response_extract_pattern"}
+            "response_extract_pattern",
+        }
     }
 
     return args, inference_config, prompt_template_config

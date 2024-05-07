@@ -305,8 +305,10 @@ class PromptTemplate:
         )
         """
         assert role_message_format is not None and isinstance(role_message_format, dict)
-        assert all(PromptTemplate.is_valid_role_message_template(message_template)
-                   for message_template in role_message_format.values())
+        assert all(
+            PromptTemplate.is_valid_role_message_template(message_template)
+            for message_template in role_message_format.values()
+        )
 
         self.role_message_template = role_message_format.copy()
         self.bos_token = bos_token
@@ -410,10 +412,7 @@ class UserAssistantPromptTemplate(PromptTemplate):
         )
         """
 
-        role_message_format = {
-            self.user_role_name: user_format,
-            self.assistant_role_name: assistant_format
-        }
+        role_message_format = {self.user_role_name: user_format, self.assistant_role_name: assistant_format}
 
         # optionally, add system message format
         if system_format is not None:
