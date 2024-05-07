@@ -67,7 +67,7 @@ def generate_cai_batch_sample(
 
     # get initial response
     print(f"\nGenerating initial response for {num_prompts} prompts...")
-    initial_prompt_batch = [few_shot_prompts + [{"content": p, "role": "User"}] for p in prompt_list]
+    initial_prompt_batch = [few_shot_prompts + [{"content": p, "role": prompt_template.user_role_name}] for p in prompt_list]
 
     chat_batch = model_remote_inference(
         [prompt_template.format_messages(p) for p in initial_prompt_batch],
@@ -83,8 +83,8 @@ def generate_cai_batch_sample(
     print(f"\nGenerating a critique for {num_prompts} initial responses...")
     critique_request_batch = [
         initial_prompt_batch[i]
-        + [{"content": initial_response_batch[i], "role": "Assistant"}]
-        + [{"content": cr_p, "role": "User"}]
+        + [{"content": initial_response_batch[i], "role": prompt_template.assistant_role_name}]
+        + [{"content": cr_p, "role": prompt_template.user_role_name}]
         for i, cr_p in enumerate(critique_list)
     ]
 
@@ -101,8 +101,8 @@ def generate_cai_batch_sample(
     print(f"\nGenerating {num_prompts} revisions ...")
     revision_request_prompt_batch = [
         critique_request_batch[i]
-        + [{"content": critique_response_batch[i], "role": "Assistant"}]
-        + [{"content": rev_p, "role": "User"}]
+        + [{"content": critique_response_batch[i], "role": prompt_template.assistant_role_name}]
+        + [{"content": rev_p, "role": prompt_template.user_role_name}]
         for i, rev_p in enumerate(revision_list)
     ]
 
