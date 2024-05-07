@@ -93,7 +93,6 @@ def main(cfg) -> None:
         scheduler=scheduler,
         logger=logger,
         ckpt_callback=ckpt_callback,
-        gbs=cfg.model.global_batch_size,
     )
 
     if custom_trainer_state_dict is not None:

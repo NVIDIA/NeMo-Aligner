@@ -225,7 +225,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         outputs = []
         for fn in call_order:
             tic = time.time()
-            output, exceeded = fn(*args, **kwargs)
+            output = fn(*args, **kwargs)
             toc = time.time()
             print(f"infer call took {toc-tic}")
             outputs.append(output)
@@ -234,9 +234,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             # reverse the output back
             outputs = reversed(outputs)
 
-        # always return rewards, value, exceeded
-        print("------------------")
-        return (*outputs, exceeded)
+        return outputs
 
     def set_output_sequence_flag(self, value_to_set):
         if isinstance(self.model, Float16Module):

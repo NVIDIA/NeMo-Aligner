@@ -26,28 +26,19 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.server_utils import decode_bytes_ndarray, lock_method, pad_input
 
 
-def run_rm_or_critic_inference(infer_fn, inputs):
-    """run the infer function for either the critic or the rm
-    """
+def process_inference_request(inputs, pad_to):
     sentences = inputs.pop("sentences", None)
     if sentences is not None:
         sentences = decode_bytes_ndarray(sentences)
     tokens = inputs.pop("tokens", None)
 
     sequence_lengths = inputs.pop("sequence_lengths", None)
-    add_EOS = inputs.pop("add_EOS", None)
 
     assert sentences is not None or tokens is not None, "Both sentences and tokens cannot be None."
 
-    dp_size = parallel_state.get_data_parallel_world_size()
-
-    # Ensure that the batch size is a multiple of the data parallel size. Otherwise, pad it.
-    sentences, extra_sentences = pad_input(sentences, dp_size)
-    tokens, extra_tokens = pad_input(tokens, dp_size)
-    sequence_lengths, extra_sequence_lengths = pad_input(sequence_lengths, dp_size)
-
-    if add_EOS is not None:
-        add_EOS = add_EOS[0]
+    sentences, extra_sentences = pad_input(sentences, pad_to)
+    tokens, extra_tokens = pad_input(tokens, pad_to)
+    sequence_lengths, extra_sequence_lengths = pad_input(sequence_lengths, pad_to)
 
     inputs = sentences if sentences is not None else tokens
     extra = extra_sentences if sentences is not None else extra_tokens
@@ -55,8 +46,12 @@ def run_rm_or_critic_inference(infer_fn, inputs):
         assert len(inputs) == len(sequence_lengths)
         assert extra_sequence_lengths == extra
 
+    return {"inputs": inputs, "sequence_length": sequence_lengths}, extra
+
+
+def run_rm_or_critic_inference(infer_fn, inputs, extra):
     try:
-        *list_outputs, exceeded = infer_fn(inputs=inputs, sequence_length=sequence_lengths, add_EOS=add_EOS)
+        list_outputs = infer_fn(inputs)
 
         processed_outputs = []
 
@@ -67,12 +62,10 @@ def run_rm_or_critic_inference(infer_fn, inputs):
 
             processed_outputs.append(output.cpu().numpy())
 
-        exceeded = exceeded[: len(exceeded) - extra]
-
     except RuntimeError as e:
         raise PyTritonUnrecoverableError(f"Fatal error occurred - no further inferences possible. {e}") from e
 
-    return (*processed_outputs, np.array(exceeded, dtype=np.int32).reshape(-1, 1))
+    return processed_outputs
 
 
 class RewardModelCallable:
@@ -86,10 +79,7 @@ class RewardModelCallable:
             Tensor(name="sequence_lengths", shape=(-1,), dtype=np.int64, optional=True),
             Tensor(name="add_EOS", shape=(1,), dtype=np.bool_, optional=True),
         )
-        self.outputs = (
-            Tensor(name="rewards", shape=(1,), dtype=np.float32),
-            Tensor(name="exceeded", shape=(1,), dtype=np.int32),
-        )
+        self.outputs = (Tensor(name="rewards", shape=(1,), dtype=np.float32),)
 
     @batch
     @lock_method("self.lock")
@@ -97,10 +87,9 @@ class RewardModelCallable:
         choice = ServerSignal.FORWARD.cuda()
         torch.distributed.broadcast(choice, 0)
 
-        rewards, exceeded = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
+        rewards = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
 
         output_dict = {
             "rewards": rewards,
-            "exceeded": exceeded,
         }
         return output_dict

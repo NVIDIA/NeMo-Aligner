@@ -19,6 +19,11 @@ trainer:
     max_steps: 10000
     gradient_clip_val: 1.0
 
+    gbs: ${model.global_batch_size}
+    forward_mbs: ${model.forward_mbs}
+
+    max_queue_delay_microseconds: 2000
+
   # do not change these trainer args
   logger: False # logger provided by exp_manager
   enable_checkpointing: False

@@ -354,93 +354,41 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         finish_validation_step(self)
 
     def infer(
-        self,
-        inputs: Union[List[str], List[List[int]]] = None,
-        sequence_length: List[int] = None,
-        add_EOS: bool = False,
+        self, inputs: Union[List[str], torch.Tensor, List[dict]],
     ):
-        tokenizer = self.tokenizer
-        max_seq_length = self.cfg.encoder_seq_length
+        if isinstance(inputs, tuple):
+            context_tokens_tensor, context_length_tensor = inputs
+        else:
+            raise NotImplementedError("string inputs not yet supported")
 
-        exceeded = None
-        context_tokens_tensor = None
-        context_length_tensor = None
-        if torch.distributed.get_rank() == 0:
-            if sequence_length is not None:
-                exceeded = [False for _ in range(len(inputs))]
-                context_tokens_tensor = torch.tensor(inputs).cuda()
-                context_length_tensor = torch.tensor(sequence_length).cuda()
-            else:
-                context_tokens_tensor, context_length_tensor, exceeded = tokenize_batch(
-                    tokenizer, inputs, max_seq_length, False, add_EOS=add_EOS
-                )
-            if context_length_tensor.dim() == 1:
-                context_length_tensor = context_length_tensor.unsqueeze(-1)
+        print("#### shape", context_tokens_tensor.size(), torch.distributed.get_rank())
 
-        context_length_tensor = broadcast_2d_tensor(context_length_tensor, src=0, group=None, dtype=torch.int64)
-        if context_length_tensor.dim() == 2:
-            context_length_tensor = context_length_tensor.squeeze(-1)
-
-        context_tokens_tensor = broadcast_2d_tensor(context_tokens_tensor, src=0, group=None, dtype=torch.int64)
-
-        # Select subset of data needed for this rank.
-        dp_size = parallel_state.get_data_parallel_world_size()
-        dp_rank = parallel_state.get_data_parallel_rank()
-        context_length_tensor = context_length_tensor.chunk(dp_size)[dp_rank]
-        context_tokens_tensor = context_tokens_tensor.chunk(dp_size)[dp_rank]
-
+        inference_batch_size, sequence_length = context_tokens_tensor.size()
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
             context_tokens_tensor,
-            tokenizer.eos_id,
+            self.tokenizer.eos_id,
             self.cfg.get("reset_position_ids", False),
             self.cfg.get("reset_attention_mask", False),
             self.cfg.get("eod_mask_loss", False),
         )
+        attention_mask = attention_mask.expand(inference_batch_size, -1, -1, -1)
+        inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask]
 
-        # TODO: maybe cut this?
-        input_batch_size = context_tokens_tensor.shape[0]
-        sequence_length = context_tokens_tensor.shape[1]
+        num_microbatches = divide(inference_batch_size, self.forward_mbs)
+        data_iter = get_iterator_k_split(inputs, num_microbatches)
 
-        attention_mask_repeat = torch.concat([attention_mask for _ in range(input_batch_size)])
-
-        inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat]
-        divisible_batch_size = (input_batch_size // self.forward_mbs) * self.forward_mbs
-        print(f"    divisible_batch_size {divisible_batch_size} input_batch_size {input_batch_size}")
-        rewards = None
-        if divisible_batch_size > 0:
-            inputs_divisible = [item[:divisible_batch_size] for item in inputs]
-            num_microbatches = divide(divisible_batch_size, self.forward_mbs)
-            data_iter = get_iterator_k_split(inputs_divisible, num_microbatches)
-
-            rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches,)
-
-        remainder_rewards = None
-        if divisible_batch_size != input_batch_size:
-            remainder_batch = [item[divisible_batch_size:] for item in inputs]
-            data_iter = get_iterator_k_split(remainder_batch, 1)
-            remainder_rewards = self.forward_step(
-                data_iter, input_batch_size - divisible_batch_size, sequence_length, 1,
-            )
+        with print_timer("forward step"):
+            rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches)
 
         if parallel_state.is_pipeline_last_stage():
-            if rewards:
-                if remainder_rewards:
-                    rewards += remainder_rewards
-                rewards = torch.cat(rewards)
-            else:
-                rewards = torch.cat(remainder_rewards)
+            rewards = torch.cat(rewards)
 
             # Standardize values to subtract a bias.
             if self.enable_standardization:
                 rewards = (rewards - self.rew_mean) / self.rew_std
 
         rewards = broadcast_2d_tensor_within_pp(rewards)
-
-        rewards_list = gather_tensor(
-            rewards, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()
-        )
-
-        return rewards_list, exceeded
+        return rewards
 
     def forward_step(self, data_iter, micro_batch_size, sequence_length, num_microbatches):
         set_sync_funcs(self, forward_only=True)
