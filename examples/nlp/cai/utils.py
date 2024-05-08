@@ -1,5 +1,6 @@
 import os
 from collections import defaultdict
+from enum import Enum
 from multiprocessing import Pool
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -337,6 +338,16 @@ class PromptTemplate:
 
         return prompt
 
+    def create_message(self, role: str, content: str):
+        """
+        Creates a single dictionary item with provided role and content.
+        @param role_name: role name
+        @param content:message content
+        @return:
+        """
+        assert role in self.role_message_template
+        return {"role": role, "content": content}
+
     def extract_response(self, message: str):
         assert self.response_extract_pattern is not None
         message = message.strip()
@@ -365,21 +376,10 @@ class PromptTemplate:
 
 
 class UserAssistantPromptTemplate(PromptTemplate):
-    _user_role_name = "User"
-    _assistant_role_name = "Assistant"
-    _system_role_name = "System"
-
-    @property
-    def user_role_name(self):
-        return UserAssistantPromptTemplate._user_role_name
-
-    @property
-    def assistant_role_name(self):
-        return UserAssistantPromptTemplate._assistant_role_name
-
-    @property
-    def system_role_name(self):
-        return UserAssistantPromptTemplate._system_role_name
+    class Role:
+        User = "User"
+        Assistant = "Assistant"
+        System = "System"
 
     def __init__(
         self,
@@ -411,12 +411,12 @@ class UserAssistantPromptTemplate(PromptTemplate):
             response_extract_pattern="[/INST]"
         )
         """
-
-        role_message_format = {self.user_role_name: user_format, self.assistant_role_name: assistant_format}
+        role_message_format = {UserAssistantPromptTemplate.Role.User: user_format,
+                               UserAssistantPromptTemplate.Role.Assistant: assistant_format}
 
         # optionally, add system message format
         if system_format is not None:
-            role_message_format[self.system_role_name] = system_format
+            role_message_format[UserAssistantPromptTemplate.Role.System] = system_format
         else:
             assert system_default_message is None
 
@@ -430,7 +430,7 @@ class UserAssistantPromptTemplate(PromptTemplate):
         self.system_default_message = system_default_message
 
     def has_system_role(self):
-        return self.system_role_name in self.role_message_template
+        return UserAssistantPromptTemplate.Role.System in self.role_message_template
 
     def format_messages(self, messages: Union[List[dict], dict]):
         assert messages is not None
@@ -440,10 +440,21 @@ class UserAssistantPromptTemplate(PromptTemplate):
 
         if self.system_default_message is not None and self.has_system_role():
             # NOTE: It is assumed that if a system message exists, it should be the first message.
-            if messages[0]["role"] != self.system_role_name:
-                messages = [{"content": self.system_default_message, "role": self.system_role_name}] + messages
+            if messages[0]["role"] != UserAssistantPromptTemplate.Role.System:
+                messages = [{"content": self.system_default_message,
+                             "role": UserAssistantPromptTemplate.Role.System}
+                            ] + messages
 
         return super().format_messages(messages)
+
+    def create_user_message(self, content: str):
+        return self.create_message(role=UserAssistantPromptTemplate.Role.User, content=content)
+
+    def create_assistant_message(self, content: str):
+        return self.create_message(role=UserAssistantPromptTemplate.Role.Assistant, content=content)
+
+    def create_system_message(self, content: str):
+        return self.create_message(role=UserAssistantPromptTemplate.Role.System, content=content)
 
 
 if __name__ == "__main__":
@@ -458,7 +469,10 @@ if __name__ == "__main__":
     )
 
     m11 = extra_id_prompt_template.format_messages(
-        [{"role": "System", "content": ""}, {"role": "User", "content": "Calculate the sum of 2 and 3."}]
+        [
+            {"role": "System", "content": ""},
+            {"role": "User", "content": "Calculate the sum of 2 and 3."}
+        ]
     )
     print(f"{'-' * 20}\n{m11}\n{'-' * 20}")
 
@@ -525,8 +539,15 @@ if __name__ == "__main__":
         response_extract_pattern="<extra_id_1>Assistant\n",
     )
 
-    m31 = extra_id_user_assistant_format.format_messages({"role": "User", "content": "Calculate the sum of 2 and 3."})
+    m31 = extra_id_user_assistant_format.format_messages(
+        {"role": UserAssistantPromptTemplate.Role.User, "content": "Calculate the sum of 2 and 3."}
+    )
     print(f"{'-' * 20}\n{m31}\n{'-' * 20}")
+
+    m32 = extra_id_user_assistant_format.format_messages(
+        extra_id_user_assistant_format.create_user_message("Calculate the sum of 2 and 3.")
+    )
+    print(f"{'-' * 20}\n{m32}\n{'-' * 20}")
 
     mistral_user_assistant_format = UserAssistantPromptTemplate(
         user_format="[INST] {MESSAGE} [/INST]",
@@ -536,5 +557,11 @@ if __name__ == "__main__":
         response_extract_pattern="[/INST]",
     )
 
-    m41 = mistral_user_assistant_format.format_messages({"role": "User", "content": "Calculate the sum of 2 and 3."})
+    m41 = mistral_user_assistant_format.format_messages(
+        {"role": UserAssistantPromptTemplate.Role.User, "content": "Calculate the sum of 2 and 3."}
+    )
     print(f"{'-' * 20}\n{m41}\n{'-' * 20}")
+
+    m42 = mistral_user_assistant_format.format_messages(
+        mistral_user_assistant_format.create_user_message("Calculate the sum of 2 and 3."))
+    print(f"{'-' * 20}\n{m42}\n{'-' * 20}")
