@@ -53,7 +53,7 @@ def main(
                 }
                 all_data.append(data_record)
             for item in all_data:
-                f.write(json.dumps(all_data, ensure_ascii=False) + "\n")
+                f.write(json.dumps(item, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":
