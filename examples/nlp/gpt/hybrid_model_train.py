@@ -19,6 +19,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from itertools import chain
 
 import torch
 import torch.multiprocessing as mp
@@ -61,6 +62,18 @@ OmegaConf.register_new_resolver("not", lambda x: not x)
 
 mp.set_start_method("spawn", force=True)
 
+class DatasetLoader:
+
+    def __init__(self, dictionary):
+        # no need to shuffle it because the dataloader does
+        self.paths = list(sorted(chain.from_iterable(dictionary.values())))
+    
+    def __getitem__(self, idx):
+        return torch.load(self.paths[idx])
+    
+    def __len__(self):
+        return len(self.paths)
+
 
 def process_data_id(item):
     output = item.pop("data_id").split("@")
@@ -76,17 +89,41 @@ def process_data_id(item):
     return item
 
 
-def load_data(path_or_dir):
+def parse_filename(filename, start_string):
+    # Define the regex pattern to capture data ID and replica ID
+    pattern = start_string + r"_(\d+)@(\d+)"
+
+    # Search for the pattern in the filename
+    match = re.search(pattern, filename)
+
+    if match:
+        # Extract the data ID and replica ID from the matched groups
+        data_id = match.group(1)
+        replica_id = match.group(2)
+        return int(data_id), int(replica_id)
+    else:
+        # Return None if no match is found
+        return None
+
+
+def get_paths(path_or_dir):
     path = Path(path_or_dir)
 
-    if path.is_dir():
-        output = {}
+    policy_paths = sorted(path.glob("policy_data*.pt"))
+    value_paths = sorted(path.glob("value_data*.pt"))
 
-        output["policies"] = [process_data_id(torch.load(p)) for p in sorted(path.glob("policy_data*.pt"))]
-        output["values"] = [process_data_id(torch.load(p)) for p in sorted(path.glob("value_data*.pt"))]
-        return output
+    policy_data_ids = defaultdict(list)
+    value_data_ids = defaultdict(list)
 
-    return torch.load(path)
+    for p in policy_paths:
+        data_id, replica_id = parse_filename(p.name, start_string="policy_data")
+        policy_data_ids[data_id].append(p)
+
+    for p in value_paths:
+        data_id, replica_id = parse_filename(p.name, start_string="value_data")
+        value_data_ids[data_id].append(p)
+
+    return policy_data_ids, value_data_ids
 
 
 def collate_fn(batch):
@@ -243,13 +280,14 @@ def main(cfg) -> None:
     dp_size = parallel_state.get_data_parallel_world_size()
 
     assert os.path.exists(cfg.mcts_data_file)
-    train_data = load_data(cfg.mcts_data_file)
 
-    policy_train_data = [item for item in train_data["policies"] if item["data_id"] not in val_ids]
-    policy_val_data = [item for item in train_data["policies"] if item["data_id"] in val_ids]
+    policy_data_paths, value_data_paths = get_paths(cfg.mcts_data_file)
 
-    value_train_data = [item for item in train_data["values"] if item["data_id"] not in val_ids]
-    value_val_data = [item for item in train_data["values"] if item["data_id"] in val_ids]
+    policy_train_data = {k: v for k, v in policy_data_paths.items() if k not in val_ids}
+    policy_val_data = {k: v for k, v in policy_data_paths.items() if k in val_ids}
+
+    value_train_data = {k: v for k, v in value_data_paths.items() if k not in val_ids}
+    value_val_data = {k: v for k, v in value_data_paths.items() if k in val_ids}
 
     num_samples = compute_limit_batches(
         len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches
@@ -257,34 +295,11 @@ def main(cfg) -> None:
 
     train_ds_id_mapping = {item["data_id"]: i for i, item in enumerate(train_ds)}
     train_eval_ds = []
-    for _, p in zip(range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_train_data):
-        idx = train_ds_id_mapping[p["data_id"]]
+    for _, data_id in zip(
+        range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_train_data.keys()
+    ):
+        idx = train_ds_id_mapping[data_id]
         train_eval_ds.append(train_ds[idx])
-
-    num_questions_correct = 0
-
-    for p in train_data["policies"]:
-        if all(x > 0 for x in p["reward"]):
-            num_questions_correct += 1
-
-    value_correct = 0
-    value_total = 0
-
-    for v in train_data["values"]:
-        rewards = v["reward"]
-        value_correct += sum(r > 0 for r in rewards)
-        value_total += len(rewards)
-
-    data_metrics = {
-        "num_questions_correct": num_questions_correct,
-        "num_questions": len(train_data["policies"]),
-        "accuracy": num_questions_correct / len(train_data["policies"]),
-        "value_correct": value_correct,
-        "value_total": value_total,
-        "value_accuracy": value_correct / value_total,
-    }
-
-    logging.info("Loaded search cached data at {} with metric {}".format(cfg.mcts_data_file, data_metrics))
 
     eos_id = ptl_model.tokenizer.eos_id
 
@@ -292,7 +307,7 @@ def main(cfg) -> None:
     # TODO(geshen): support multiple epochs
     train_policy_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=policy_train_data,
+        dataset=DatasetLoader(policy_train_data),
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
@@ -304,7 +319,7 @@ def main(cfg) -> None:
     # TODO(geshen): can have different mbs
     train_value_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=value_train_data,
+        dataset=DatasetLoader(value_train_data),
         consumed_samples=consumed_samples_values,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.critic_global_batch_size,
@@ -345,7 +360,7 @@ def main(cfg) -> None:
 
     val_policy_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=policy_val_data,
+        dataset=DatasetLoader(policy_val_data),
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
@@ -357,7 +372,7 @@ def main(cfg) -> None:
     # TODO(geshen): can have different mbs
     val_value_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=value_val_data,
+        dataset=DatasetLoader(value_val_data),
         consumed_samples=consumed_samples_values,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.critic_global_batch_size,
@@ -408,8 +423,6 @@ def main(cfg) -> None:
 
     if custom_trainer_state_dict is not None:
         deep_search_trainer.load_state_dict(custom_trainer_state_dict)
-
-    logger.log_metrics(data_metrics, step=deep_search_trainer.step, prefix="data/")
 
     deep_search_trainer.fit()
 
