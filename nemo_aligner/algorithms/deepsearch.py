@@ -137,18 +137,20 @@ class DeepSearchTrainer:
             output = self.model.generate(batch["question"])
 
             for question, response, answer in zip(
-                output["question"], output["sentences"], batch["answer"], strict=True
+                batch["question"], output["sentences"], batch["answer"], strict=True
             ):
                 score = self.feedback.score(response, answer)
 
                 if score > 0:
                     num_correct += 1
 
-                output["question"] = question
-                output["reward"] = score
-                output["response"] = response
-                output["ground_truth_answer"] = answer
-                outputs.append(output)
+                new_output = {}
+                new_output["question"] = question
+                new_output["reward"] = score
+                new_output["response"] = response
+                new_output["ground_truth_answer"] = answer
+
+                outputs.append(new_output)
 
                 if logged < self.num_to_log_to_table:
                     table = {}
@@ -311,7 +313,7 @@ class DeepSearchTrainer:
         val_metrics, outputs = self.run_inference(dataloader)
 
         path_to_save = os.path.join(
-            self.cfg.log_dir, "rank_{}_step_{}".format(torch.distributed.get_rank(), self.step)
+            self.cfg.log_dir, "rank_{}_step_{}_generation.pt".format(torch.distributed.get_rank(), self.step)
         )
         torch.save(outputs, path_to_save)
 
