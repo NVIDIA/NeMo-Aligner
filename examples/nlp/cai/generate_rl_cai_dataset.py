@@ -23,8 +23,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 import numpy as np
-from nemo_aligner.utils.cai_utils import UserAssistantPromptTemplate, remote_inference, remote_inference_with_ngc
 from tqdm import tqdm
+
+from nemo_aligner.utils.cai_utils import UserAssistantPromptTemplate, remote_inference, remote_inference_with_ngc
 
 
 def generate_cai_rlaif_candidate_dataset(
