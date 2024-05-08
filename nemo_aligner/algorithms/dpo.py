@@ -237,6 +237,8 @@ class DPOTrainer:
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
                     self.limit_val_batches,
+                    epoch=self.epoch,
+                    max_epochs=self.cfg.max_epochs,
                     run_time_exceeded=run_time_exceeded,
                 )
 
