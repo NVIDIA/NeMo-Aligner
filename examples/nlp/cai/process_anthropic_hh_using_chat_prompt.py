@@ -20,6 +20,8 @@ import warnings
 from pathlib import Path
 
 from datasets import DatasetDict, concatenate_datasets, load_dataset
+from nemo_aligner.utils.cai_utils import UserAssistantPromptTemplate
+
 
 """
 
@@ -50,42 +52,64 @@ def prepare_args():
         type=str,
         default="True",
         choices=["False", "True"],
-        help="add <extra_id_1> token at the end of a comparison prompt?",
+        help="add eos-token at the end of a comparison prompt?",
     )
 
-    a = parser.parse_args()
-    a.add_eos = a.add_eos in ["True", "true"]
+    # prompt template
+    group_prompt_template = parser.add_argument_group("prompt_template", "prompt template")
+    group_prompt_template.add_argument(
+        "--user_format", type=str, default="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n"
+    )
+    group_prompt_template.add_argument("--assistant_format", type=str, default="{MESSAGE}\n")
+    group_prompt_template.add_argument("--system_format", type=str, default="<extra_id_0>System\n{MESSAGE}\n")
+    group_prompt_template.add_argument("--system_default_message", type=str, default="")
+    group_prompt_template.add_argument("--bos_token", type=str, default=None)
+    group_prompt_template.add_argument("--eos_token", type=str, default="<extra_id_1>")
+    group_prompt_template.add_argument("--response_extract_pattern", type=str, default="<extra_id_1>Assistant\n")
+
+    args = parser.parse_args()
+    args.add_eos = args.add_eos in ["True", "true"]
 
     if (
-        (a.dataset_dir_name is None)
-        or (len(a.dataset_dir_name) == 0)
-        or (len(a.dataset_dir_name) == 0 and a.dataset_dir_name[0] is None)
+        (args.dataset_dir_name is None)
+        or (len(args.dataset_dir_name) == 0)
+        or (len(args.dataset_dir_name) == 0 and args.dataset_dir_name[0] is None)
     ):
-        if a.output_file_name_prefix is None or a.output_file_name_prefix == "":
-            a.output_file_name_prefix = "anthropic_hh"
+        if args.output_file_name_prefix is None or args.output_file_name_prefix == "":
+            args.output_file_name_prefix = "anthropic_hh"
 
-        a.dataset_dir_name = [None]
+        args.dataset_dir_name = [None]
 
-    return a
+    def _process_string(s: str):
+        return s.encode("utf-8").decode("unicode_escape")
+
+    args_dict = vars(args)
+    prompt_template_config = {
+        k: _process_string(v) if v is not None else v
+        for k, v in args_dict.items()
+        if k
+           in {
+               "user_format",
+               "assistant_format",
+               "system_format",
+               "system_default_message",
+               "bos_token",
+               "eos_token",
+               "response_extract_pattern",
+           }
+    }
+
+    return args, prompt_template_config
 
 
-START_PROMPT_FORMAT_WITH_EXTRA_ID = (
-    "<extra_id_0>System\n\n" "<extra_id_1>User\n{body}\n" "<extra_id_1>Assistant\n{response}\n"
-)
-
-PROMPT_CONTINUATION_FORMAT_WITH_EXTRA_ID = "{text}<extra_id_1>User\n{body}\n" "<extra_id_1>Assistant\n{response}\n"
-
-
-def _process_samples(dataset, add_eos: bool):
-    start_prompt_format = START_PROMPT_FORMAT_WITH_EXTRA_ID
-    prompt_continuation_format = PROMPT_CONTINUATION_FORMAT_WITH_EXTRA_ID
+def _process_samples(dataset, add_eos: bool, prompt_template_config: dict):
 
     def convert_string_format(string):
         split_string = [s.strip() for s in string.split("\n\nHuman: ")]
         split_string = [s for s in split_string if len(s) > 0]
 
-        string_to_use = ""
-        prompt_string_to_use = ""
+        prompt_template = UserAssistantPromptTemplate(**prompt_template_config)
+        messages = []
 
         for i, item in enumerate(split_string):
 
@@ -105,19 +129,17 @@ def _process_samples(dataset, add_eos: bool):
             if len(body) == 0 or len(response) == 0:
                 return None
 
-            if len(string_to_use) == 0:
-                prompt_string_to_use = start_prompt_format.format(body=body, response="")
-                string_to_use = start_prompt_format.format(body=body, response=response)
-            else:
-                prompt_string_to_use = prompt_continuation_format.format(text=string_to_use, body=body, response="")
-                string_to_use = prompt_continuation_format.format(text=string_to_use, body=body, response=response)
+            messages.append(prompt_template.create_user_message(body))
+            messages.append(prompt_template.create_assistant_message(response))
 
-        # just in case... make sure we have single backslash
-        prompt_string_to_use = prompt_string_to_use.rstrip("\n") + "\n"
-        string_to_use = string_to_use.rstrip("\n") + "\n"
+        if len(messages) == 0:
+            return None
+
+        prompt_string_to_use = prompt_template.format_messages(messages[:-1])
+        string_to_use = prompt_template.format_messages(messages)
 
         if add_eos:
-            string_to_use += "<extra_id_1>"
+            string_to_use += prompt_template.eos_token
 
         # for prompt, remove the space at the end
         return string_to_use, prompt_string_to_use
@@ -232,12 +254,18 @@ def _load_anthropic_dataset(dataset_dir_name=None, split_names=None):
     return merged_dataset
 
 
-if __name__ == "__main__":
-    args = prepare_args()
+def main():
+    args, prompt_template_config = prepare_args()
     os.makedirs(args.output_dir, exist_ok=True)
 
     anthropic_dataset = _load_anthropic_dataset(args.dataset_dir_name, split_names=["train", "test"])
 
     for split in ["train", "test"]:
-        list_of_dicts = _process_samples(anthropic_dataset[split], add_eos=args.add_eos)
+        list_of_dicts = _process_samples(anthropic_dataset[split],
+                                         add_eos=args.add_eos,
+                                         prompt_template_config=prompt_template_config)
         _save_dataset(list_of_dicts, split, args.output_dir, args.output_file_name_prefix, add_eos=args.add_eos)
+
+
+if __name__ == "__main__":
+    main()
