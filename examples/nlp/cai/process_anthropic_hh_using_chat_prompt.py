@@ -88,22 +88,21 @@ def prepare_args():
         k: _process_string(v) if v is not None else v
         for k, v in args_dict.items()
         if k
-           in {
-               "user_format",
-               "assistant_format",
-               "system_format",
-               "system_default_message",
-               "bos_token",
-               "eos_token",
-               "response_extract_pattern",
-           }
+        in {
+            "user_format",
+            "assistant_format",
+            "system_format",
+            "system_default_message",
+            "bos_token",
+            "eos_token",
+            "response_extract_pattern",
+        }
     }
 
     return args, prompt_template_config
 
 
 def _process_samples(dataset, add_eos: bool, prompt_template_config: dict):
-
     def convert_string_format(string):
         split_string = [s.strip() for s in string.split("\n\nHuman: ")]
         split_string = [s for s in split_string if len(s) > 0]
@@ -261,9 +260,9 @@ def main():
     anthropic_dataset = _load_anthropic_dataset(args.dataset_dir_name, split_names=["train", "test"])
 
     for split in ["train", "test"]:
-        list_of_dicts = _process_samples(anthropic_dataset[split],
-                                         add_eos=args.add_eos,
-                                         prompt_template_config=prompt_template_config)
+        list_of_dicts = _process_samples(
+            anthropic_dataset[split], add_eos=args.add_eos, prompt_template_config=prompt_template_config
+        )
         _save_dataset(list_of_dicts, split, args.output_dir, args.output_file_name_prefix, add_eos=args.add_eos)
 
 
