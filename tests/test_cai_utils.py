@@ -102,6 +102,7 @@ Thank you! Could you also calculate the sum of 5 and 7?
 
 # mistral template
 
+
 def test_mistral_format_single_user_prompt():
     mistral_prompt_template = PromptTemplate(
         dict(User="[INST] {MESSAGE} [/INST]", Assistant="{MESSAGE}</s> "),
@@ -229,5 +230,3 @@ def test_mistral_user_assistant_format_single_user_prompt_create_user():
     )
     m42_expected = "<s>[INST] Calculate the sum of 2 and 3. [/INST]"
     assert m42 == m42_expected, "mistral user assistant format single user prompt create user failed"
-
-
