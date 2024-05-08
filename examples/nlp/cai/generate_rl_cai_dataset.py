@@ -10,14 +10,16 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 import requests
-from examples.nlp.cai.utils import remote_inference, remote_inference_with_ngc, UserAssistantPromptTemplate
+from examples.nlp.cai.utils import UserAssistantPromptTemplate, remote_inference, remote_inference_with_ngc
 from tqdm import tqdm
 
 
-
 def generate_cai_rlaif_candidate_dataset(
-    batch_size: int, temperatures: Union[List, int], red_teaming_dataset_path: str,
-        inference_config: dict, prompt_template_config: dict
+    batch_size: int,
+    temperatures: Union[List, int],
+    red_teaming_dataset_path: str,
+    inference_config: dict,
+    prompt_template_config: dict,
 ):
     """
     @param host:
@@ -52,7 +54,8 @@ def generate_cai_rlaif_candidate_dataset(
             rlaif_batch_samples = generate_responses_batch(
                 red_teaming_prompts_list,
                 inference_config=inference_config,
-                prompt_template_config=prompt_template_config)
+                prompt_template_config=prompt_template_config,
+            )
             samples.extend(rlaif_batch_samples)
 
             samples_per_temperature[str(t)] = samples
@@ -69,7 +72,10 @@ def generate_responses_batch(prompt_list: list, inference_config: dict, prompt_t
     prompt_template = UserAssistantPromptTemplate(**prompt_template_config)
 
     # get initial response
-    prompts = [prompt_template.format_messages({"content": p, "role": UserAssistantPromptTemplate.Role.User}) for p in prompt_list]
+    prompts = [
+        prompt_template.format_messages({"content": p, "role": UserAssistantPromptTemplate.Role.User})
+        for p in prompt_list
+    ]
     responses = model_remote_inference(prompts, inference_config=inference_config, eos_token=prompt_template.eos_token)
     assert len(responses) == num_prompts
     stripped_responses = [prompt_template.extract_response(r) for r in responses]
@@ -85,9 +91,7 @@ def generate_responses_batch(prompt_list: list, inference_config: dict, prompt_t
 def model_remote_inference(prompt, inference_config: dict, eos_token: str):
     sentences = remote_inference(prompt=prompt, **inference_config)
 
-    sentences = [
-        s + eos_token if not s.endswith(eos_token) else s for s in sentences
-    ]
+    sentences = [s + eos_token if not s.endswith(eos_token) else s for s in sentences]
 
     return sentences
 
@@ -177,7 +181,9 @@ def prepare_args():
 
     # prompt template
     group_prompt_template = parser.add_argument_group("prompt_template", "prompt template")
-    group_prompt_template.add_argument("--user_format", type=str, default="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n")
+    group_prompt_template.add_argument(
+        "--user_format", type=str, default="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n"
+    )
     group_prompt_template.add_argument("--assistant_format", type=str, default="{MESSAGE}\n")
     group_prompt_template.add_argument("--system_format", type=str, default="<extra_id_0>System\n{MESSAGE}\n")
     group_prompt_template.add_argument("--system_default_message", type=str, default="")
@@ -244,19 +250,21 @@ def prepare_args():
     }
 
     def _process_string(s: str):
-        return s.encode('utf-8').decode('unicode_escape')
+        return s.encode("utf-8").decode("unicode_escape")
 
     prompt_template_config = {
         k: _process_string(v) if v is not None else v
         for k, v in args_dict.items()
-        if k in {
+        if k
+        in {
             "user_format",
             "assistant_format",
             "system_format",
             "system_default_message",
             "bos_token",
             "eos_token",
-            "response_extract_pattern"}
+            "response_extract_pattern",
+        }
     }
 
     return args, inference_config, prompt_template_config
@@ -387,7 +395,6 @@ def split_dataset(dataset, splits: Dict[str, float], shuffle: bool):
 
 
 def process_samples(dataset, prompt_template_config: dict):
-
     def convert_string_format(body, response):
         response = response.strip().strip("\n")
         body = body.strip().strip("\n")
@@ -404,8 +411,8 @@ def process_samples(dataset, prompt_template_config: dict):
         prompt_with_response = prompt_template.format_messages(
             [
                 {"content": body, "role": UserAssistantPromptTemplate.Role.User},
-                {"content": response, "role": UserAssistantPromptTemplate.Role.Assistant}
-             ]
+                {"content": response, "role": UserAssistantPromptTemplate.Role.Assistant},
+            ]
         )
 
         # we need tomake sure eos-token is present at the end of the response
@@ -576,7 +583,7 @@ def main():
         temperatures=np.arange(0.01, 2.01, 0.5).tolist(),
         red_teaming_dataset_path=args.red_teaming_file_path,
         inference_config=inference_config,
-        prompt_template_config=prompt_template_config
+        prompt_template_config=prompt_template_config,
     )
 
     with open(os.path.join(args.output_dir, "cai_candidate_dataset.json"), "w") as file:
@@ -626,7 +633,7 @@ def main():
             dataset=split_samples,
             split=split_name,
             output_dir=args.output_dir,
-            output_filename_prefix=args.output_filename_prefix
+            output_filename_prefix=args.output_filename_prefix,
         )
         output_file_names.append(dict(split_name=split_name, prompts=prompts_path, comparisons=comparisons_path))
 
