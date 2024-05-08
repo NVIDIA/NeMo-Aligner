@@ -1,13 +1,26 @@
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import argparse
 import json
 import os
 import os.path
 import random
-from typing import Optional
 
 import numpy as np
 import tqdm
-from utils import UserAssistantPromptTemplate, remote_inference
+from nemo_aligner.utils.cai_utils import UserAssistantPromptTemplate, remote_inference
 
 
 def generate_chat_prompt(sample: dict):
@@ -280,7 +293,7 @@ def generate_cai_dataset(
 def remove_long_dialogs_wrapper(
     input_file_path: str, max_seq_length: int, tokenizer_model: str, tokenizer_library: str
 ):
-    from utils import remove_long_dialogs
+    from nemo_aligner.utils.cai_utils import remove_long_dialogs
 
     if max_seq_length is None or max_seq_length <= 0:
         return
