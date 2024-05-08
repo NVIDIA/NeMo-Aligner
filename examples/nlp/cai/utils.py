@@ -411,8 +411,10 @@ class UserAssistantPromptTemplate(PromptTemplate):
             response_extract_pattern="[/INST]"
         )
         """
-        role_message_format = {UserAssistantPromptTemplate.Role.User: user_format,
-                               UserAssistantPromptTemplate.Role.Assistant: assistant_format}
+        role_message_format = {
+            UserAssistantPromptTemplate.Role.User: user_format,
+            UserAssistantPromptTemplate.Role.Assistant: assistant_format,
+        }
 
         # optionally, add system message format
         if system_format is not None:
@@ -441,9 +443,9 @@ class UserAssistantPromptTemplate(PromptTemplate):
         if self.system_default_message is not None and self.has_system_role():
             # NOTE: It is assumed that if a system message exists, it should be the first message.
             if messages[0]["role"] != UserAssistantPromptTemplate.Role.System:
-                messages = [{"content": self.system_default_message,
-                             "role": UserAssistantPromptTemplate.Role.System}
-                            ] + messages
+                messages = [
+                    {"content": self.system_default_message, "role": UserAssistantPromptTemplate.Role.System}
+                ] + messages
 
         return super().format_messages(messages)
 
@@ -469,10 +471,7 @@ if __name__ == "__main__":
     )
 
     m11 = extra_id_prompt_template.format_messages(
-        [
-            {"role": "System", "content": ""},
-            {"role": "User", "content": "Calculate the sum of 2 and 3."}
-        ]
+        [{"role": "System", "content": ""}, {"role": "User", "content": "Calculate the sum of 2 and 3."}]
     )
     print(f"{'-' * 20}\n{m11}\n{'-' * 20}")
 
@@ -563,5 +562,6 @@ if __name__ == "__main__":
     print(f"{'-' * 20}\n{m41}\n{'-' * 20}")
 
     m42 = mistral_user_assistant_format.format_messages(
-        mistral_user_assistant_format.create_user_message("Calculate the sum of 2 and 3."))
+        mistral_user_assistant_format.create_user_message("Calculate the sum of 2 and 3.")
+    )
     print(f"{'-' * 20}\n{m42}\n{'-' * 20}")
