@@ -12,4 +12,222 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from nemo_aligner.utils import cai_utils
+from nemo_aligner.utils.cai_utils import PromptTemplate, UserAssistantPromptTemplate
+
+
+def test_extra_id_format_single_user_prompt():
+    extra_id_prompt_template = PromptTemplate(
+        dict(
+            System="<extra_id_0>System\n{MESSAGE}\n",
+            User="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
+            Assistant="{MESSAGE}\n",
+        ),
+        eos_token="<extra_id_1>",
+        response_extract_pattern="<extra_id_1>Assistant\n",
+    )
+    m11 = extra_id_prompt_template.format_messages(
+        [{"role": "System", "content": ""}, {"role": "User", "content": "Calculate the sum of 2 and 3."}]
+    )
+    m11_expected = """<extra_id_0>System
+
+<extra_id_1>User
+Calculate the sum of 2 and 3.
+<extra_id_1>Assistant
+"""
+    assert m11 == m11_expected, "extra_id formatting failed"
+
+
+def test_extra_id_format_single_message_chat():
+    extra_id_prompt_template = PromptTemplate(
+        dict(
+            System="<extra_id_0>System\n{MESSAGE}\n",
+            User="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
+            Assistant="{MESSAGE}\n",
+        ),
+        eos_token="<extra_id_1>",
+        response_extract_pattern="<extra_id_1>Assistant\n",
+    )
+    m12 = extra_id_prompt_template.format_messages(
+        [
+            {"role": "System", "content": ""},
+            {"role": "User", "content": "Calculate the sum of 2 and 3."},
+            {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+        ]
+    )
+    m12_expected = """<extra_id_0>System
+
+<extra_id_1>User
+Calculate the sum of 2 and 3.
+<extra_id_1>Assistant
+The sum of 2 and 3 is 5.
+"""
+    assert m12 == m12_expected, "extra_id formatting single message chat failed"
+
+    extract_m12 = extra_id_prompt_template.extract_response(m12)
+    extract_m12_expected = "The sum of 2 and 3 is 5."
+    assert extract_m12 == extract_m12_expected, "extra_id formatting single message chat extract failed"
+
+
+def test_extra_id_format_multi_message_chat():
+    extra_id_prompt_template = PromptTemplate(
+        dict(
+            System="<extra_id_0>System\n{MESSAGE}\n",
+            User="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
+            Assistant="{MESSAGE}\n",
+        ),
+        eos_token="<extra_id_1>",
+        response_extract_pattern="<extra_id_1>Assistant\n",
+    )
+
+    m13 = extra_id_prompt_template.format_messages(
+        [
+            {"role": "System", "content": ""},
+            {"role": "User", "content": "Calculate the sum of 2 and 3."},
+            {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+            {"role": "User", "content": "Thank you! Could you also calculate the sum of 5 and 7?"},
+        ]
+    )
+    m13_expected = """<extra_id_0>System
+
+<extra_id_1>User
+Calculate the sum of 2 and 3.
+<extra_id_1>Assistant
+The sum of 2 and 3 is 5.
+<extra_id_1>User
+Thank you! Could you also calculate the sum of 5 and 7?
+<extra_id_1>Assistant
+"""
+    assert m13 == m13_expected, "extra_id formatting multi message chat failed"
+
+
+# mistral template
+
+def test_mistral_format_single_user_prompt():
+    mistral_prompt_template = PromptTemplate(
+        dict(User="[INST] {MESSAGE} [/INST]", Assistant="{MESSAGE}</s> "),
+        bos_token="<s>",
+        eos_token="</s>",
+        response_extract_pattern="[/INST]",
+    )
+
+    m21 = mistral_prompt_template.format_messages({"role": "User", "content": "Calculate the sum of 2 and 3."})
+    m21_expected = "<s>[INST] Calculate the sum of 2 and 3. [/INST]"
+    assert m21 == m21_expected, "mistral formatting single user prompt failed"
+
+
+def test_mistral_format_single_message_chat():
+    mistral_prompt_template = PromptTemplate(
+        dict(User="[INST] {MESSAGE} [/INST]", Assistant="{MESSAGE}</s> "),
+        bos_token="<s>",
+        eos_token="</s>",
+        response_extract_pattern="[/INST]",
+    )
+    m22 = mistral_prompt_template.format_messages(
+        [
+            {"role": "User", "content": "Calculate the sum of 2 and 3."},
+            {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+        ]
+    )
+    m22_expected = """<s>[INST] Calculate the sum of 2 and 3. [/INST]The sum of 2 and 3 is 5.</s> """
+    assert m22 == m22_expected, "mistral formatting single message chat failed"
+
+    extract_m22 = mistral_prompt_template.extract_response(m22)
+    extract_m22_expected = "The sum of 2 and 3 is 5."
+    assert extract_m22 == extract_m22_expected, "mistral formatting single message chat extract failed"
+
+
+def test_mistral_format_multi_message_chat():
+    mistral_prompt_template = PromptTemplate(
+        dict(User="[INST] {MESSAGE} [/INST]", Assistant="{MESSAGE}</s> "),
+        bos_token="<s>",
+        eos_token="</s>",
+        response_extract_pattern="[/INST]",
+    )
+    m23 = mistral_prompt_template.format_messages(
+        [
+            {"role": "User", "content": "Calculate the sum of 2 and 3."},
+            {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+            {"role": "User", "content": "Thank you! Could you also calculate the sum of 5 and 7?"},
+        ]
+    )
+    m23_expected = "<s>[INST] Calculate the sum of 2 and 3. [/INST]The sum of 2 and 3 is 5.</s> [INST] Thank you! Could you also calculate the sum of 5 and 7? [/INST]"
+    assert m23 == m23_expected, "mistral formatting multi message chat failed"
+
+
+# UserAssistantPromptTemplate
+def test_extra_id_user_assistant_format_single_user_prompt():
+    extra_id_user_assistant_format = UserAssistantPromptTemplate(
+        user_format="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
+        assistant_format="{MESSAGE}\n",
+        system_format="<extra_id_0>System\n{MESSAGE}\n",
+        system_default_message="",
+        eos_token="<extra_id_1>",
+        response_extract_pattern="<extra_id_1>Assistant\n",
+    )
+
+    m31 = extra_id_user_assistant_format.format_messages(
+        {"role": UserAssistantPromptTemplate.Role.User, "content": "Calculate the sum of 2 and 3."}
+    )
+    m31_expected = """<extra_id_0>System
+
+<extra_id_1>User
+Calculate the sum of 2 and 3.
+<extra_id_1>Assistant
+"""
+    assert m31 == m31_expected, "extra_id user assistant format single user prompt failed"
+
+
+def test_extra_id_user_assistant_format_single_user_prompt_create_user_message():
+    extra_id_user_assistant_format = UserAssistantPromptTemplate(
+        user_format="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
+        assistant_format="{MESSAGE}\n",
+        system_format="<extra_id_0>System\n{MESSAGE}\n",
+        system_default_message="",
+        eos_token="<extra_id_1>",
+        response_extract_pattern="<extra_id_1>Assistant\n",
+    )
+
+    m32 = extra_id_user_assistant_format.format_messages(
+        extra_id_user_assistant_format.create_user_message("Calculate the sum of 2 and 3.")
+    )
+    m32_expected = """<extra_id_0>System
+
+<extra_id_1>User
+Calculate the sum of 2 and 3.
+<extra_id_1>Assistant
+"""
+    assert m32 == m32_expected, "extra_id user assistant format single user prompt create user message failed"
+
+
+def test_mistral_user_assistant_format_single_user_prompt():
+    mistral_user_assistant_format = UserAssistantPromptTemplate(
+        user_format="[INST] {MESSAGE} [/INST]",
+        assistant_format="{MESSAGE}</s> ",
+        bos_token="<s>",
+        eos_token="</s>",
+        response_extract_pattern="[/INST]",
+    )
+
+    m41 = mistral_user_assistant_format.format_messages(
+        {"role": UserAssistantPromptTemplate.Role.User, "content": "Calculate the sum of 2 and 3."}
+    )
+    m41_expected = "<s>[INST] Calculate the sum of 2 and 3. [/INST]"
+    assert m41 == m41_expected, "mistral user assistant format single user prompt failed"
+
+
+def test_mistral_user_assistant_format_single_user_prompt_create_user():
+    mistral_user_assistant_format = UserAssistantPromptTemplate(
+        user_format="[INST] {MESSAGE} [/INST]",
+        assistant_format="{MESSAGE}</s> ",
+        bos_token="<s>",
+        eos_token="</s>",
+        response_extract_pattern="[/INST]",
+    )
+
+    m42 = mistral_user_assistant_format.format_messages(
+        mistral_user_assistant_format.create_user_message("Calculate the sum of 2 and 3.")
+    )
+    m42_expected = "<s>[INST] Calculate the sum of 2 and 3. [/INST]"
+    assert m42 == m42_expected, "mistral user assistant format single user prompt create user failed"
+
+
