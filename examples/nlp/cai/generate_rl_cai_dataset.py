@@ -10,93 +10,14 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 import requests
-from examples.nlp.cai.utils import remote_inference, remote_inference_with_ngc
+from examples.nlp.cai.utils import remote_inference, remote_inference_with_ngc, UserAssistantPromptTemplate
 from tqdm import tqdm
 
 
-class ChatPromptTemplate:
-    system_token = "System"
-    user_token = "User"
-    assistant_token = "Assistant"
-
-    system_turn_token = "<extra_id_0>"
-    turn_token = "<extra_id_1>"  # (model_config: chat_prompt_tokens.turn_start)
-    end_signal = "\n"  # (model_config: chat_prompt_tokens.end_of_turn. NOTE: "\x0A" is '\n' in ASCII code)
-    label_start = "<extra_id_2>"  # (model_config: chat_prompt_tokens.label_start)
-    end_name_signal = "\n"  # (model_config: chat_prompt_tokens.end_of_name. NOTE: "\x0A" is '\n' in ASCII code)
-
-    begin_signal = ""
-
-    user_message_header = begin_signal + turn_token + user_token + end_name_signal
-
-    assistant_message_header = begin_signal + turn_token + assistant_token + end_name_signal
-
-    @staticmethod
-    def _apply_header_template(system_prompt: str):
-        # header/system-message ('<extra_id_0>System\n<system_prompt>\n')
-        header = (
-            ChatPromptTemplate.system_turn_token
-            + ChatPromptTemplate.system_token
-            + ChatPromptTemplate.end_name_signal
-            + system_prompt
-            + ChatPromptTemplate.end_signal
-        )
-
-        return header
-
-    @staticmethod
-    def _apply_role_template(role: str, prompt: Optional[str] = None):
-        assert role in [ChatPromptTemplate.user_token, ChatPromptTemplate.assistant_token]
-
-        # assistant message ('<extra_id_1><role_name>\n<prompt>\n')
-        assistant_message = (
-            ChatPromptTemplate.begin_signal + ChatPromptTemplate.turn_token + role + ChatPromptTemplate.end_name_signal
-        )
-
-        if prompt is not None:
-            assistant_message += prompt + ChatPromptTemplate.end_signal
-
-        return assistant_message
-
-    @staticmethod
-    def apply_user_role_template(prompt: str):
-        assert prompt is not None and prompt != ""
-        return ChatPromptTemplate._apply_role_template(ChatPromptTemplate.user_token, prompt)
-
-    @staticmethod
-    def apply_assistant_role_template(prompt: Optional[str] = None):
-        return ChatPromptTemplate._apply_role_template(ChatPromptTemplate.assistant_token, prompt)
-
-    @staticmethod
-    def apply_prompt_template(prompt: str, system_prompt: str = ""):
-        header = ChatPromptTemplate._apply_header_template(system_prompt)
-
-        # user message ('<extra_id_1>User\n<prompt>\n')
-        user_message = ChatPromptTemplate.apply_user_role_template(prompt)
-
-        # assistant message ('<extra_id_1>Assistant\n')
-        assistant_message = ChatPromptTemplate.apply_assistant_role_template(None)
-
-        # create conversation message (full prompt)
-        conversation = header + user_message + assistant_message
-
-        return conversation
-
-    @staticmethod
-    def apply_prompt_with_response_template(prompt: str, response: str, system_prompt: str = ""):
-        prompt = ChatPromptTemplate.apply_prompt_template(prompt, system_prompt=system_prompt)
-        prompt_with_response = prompt + response + ChatPromptTemplate.end_signal + ChatPromptTemplate.turn_token
-        return prompt_with_response
-
-    @staticmethod
-    def extract_response(prompt: str):
-        response = prompt.rsplit(ChatPromptTemplate.assistant_message_header, 1)[-1]
-        response = response.strip().removesuffix(ChatPromptTemplate.turn_token).strip()
-        return response
-
 
 def generate_cai_rlaif_candidate_dataset(
-    batch_size: int, temperatures: Union[List, int], red_teaming_dataset_path: str, inference_config: dict
+    batch_size: int, temperatures: Union[List, int], red_teaming_dataset_path: str,
+        inference_config: dict, prompt_template_config: dict
 ):
     """
     @param host:
@@ -128,7 +49,10 @@ def generate_cai_rlaif_candidate_dataset(
 
             # call model
             inference_config["temperature"] = t
-            rlaif_batch_samples = generate_responses_batch(red_teaming_prompts_list, inference_config=inference_config)
+            rlaif_batch_samples = generate_responses_batch(
+                red_teaming_prompts_list,
+                inference_config=inference_config,
+                prompt_template_config=prompt_template_config)
             samples.extend(rlaif_batch_samples)
 
             samples_per_temperature[str(t)] = samples
@@ -138,15 +62,17 @@ def generate_cai_rlaif_candidate_dataset(
     return all_samples
 
 
-def generate_responses_batch(prompt_list: list, inference_config: dict):
+def generate_responses_batch(prompt_list: list, inference_config: dict, prompt_template_config: dict):
     assert isinstance(prompt_list, list)
     num_prompts = len(prompt_list)
 
+    prompt_template = UserAssistantPromptTemplate(**prompt_template_config)
+
     # get initial response
-    prompts = [ChatPromptTemplate.apply_prompt_template(p) for p in prompt_list]
-    responses = model_remote_inference(prompts, inference_config=inference_config)
+    prompts = [prompt_template.format_messages({"content": p, "role": UserAssistantPromptTemplate.Role.User}) for p in prompt_list]
+    responses = model_remote_inference(prompts, inference_config=inference_config, eos_token=prompt_template.eos_token)
     assert len(responses) == num_prompts
-    stripped_responses = [ChatPromptTemplate.extract_response(r) for r in responses]
+    stripped_responses = [prompt_template.extract_response(r) for r in responses]
 
     s_batch = []
     for i in range(num_prompts):
@@ -156,11 +82,11 @@ def generate_responses_batch(prompt_list: list, inference_config: dict):
     return s_batch
 
 
-def model_remote_inference(prompt, inference_config: dict):
+def model_remote_inference(prompt, inference_config: dict, eos_token: str):
     sentences = remote_inference(prompt=prompt, **inference_config)
 
     sentences = [
-        s + ChatPromptTemplate.turn_token if not s.endswith(ChatPromptTemplate.turn_token) else s for s in sentences
+        s + eos_token if not s.endswith(eos_token) else s for s in sentences
     ]
 
     return sentences
@@ -249,6 +175,16 @@ def prepare_args():
         "--host", type=str, default="localhost", help="The hostname or IP address of the inference service"
     )
 
+    # prompt template
+    group_prompt_template = parser.add_argument_group("prompt_template", "prompt template")
+    group_prompt_template.add_argument("--user_format", type=str, default="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n")
+    group_prompt_template.add_argument("--assistant_format", type=str, default="{MESSAGE}\n")
+    group_prompt_template.add_argument("--system_format", type=str, default="<extra_id_0>System\n{MESSAGE}\n")
+    group_prompt_template.add_argument("--system_default_message", type=str, default="")
+    group_prompt_template.add_argument("--bos_token", type=str, default=None)
+    group_prompt_template.add_argument("--eos_token", type=str, default="<extra_id_1>")
+    group_prompt_template.add_argument("--response_extract_pattern", type=str, default="<extra_id_1>Assistant\n")
+
     args = parser.parse_args()
     assert os.path.isfile(args.red_teaming_file_path)
     args.splits = ast.literal_eval(args.splits)
@@ -307,7 +243,23 @@ def prepare_args():
         }
     }
 
-    return args, inference_config
+    def _process_string(s: str):
+        return s.encode('utf-8').decode('unicode_escape')
+
+    prompt_template_config = {
+        k: _process_string(v) if v is not None else v
+        for k, v in args_dict.items()
+        if k in {
+            "user_format",
+            "assistant_format",
+            "system_format",
+            "system_default_message",
+            "bos_token",
+            "eos_token",
+            "response_extract_pattern"}
+    }
+
+    return args, inference_config, prompt_template_config
 
 
 def generate_ai_preference(
@@ -434,7 +386,8 @@ def split_dataset(dataset, splits: Dict[str, float], shuffle: bool):
     return dataset_splits
 
 
-def process_samples(dataset):
+def process_samples(dataset, prompt_template_config: dict):
+
     def convert_string_format(body, response):
         response = response.strip().strip("\n")
         body = body.strip().strip("\n")
@@ -442,8 +395,24 @@ def process_samples(dataset):
         if len(response) == 0 or len(body) == 0:
             return "", ""
 
-        prompt = ChatPromptTemplate.apply_prompt_template(prompt=body)
-        prompt_with_response = ChatPromptTemplate.apply_prompt_with_response_template(prompt=body, response=response)
+        prompt_template = UserAssistantPromptTemplate(**prompt_template_config)
+
+        # encode only prompt (user message)
+        prompt = prompt_template.format_messages({"content": body, "role": UserAssistantPromptTemplate.Role.User})
+
+        # encode user message and assistant response (for rejected/chosen samples)
+        prompt_with_response = prompt_template.format_messages(
+            [
+                {"content": body, "role": UserAssistantPromptTemplate.Role.User},
+                {"content": response, "role": UserAssistantPromptTemplate.Role.Assistant}
+             ]
+        )
+
+        # we need tomake sure eos-token is present at the end of the response
+        prompt_with_response = prompt_with_response.strip()
+        if not prompt_with_response.endswith(prompt_template.eos_token):
+            prompt_with_response += prompt_template.eos_token
+
         return prompt_with_response, prompt
 
     chosen = [convert_string_format(x["prompt"], x["chosen"]) for x in dataset]
@@ -597,7 +566,7 @@ def blend_preference_datasets(files: list, output_file: str, blend_type: str):
 
 
 def main():
-    args, inference_config = prepare_args()
+    args, inference_config, prompt_template_config = prepare_args()
     os.makedirs(args.output_dir, exist_ok=True)
     random.seed(args.seed)
 
@@ -607,6 +576,7 @@ def main():
         temperatures=np.arange(0.01, 2.01, 0.5).tolist(),
         red_teaming_dataset_path=args.red_teaming_file_path,
         inference_config=inference_config,
+        prompt_template_config=prompt_template_config
     )
 
     with open(os.path.join(args.output_dir, "cai_candidate_dataset.json"), "w") as file:
@@ -651,12 +621,12 @@ def main():
 
     output_file_names = []
     for split_name, split in ds.items():
-        split_samples = process_samples(split)
+        split_samples = process_samples(split, prompt_template_config=prompt_template_config)
         prompts_path, comparisons_path = save_dataset(
             dataset=split_samples,
             split=split_name,
             output_dir=args.output_dir,
-            output_filename_prefix=args.output_filename_prefix,
+            output_filename_prefix=args.output_filename_prefix
         )
         output_file_names.append(dict(split_name=split_name, prompts=prompts_path, comparisons=comparisons_path))
 
