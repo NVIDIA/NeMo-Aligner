@@ -18,6 +18,7 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 
 import torch
 import torch.multiprocessing as mp
@@ -59,6 +60,33 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 OmegaConf.register_new_resolver("not", lambda x: not x)
 
 mp.set_start_method("spawn", force=True)
+
+
+def process_data_id(item):
+    output = item.pop("data_id").split("@")
+
+    if len(output) == 1:
+        data_id = int(output[0])
+        replica_id = 0
+    else:
+        data_id, replica_id = map(int, output)
+
+    item["data_id"] = data_id
+    item["replica_id"] = replica_id
+    return item
+
+
+def load_data(path_or_dir):
+    path = Path(path_or_dir)
+
+    if path.is_dir():
+        output = {}
+
+        output["policies"] = [process_data_id(torch.load(p)) for p in sorted(path.glob("policy_data*.pt"))]
+        output["values"] = [process_data_id(torch.load(p)) for p in sorted(path.glob("value_data*.pt"))]
+        return output
+
+    return torch.load(path)
 
 
 def collate_fn(batch):
@@ -215,7 +243,7 @@ def main(cfg) -> None:
     dp_size = parallel_state.get_data_parallel_world_size()
 
     assert os.path.exists(cfg.mcts_data_file)
-    train_data = torch.load(cfg.mcts_data_file)
+    train_data = load_data(cfg.mcts_data_file)
 
     policy_train_data = [item for item in train_data["policies"] if item["data_id"] not in val_ids]
     policy_val_data = [item for item in train_data["policies"] if item["data_id"] in val_ids]

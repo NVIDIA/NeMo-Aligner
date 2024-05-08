@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import random
 from collections import defaultdict
 from enum import IntEnum, auto
@@ -122,6 +123,7 @@ class DeepSearchTrainer:
         logged = 0
 
         tables = []
+        outputs = []
 
         limit_batches = compute_limit_batches(len(dataloader), self.cfg.limit_val_batches)
 
@@ -134,11 +136,19 @@ class DeepSearchTrainer:
 
             output = self.model.generate(batch["question"])
 
-            for response, answer in zip(output["sentences"], batch["answer"], strict=True):
+            for question, response, answer in zip(
+                output["question"], output["sentences"], batch["answer"], strict=True
+            ):
                 score = self.feedback.score(response, answer)
 
                 if score > 0:
                     num_correct += 1
+
+                output["question"] = question
+                output["reward"] = score
+                output["response"] = response
+                output["ground_truth_answer"] = answer
+                outputs.append(output)
 
                 if logged < self.num_to_log_to_table:
                     table = {}
@@ -157,12 +167,15 @@ class DeepSearchTrainer:
         torch.distributed.all_reduce(metric_output, group=parallel_state.get_data_parallel_group())
         num_correct, total = metric_output.tolist()
 
-        return {
-            "global_total": total,
-            "global_correct": num_correct,
-            "global_accuracy": num_correct / total if total > 0 else 0,
-            "table": tables,
-        }
+        return (
+            {
+                "global_total": total,
+                "global_correct": num_correct,
+                "global_accuracy": num_correct / total if total > 0 else 0,
+                "table": tables,
+            },
+            outputs,
+        )
 
     def val_single_step(self, batch, train_mode):
         batch["train_mode"] = train_mode
@@ -295,7 +308,12 @@ class DeepSearchTrainer:
         self.timer.start("validation_time")
 
         dataloader = self.val_dataloader_builder_func()
-        val_metrics = self.run_inference(dataloader)
+        val_metrics, outputs = self.run_inference(dataloader)
+
+        path_to_save = os.path.join(
+            self.cfg.log_dir, "rank_{}_step_{}".format(torch.distributed.get_rank(), self.step)
+        )
+        torch.save(outputs, path_to_save)
 
         self.timer.stop("validation_time")
         val_metrics["validation_time"] = self.timer.get("validation_time")
@@ -319,7 +337,7 @@ class DeepSearchTrainer:
         self.timer.start("train_eval")
 
         dataloader = self.train_dataloader_builder_func()
-        train_metrics = self.run_inference(dataloader)
+        train_metrics, _ = self.run_inference(dataloader)
 
         self.timer.stop("train_eval")
         train_metrics["train_eval_timing"] = self.timer.get("train_eval")
