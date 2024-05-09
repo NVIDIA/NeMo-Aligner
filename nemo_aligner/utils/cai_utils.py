@@ -166,7 +166,8 @@ def remote_inference(
     if tokens_to_generate is not None:
         data["tokens_to_generate"] = tokens_to_generate
     if temperature is not None:
-        data["temperature"] = temperature
+        # workaround to support temperature = 0
+        data["temperature"] = 0.00000001 + temperature
     if add_bos is not None:
         data["add_BOS"] = add_bos
     if top_k is not None:
@@ -261,8 +262,10 @@ def remote_inference_with_ngc(
     }
 
     if temperature is not None:
+        # workaround since playground doesn't support temperature = 0
         payload["temperature"] = 0.0000001 + temperature
     if top_p is not None:
+        # workaround since playground doesn't support top p = 0
         payload["top_p"] = 0.0000001 + top_p
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
