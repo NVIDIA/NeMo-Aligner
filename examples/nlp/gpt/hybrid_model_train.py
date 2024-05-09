@@ -64,9 +64,24 @@ mp.set_start_method("spawn", force=True)
 
 class DatasetLoader:
 
-    def __init__(self, dictionary):
+    def __init__(self, dictionary, filter_correct_only=False):
         # no need to shuffle it because the dataloader does
-        self.paths = list(sorted(chain.from_iterable(dictionary.values())))
+        paths = list(sorted(chain.from_iterable(dictionary.values())))
+
+        if filter_correct_only:
+
+            correct_paths = []
+            print("### PRE data ids", len(paths))
+            for p in paths:
+                output = torch.load(p)
+                if all(output['reward']):
+                    correct_paths.append(p)
+
+                del output
+            paths = correct_paths
+            print("### POST data ids", len(paths))
+
+        self.paths = paths
     
     def __getitem__(self, idx):
         return torch.load(self.paths[idx])
@@ -307,7 +322,7 @@ def main(cfg) -> None:
     # TODO(geshen): support multiple epochs
     train_policy_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=DatasetLoader(policy_train_data),
+        dataset=DatasetLoader(policy_train_data, filter_correct_only=True),
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
