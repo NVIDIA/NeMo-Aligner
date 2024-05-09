@@ -18,8 +18,8 @@ from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
-from pathlib import Path
 from itertools import chain
+from pathlib import Path
 
 import torch
 import torch.multiprocessing as mp
@@ -62,8 +62,8 @@ OmegaConf.register_new_resolver("not", lambda x: not x)
 
 mp.set_start_method("spawn", force=True)
 
-class DatasetLoader:
 
+class DatasetLoader:
     def __init__(self, dictionary, filter_correct_only=False):
         # no need to shuffle it because the dataloader does
         paths = list(sorted(chain.from_iterable(dictionary.values())))
@@ -74,7 +74,7 @@ class DatasetLoader:
             print("### PRE data ids", len(paths))
             for p in paths:
                 output = torch.load(p)
-                if all(output['reward']):
+                if all(output["reward"]):
                     correct_paths.append(p)
 
                 del output
@@ -82,10 +82,10 @@ class DatasetLoader:
             print("### POST data ids", len(paths))
 
         self.paths = paths
-    
+
     def __getitem__(self, idx):
         return torch.load(self.paths[idx])
-    
+
     def __len__(self):
         return len(self.paths)
 

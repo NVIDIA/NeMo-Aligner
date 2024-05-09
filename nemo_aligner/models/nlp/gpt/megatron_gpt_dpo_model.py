@@ -59,6 +59,7 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
 
         self.ref_policy_kl_penalty = self.cfg.dpo.get("ref_policy_kl_penalty", 0.0)
         self.avg_log_probs = self.cfg.dpo.get("average_log_probs", False)
+        self.alpha = self.cfg.dpo.alpha
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels):
@@ -157,7 +158,7 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
                 )
 
                 loss, acc_chosen = self.loss_func(
-                    per_token_logps, ref_logprobs, labels[:, 1:], average_log_probs=self.avg_log_probs
+                    per_token_logps, ref_logprobs, labels[:, 1:], average_log_probs=self.avg_log_probs,
                 )
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
@@ -190,12 +191,15 @@ class MegatronGPTDPOModel(MegatronGPTModel, SupervisedInterface):
             return (logps * loss_mask).sum(-1)
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
+        sft_log_probs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=True)
+        chosen_logprobs, _ = self.split_output_tensor(sft_log_probs)
+        sft_loss = -chosen_logprobs.mean()
+
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
         chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards)
-
-        loss = -torch.nn.functional.logsigmoid(chosen_rewards - reject_rewards)
+        loss = -(self.alpha * torch.nn.functional.logsigmoid(chosen_rewards - reject_rewards)) + sft_loss
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
