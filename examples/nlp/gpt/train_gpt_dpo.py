@@ -97,6 +97,7 @@ def main(cfg) -> None:
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
+        shuffle=True,
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
         collate_fn=partial(
@@ -114,6 +115,7 @@ def main(cfg) -> None:
         consumed_samples=0,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
+        shuffle=True,
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
         collate_fn=partial(
