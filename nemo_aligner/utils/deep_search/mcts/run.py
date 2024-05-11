@@ -2,6 +2,7 @@ from nemo_aligner.utils.deep_search.mcts.mcts import DeepSearch, MCTSParallel, P
 from nemo_aligner.utils.deep_search.mcts.state_transition_functions import (
     LocalStateTransitionFunction,
     MathtoolLocalStateTransitionFunction,
+    TRTLLMLocalStateTransitionFunction,
 )
 from nemo_aligner.utils.deep_search.mcts.termination_condition import TerminationCondition
 from nemo_aligner.utils.deep_search.text_generation_strategy import (
@@ -12,7 +13,9 @@ from nemo_aligner.utils.deep_search.text_generation_strategy import (
 )
 
 
-def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_value=True, use_cpu=False):
+def run_mcts(
+    batch, filename, ptl_model, score_fn, eos_id, bos_id, pad_id, inference_only=False, has_value=True, use_cpu=False
+):
     mcts_cfg = ptl_model.cfg.mcts
 
     if has_value:
@@ -53,6 +56,7 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_val
     mcts = MCTSParallel(
         mcts_cfg,
         ptl_model.tokenizer.tokenizer,
+        pad_id,
         session_info="test_selfplay",
         score_fn=score_fn,
         terminate_fns=[termination_condition],
@@ -74,12 +78,69 @@ def run_mcts(batch, filename, ptl_model, score_fn, inference_only=False, has_val
     ps = []
 
     for question, data_id in zip(batch["question"], batch["data_id"]):
-        if mcts_cfg.add_bos_token:
-            ps.append(
-                ParallelSearch([ptl_model.tokenizer.bos_id] + ptl_model.tokenizer.text_to_ids(question,), data_id,)
-            )
+        if mcts_cfg.add_bos_token and bos_id is not None:
+            ps.append(ParallelSearch([bos_id] + ptl_model.tokenizer.text_to_ids(question), data_id))
         else:
-            ps.append(ParallelSearch(ptl_model.tokenizer.text_to_ids(question,), data_id,))
+            ps.append(ParallelSearch(ptl_model.tokenizer.text_to_ids(question), data_id))
+
+    output = ds.search(ps, filename)
+    return output
+
+
+def run_trtllm_mcts(
+    batch,
+    filename,
+    trtllm_infer,
+    mcts_cfg,
+    score_fn,
+    eos_id,
+    bos_id,
+    pad_id,
+    inference_only=False,
+    has_value=True,
+    use_cpu=False,
+):
+
+    if mcts_cfg.environment == "code":
+        raise NotImplementedError("Code environment is not supported for TRTLLM model")
+    else:
+        client_fun = TRTLLMLocalStateTransitionFunction(
+            trtllm_infer, mcts_cfg.top_k, mcts_cfg.max_depth, mcts_cfg.add_bos_token, mcts_cfg.child_threshold,
+        )
+
+    termination_condition = TerminationCondition(
+        mcts_cfg.max_depth, end_strings=mcts_cfg.end_strings, end_tokens=[eos_id]
+    )
+
+    mcts = MCTSParallel(
+        mcts_cfg,
+        trtllm_infer.tokenizer,
+        pad_id,
+        session_info="test_selfplay",
+        score_fn=score_fn,
+        terminate_fns=[termination_condition],
+        client_fun=client_fun,
+        has_value=has_value,
+    )
+
+    ds = DeepSearch(
+        mcts,
+        mcts_cfg.max_depth,
+        mcts_cfg.temperature,
+        None,
+        mcts_cfg.save_timer,
+        mcts_cfg.top_k,
+        mcts_cfg.cache_dir,
+        inference_only=inference_only,
+    )
+
+    ps = []
+
+    for question, data_id in zip(batch["question"], batch["data_id"]):
+        if mcts_cfg.add_bos_token and bos_id is not None:
+            ps.append(ParallelSearch([bos_id] + trtllm_infer.tokenizer.encode(question), data_id))
+        else:
+            ps.append(ParallelSearch(trtllm_infer.tokenizer.encode(question), data_id))
 
     output = ds.search(ps, filename)
     return output

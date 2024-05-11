@@ -17,6 +17,7 @@ import torch.multiprocessing as mp
 from nemo_aligner.data.nlp.datasets import MCTSDataset
 
 mp.set_start_method("spawn", force=True)
+import json
 import os
 import random
 import tempfile
@@ -28,10 +29,19 @@ from pathlib import Path
 from typing import List, Union
 
 import numpy as np
+import tensorrt_llm
+import tensorrt_llm.profiler as profiler
 import torch
 from celery import Celery
 from megatron.core import parallel_state
 from omegaconf.omegaconf import OmegaConf
+from pytorch_lightning import Trainer
+from tensorrt_llm._utils import str_dtype_to_torch
+from tensorrt_llm.builder import get_engine_version
+from tensorrt_llm.logger import logger
+from tensorrt_llm.models.qwen.utils import make_context
+from tensorrt_llm.runtime import PYTHON_BINDINGS, ModelRunner
+from tensorrt_llm.tools.ppl import ppl
 from tqdm import tqdm
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
@@ -41,21 +51,16 @@ from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import DummyScore, GSK8KFeedbackDataset, SteerLMFeedback
-from nemo_aligner.utils.deep_search.mcts.run import run_mcts
+from nemo_aligner.utils.deep_search.mcts.run import run_mcts, run_trtllm_mcts
 from nemo_aligner.utils.distributed import broadcast_2d_tensor
-from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer, temp_pop_from_config
-from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, preemptable_save
-import tensorrt_llm
-import tensorrt_llm.profiler as profiler
-from tensorrt_llm._utils import str_dtype_to_torch
-from tensorrt_llm.logger import logger
-from tensorrt_llm.models.qwen.utils import make_context
-from tensorrt_llm.runtime import PYTHON_BINDINGS, ModelRunner
-from tensorrt_llm.tools.ppl import ppl
-from tensorrt_llm.builder import get_engine_version
-import json
+from nemo_aligner.utils.train_script_utils import (
+    CustomLoggerWrapper,
+    init_distributed,
+    resolve_and_create_trainer,
+    temp_pop_from_config,
+)
 from nemo_aligner.utils.trtllm.trtllm_inference import TRTLLMInference, load_tokenizer, read_model_name
-from pytorch_lightning import Trainer
+from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, preemptable_save
 
 """Script to start Reward Model training"""
 
@@ -177,8 +182,8 @@ class MCTSSearchOneBatch:
 
         self.timer = NamedTimer(reduction="mean", sync_cuda=True, buffer_size=1)
 
-        tp_rank = parallel_state.get_tensor_model_parallel_rank()
-        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
+        tp_rank = 0
+        pp_rank = 0
         self.filename_format = "{num}" + f"_tp_{tp_rank}_pp_{pp_rank}.pt"
         # search for the files here
         self.step = 0
@@ -304,7 +309,6 @@ def main(cfg) -> None:
     # if cfg.pretrained_checkpoint.has_value_head:
     #     cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
 
-
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
@@ -316,10 +320,10 @@ def main(cfg) -> None:
     # exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
-    if cfg.pretrained_checkpoint.has_value_head:
-        hybrid_model_cls = MegatronGPTHybridModel
-    else:
-        hybrid_model_cls = MegatronGPTModel
+    # if cfg.pretrained_checkpoint.has_value_head:
+    #     hybrid_model_cls = MegatronGPTHybridModel
+    # else:
+    #     hybrid_model_cls = MegatronGPTModel
 
     # ptl_model = load_from_nemo(
     #     hybrid_model_cls,
@@ -330,36 +334,33 @@ def main(cfg) -> None:
     #     restore_path=cfg.pretrained_checkpoint.restore_from_path,
     # )
     model_name, model_version = read_model_name(cfg.trtllm.engine_path)
-    tokenizer, pad_id, end_id = load_tokenizer(
+    tokenizer, pad_id, end_id, bos_id = load_tokenizer(
         tokenizer_dir=cfg.trtllm.tokenizer_dir,
         vocab_file=cfg.trtllm.vocab_file,
         model_name=model_name,
         model_version=model_version,
     )
-    infer = TRTLLMInference(cfg, end_id, pad_id)
-    input_text = ['hello?', 'hello? how are you?']
+    infer = TRTLLMInference(cfg, end_id, pad_id, bos_id, tokenizer)
+    # input_text = ['hello?', 'hello? how are you?']
 
-    batch_ids = [ tokenizer.encode(i, return_tensors='pt').squeeze(0) for i in input_text]
-    infer.evaluate(batch_ids)
+    # batch_ids = [ tokenizer.encode(i, return_tensors='pt').squeeze(0) for i in input_text]
+    # infer.evaluate(batch_ids)
+    # infer(inputs=['hello?', 'hello? how are you?'], action=None, context_ids=None, session_info=None)
 
+    # init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
+    # if cfg.pretrained_checkpoint.has_value_head:
+    #     ptl_model.prepare_for_inference()
+    # else:
+    #     ptl_model._reset_activation_checkpointing_args()
+    #     ptl_model._reset_sequence_parallelism_args()
+    #     ptl_model.eval()
 
-    if cfg.pretrained_checkpoint.has_value_head:
-        ptl_model.prepare_for_inference()
-    else:
-        ptl_model._reset_activation_checkpointing_args()
-        ptl_model._reset_sequence_parallelism_args()
-        ptl_model.eval()
-
-    ptl_model.freeze()
+    # ptl_model.freeze()
 
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
 
-    if torch.distributed.get_rank() == 0:
-        os.makedirs(save_dir, exist_ok=True)
-
-    torch.distributed.barrier()
+    os.makedirs(save_dir, exist_ok=True)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
@@ -368,9 +369,13 @@ def main(cfg) -> None:
     )
 
     search_func = partial(
-        run_mcts,
-        ptl_model=ptl_model,
+        run_trtllm_mcts,
+        trtllm_infer=infer,
+        mcts_cfg=cfg.model.mcts,
         score_fn=score_fn,
+        eos_id=end_id,
+        bos_id=bos_id,
+        pad_id=pad_id,
         inference_only=False,
         has_value=cfg.pretrained_checkpoint.has_value_head,
         use_cpu=cfg.model.mcts.kv_cache_in_cpu,
@@ -381,64 +386,24 @@ def main(cfg) -> None:
 
 
 def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url):
-    if torch.distributed.get_rank() == 0:
-        app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
+    app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
 
-        app.conf.task_acks_late = True
-        app.conf.worker_deduplicate_successful_tasks = True
-        app.conf.worker_prefetch_multiplier = 1
+    app.conf.task_acks_late = True
+    app.conf.worker_deduplicate_successful_tasks = True
+    app.conf.worker_prefetch_multiplier = 1
 
-        # 5 hrs timeout
-        app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
+    # 5 hrs timeout
+    app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
 
-        @app.task(
-            bind=True,
-            autoretry_for=(Exception,),
-            retry_backoff=True,
-            retry_jitter=True,
-            retry_kwargs={"max_retries": 10},
-        )
-        def search_for_batch(self, job):
-            try:
-                beg_time = time.time()
-                # job exmaple [(0, 0), (0, 1), (1, 0), (1, 1)], list of (batch_idx, replica_idx)
-                job = torch.tensor(job)
-                job = broadcast_2d_tensor(job, 0, None, dtype=torch.int64)
-                batch_idx = job[:, 0].tolist()
-                replicat_idx = job[:, 1].tolist()
-                searcher = MCTSSearchOneBatch(
-                    search_func=search_func,
-                    collate_func=collate_func,
-                    save_path=save_path,
-                    dataset=ds,
-                    cache_dir=cfg.model.mcts.cache_dir,
-                )
-                searcher.search(batch_idx, replicat_idx)
-                end_time = time.time()
-            except Exception as e:
-                print("ERROR", e)
-                # print the stack trace
-                import traceback
-
-                traceback.print_exc()
-                raise self.retry(exc=e)
-            return {"batch_ids": batch_idx, "time": end_time - beg_time}
-
-        RAND_ID = os.environ.get("local_rank", random.randint(0, 10000))
-        app.worker_main(
-            [
-                "worker",
-                "--loglevel=INFO",
-                "--concurrency=1",
-                "--pool=threads",
-                "--without-gossip",
-                "-Ofair",
-                f"--hostname=worker-{RAND_ID}@%%h",
-            ]
-        )
-    else:
-        while True:
-            job = broadcast_2d_tensor(job, 0, None, dtype=torch.int64)
+    @app.task(
+        bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, retry_kwargs={"max_retries": 10},
+    )
+    def search_for_batch(self, job):
+        try:
+            beg_time = time.time()
+            # job exmaple [(0, 0), (0, 1), (1, 0), (1, 1)], list of (batch_idx, replica_idx)
+            job = torch.tensor(job)
+            # job = broadcast_2d_tensor(job, 0, None, dtype=torch.int64)
             batch_idx = job[:, 0].tolist()
             replicat_idx = job[:, 1].tolist()
             searcher = MCTSSearchOneBatch(
@@ -449,6 +414,28 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
                 cache_dir=cfg.model.mcts.cache_dir,
             )
             searcher.search(batch_idx, replicat_idx)
+            end_time = time.time()
+        except Exception as e:
+            print("ERROR", e)
+            # print the stack trace
+            import traceback
+
+            traceback.print_exc()
+            raise self.retry(exc=e)
+        return {"batch_ids": batch_idx, "time": end_time - beg_time}
+
+    RAND_ID = os.environ.get("local_rank", random.randint(0, 10000))
+    app.worker_main(
+        [
+            "worker",
+            "--loglevel=INFO",
+            "--concurrency=1",
+            "--pool=threads",
+            "--without-gossip",
+            "-Ofair",
+            f"--hostname=worker-{RAND_ID}@%%h",
+        ]
+    )
 
 
 if __name__ == "__main__":

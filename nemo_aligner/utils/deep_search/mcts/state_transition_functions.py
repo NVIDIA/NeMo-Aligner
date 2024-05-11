@@ -64,6 +64,48 @@ class LocalStateTransitionFunction(StateTransitionFunction):
         return output
 
 
+class TRTLLMLocalStateTransitionFunction(StateTransitionFunction):
+    def __init__(self, trtllm_infer, top_k, max_depth, add_bos_token, threshold, **strategy_args):
+        self.trtllm_infer = trtllm_infer
+        self.top_k = top_k
+        self.max_depth = max_depth
+        self.add_bos_token = add_bos_token
+        self.strategy_args = strategy_args
+        self.threshold = threshold
+
+    def __call__(self, sentences=None, actions=None, context_ids=None, session_info=None):
+        output = self.trtllm_infer(
+            inputs=sentences,
+            action=actions,
+            context_ids=context_ids,
+            session_info=session_info,
+            tokens_to_generate=self.max_depth,  # max search depth
+            top_k=self.top_k,
+            add_bos_token=self.add_bos_token,
+        )
+        threshold = self.threshold  # min probability threshold
+        probablities = output["policy"]
+        actions = output["action"]
+        update_probablities = []
+        update_actions = []
+        for prob, one_actions in zip(probablities, actions):
+            selected = prob >= threshold
+            if sum(selected) > 0:
+                # not empty
+                select_prob = prob[selected]
+                select_action = one_actions[selected].tolist()
+                update_probablities.append(select_prob)
+                update_actions.append(select_action)
+            else:
+                # if all the probablities are less than the threshold
+                # use all the probablities
+                update_probablities.append(prob)
+                update_actions.append(one_actions.tolist())
+        output["policy"] = update_probablities
+        output["action"] = update_actions
+        return output
+
+
 class EnvironmentStateTransitionFunction(LocalStateTransitionFunction):
     def interact_with_environment(self, action, past_text, past_tokens):
         """base on the context text/tokens, decide whether need to augment the input action with environment tokens

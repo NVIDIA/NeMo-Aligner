@@ -177,6 +177,7 @@ class MCTSParallel:
         self,
         args,
         tokenizer,
+        pad_id,
         session_info="session",
         score_fn=None,
         terminate_fns=None,
@@ -191,6 +192,7 @@ class MCTSParallel:
         self.client_fun = client_fun
         self.cache = {}
         self.has_value = has_value
+        self.pad_id = pad_id
 
     def decode_text(self, state):
         decoded_text = self.tokenizer.decode(state)
@@ -249,7 +251,7 @@ class MCTSParallel:
         max_length = max(action_length)
         # padding in the end
         for action in actions:
-            action.extend([self.tokenizer.pad_id()] * (max_length - len(action)))
+            action.extend([self.pad_id] * (max_length - len(action)))
         # convert to tensor
         actions = np.array(actions, dtype=np.int32)
         # get the context ids for the search nodes
@@ -505,7 +507,7 @@ class DeepSearch:
 
         count = 0
         # load the partial result from disk
-        if os.path.exists(filename) and self.strategy is not None:
+        if os.path.exists(filename):
             print("### LOADING CACHE FROM", filename)
             load_beg = time.time()
             cache = torch.load(filename)
