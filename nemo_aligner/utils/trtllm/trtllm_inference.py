@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
+import sentencepiece
 import tensorrt_llm
 import tensorrt_llm.profiler as profiler
 import torch
@@ -64,8 +65,9 @@ def load_tokenizer(
         tokenizer = GemmaTokenizer(vocab_file=vocab_file, padding_side="left", truncation_side="left", legacy=False)
     else:
         # For gpt-next, directly load from tokenizer.model
-        tokenizer = T5Tokenizer(vocab_file=vocab_file, padding_side="left", truncation_side="left", legacy=False)
-
+        # use sentence piece tokenizer
+        # tokenizer = T5Tokenizer(vocab_file=vocab_file, padding_side="left", truncation_side="left", legacy=False)
+        tokenizer = sentencepiece.SentencePieceProcessor(vocab_file)
     if model_name == "QWenForCausalLM" and model_version == "qwen":
         with open(Path(tokenizer_dir) / "generation_config.json") as f:
             gen_config = json.load(f)
@@ -77,12 +79,14 @@ def load_tokenizer(
         end_id = tokenizer.eop_token_id
         bos_id = tokenizer.bos_token_id
     else:
-        if tokenizer.pad_token_id is None:
-            tokenizer.pad_token_id = tokenizer.eos_token_id
-        pad_id = tokenizer.pad_token_id
-        end_id = tokenizer.eos_token_id
-        bos_id = tokenizer.bos_token_id
-
+        pad_id = tokenizer.pad_id()
+        end_id = tokenizer.eos_id()
+        bos_id = tokenizer.bos_id()
+        # if tokenizer.pad_token_id is None:
+        #     tokenizer.pad_token_id = tokenizer.eos_token_id
+        # pad_id = tokenizer.pad_token_id
+        # end_id = tokenizer.eos_token_id
+        # bos_id = tokenizer.bos_token_id
     return tokenizer, pad_id, end_id, bos_id
 
 
@@ -143,7 +147,7 @@ class TRTLLMInference:
         if add_BOS:
             context_tokens = [torch.tensor([self.bos_id] + tokenizer.encode(s)) for s in sentences]
         else:
-            context_tokens = [tokenizer.encode(s, return_tensors="pt").squeeze(0) for s in sentences]
+            context_tokens = [torch.tensor(tokenizer.encode(s)) for s in sentences]
         return context_tokens
 
     def __call__(
