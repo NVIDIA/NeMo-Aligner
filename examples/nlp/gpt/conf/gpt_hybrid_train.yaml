@@ -31,6 +31,11 @@ pretrained_checkpoint:
   from_mcts_trained: False
   has_value_head: True  # whehter the pretrained model has value head
 
+trtllm:
+  engine_path: null
+  tokenizer_dir: null
+  vocab_file: null
+
 mcts_data_file: null
 
 server_url: ??  # the rabbitmq server url, e.g. pyamqp://guest@localhost:5672//
