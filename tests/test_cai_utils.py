@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 import os
+import sys
 
-sys.path.append(os.path.abspath('../examples/nlp/cai'))
+sys.path.append(os.path.abspath("../examples/nlp/cai"))
 
 from cai_utils import PromptTemplate, UserAssistantPromptTemplate
 
