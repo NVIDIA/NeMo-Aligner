@@ -20,12 +20,12 @@ import os.path
 import random
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Union
 
 import numpy as np
 from tqdm import tqdm
 
-from nemo_aligner.utils.cai_utils import UserAssistantPromptTemplate, remote_inference, remote_inference_with_ngc
+from cai_utils import UserAssistantPromptTemplate, remote_inference, remote_inference_with_ngc
 
 
 def generate_cai_rlaif_candidate_dataset(

@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from nemo_aligner.utils.cai_utils import PromptTemplate, UserAssistantPromptTemplate
+import sys
+import os
+
+sys.path.append(os.path.abspath('../examples/nlp/cai'))
+
+from cai_utils import PromptTemplate, UserAssistantPromptTemplate
 
 
 def test_extra_id_format_single_user_prompt():

@@ -20,7 +20,7 @@ import warnings
 from pathlib import Path
 
 from datasets import DatasetDict, concatenate_datasets, load_dataset
-from nemo_aligner.utils.cai_utils import UserAssistantPromptTemplate
+from cai_utils import UserAssistantPromptTemplate
 
 
 """

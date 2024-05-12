@@ -20,7 +20,7 @@ import random
 
 import numpy as np
 import tqdm
-from nemo_aligner.utils.cai_utils import UserAssistantPromptTemplate, remote_inference
+from cai_utils import UserAssistantPromptTemplate, remote_inference
 
 
 def generate_chat_prompt(sample: dict):
@@ -293,7 +293,7 @@ def generate_cai_dataset(
 def remove_long_dialogs_wrapper(
     input_file_path: str, max_seq_length: int, tokenizer_model: str, tokenizer_library: str
 ):
-    from nemo_aligner.utils.cai_utils import remove_long_dialogs
+    from cai_utils import remove_long_dialogs
 
     if max_seq_length is None or max_seq_length <= 0:
         return
