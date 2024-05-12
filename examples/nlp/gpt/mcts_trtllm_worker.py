@@ -52,7 +52,6 @@ from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import DummyScore, GSK8KFeedbackDataset, SteerLMFeedback
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts, run_trtllm_mcts
-from nemo_aligner.utils.distributed import broadcast_2d_tensor
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     init_distributed,
@@ -134,22 +133,14 @@ def get_cached_outputs(cache_dir, global_set):
 
         global_batch_ids.update(batches)
 
-    if torch.distributed.get_rank() == 0:
-        print("### DELETING FILES", to_delete)
-        for p in to_delete:
-            p.unlink()
+    #    if torch.distributed.get_rank() == 0:
+    print("### DELETING FILES", to_delete)
+    for p in to_delete:
+        p.unlink()
 
-    torch.distributed.barrier()
+    # torch.distributed.barrier()
 
     return local_batches_to_load, global_batch_ids
-
-
-def get_global_set(local_data_ids):
-    output = [None for _ in range(parallel_state.get_data_parallel_world_size())]
-    torch.distributed.all_gather_object(output, local_data_ids, group=parallel_state.get_data_parallel_group())
-    global_set = set().union(*output)
-
-    return global_set
 
 
 def get_local_iterator(global_set, num_to_load, extra_filters=None):
@@ -232,21 +223,21 @@ class MCTSSearchOneBatch:
         self.data_ids.update(ids)
         print("###### DONE", batch_idx)
 
-        print("### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx, "at step", self.step)
+        print("### Finish Job", "batch_idx", batch_idx, "at step", self.step)
         save_path = os.path.join(self.save_path, f"{batch_file_name}_.pt")
         self.save(save_path)
 
     def save(self, save_path):
-        group = parallel_state.get_model_parallel_group()
-        rank = torch.distributed.get_rank(group=group)
+        # group = parallel_state.get_model_parallel_group()
+        # rank = torch.distributed.get_rank(group=group)
 
-        assert rank >= 0
+        # assert rank >= 0
 
-        if rank + 1 == torch.distributed.get_world_size(group):
-            print("### RANK SAVING", torch.distributed.get_rank())
-            preemptable_save(self.state_dict(), save_path)
-
-        torch.distributed.barrier(group=group)
+        # if rank + 1 == torch.distributed.get_world_size(group):
+        # print("### RANK SAVING", torch.distributed.get_rank())
+        print("### RANK SAVING")
+        preemptable_save(self.state_dict(), save_path)
+        # torch.distributed.barrier(group=group)
 
     def state_dict(self):
         return {"data_ids": self.data_ids, "mcts_outputs": self.outputs}
