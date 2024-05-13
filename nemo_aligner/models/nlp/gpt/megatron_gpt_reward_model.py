@@ -362,6 +362,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             raise NotImplementedError("string inputs not yet supported")
 
         print("#### shape", context_tokens_tensor.size(), torch.distributed.get_rank())
+        context_tokens_tensor = context_tokens_tensor.cuda()
+        context_length_tensor = context_length_tensor.cuda()
 
         inference_batch_size, sequence_length = context_tokens_tensor.size()
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
@@ -377,8 +379,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         num_microbatches = divide(inference_batch_size, self.forward_mbs)
         data_iter = get_iterator_k_split(inputs, num_microbatches)
 
-        with print_timer("forward step"):
-            rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches)
+        rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches)
 
         if parallel_state.is_pipeline_last_stage():
             rewards = torch.cat(rewards)
