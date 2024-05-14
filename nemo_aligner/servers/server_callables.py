@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import threading
 from typing import Dict
 
@@ -25,8 +26,10 @@ from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.server_utils import decode_bytes_ndarray, lock_method, pad_input
 
+MODEL_SEQ_LENGTH = 4096
 
-def process_inference_request(inputs, pad_to):
+
+def process_inference_request(inputs, pad_to, pad_sequence_length_to_multiple=None):
     sentences = inputs.pop("sentences", None)
     if sentences is not None:
         sentences = decode_bytes_ndarray(sentences)
@@ -36,7 +39,19 @@ def process_inference_request(inputs, pad_to):
 
     assert sentences is not None or tokens is not None, "Both sentences and tokens cannot be None."
 
+    # TODO: tokenize it here
     sentences, extra_sentences = pad_input(sentences, pad_to)
+
+    prepad_sequence_length = tokens.shape[1]
+
+    if pad_sequence_length_to_multiple is not None:
+        padded_sequence_length = (
+            math.ceil(sequence_lengths.max().item() / pad_sequence_length_to_multiple)
+            * pad_sequence_length_to_multiple
+        )
+        max_sequence_length = min(padded_sequence_length, MODEL_SEQ_LENGTH)
+        tokens = tokens[:, :max_sequence_length]
+
     tokens, extra_tokens = pad_input(tokens, pad_to)
     sequence_lengths, extra_sequence_lengths = pad_input(sequence_lengths, pad_to)
 
@@ -46,7 +61,7 @@ def process_inference_request(inputs, pad_to):
         assert len(inputs) == len(sequence_lengths)
         assert extra_sequence_lengths == extra
 
-    return {"inputs": inputs, "sequence_length": sequence_lengths}, extra
+    return {"inputs": inputs, "sequence_length": sequence_lengths}, extra, prepad_sequence_length
 
 
 def run_rm_or_critic_inference(infer_fn, inputs, extra):

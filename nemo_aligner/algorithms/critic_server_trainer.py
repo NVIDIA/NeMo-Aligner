@@ -60,6 +60,7 @@ class CriticServerTrainer:
         self.gbs = cfg.gbs
         self.forward_mbs = cfg.forward_mbs
         self.step = 0
+        self.pad_sequence_length_to_multiple = cfg.pad_sequence_length_to_multiple
 
         self.timestamp = time.time()
 
@@ -110,10 +111,19 @@ class CriticServerTrainer:
             )
         )
         start_time = time.time()
-        inputs, extra = process_inference_request(
-            inputs, pad_to=self.forward_mbs * parallel_state.get_data_parallel_world_size()
+        inputs, extra, prepad_sequence_length = process_inference_request(
+            inputs,
+            pad_to=self.forward_mbs * parallel_state.get_data_parallel_world_size(),
+            pad_sequence_length_to_multiple=self.pad_sequence_length_to_multiple,
         )
         rewards, values = self.run_inference(inputs=inputs, extra=extra)
+
+        if prepad_sequence_length > values.shape[1]:
+            values = np.pad(
+                values, ((0, 0), (0, prepad_sequence_length - values.shape[1])), mode="constant", constant_values=0
+            )
+        else:
+            values = values[:, :prepad_sequence_length]
 
         end_time = time.time()
         print("#### INFER TOOK", end_time - start_time)
@@ -180,8 +190,8 @@ class CriticServerTrainer:
             )
             # try to find a common multiple of forward mbs and dp so we don't need to pad
             dp_size = parallel_state.get_data_parallel_world_size()
-
             preferred_batch_size = [dp_size * self.forward_mbs * (i + 1) for i in range(1000)]
+
             # 1 second latency max
             dynamic_batcher = DynamicBatcher(
                 max_queue_delay_microseconds=self.cfg.max_queue_delay_microseconds,

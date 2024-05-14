@@ -21,6 +21,7 @@ trainer:
 
     gbs: ${model.global_batch_size}
     forward_mbs: ${model.forward_mbs}
+    pad_sequence_length_to_multiple: null
 
     max_queue_delay_microseconds: 2000
 
