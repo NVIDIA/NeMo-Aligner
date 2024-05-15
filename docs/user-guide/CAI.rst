@@ -9,25 +9,28 @@ Constitutional AI: Harmlessness from AI Feedback
 `Constitutional AI (CAI)`_ is an approach by Anthropic to train AI systems that are helpful, honest, and harmless, without relying on human feedback labels for harmlessness.
 CAI uses a set of natural language principles to guide AI behavior and self-improvement.
 The method consists of two stages: a supervised learning stage, where the AI critiques and revises its own responses according to the principles, and a reinforcement learning stage, where the AI learns from its own feedback based on the principles.
-CAI allows training a harmless but non-evasive AI assistant that engages with harmful queries by explaining its objections to them.
+CAI allows training a harmless, but non-evasive AI assistant that engages with harmful queries by explaining its objections to them.
 
 .. _Constitutional AI (CAI): https://arxiv.org/abs/2212.08073
 
 CAI
 ###############
-The basic steps of CAI, as illustrated in Figure 1 of the paper (below):
+The basic steps of CAI are described in this section and illustrated in the figure below (`Figure 1 <https://arxiv.org/abs/2212.08073>`_).
 
-(Supervised Stage) Critique → Revision → Supervised Learning: The AI generates responses to harmfulness prompts using a helpful-only AI assistant, then critiques and revises its own responses according to a principle in the constitution, and then finetunes the original model on the revised responses.
+(Supervised Stage) Critique → Revision → Supervised Learning: The AI generates responses to harmfulness prompts using a helpful-only AI assistant, then critiques and revises its own responses according to a principle in the constitution, and then fine-tunes the original model on the revised responses.
 
 (RL Stage) AI Comparison Evaluations → Reward Model → Reinforcement Learning: The AI generates pairs of responses to harmfulness prompts using the finetuned model, then evaluates which response is better according to a principle in the constitution, and then trains a reward model based on this dataset of AI preferences and a human helpfulness preferences. The AI then trains with RL using the learned reward model.
 
 .. image:: ../assets/cai_diagram.png
    :alt: basic steps of the CAI process
 
-Critiques, revisions and AI harmlessness feedback are steered by a small set of principles drawn from a ‘constitution’. The supervised stage significantly improves the initial model, and gives some control over the initial behavior at the start of the RL phase, addressing potential exploration problems. The RL stage significantly improves performance and reliability.
+   Constitutional AI Steps. `Figure 1 <https://arxiv.org/abs/2212.08073>`_.
+
+Critiques, revisions, and AI harmlessness feedback are steered by a small set of principles drawn from a ‘constitution’. The supervised stage significantly improves the initial model. It gives some control over the initial behavior at the start of the RL phase, while addressing potential exploration problems. The RL stage significantly improves performance and reliability.
 
 Motivation
 ###############
+Constitutional AI motivation refers to designing AI systems in such a way that their objectives and behaviors are guided by a set of predefined rules or principles. It includes the following:
 
 Scaling supervision: using AI to help humans supervise other AIs more efficiently and effectively, especially for tasks where AI capabilities may exceed human ones.
 
@@ -46,18 +49,18 @@ This section is a step-by-step tutorial that walks you through how to run a full
 
 2. Generate responses to harmfulness prompts using a helpful-only AI assistant. Ask the model to critique its response according to a principle in the constitution, and then revise the original response in light of the critique.
 
-3. Finetune ``Mistral-7B`` with SFT on the revised responses to create a ``Mistral-7B-SL-CAI`` model.
+3. Fine-tune ``Mistral-7B`` with SFT on the revised responses to create a ``Mistral-7B-SL-CAI`` model.
 
-4. 
+4. Generate the RL-CAI (preference) dataset for RM and PPO training.
    a. Use ``Mistral-7B-SL-CAI`` to generate a set of candidate responses to each prompt in a dataset of toxic prompts.
    b. Formulate each prompt and pair into a multiple choice question, where we ask ``Mixtral-8x7B`` which response is best according to the constitution.
    c. Blend the AI feedback preference dataset (prompts and pairs) with human feedback helpfulness dataset.
 
-5. Train a RM.
+5. Train a Reward Model (RM).
 
-6. Finetune the ``Mistral-7B-SL-CAI`` with PPO and the RM to train a ``Mistral-7B-RL-CAI`` model.
+6. Fine-tune the ``Mistral-7B-SL-CAI`` with Proximal Policy Optimization (PPO) and the RM to train a ``Mistral-7B-RL-CAI`` model.
 
-7. Inference.
+7. Run inference.
 
 .. image:: ../assets/cai_flow.png
 
@@ -65,7 +68,7 @@ Step 1: Download models and datasets
 #############################################################################
 1. Download ``Mistral-7B-Instruct`` and ``Mistral-7B`` LLM models from https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 and https://huggingface.co/mistralai/Mistral-7B-v0.1 into the models folder.
 
-   Then convert into .nemo format:
+   Then, convert into .nemo format:
    
    .. code-block:: bash
    
@@ -81,7 +84,7 @@ Step 1: Download models and datasets
 
       python3 -c "from datasets import load_dataset; load_dataset('Anthropic/hh-rlhf', data_dir='red-team-attempts', split='train').to_json('/path/to/anthropic_red_team_attempts_train.json')"
    
-   This will download the dataset to ``/path/to/anthropic_red_team_attempts_train.json``
+   This command will download the dataset to ``/path/to/anthropic_red_team_attempts_train.json``
 
 
 3. Download SFT helpfulness dataset:
@@ -90,7 +93,7 @@ Step 1: Download models and datasets
    
       python3 -c "from datasets import load_dataset; load_dataset('nvidia/sft_datablend_v1', split='train').to_json('/path/to/nvidia_sft_datablend_v1_train.json')"
 
-   This will download the dataset to ``/path/to/nvidia_sft_datablend_v1_train.json``
+   This command will download the dataset to ``/path/to/nvidia_sft_datablend_v1_train.json``
 
 
 4. Download and process preference helpfulness dataset:
@@ -143,13 +146,13 @@ This will generate an SL-CAI dataset of prompts and revised responses as ``cai_r
 The few-shot samples should be provided following the template in ``few_shot_samples_example.json`` (filling in the `content` tags, and choosing how many samples to use), and should include a red teaming prompt, a response from the helpful model (e.g. ``Mistral-7B`` in this tutorial), critique and revision requests and responses. The Anthropic repo outlines an example `here <https://github.com/anthropics/ConstitutionalHarmlessnessPaper/blob/main/prompts/CritiqueRevisionFewShotPrompts.json>`_.
 
 *NOTE: The tokenizer file can be found by extracting the .nemo checkpoint using `tar -xf /models/mistral/mistral-7b-Instruct.nemo`.
-There are 2 tokenizer files that end with `*.model` in the model checkpoint and they are the same, so you can use either one for data processing.*
+There are 2 tokenizer files that end with `.model` in the model checkpoint and they are the same, so you can use either one for data processing.*
 
 
-Step 3: Finetune Mistral-7B on the revised responses to create a Mistral-7B-SL-CAI model
+Step 3: Fine-tune Mistral-7B on the revised responses to create a Mistral-7B-SL-CAI model
 ######################################################################################################
 
-Note that you would need to set up multi-node training run in your cluster env, depending on the type of cluster you use. For details, please refer to https://lightning.ai/docs/pytorch/stable/clouds/cluster.html
+Note that you would need to set up multi-node training run in your cluster env, depending on the type of cluster you use. For details, please refer to https://lightning.ai/docs/pytorch/stable/clouds/cluster.html .
 
 .. code-block:: bash
 
@@ -182,9 +185,9 @@ Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
 ##############################################################################################################
 
 The following section runs an inference server with the SL-CAI model that we've previously trained, and queries it with red teaming prompts asking for several responses per prompt.
-These will then be ranked by a judge LLM being run from NVIDIA's NGC. An NGC API key can be acquired `here`_.
+The responses will then be ranked by a judge LLM being run from NVIDIA's NGC. An NGC API key can be acquired `here`_.
 
-The following will run the inference server:
+The following command will run the inference server:
 
 .. _here: https://org.ngc.nvidia.com/setup/api-key
 
@@ -218,11 +221,13 @@ Using a different terminal, run the following command to start the RL-CAI datase
       --blend-with "{'name': 'anthropic_helpful_only', 'train': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_comparisons_with_chat_prompt.jsonl']}, 'test': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_comparisons_with_chat_prompt.jsonl']}}" \
       --port 5999
 
-This will create the ``rl-cai`` dataset files in the defined output folder with the given output filename prefix.
+This command will create the ``rl-cai`` dataset files in the defined output folder with the given output filename prefix.
 
 
 Step 5: Train the RM
 #####################
+
+Run the following command to train the RM:
 
 .. code-block:: bash
 
@@ -247,7 +252,7 @@ Step 5: Train the RM
 
 The trained RM checkpoint will be saved to output dir given by ``exp_manager.explicit_log_dir``.
 
-Step 6: Finetune Mistral-7B-SL-CAI with PPO and the RM to train a Mistral-7B-RL-CAI model
+Step 6: Fine-tune Mistral-7B-SL-CAI with PPO and the RM to train a Mistral-7B-RL-CAI model
 ##############################################################################################
 Run the following command in the background to launch a RM and PPO critic training server:
 
@@ -263,7 +268,7 @@ Run the following command in the background to launch a RM and PPO critic traini
       model.seed=1234 \
       exp_manager.explicit_log_dir=<path to critic output dir>
 
-Run the following command to launch actor training and reference policy server:
+Run the following command to launch actor training and a reference policy server:
 
 .. code-block:: bash
 
@@ -285,7 +290,7 @@ Run the following command to launch actor training and reference policy server:
       remote_critic_rm.critic.ip=<ip to critic service> \
       remote_critic_rm.critic.port=5567
 
-The trained policy (LLM) checkpoint will be saved to output dir given by ``exp_manager.explicit_log_dir``.
+The trained LLM policy checkpoint will be saved to the output dir given by ``exp_manager.explicit_log_dir``.
 
 Step 7: Inference
 ##################
@@ -305,4 +310,4 @@ To start inference, run an inference server in the background using the followin
            web_server=False \
            port=1427
 
-Please wait for the server to be ready before proceeding, and follow the on-screen directive.
+Please wait for the server to be ready before proceeding. Then, follow the on-screen directive.

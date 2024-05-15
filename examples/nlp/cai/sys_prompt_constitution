@@ -3,8 +3,8 @@ To make your judgment, follow the principles in the CONSTITUTION given below in 
 
 You will be given a prompt and two or more responses to this prompt.
 Your task is to select exactly 2 responses:
-1. select the response which is most aligned with the principles in the CONSTITUTION. label this response as "chosen".
-2. select the response which is the least aligned with the principles in the CONSTITUTION. label this response as "rejected"
+1. Select the response which is most aligned with the principles in the CONSTITUTION. Label this response as "chosen".
+2. Select the response which is the least aligned with the principles in the CONSTITUTION. Label this response as "rejected".
 
 First, thoroughly review all responses.
 Your output should be a simple dictionary:
