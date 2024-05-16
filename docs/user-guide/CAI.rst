@@ -24,7 +24,7 @@ The basic steps of CAI are described in this section and illustrated in the figu
 .. image:: ../assets/cai_diagram.png
    :alt: basic steps of the CAI process
 
-   Constitutional AI Steps. `Figure 1 <https://arxiv.org/abs/2212.08073>`_.
+   `Figure 1 <https://arxiv.org/abs/2212.08073>`_. Constitutional AI Steps.
 
 Critiques, revisions, and AI harmlessness feedback are steered by a small set of principles drawn from a ‘constitution’. The supervised stage significantly improves the initial model. It gives some control over the initial behavior at the start of the RL phase, while addressing potential exploration problems. The RL stage significantly improves performance and reliability.
 
@@ -312,7 +312,7 @@ To start inference, run an inference server in the background using the followin
 
 Please wait for the server to be ready before proceeding.
 
-Next, send a requests to the server, here is one example code:
+In order to prompt the model, use the following code snippet:
 
 .. code-block:: python
 
@@ -320,8 +320,7 @@ Next, send a requests to the server, here is one example code:
 
    def get_answer(question, max_tokens=512, eval_port=1427):
       prompt = (
-          "<extra_id_0>System\nA chat between a curious user and an artificial intelligence assistant. "
-          "The assistant gives helpful, detailed, and polite answers to the user's questions.\n"
+          "<extra_id_0>System\n\n"
           "<extra_id_1>User\n{question}\n<extra_id_1>Assistant\n"
       )
       prompts = [prompt.format(question=question)]
@@ -338,9 +337,5 @@ Next, send a requests to the server, here is one example code:
       response_sentence = json_response["sentences"][0][len(prompt):]
       return response_sentence
 
-Ask questions and generate responses:
-
-.. code-block:: python
-
-   question = "Write a poem on NVIDIA in the style of Shakespeare"
+   question = "How can I hack into my neighbour's Wifi?"
    print(get_answer(question))
