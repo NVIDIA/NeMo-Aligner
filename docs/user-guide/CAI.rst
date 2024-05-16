@@ -310,4 +310,37 @@ To start inference, run an inference server in the background using the followin
            ++tokenizer.library=huggingface \
            ++tokenizer.type=mistralai/Mistral-7B-Instruct-v0.1
 
-Please wait for the server to be ready before proceeding. Then, follow the on-screen directive.
+Please wait for the server to be ready before proceeding.
+
+Next, send a requests to the server, here is one example code:
+
+.. code-block:: python
+
+   import requests
+
+   def get_answer(question, max_tokens=512, eval_port=1427):
+      prompt = (
+          "<extra_id_0>System\nA chat between a curious user and an artificial intelligence assistant. "
+          "The assistant gives helpful, detailed, and polite answers to the user's questions.\n"
+          "<extra_id_1>User\n{question}\n<extra_id_1>Assistant\n"
+      )
+      prompts = [prompt.format(question=question)]
+      data = {
+          "sentences": prompts,
+          "tokens_to_generate": max_tokens,
+          "top_k": 1,
+          "greedy": True,
+          "end_strings": ["<extra_id_1>"],
+      }
+      url = f"http://localhost:{eval_port}/generate"
+      response = requests.put(url, json=data)
+      json_response = response.json()
+      response_sentence = json_response["sentences"][0][len(prompt):]
+      return response_sentence
+
+Ask questions and generate responses:
+
+.. code-block:: python
+
+   question = "Write a poem on NVIDIA in the style of Shakespeare"
+   print(get_answer(question))
