@@ -198,11 +198,14 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             rewards = batch["reward"]
             mask = batch["mcts_mask"]
 
-            policy_mask = (rewards > 0) & mask
-            policy_loss = (log_probs.gather(dim=-1, index=actions.long()) * action_probs).sum(-1)
-            policy_loss = self.policy_loss_weight * policy_loss
+            policy_mask = (rewards > 0).unsqueeze(-1) & mask
+            policy_loss = (log_probs.gather(dim=-1, index=actions.long()) * action_probs) * policy_mask
+            policy_loss = policy_loss.view(policy_loss.size(0), -1).sum(-1) / policy_mask.view(mask.size(0), -1).sum(
+                -1
+            )
+            policy_loss = policy_loss.mean()
 
-            return compute_masked_per_sample_average(policy_loss, policy_mask, dim=-1)
+            return self.policy_loss_weight * policy_loss
 
         return policy_loss
 

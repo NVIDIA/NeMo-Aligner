@@ -64,23 +64,9 @@ mp.set_start_method("spawn", force=True)
 
 
 class DatasetLoader:
-    def __init__(self, dictionary, filter_correct_only=False):
+    def __init__(self, dictionary):
         # no need to shuffle it because the dataloader does
         paths = list(sorted(chain.from_iterable(dictionary.values())))
-
-        if filter_correct_only:
-
-            correct_paths = []
-            print("### PRE data ids", len(paths))
-            for p in paths:
-                output = torch.load(p)
-                if all(output["reward"]):
-                    correct_paths.append(p)
-
-                del output
-            paths = correct_paths
-            print("### POST data ids", len(paths))
-
         self.paths = paths
 
     def __getitem__(self, idx):
@@ -123,6 +109,7 @@ def parse_filename(filename, start_string):
 
 def get_paths(path_or_dir):
     path = Path(path_or_dir)
+    assert path.exists()
 
     policy_paths = sorted(path.glob("policy_data*.pt"))
     value_paths = sorted(path.glob("value_data*.pt"))
@@ -176,9 +163,7 @@ def create_mask(tokens, lengths, response_length, actions=None):
     sequence_mask = (start <= seq_range) & (end > seq_range)
 
     if actions is not None:
-        # mask out actions that are -1
-        action_mask = ~((actions == -1).sum(-1) > 0)
-        sequence_mask &= action_mask
+        sequence_mask = sequence_mask[..., None] & (actions != -1)
 
     return sequence_mask
 
@@ -248,15 +233,45 @@ def mcts_value_collate_fn(eos_id, batches):
     return final_dict | {"mcts_mask": mask}
 
 
+def split_paths(data_paths, train_ds, val_ds, tokenizer):
+    train_ds_str = set(item["question"] for item in train_ds)
+    val_ds_str = set(item["question"] for item in val_ds)
+
+    train_paths = {}
+    validation_paths = {}
+
+    for k, list_of_paths in data_paths.items():
+        item = torch.load(list_of_paths[0])
+        toks = item["tokens"]
+
+        if isinstance(toks[0], list):
+            toks = toks[0]
+
+        curr_text = tokenizer.ids_to_text(toks[: item["context_length"]])
+
+        if isinstance(curr_text, list):
+            curr_text = curr_text[0]
+
+        if curr_text in train_ds_str:
+            train_paths[k] = list_of_paths
+        elif curr_text in val_ds_str:
+            validation_paths[k] = list_of_paths
+        else:
+            raise ValueError(f"cannot find set for {list_of_paths}")
+
+    return train_paths, validation_paths
+
+
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
     train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
     val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
-    val_ids = {item["data_id"] for item in val_ds}
 
     feedback = MathSandBoxedFeedBack(
         host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT")
     )
+
+    all_policy_data_paths, all_value_data_paths = get_paths(cfg.mcts_data_file)
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
     cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
@@ -280,6 +295,24 @@ def main(cfg) -> None:
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
+    train_policy_data_paths, val_policy_data_paths = split_paths(
+        all_policy_data_paths, train_ds, val_ds, ptl_model.tokenizer
+    )
+    logging.info(
+        "policy data presplit: {} post split train: {} val: {}".format(
+            len(all_policy_data_paths), len(train_policy_data_paths), len(val_policy_data_paths)
+        )
+    )
+
+    train_value_data_paths, val_value_data_paths = split_paths(
+        all_value_data_paths, train_ds, val_ds, ptl_model.tokenizer
+    )
+    logging.info(
+        "value data presplit: {} post split train: {} val: {}".format(
+            len(all_value_data_paths), len(train_value_data_paths), len(val_value_data_paths)
+        )
+    )
+
     trainer_restore_path = trainer.ckpt_path
     if trainer_restore_path is not None:
         custom_trainer_state_dict = retrieve_custom_trainer_state_dict(trainer)
@@ -294,35 +327,13 @@ def main(cfg) -> None:
 
     dp_size = parallel_state.get_data_parallel_world_size()
 
-    assert os.path.exists(cfg.mcts_data_file)
-
-    policy_data_paths, value_data_paths = get_paths(cfg.mcts_data_file)
-
-    policy_train_data = {k: v for k, v in policy_data_paths.items() if k not in val_ids}
-    policy_val_data = {k: v for k, v in policy_data_paths.items() if k in val_ids}
-
-    value_train_data = {k: v for k, v in value_data_paths.items() if k not in val_ids}
-    value_val_data = {k: v for k, v in value_data_paths.items() if k in val_ids}
-
-    num_samples = compute_limit_batches(
-        len(train_ds) // (cfg.model.inference.micro_batch_size * dp_size), cfg.trainer.deep_search.limit_val_batches
-    )
-
-    train_ds_id_mapping = {item["data_id"]: i for i, item in enumerate(train_ds)}
-    train_eval_ds = []
-    for _, data_id in zip(
-        range(num_samples * (cfg.model.inference.micro_batch_size * dp_size)), policy_train_data.keys()
-    ):
-        idx = train_ds_id_mapping[data_id]
-        train_eval_ds.append(train_ds[idx])
-
     eos_id = ptl_model.tokenizer.eos_id
 
     # TODO(geshen): consumed samples need to be different for each of these 2 dataloaders
     # TODO(geshen): support multiple epochs
     train_policy_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=DatasetLoader(policy_train_data, filter_correct_only=True),
+        dataset=DatasetLoader(train_policy_data_paths),
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
@@ -334,7 +345,7 @@ def main(cfg) -> None:
     # TODO(geshen): can have different mbs
     train_value_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=DatasetLoader(value_train_data),
+        dataset=DatasetLoader(train_value_data_paths),
         consumed_samples=consumed_samples_values,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.critic_global_batch_size,
@@ -361,7 +372,7 @@ def main(cfg) -> None:
     train_dataloader_builder_func = partial(
         build_dataloader,
         cfg=cfg,
-        dataset=train_eval_ds,
+        dataset=train_ds,
         consumed_samples=0,
         mbs=cfg.model.inference.micro_batch_size,
         gbs=cfg.model.inference.micro_batch_size * dp_size,
@@ -375,7 +386,7 @@ def main(cfg) -> None:
 
     val_policy_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=DatasetLoader(policy_val_data),
+        dataset=DatasetLoader(val_policy_data_paths),
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
@@ -387,7 +398,7 @@ def main(cfg) -> None:
     # TODO(geshen): can have different mbs
     val_value_dataloader = build_dataloader(
         cfg=cfg,
-        dataset=DatasetLoader(value_val_data),
+        dataset=DatasetLoader(val_value_data_paths),
         consumed_samples=consumed_samples_values,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.critic_global_batch_size,
