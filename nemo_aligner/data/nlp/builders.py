@@ -51,7 +51,7 @@ from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
 def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name):
-    def _build_dataset(current_data_prefix, current_num_samples):
+    def _build_dataset(current_data_prefix, current_num_samples):  # WARNING: current_num_samples not used
         if data_impl == "mmap":
             data_payload = get_indexed_dataset_(current_data_prefix, data_impl, cfg.data.get("skip_warmup", True))
         elif data_impl.startswith("json"):
@@ -66,7 +66,7 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
         logging.info("     Total {} documents is : {} ".format(name, total_num_of_documents))
 
         drop_last = True
-        if name == "valid":
+        if name == "valid":  # WARNING: valid or validation?
             drop_last = cfg.data.get("validation_drop_last", True)
 
         dataset = cls(
@@ -85,7 +85,7 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
     if len(data_prefix) == 1:
         return _build_dataset(data_prefix[0], num_samples)
     else:
-        output = get_datasets_weights_and_num_samples(data_prefix, num_samples)
+        output = get_datasets_weights_and_num_samples(data_prefix, num_samples)  # WARNING: num_samples has no effect
         data_prefixes, weights, datasets_num_samples = output
         datasets = []
         for i in range(len(data_prefixes)):
@@ -116,17 +116,21 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="train",
         )
-        validation_ds = build_dataset_generic(
-            cls=cls,
-            cfg=cfg,
-            data_prefix=data_prefix["validation"],
-            data_impl=data_impl,
-            num_samples=int(train_valid_test_num_samples[0]),
-            seq_length=seq_length,
-            seed=seed,
-            tokenizer=tokenizer,
-            name="validation",
-        )
+        keys_val = [k for k in data_prefix if k.startswith("validation")]
+        dict_validation_ds = {
+            k: build_dataset_generic(
+                cls=cls,
+                cfg=cfg,
+                data_prefix=data_prefix["validation"],
+                data_impl=data_impl,
+                num_samples=int(train_valid_test_num_samples[0]),
+                seq_length=seq_length,
+                seed=seed,
+                tokenizer=tokenizer,
+                name="validation",
+            )
+            for k in keys_val
+        }
         test_ds = build_dataset_generic(
             cls=cls,
             cfg=cfg,
@@ -138,9 +142,9 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="test",
         )
-        return train_ds, validation_ds, test_ds
+        return train_ds, dict_validation_ds, test_ds
 
-    else:
+    else:  # TODO: when is data_prefix not a DictConfig?
         # Single dataset.
         if len(data_prefix) == 1:
             return _build_train_valid_test_datasets(

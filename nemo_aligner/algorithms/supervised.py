@@ -49,9 +49,10 @@ class SupervisedTrainer:
         ckpt_callback,
         run_timer,
     ):
+        assert isinstance(val_dataloader, (torch.utils.data.DataLoader, dict))
         self.model = model
         self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
+        self.val_dataloader = val_dataloader if isinstance(val_dataloader, dict) else {"validation": val_dataloader}
         self.test_dataloader = test_dataloader
         self.logger = logger
         self.cfg = cfg
@@ -69,7 +70,8 @@ class SupervisedTrainer:
         # compute `max_steps`
         self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
 
-        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
+        self.dict_limit_val_batches = {k: compute_limit_batches(len(v), self.cfg.limit_val_batches) for k, v in val_dataloader.items()}
+        self.main_limit_val_batches = self.dict_limit_val_batches["validation"]
         self.set_max_steps()
 
         self.timer = SyncTimer(
@@ -90,13 +92,26 @@ class SupervisedTrainer:
     @torch.no_grad()
     def run_validation(self):
         loss_means = []
+        metrics = {}
+        for k in self.val_dataloader:
+            loss_means_, metrics_ = self.run_validation_one_dataset(k)
+            loss_means.append(loss_means_)
+            metrics.update(metrics_)
+        return mean(loss_means), metrics  # TODO: would we want weighted sum with ds lengths?
+
+    @torch.no_grad()
+    def run_validation_one_dataset(self, key: str):
+        loss_means = []
         val_metrics = defaultdict(list)
 
+        limit_val_batches = self.dict_limit_val_batches[key]
+        val_dataloader = self.val_dataloader[key]
+
         val_pbar = tqdm(
-            zip(range(self.limit_val_batches), self.val_dataloader),
-            total=self.limit_val_batches,
+            zip(range(limit_val_batches), val_dataloader),
+            total=limit_val_batches,
             leave=True,
-            desc="Validation steps",
+            desc="Validation steps", # TODO improve pbar with key maybe
         )
 
         for _, batch in val_pbar:
@@ -123,6 +138,7 @@ class SupervisedTrainer:
 
         val_metrics = {k: mean(v) for k, v in val_metrics.items()}
         val_metrics.update(self.inference_metrics_handler.compute())
+        val_metrics = {f"{key}/{k}": v for k, v in val_metrics.items()}  # One wandb tab per validation dataset
         self.inference_metrics_handler.reset()
 
         return mean(loss_means), val_metrics
@@ -212,7 +228,7 @@ class SupervisedTrainer:
                     self.max_steps,
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
-                    self.limit_val_batches,
+                    self.main_limit_val_batches,
                     run_time_exceeded=run_time_exceeded,
                 )
 

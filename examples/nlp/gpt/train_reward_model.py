@@ -95,7 +95,7 @@ def main(cfg) -> None:
     else:
         raise ValueError(f"Only support binary_ranking and regression reward model, but get {reward_model_type} ")
 
-    train_ds, validation_ds, _ = dataset_builder(
+    train_ds, dict_validation_ds, _ = dataset_builder(
         cfg=cfg.model,
         data_prefix=cfg.model.data.data_prefix,
         data_impl=cfg.model.data.data_impl,
@@ -115,15 +115,18 @@ def main(cfg) -> None:
         load_gbs=True,
     )
 
-    val_dataloader = build_dataloader(
-        cfg=cfg,
-        dataset=validation_ds,
-        consumed_samples=0,
-        mbs=cfg.model.micro_batch_size,
-        gbs=cfg.model.global_batch_size,
-        load_gbs=True,
-        use_random_sampler=False,
-    )
+    dict_val_dataloader = {
+        k: build_dataloader(
+            cfg=cfg,
+            dataset=v,
+            consumed_samples=0,
+            mbs=cfg.model.micro_batch_size,
+            gbs=cfg.model.global_batch_size,
+            load_gbs=True,
+            use_random_sampler=False,
+        )
+        for k, v in dict_validation_ds.items()
+    }
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
@@ -140,7 +143,7 @@ def main(cfg) -> None:
         optimizer=optimizer,
         scheduler=scheduler,
         train_dataloader=train_dataloader,
-        val_dataloader=val_dataloader,
+        val_dataloader=dict_val_dataloader,
         test_dataloader=None,
         logger=logger,
         ckpt_callback=ckpt_callback,
