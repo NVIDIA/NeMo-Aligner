@@ -175,7 +175,7 @@ def prepare_args():
     group_ngc.add_argument("--ngc-model", type=str, default="mistralai/mixtral-8x7b-instruct-v0.1")
 
     group_inference = parser.add_argument_group("inference", "inference (service) arguments")
-    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
+    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="False")
     group_inference.add_argument("--top_k", type=int, default=50)
     group_inference.add_argument("--top_p", type=float, default=0.95)
     group_inference.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
