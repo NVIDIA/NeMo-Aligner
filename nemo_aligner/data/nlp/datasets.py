@@ -557,9 +557,7 @@ class LLaMa3ChatDataset:
     def __getitem__(self, idx):
         item = deepcopy(self.ds[idx])
 
-        breakpoint()
-
-        item["question"] = message
+        item["question"] = self.template['prompt_template'].format(system=self.template['system'], user=item["question"], generated_solution="")
         item["data_id"] = idx
         return item
 
