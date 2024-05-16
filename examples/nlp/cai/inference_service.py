@@ -85,8 +85,7 @@ Usage:
 @hydra_runner(config_path="conf", config_name="inference_service")
 def main(cfg) -> None:
     # trainer required for restoring model parallel models
-    trainer = Trainer(
-        strategy=NLPDDPStrategy(timeout=datetime.timedelta(seconds=18000)), **cfg.trainer)
+    trainer = Trainer(strategy=NLPDDPStrategy(timeout=datetime.timedelta(seconds=18000)), **cfg.trainer)
 
     # get pretrained model configuration
     save_restore_connector = NLPSaveRestoreConnector()
@@ -101,21 +100,22 @@ def main(cfg) -> None:
     )
 
     if (
-            cfg.tensor_model_parallel_size < 0
-            or cfg.pipeline_model_parallel_size < 0
-            or cfg.get('pipeline_model_parallel_split_rank', -1) < 0):
+        cfg.tensor_model_parallel_size < 0
+        or cfg.pipeline_model_parallel_size < 0
+        or cfg.get("pipeline_model_parallel_split_rank", -1) < 0
+    ):
         # with dist checkpointing we don't need to set this
-        if not pretrained_cfg.get('mcore_gpt', False):
+        if not pretrained_cfg.get("mcore_gpt", False):
             with open_dict(cfg):
-                cfg.tensor_model_parallel_size = pretrained_cfg.get('tensor_model_parallel_size', 1)
-                cfg.pipeline_model_parallel_size = pretrained_cfg.get('pipeline_model_parallel_size', 1)
-                cfg.pipeline_model_parallel_split_rank = pretrained_cfg.get('pipeline_model_parallel_split_rank', 0)
+                cfg.tensor_model_parallel_size = pretrained_cfg.get("tensor_model_parallel_size", 1)
+                cfg.pipeline_model_parallel_size = pretrained_cfg.get("pipeline_model_parallel_size", 1)
+                cfg.pipeline_model_parallel_split_rank = pretrained_cfg.get("pipeline_model_parallel_split_rank", 0)
 
     assert (
-            cfg.trainer.devices * cfg.trainer.num_nodes
-            == cfg.tensor_model_parallel_size
-            * cfg.pipeline_model_parallel_size
-            * max(1, cfg.get('expert_model_parallel_size', 1))
+        cfg.trainer.devices * cfg.trainer.num_nodes
+        == cfg.tensor_model_parallel_size
+        * cfg.pipeline_model_parallel_size
+        * max(1, cfg.get("expert_model_parallel_size", 1))
     ), "devices * num_nodes should equal tensor_model_parallel_size * pipeline_model_parallel_size"
 
     OmegaConf.set_struct(pretrained_cfg, True)
@@ -125,19 +125,19 @@ def main(cfg) -> None:
         pretrained_cfg.activations_checkpoint_method = None
         pretrained_cfg.precision = trainer.precision
         ## pretrained_cfg["use_flash_attention"] = cfg.inference.get("use_flash_attention", False)
-        if pretrained_cfg.get('mcore_gpt', False):
+        if pretrained_cfg.get("mcore_gpt", False):
             # with dist checkpointing we can use the model parallel config specified by the user
             pretrained_cfg.tensor_model_parallel_size = cfg.tensor_model_parallel_size
             pretrained_cfg.pipeline_model_parallel_size = cfg.pipeline_model_parallel_size
-            pretrained_cfg.expert_model_parallel_size = cfg.get('expert_model_parallel_size', 1)
+            pretrained_cfg.expert_model_parallel_size = cfg.get("expert_model_parallel_size", 1)
             pretrained_cfg.micro_batch_size = 1
         if trainer.precision == "16":
             pretrained_cfg.megatron_amp_O2 = False
-        elif trainer.precision in ['bf16', 'bf16-mixed'] and cfg.get('megatron_amp_O2', False):
+        elif trainer.precision in ["bf16", "bf16-mixed"] and cfg.get("megatron_amp_O2", False):
             pretrained_cfg.megatron_amp_O2 = True
 
-        if cfg.get('tokenizer') is not None and len(cfg.get('tokenizer')) > 0:
-            assert pretrained_cfg.get('tokenizer') is not None
+        if cfg.get("tokenizer") is not None and len(cfg.get("tokenizer")) > 0:
+            assert pretrained_cfg.get("tokenizer") is not None
             # pretrained_cfg.tokenizer = cfg.tokenizer
             pretrained_cfg.tokenizer = OmegaConf.merge(pretrained_cfg.tokenizer, cfg.tokenizer)
 
@@ -147,7 +147,7 @@ def main(cfg) -> None:
         trainer=trainer,
         override_config_path=pretrained_cfg,
         save_restore_connector=save_restore_connector,
-        map_location=f'cuda:{trainer.local_rank}',  # map_location is needed for converted models
+        map_location=f"cuda:{trainer.local_rank}",  # map_location is needed for converted models
     )
 
     model.freeze()
@@ -170,5 +170,5 @@ def main(cfg) -> None:
             generate(model.cuda())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()  # noqa pylint: disable=no-value-for-parameter
