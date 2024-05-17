@@ -79,6 +79,13 @@ def get_data_parallel_rank():
 
     return data_parallel_rank
 
+def get_pipeline_model_parallel_world_size():
+    data_parallel_rank = mcore_parallel_state.get_data_parallel_rank()
+
+    if is_trt_llm_reshard():
+        return 1
+    else:
+        return mcore_parallel_state.get_pipeline_model_parallel_world_size()
 
 @contextmanager
 def trt_llm_reshard_region():
