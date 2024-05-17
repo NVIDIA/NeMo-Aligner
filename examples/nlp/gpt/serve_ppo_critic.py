@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch._dynamo
+
+torch._dynamo.config.suppress_errors = True
+
 from omegaconf.omegaconf import OmegaConf
 
 from nemo.core.config import hydra_runner
