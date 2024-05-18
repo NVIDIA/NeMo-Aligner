@@ -449,7 +449,6 @@ class SteerLM2Dataset(GPTSFTChatDataset):
         Truncation is carried out when needed, but it is performed only on the prompt side.
         BOS, EOS, and SEP, are added if specified.
         """
-        print(example)
         assert len(example['prompt_turns']) % 2 == 1, "Number of prompt turns should be odd" 
         prompt = self.get_prompt(example['system'], example['prompt_turns'])
         batched_token_ids = []
@@ -462,7 +461,7 @@ class SteerLM2Dataset(GPTSFTChatDataset):
         prompt_tokens = self.tokenizer.text_to_ids(prompt)
         num_prompt_tokens = len(prompt_tokens)
         batch_size = len(example['responses'])
-        ws= []
+        logws = []
         logqs = []
         for item in example['responses']:
             full_text = prompt
@@ -471,12 +470,18 @@ class SteerLM2Dataset(GPTSFTChatDataset):
             masks = [0] * num_prompt_tokens + [1] * (len(token_ids) - num_prompt_tokens)
             logqs.append(item['log(Q(y|a,x))'])
             logw = item['log(P(a|x,y))'] + item['log(P(y|x))'] - item['log(Q(y|a,x))']
-            w = np.exp(logw)
-            ws.append(w)
+            # for numerical stability
+            logws.append(logw)
+            # logw = logw - logw.max()
+            # w = np.exp(logw)
+            # ws.append(w)
             batched_token_ids.append(token_ids)
             batched_masks.append(masks)
+        logws = np.array(logws)
+        # for numerical stability
+        logws = logws - logws.max()
+        ws = np.exp(logws)
         # noramlized weights
-        ws = np.array(ws)
         ws = ws / ws.sum()
         
         input_ids = [x[:-1] for x in batched_token_ids]
