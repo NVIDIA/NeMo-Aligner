@@ -20,9 +20,9 @@ import numpy as np
 import torch
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.core import Dataset
 from nemo.utils import logging
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 
 
 class RLHFDataset(Dataset):
@@ -431,16 +431,14 @@ class RegressionRewardModelDataset(RewardModelDataset):
         }
         return output
 
-    
-class SteerLM2Dataset(GPTSFTChatDataset):
 
-    
+class SteerLM2Dataset(GPTSFTChatDataset):
     def get_prompt(self, system_turn, prompt_turns):
         prompt = f"{self.special_tokens['system_turn_start']}System{self.special_tokens['end_of_name']}"
         prompt += f"{system_turn}{self.special_tokens['end_of_turn']}"
         for turn in prompt_turns:
-             prompt += f"{self.special_tokens['turn_start']}{turn['from']}{self.special_tokens['end_of_name']}"
-             prompt += f"{turn['value']}{self.special_tokens['end_of_turn']}"
+            prompt += f"{self.special_tokens['turn_start']}{turn['from']}{self.special_tokens['end_of_name']}"
+            prompt += f"{turn['value']}{self.special_tokens['end_of_turn']}"
         return prompt
 
     def _process_example(self, example):
@@ -449,27 +447,29 @@ class SteerLM2Dataset(GPTSFTChatDataset):
         Truncation is carried out when needed, but it is performed only on the prompt side.
         BOS, EOS, and SEP, are added if specified.
         """
-        assert len(example['prompt_turns']) % 2 == 1, "Number of prompt turns should be odd" 
-        prompt = self.get_prompt(example['system'], example['prompt_turns'])
+        assert len(example["prompt_turns"]) % 2 == 1, "Number of prompt turns should be odd"
+        prompt = self.get_prompt(example["system"], example["prompt_turns"])
         batched_token_ids = []
         batched_masks = []
-        response_from = example['responses'][0]['from']
-        assert [item['from'] for item in example['responses']] == [response_from] * len(example['responses']), "All responses should be from the same person"
+        response_from = example["responses"][0]["from"]
+        assert [item["from"] for item in example["responses"]] == [response_from] * len(
+            example["responses"]
+        ), "All responses should be from the same person"
         prompt += f"{self.special_tokens['turn_start']}{response_from}{self.special_tokens['end_of_name']}"
-        if 'label' in example and example['label'] is not None:
+        if "label" in example and example["label"] is not None:
             prompt += f"{self.special_tokens['label_start']}{example['label']}{self.special_tokens['end_of_turn']}"
         prompt_tokens = self.tokenizer.text_to_ids(prompt)
         num_prompt_tokens = len(prompt_tokens)
-        batch_size = len(example['responses'])
+        batch_size = len(example["responses"])
         logws = []
         logqs = []
-        for item in example['responses']:
+        for item in example["responses"]:
             full_text = prompt
-            full_text += item['value'] + self.special_tokens['end_of_turn'] + self.special_tokens['turn_start']
+            full_text += item["value"] + self.special_tokens["end_of_turn"] + self.special_tokens["turn_start"]
             token_ids = self.tokenizer.text_to_ids(full_text)
             masks = [0] * num_prompt_tokens + [1] * (len(token_ids) - num_prompt_tokens)
-            logqs.append(item['log(Q(y|a,x))'])
-            logw = item['log(P(a|x,y))'] + item['log(P(y|x))'] - item['log(Q(y|a,x))']
+            logqs.append(item["log(Q(y|a,x))"])
+            logw = item["log(P(a|x,y))"] + item["log(P(y|x))"] - item["log(Q(y|a,x))"]
             # for numerical stability
             logws.append(logw)
             # logw = logw - logw.max()
@@ -483,7 +483,7 @@ class SteerLM2Dataset(GPTSFTChatDataset):
         ws = np.exp(logws)
         # noramlized weights
         ws = ws / ws.sum()
-        
+
         input_ids = [x[:-1] for x in batched_token_ids]
         labels = [x[1:] for x in batched_token_ids]
         loss_mask = [x[1:] for x in batched_masks]
@@ -515,13 +515,13 @@ class SteerLM2Dataset(GPTSFTChatDataset):
         logqs = torch.FloatTensor(logqs)
 
         processed_batch = {
-            'tokens': input_ids,
-            'labels': labels,
-            'attention_mask': attention_mask,
-            'loss_mask': loss_mask,
-            'position_ids': position_ids,
-            'ws': ws,
-            'log(Q(y|a,x))': logqs,
+            "tokens": input_ids,
+            "labels": labels,
+            "attention_mask": attention_mask,
+            "loss_mask": loss_mask,
+            "position_ids": position_ids,
+            "ws": ws,
+            "log(Q(y|a,x))": logqs,
         }
         return processed_batch
 

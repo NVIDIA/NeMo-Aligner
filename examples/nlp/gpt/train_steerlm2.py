@@ -50,6 +50,7 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
+
 def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
     dataset_cls = SteerLM2Dataset
     dataset = dataset_cls(

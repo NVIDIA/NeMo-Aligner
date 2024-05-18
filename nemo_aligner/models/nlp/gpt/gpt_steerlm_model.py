@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from importlib.metadata import version
+from itertools import chain
 from typing import List, Optional, Tuple, Union
 
 import hydra
@@ -20,10 +22,14 @@ from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_n
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
+from pkg_resources import packaging
 from pytorch_lightning.trainer.trainer import Trainer
-from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.collections.nlp.modules.common.megatron.utils import (
+    average_losses_across_data_parallel_group,
+    get_iterator_k_split,
+)
 from nemo.collections.nlp.modules.common.text_generation_strategy import TextGenerationStrategy
 from nemo.collections.nlp.modules.common.text_generation_utils import (
     get_default_length_params,
@@ -32,7 +38,9 @@ from nemo.collections.nlp.modules.common.text_generation_utils import (
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo.utils import logging
 from nemo_aligner.models.alignable_interface import SupervisedInterface
+from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -43,36 +51,77 @@ from nemo_aligner.utils.train_utils import (
     set_train,
 )
 from nemo_aligner.utils.utils import configure_batch_sizes
-from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel
-from itertools import chain
-
 
 
 def get_grouped_iterator_k_split(batch, num_microbatches):
     microbatches = []
+    total_items = sum([len(group["tokens"]) for group in batch])
+    assert (
+        total_items % num_microbatches == 0
+    ), f"total number of items in the batch {total_items} must be divisible by num_microbatches {num_microbatches}"
+    assert (
+        num_microbatches % len(batch) == 0
+    ), f"num_microbatches {num_microbatches} must be divisible by the number of groups in the batch {len(batch)}"
+    sub_num_microbatches = num_microbatches // len(batch)
     for group in batch:
-        if isinstance(batch, dict):
+        if isinstance(group, dict):
             items = list(group.items())
-            assert items[0][1].shape[0] % num_microbatches == 0, "Issue with batch size configuration!"
-            split_batch = [torch.tensor_split(item[1], num_microbatches, dim=0) for item in items]
-            one_microbatches = [[(items[i][0], split_batch[i][j]) for i in range(len(items))] for j in range(num_microbatches)]
-            one_microbatches = [dict(elem) for elem in microbatches]
+            split_batch = [torch.tensor_split(item[1], sub_num_microbatches, dim=0) for item in items]
+            one_microbatches = [
+                [(items[i][0], split_batch[i][j]) for i in range(len(items))] for j in range(sub_num_microbatches)
+            ]
+            one_microbatches = [dict(elem) for elem in one_microbatches]
             microbatches.extend(one_microbatches)
 
     return chain(microbatches)
 
 
+def get_batch(data_iterator, tuning):
+    """Generate a batch."""
+
+    # Broadcast data.
+    if data_iterator is not None:
+        data = next(data_iterator)
+    else:
+        data = None
+
+    # return batch for GPT SFT
+    if tuning:
+        return data
+
+    batch = {
+        "tokens": data["tokens"],
+        "labels": data["labels"],
+        "loss_mask": data["loss_mask"],
+        "attention_mask": data["attention_mask"],
+        "position_ids": data["position_ids"],
+        "weight": data["weight"],
+    }
+
+    return batch
+
 
 class GPTSteerLMModel(GPTSFTModel):
-
     def loss_func(self, loss_mask, output_tensor):
         # loss is the nll loss for each token in the batch
         losses = output_tensor.float()
         # losses [batch_size, sequence_length]
-        # calculate loss for each token in the batch, which is 
+        # calculate loss for each token in the batch, which is
         loss = torch.sum(losses * loss_mask, dim=-1)
         # if parallel_state.get_context_parallel_world_size() > 1:
         #     torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
+        return loss
+
+    def weight_loss_func(self, loss_mask, num_valid_tokens_in_ub, output_tensor, weight):
+        # loss is the nll loss for each token in the batch
+        losses = output_tensor.float()
+        loss_mask = loss_mask.float()
+        # apply the per batch weight
+        losses = losses * weight[:, None]
+        # losses [batch_size, sequence_length]
+        loss = torch.sum(losses * loss_mask) / num_valid_tokens_in_ub  # sequence level nll
+        if parallel_state.get_context_parallel_world_size() > 1:
+            torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
         return loss
 
     def get_forward_output_only_for_weight_func(self):
@@ -82,17 +131,17 @@ class GPTSteerLMModel(GPTSFTModel):
                 batch = {key: val.cuda(non_blocking=True) for key, val in batch.items()}
 
                 forward_args = {
-                    'input_ids': batch['tokens'],
-                    'position_ids': batch['position_ids'],
-                    'attention_mask': None if self.get_attention_mask_from_fusion else batch['attention_mask'],
-                    'labels': batch['labels'],
+                    "input_ids": batch["tokens"],
+                    "position_ids": batch["position_ids"],
+                    "attention_mask": None if self.get_attention_mask_from_fusion else batch["attention_mask"],
+                    "labels": batch["labels"],
                 }
 
                 output_tensor = model(**forward_args)
 
                 def id_func(output_tensor):
-                    nll = self.loss_func(batch['loss_mask'], output_tensor)
-                    return output_tensor, {'loss': nll}
+                    nll = self.loss_func(batch["loss_mask"], output_tensor)
+                    return output_tensor, {"loss": nll}
 
             return output_tensor, id_func
 
@@ -102,24 +151,24 @@ class GPTSteerLMModel(GPTSFTModel):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
 
             # Get data batch
-            batch = self.get_batch(dataloader_iter, tuning)
+            batch = get_batch(dataloader_iter, tuning)
 
             # Transfer needed data to GPU
             required_keys = set()
-            max_seqlen = batch['max_seqlen'].squeeze() if 'max_seqlen' in batch else None
-            cu_seqlens_argmin = batch['cu_seqlens_argmin'] if 'cu_seqlens_argmin' in batch else None
+            max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
+            cu_seqlens_argmin = batch["cu_seqlens_argmin"] if "cu_seqlens_argmin" in batch else None
             if parallel_state.get_pipeline_model_parallel_world_size() == 1:
                 required_keys.update(batch.keys())
             else:
-                required_keys.add('attention_mask')
-                if 'cu_seqlens' in batch:
-                    required_keys.add('cu_seqlens')
+                required_keys.add("attention_mask")
+                if "cu_seqlens" in batch:
+                    required_keys.add("cu_seqlens")
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(('tokens', 'position_ids'))
+                    required_keys.update(("tokens", "position_ids"))
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(('labels', 'loss_mask'))
-            if self.get_attention_mask_from_fusion and 'attention_mask' in required_keys:
-                required_keys.remove('attention_mask')
+                    required_keys.update(("labels", "loss_mask"))
+            if self.get_attention_mask_from_fusion and "attention_mask" in required_keys:
+                required_keys.remove("attention_mask")
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
             # slice batch along sequence dimension for context parallelism
@@ -127,24 +176,24 @@ class GPTSteerLMModel(GPTSFTModel):
 
             # Model forward pass
             forward_args = {
-                'input_ids': batch['tokens'],
-                'position_ids': batch['position_ids'],
-                'attention_mask': None if self.get_attention_mask_from_fusion else batch['attention_mask'],
-                'labels': batch['labels'],
-                'loss_mask': batch['loss_mask'],
+                "input_ids": batch["tokens"],
+                "position_ids": batch["position_ids"],
+                "attention_mask": None if self.get_attention_mask_from_fusion else batch["attention_mask"],
+                "labels": batch["labels"],
+                "loss_mask": batch["loss_mask"],
             }
 
             if not self.mcore_gpt:
-                forward_args['checkpoint_activations_all_layers'] = checkpoint_activations_all_layers
+                forward_args["checkpoint_activations_all_layers"] = checkpoint_activations_all_layers
                 if not self.use_loss_mask:
-                    forward_args.pop('loss_mask')
+                    forward_args.pop("loss_mask")
             else:
                 # TODO: @eharper can we add this to mcore?
-                forward_args.pop('loss_mask')
+                forward_args.pop("loss_mask")
 
-                if 'cu_seqlens' in batch:  # packed sequence from GPTSFTPackedDataset
+                if "cu_seqlens" in batch:  # packed sequence from GPTSFTPackedDataset
                     # these args are passed eventually into TEDotProductAttention.forward()
-                    cu_seqlens = batch['cu_seqlens'].squeeze()  # remove batch size dimension (mbs=1)
+                    cu_seqlens = batch["cu_seqlens"].squeeze()  # remove batch size dimension (mbs=1)
                     # remove -1 "paddings" added in collate_fn
                     if cu_seqlens_argmin is not None:
                         cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
@@ -154,31 +203,33 @@ class GPTSteerLMModel(GPTSFTModel):
                     try:
                         from megatron.core.packed_seq_params import PackedSeqParams
                     except (ImportError, ModuleNotFoundError) as e:
-                        mcore_version = packaging.version.Version(version('megatron-core'))
+                        mcore_version = packaging.version.Version(version("megatron-core"))
                         logging.error(
                             f"megatron-core v{mcore_version} does not support training with packed sequence. "
                             "Please use megatron-core >= 0.5.0, or set model.data.train_ds.packed_sequence=False"
                         )
                         raise e
 
-                    forward_args['packed_seq_params'] = PackedSeqParams(
+                    forward_args["packed_seq_params"] = PackedSeqParams(
                         cu_seqlens_q=cu_seqlens,
                         cu_seqlens_kv=cu_seqlens,
                         max_seqlen_q=max_seqlen,
                         max_seqlen_kv=max_seqlen,
-                        qkv_format='thd',
+                        qkv_format="thd",
                     )
 
             output_tensor = model(**forward_args)
 
             def loss_func(output_tensor):
                 # Loss for a micro-batch (ub)
-                loss_for_ub = self.loss_func(batch['loss_mask'], batch['num_valid_tokens_in_ub'], output_tensor)
+                loss_for_ub = self.weight_loss_func(
+                    batch["loss_mask"], batch["num_valid_tokens_in_ub"], output_tensor, batch["weight"]
+                )
                 cp_size = parallel_state.get_context_parallel_world_size()
-                if validation_step and not self.cfg.data.get('validation_drop_last', True):
-                    num_valid_tokens_in_ub = batch['num_valid_tokens_in_ub']
+                if validation_step and not self.cfg.data.get("validation_drop_last", True):
+                    num_valid_tokens_in_ub = batch["num_valid_tokens_in_ub"]
                     if loss_for_ub.isnan():
-                        assert batch['loss_mask'].count_nonzero() == 0, 'Got NaN loss with non-empty input'
+                        assert batch["loss_mask"].count_nonzero() == 0, "Got NaN loss with non-empty input"
                         loss_sum_for_ub = torch.zeros_like(num_valid_tokens_in_ub)
                     else:
                         loss_sum_for_ub = num_valid_tokens_in_ub * loss_for_ub
@@ -193,18 +244,20 @@ class GPTSteerLMModel(GPTSFTModel):
                     torch.distributed.all_reduce(
                         loss_sum_and_ub_size_all_gpu, group=parallel_state.get_data_parallel_group()
                     )
-                    return loss_for_ub * cp_size, {'loss_sum_and_ub_size': loss_sum_and_ub_size_all_gpu}
+                    return loss_for_ub * cp_size, {"loss_sum_and_ub_size": loss_sum_and_ub_size_all_gpu}
                 else:
                     reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
-                    return loss_for_ub * cp_size, {'avg': reduced_loss}
+                    return loss_for_ub * cp_size, {"avg": reduced_loss}
 
             return output_tensor, loss_func
+
+        return fwd_output_and_loss_func
 
     def get_loss_and_metrics(self, batch, forward_only):
         """Take a data_iter which is an interator over the microbatches
             and return loss as well as metrics
         """
-        sizes = [group['tokens'].shape[0] for group in batch]
+        sizes = [group["tokens"].shape[0] for group in batch]
         # make sure the batch sizes are the same
         assert len(set(sizes)) == 1, "Batch sizes are not the same"
         set_sync_funcs(self, True)
@@ -221,7 +274,6 @@ class GPTSteerLMModel(GPTSFTModel):
 
             data_iter = get_iterator_k_split(group_batch, get_num_microbatches())
 
-
             fwd_bwd_function = get_forward_backward_func()
 
             # first get the forward nll loss for each of the microbatches
@@ -235,17 +287,16 @@ class GPTSteerLMModel(GPTSFTModel):
                 micro_batch_size=get_micro_batch_size(),
                 seq_length=seq_length,
             )
-            updated_weight = torch.concatenate([i['loss'] for i in losses_forward])
+            updated_weight = torch.concatenate([i["loss"] for i in losses_forward])
             # compute base weight
-            base_weight = - updated_weight - group['log(Q(y|a,x))'].cuda()
+            base_weight = -updated_weight - group["log(Q(y|a,x))"].cuda()
             # for numerical stability
             base_weight = base_weight - base_weight.max()
             base_weight_p = torch.exp(base_weight)
             # noramliize the weight
             base_weight_p = base_weight_p / base_weight_p.sum()
-            group['base_weight'] = base_weight_p
-            group['weight'] = group['ws'].cuda() - base_weight_p
-
+            group["base_weight"] = base_weight_p
+            group["weight"] = group["ws"].cuda() - base_weight_p
 
         dp_size = int(parallel_state.get_data_parallel_world_size())
         gbs = len(batch) * dp_size * sizes[0]
@@ -254,7 +305,7 @@ class GPTSteerLMModel(GPTSFTModel):
         # restore the batch sizes for training
         set_sync_funcs(self, forward_only)
 
-        data_iter = get_grouped_iterator_k_split(group_batch, get_num_microbatches())
+        data_iter = get_grouped_iterator_k_split(batch, get_num_microbatches())
 
         fwd_loss_fn = self.get_forward_output_and_loss_func(forward_only)
 
