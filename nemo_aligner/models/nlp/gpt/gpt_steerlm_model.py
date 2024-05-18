@@ -106,7 +106,8 @@ class GPTSteerLMModel(GPTSFTModel):
         # loss is the nll loss for each token in the batch
         losses = output_tensor.float()
         # losses [batch_size, sequence_length]
-        # calculate loss for each token in the batch, which is
+        # calculate sum of log(p) for all tokens in a one batch item
+        # this will be later used to calculate the baseline weights
         loss = torch.sum(losses * loss_mask, dim=-1)
         # if parallel_state.get_context_parallel_world_size() > 1:
         #     torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
@@ -257,14 +258,14 @@ class GPTSteerLMModel(GPTSFTModel):
         """Take a data_iter which is an interator over the microbatches
             and return loss as well as metrics
         """
+        # first compute the baseline weights
         sizes = [group["tokens"].shape[0] for group in batch]
         # make sure the batch sizes are the same
         assert len(set(sizes)) == 1, "Batch sizes are not the same"
         set_sync_funcs(self, True)
         for group in batch:
-
-            # restore the batch sizes for training
-
+            # calculate the baseline weights for each group of generated reponses
+            # set the batch size for log likelihood calculation
             gbs, seq_length = group["tokens"].shape
             mbs = int(self.cfg.data.train_ds.micro_batch_size)
             dp_size = 1
@@ -288,9 +289,11 @@ class GPTSteerLMModel(GPTSFTModel):
                 seq_length=seq_length,
             )
             updated_weight = torch.concatenate([i["loss"] for i in losses_forward])
+            # the weights are negative log likelihood, to get log likelihood we need to negate the weights
             # compute base weight
             base_weight = -updated_weight - group["log(Q(y|a,x))"].cuda()
-            # for numerical stability
+            # for numerical stability, subtract the max value
+            # calculate the probability vector
             base_weight = base_weight - base_weight.max()
             base_weight_p = torch.exp(base_weight)
             # noramliize the weight
@@ -298,6 +301,7 @@ class GPTSteerLMModel(GPTSFTModel):
             group["base_weight"] = base_weight_p
             group["weight"] = group["ws"].cuda() - base_weight_p
 
+        # compute the gbs which are all the responses generated
         dp_size = int(parallel_state.get_data_parallel_world_size())
         gbs = len(batch) * dp_size * sizes[0]
         mbs = int(self.cfg.data.train_ds.micro_batch_size)
@@ -305,6 +309,7 @@ class GPTSteerLMModel(GPTSFTModel):
         # restore the batch sizes for training
         set_sync_funcs(self, forward_only)
 
+        # modify the iterator_k_split to iterate over all the data
         data_iter = get_grouped_iterator_k_split(batch, get_num_microbatches())
 
         fwd_loss_fn = self.get_forward_output_and_loss_func(forward_only)
