@@ -96,6 +96,7 @@ def get_batch(data_iterator, tuning):
         "attention_mask": data["attention_mask"],
         "position_ids": data["position_ids"],
         "weight": data["weight"],
+        "avg_num_valid_tokens_in_ub": data["avg_num_valid_tokens_in_ub"],
     }
 
     return batch
@@ -113,14 +114,19 @@ class GPTSteerLMModel(GPTSFTModel):
         #     torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
         return loss
 
-    def weight_loss_func(self, loss_mask, num_valid_tokens_in_ub, output_tensor, weight):
+    def weight_loss_func(self, loss_mask, avg_num_valid_tokens_in_ub, output_tensor, weight):
         # loss is the nll loss for each token in the batch
         losses = output_tensor.float()
         loss_mask = loss_mask.float()
         # apply the per batch weight
         losses = losses * weight[:, None]
         # losses [batch_size, sequence_length]
-        loss = torch.sum(losses * loss_mask) / num_valid_tokens_in_ub  # sequence level nll
+        # loss per batch item, log(p) for all tokens in one batch item
+        loss = torch.sum(losses * loss_mask, dim=-1)
+        # average log(p) in microbatch
+        loss = loss.mean()
+        # average lop(p) per token
+        loss = loss / avg_num_valid_tokens_in_ub[0]  # sequence level nll
         if parallel_state.get_context_parallel_world_size() > 1:
             torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
         return loss
@@ -224,7 +230,7 @@ class GPTSteerLMModel(GPTSFTModel):
             def loss_func(output_tensor):
                 # Loss for a micro-batch (ub)
                 loss_for_ub = self.weight_loss_func(
-                    batch["loss_mask"], batch["num_valid_tokens_in_ub"], output_tensor, batch["weight"]
+                    batch["loss_mask"], batch["avg_num_valid_tokens_in_ub"], output_tensor, batch["weight"]
                 )
                 cp_size = parallel_state.get_context_parallel_world_size()
                 if validation_step and not self.cfg.data.get("validation_drop_last", True):
@@ -300,6 +306,9 @@ class GPTSteerLMModel(GPTSFTModel):
             base_weight_p = base_weight_p / base_weight_p.sum()
             group["base_weight"] = base_weight_p
             group["weight"] = group["ws"].cuda() - base_weight_p
+            group["avg_num_valid_tokens_in_ub"] = (
+                group["loss_mask"].sum(axis=-1).float().mean().repeat(len(base_weight))
+            )
 
         # compute the gbs which are all the responses generated
         dp_size = int(parallel_state.get_data_parallel_world_size())
