@@ -14,6 +14,7 @@
 
 """distributed utils for communicating between different ranks"""
 
+import pickle
 import time
 import warnings
 from collections import defaultdict
@@ -21,6 +22,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Dict, Optional, Union
 
+import numpy as np
 import torch
 from megatron.core import parallel_state, tensor_parallel
 
@@ -67,6 +69,27 @@ def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
         tensor = torch.empty(dim1, dim2, dtype=dtype, device=torch.cuda.current_device())
         torch.distributed.broadcast(tensor, src, group)
     return tensor
+
+
+def broadcast_python_obj(obj, src, group):
+    """Broadcast any 2d tensor from the src rank to every other rank in the given group.
+    All the ranks that send or receive data must call this function."""
+    if torch.distributed.get_rank() == src:
+        byte_tensor = torch.as_tensor(
+            np.frombuffer(pickle.dumps(obj), dtype=np.int8), device=torch.cuda.current_device()
+        )
+        size = torch.as_tensor([byte_tensor.size(0)], device=torch.cuda.current_device(), dtype=torch.int64)
+
+        torch.distributed.broadcast(size, src, group)
+        torch.distributed.broadcast(byte_tensor, src, group)
+    else:
+        size_tensor = torch.empty(1, dtype=torch.int64, device=torch.cuda.current_device())
+        torch.distributed.broadcast(size_tensor, src, group)
+        size = int(size_tensor[0].item())
+        tensor = torch.empty(size, dtype=torch.int8, device=torch.cuda.current_device())
+        torch.distributed.broadcast(tensor, src, group)
+        obj = pickle.loads(tensor.cpu().numpy().tobytes())
+    return obj
 
 
 def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
