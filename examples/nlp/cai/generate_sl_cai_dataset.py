@@ -414,7 +414,7 @@ def prepare_args():
     parser.add_argument("--helpfulness-dataset-path", type=str, required=True, default=None)
 
     group_inference = parser.add_argument_group("inference", "inference (service) arguments")
-    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
+    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="False")
     group_inference.add_argument("--top_k", type=int, default=1)
     group_inference.add_argument("--top_p", type=float, default=0.9)
     group_inference.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
