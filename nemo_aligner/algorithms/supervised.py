@@ -174,6 +174,7 @@ class SupervisedTrainer:
 
         self.run_timer.start_time()
 
+        print('@@1')
         for _ in epoch_iter:
             num_steps_in_epoch = min(
                 self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
@@ -181,18 +182,23 @@ class SupervisedTrainer:
             loop_iter = range(num_steps_in_epoch)
 
             if not loop_iter:
+                print('@@2')
                 return  # training ended
 
+            print('@@3')
             global_pbar = tqdm(
                 self.train_dataloader, initial=self.step, total=self.max_steps, leave=True, desc="Training steps"
             )
+            print('@@4')
 
             for _, batch in zip(loop_iter, global_pbar):
+                print('@@5')
 
                 self.timer.start("train_step_time")
                 loss, metrics = self.train_single_step(batch)
                 self.timer.stop("train_step_time")
                 train_step_time = self.timer.get("train_step_time")
+                print('@@6')
 
                 # TODO(geshen): maybe use the dataloader instead
                 self.consumed_samples += self.model.cfg.global_batch_size
@@ -205,8 +211,10 @@ class SupervisedTrainer:
                 metrics = {f"train_{k}": v for k, v in metrics.items()}
 
                 self.step += 1
+                print('@@7')
 
                 run_time_exceeded = self.run_timer.is_finished()
+                print('@@8')
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
@@ -215,29 +223,43 @@ class SupervisedTrainer:
                     self.limit_val_batches,
                     run_time_exceeded=run_time_exceeded,
                 )
+                print('@@9')
 
                 if run_val:
+                    print('@@10')
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
                     # so we use the incremented self.step
                     self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                     val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
                     metrics.update(val_metrics)
+                    print('@@11')
 
+                print('@@12')
                 global_pbar.set_postfix(metrics)
+                print('@@13')
 
                 if save_model:
                     # PTL save wants tensors only
+                    print('@@14')
                     metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
+                    print('@@15')
                     self.save(metrics, is_train_end=is_train_end)
+                    print('@@16')
 
+                print('@@17')
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
+                    print('@@18')
                     return
 
+                print('@@19')
                 metrics.clear()
+           print('@@20')
 
+        print('@@21')
         self.logger.finalize()
+        print('@@22')
 
     def save(self, extra_candidates=None, is_train_end=False):
         """PTL based save"""
