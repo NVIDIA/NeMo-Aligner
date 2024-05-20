@@ -234,7 +234,23 @@ Using a different terminal, run the following command to start the RL-CAI datase
       --output-dir /path/to/blend_preference_dataset_with_anthropic_helpful_only \
       --output-filename-prefix mistral_7b_cai_preference_dataset \
       --blend-with "{'name': 'anthropic_helpful_only', 'train': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_train_comparisons_with_chat_prompt.jsonl']}, 'test': {'prompts': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_prompts_with_chat_prompt.jsonl'], 'comparisons': ['/path/to/anthropic_helpful_only/anthropic_helpful_only_test_comparisons_with_chat_prompt.jsonl']}}" \
-      --port 5999
+      --port 5999 \
+      --add_bos False \
+      --top_k 50 \
+      --top_p 0.95 \
+      --all_probs False \
+      --repetition_penalty 1.0 \
+      --min_tokens_to_generate 1 \
+      --temperature 1.0 \
+      --greedy False \
+      --tokens_to_generate 1024 \
+      --end_strings "<extra_id_1>" \
+      --user_format "<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n" \
+      --assistant_format "{MESSAGE}\n" \
+      --system_format "<extra_id_0>System\n{MESSAGE}\n" \
+      --system_default_message "" \
+      --eos_token "<extra_id_1>" \
+      --response_extract_pattern "<extra_id_1>Assistant\n"
 
 This command will create the ``rl-cai`` dataset files in the defined output folder with the given output filename prefix.
 

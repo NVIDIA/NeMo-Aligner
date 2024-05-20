@@ -240,6 +240,9 @@ def prepare_args():
                         file
                     ), f"split={split_name}, blend-type={blend_type}. error => invalid file path: {file}"
 
+    def _process_string(s: str):
+        return s.encode("utf-8").decode("unicode_escape")
+
     # Convert parsed arguments to dictionary
     args_dict = vars(args)
     inference_config = {
@@ -261,9 +264,8 @@ def prepare_args():
             "host",
         }
     }
-
-    def _process_string(s: str):
-        return s.encode("utf-8").decode("unicode_escape")
+    if inference_config["end_strings"] is not None:
+        inference_config["end_strings"] = list(map(_process_string, inference_config["end_strings"]))
 
     prompt_template_config = {
         k: _process_string(v) if v is not None else v
