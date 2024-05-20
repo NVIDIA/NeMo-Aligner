@@ -139,7 +139,22 @@ Please wait for the server to be ready before proceeding.
       --helpfulness-dataset-path /path/to/nvidia_sft_datablend_v1_train.json \
       --output-filepath /path/to/cai_revisions_aligner_chat_template.jsonl \
       --port 5999 \
-      --host <hostname or IP address of the inference service>
+      --host <hostname or IP address of the inference service> \
+      --add_bos False \
+      --top_k 1 \
+      --top_p 0.9 \
+      --all_probs False \
+      --repetition_penalty 1.2 \
+      --min_tokens_to_generate 1 \
+      --temperature 1.0 \
+      --greedy True \
+      --tokens_to_generate 1024 \
+      --end_strings "</s>" \
+      --user_format "[INST] {MESSAGE} [/INST]" \
+      --assistant_format "{MESSAGE}</s> " \
+      --bos_token "<s>" \
+      --eos_token "</s>" \
+      --response_extract_pattern "[/INST]"
 
 This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
 
