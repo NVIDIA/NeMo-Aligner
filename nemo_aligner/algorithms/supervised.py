@@ -255,7 +255,7 @@ class SupervisedTrainer:
 
                 print('@@19')
                 metrics.clear()
-           print('@@20')
+            print('@@20')
 
         print('@@21')
         self.logger.finalize()
