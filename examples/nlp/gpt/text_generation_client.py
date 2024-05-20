@@ -71,6 +71,7 @@ def main(
     # tmp file
     tmp_file_path = output_file + ".tmp"
     keys = {}
+    finished_job = []
     if os.path.exists(tmp_file_path):
         with open(tmp_file_path, "r", encoding="utf-8") as f:
             for line in f:
@@ -80,6 +81,7 @@ def main(
                     keys[key] += 1
                 else:
                     keys[key] = 1
+                finished_job.append(obj)
 
     raw_job = {}
     jobs = []
@@ -100,7 +102,10 @@ def main(
 
     text_generation_for_batch = get_text_generation_for_batch(server_url, backend_url)
     job_array = np.array(jobs)
-    job_array_list = np.array_split(job_array, len(job_array) // micro_batch_size)
+    if len(job_array) != 0:
+        job_array_list = np.array_split(job_array, len(job_array) // micro_batch_size)
+    else:
+        job_array_list = []
 
     results = []
     for data in job_array_list:
@@ -115,6 +120,7 @@ def main(
             "top_k": top_k,
             "top_p": top_p,
             "compute_logprob": compute_logprob,
+            "end_strings": ["<extra_id_1>", "\x11"],
             "all_probs": False,
         }
         job = {
@@ -141,6 +147,11 @@ def main(
                         global_pbar.write(
                             f"Finished {data_ids} in {time_spent} seconds, total_time: {total_time}, average time: {total_time / total_finished}"
                         )
+                        for data_id, output, logp in zip(data_ids, args["responses"], args["response_logprob"]):
+                            raw_job[data_id]["response"] = output
+                            raw_job[data_id]["log(Q(y|a,x))"] = logp
+                            f.write(json.dumps(raw_job[data_id], ensure_ascii=False) + "\n")
+                            finished_job.append(raw_job[data_id])
                         results.remove(subtask)
                         # results.children.remove(subtask)  # Remove the subtask from the list
                 except TimeoutError:
@@ -152,6 +163,24 @@ def main(
                 except Exception as e:
                     global_pbar.write(f"Exception: {e}")
                     results.remove(subtask)
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        # group by data_id
+        groups = {}
+        for item in finished_job:
+            if item["data_id"] in groups:
+                groups[item["data_id"]].append(item)
+            else:
+                groups[item["data_id"]] = [item]
+        for key in groups:
+            if len(groups[key]) < replica_size:
+                print("Missing data for key:", key)
+                continue
+            one_record = groups[key][0]
+            one_record["responses"] = [
+                {"value": item["response"], "log(Q(y|a,x))": item["log(Q(y|a,x))"]} for item in groups[key]
+            ]
+            f.write(json.dumps(one_record, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":

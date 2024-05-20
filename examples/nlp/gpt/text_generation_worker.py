@@ -262,9 +262,15 @@ def start_worker(model, cfg, url, backend_url):
                     model.tokenizer.ids_to_text(tokens[length.item() : length.item() + length_params["max_length"]])
                     for tokens, length in zip(response["token_ids"], context_length_tensor)
                 ]
-
+                # remove the end_strings from the output
+                clean_output_response = []
+                for clean_response in output_response:
+                    for end_string in sampling_params["end_strings"]:
+                        if clean_response.endswith(end_string):
+                            clean_response = clean_response[: -len(end_string)]
+                    clean_output_response.append(clean_response)
                 output = {}
-                output["responses"] = output_response
+                output["responses"] = clean_output_response
 
                 if "logprob" in response and response["logprob"] is not None:
                     eod_id = model.tokenizer.eos_id
