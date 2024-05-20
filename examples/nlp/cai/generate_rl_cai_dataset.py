@@ -361,6 +361,13 @@ def generate_ai_preference(
     chosen_response_index = selected_pair["chosen"] - 1
     rejected_response_index = selected_pair["rejected"] - 1
 
+    if chosen_response_index == rejected_response_index:
+        # judge model assigned same index for 'chosen' and 'rejected' responses.
+        # sample a random index for both 'rejected' and 'chosen'.
+        rnd_response_index = random.sample(range(len(responses)), 2)
+        chosen_response_index = rnd_response_index[0]
+        rejected_response_index = rnd_response_index[1]
+
     # get responses
     chosen_response = responses[chosen_response_index]
     rejected_response = responses[rejected_response_index]
