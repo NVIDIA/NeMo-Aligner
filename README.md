@@ -1,8 +1,12 @@
 # NVIDIA NeMo-Aligner
 
+# Latest News
+- We released a beta version of accelerated generation support in the RLHF pipeline. This is still very much work in process but adds significant speedup to the RLHF training. For more details see [Accelerated-RLHF](https://github.com/NVIDIA/NeMo-Aligner/blob/v0.3.0.trtllm/Accelerated-RLHF.md) and the special [Accelerated-RLHF-Release](https://github.com/NVIDIA/NeMo-Aligner/releases/tag/v0.3.0.trtllm).
+- [NeMo-Aligner Paper](https://arxiv.org/abs/2405.01481) is now out on arxiv!
+
 ## Introduction
 
-NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state of the art model alignment algorithms such as SteerLM, DPO and Reinforcement Learning from Human Feedback (RLHF). These algorithms enable users to align language models to be more safe, harmless and helpful. Users can do end-to-end model alignment on a wide range of model sizes and take advantage of all the parallelism techniques to ensure their model alignment is done in a performant and resource efficient manner.
+NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state of the art model alignment algorithms such as SteerLM, DPO and Reinforcement Learning from Human Feedback (RLHF). These algorithms enable users to align language models to be more safe, harmless and helpful. Users can do end-to-end model alignment on a wide range of model sizes and take advantage of all the parallelism techniques to ensure their model alignment is done in a performant and resource efficient manner. For more technical details, please refer to our [paper](https://arxiv.org/abs/2405.01481).
 
 NeMo-Aligner toolkit is built using the [NeMo Toolkit](https://github.com/NVIDIA/NeMo) which allows for scaling training up to 1000s of GPUs using tensor, data and pipeline parallelism for all components of alignment. All of our checkpoints are cross compatible with the NeMo ecosystem; allowing for inference deployment and further customization.
 
@@ -19,12 +23,14 @@ The toolkit is currently in it's early stages, and we are committed to improving
 * **Reinforcement Learning from Human Feedback using the [PPO](https://arxiv.org/pdf/1707.06347.pdf) Algorithm**
     * Try [NV-Llama2-70B-RLHF model](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/nv-llama2-70b-rlhf) aligned with NeMo Aligner on NVIDIA AI Foundation for free (no registration required).
     * Corresponding reward model [NV-Llama2-13B-RLHF-RM](https://huggingface.co/nvidia/NV-Llama2-13B-RLHF-RM)
-* **Direct Preference Optimization** as described in [Direct Preference Optimization: Your Language Model is Secretly a Reward Model](https://arxiv.org/pdf/2305.18290.pdf)
+* **Direct Preference Optimization** as described in [Direct Preference Optimization: Your Language Model is Secretly a Reward Model](https://arxiv.org/pdf/2305.18290)
+* **Self-Play Fine-Tuning (SPIN)** as described in [Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models](https://arxiv.org/pdf/2401.01335)
 
 ## Learn More
 * [Documentation](https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/README.md)
 * [Examples](https://github.com/NVIDIA/NeMo-Aligner/tree/main/examples/nlp/gpt)
 * [Tutorials](https://docs.nvidia.com/nemo-framework/user-guide/latest/ModelAlignment/index.html)
+* [Paper](https://arxiv.org/abs/2405.01481)
 
 ## Latest Release
 
@@ -59,6 +65,18 @@ Alternatively, you can build the NeMo Dockerfile here [NeMo Dockerfile](https://
 
 ## Contributing
 We welcome community contributions! Please refer to [CONTRIBUTING.md](https://github.com/NVIDIA/NeMo-Aligner/blob/main/CONTRIBUTING.md) for guidelines.
+
+## Citing NeMo-Aligner
+```
+@misc{shen2024nemoaligner,
+      title={NeMo-Aligner: Scalable Toolkit for Efficient Model Alignment},
+      author={Gerald Shen and Zhilin Wang and Olivier Delalleau and Jiaqi Zeng and Yi Dong and Daniel Egert and Shengyang Sun and Jimmy Zhang and Sahil Jain and Ali Taghibakhshi and Markel Sanz Ausin and Ashwath Aithal and Oleksii Kuchaiev},
+      year={2024},
+      eprint={2405.01481},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+```
 
 ## License
 This toolkit is licensed under the [Apache License, Version 2.0.](https://github.com/NVIDIA/NeMo-Aligner/blob/main/LICENSE)

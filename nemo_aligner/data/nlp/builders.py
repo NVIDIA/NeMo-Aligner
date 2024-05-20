@@ -30,8 +30,10 @@ from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils imp
     get_train_valid_test_split_,
 )
 from nemo.collections.nlp.data.language_modeling.megatron.blendable_dataset import BlendableDataset
-
-from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingSampler
+from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
+    MegatronPretrainingRandomSampler,
+    MegatronPretrainingSampler,
+)
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset
@@ -46,7 +48,6 @@ from nemo_aligner.data.nlp.datasets import (
     RewardModelDataset,
     RLHFDataset,
 )
-from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 

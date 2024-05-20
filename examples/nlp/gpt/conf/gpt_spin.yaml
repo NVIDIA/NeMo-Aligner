@@ -61,6 +61,7 @@ model:
 
   spin:
     log_prob_forward_micro_batch_size: 1
+    rollout_micro_batch_size: 32
     ref_policy_kl_penalty: 0.2   # Can also be a list of elements == max_iterations, where each element will be the KL penalty used for that iteration
     offload_adam_states: True
 
@@ -130,7 +131,7 @@ model:
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
       shuffle: True
       memmap_workers: null
-      max_seq_length: 4096
+      max_seq_length: ${model.encoder_seq_length}
       min_seq_length: 1
       drop_last: True
       # Example of how to specify concat_sampling_probabilities

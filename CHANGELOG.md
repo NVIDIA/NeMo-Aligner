@@ -4,12 +4,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Next Version]
+- SPIN: added `rollout_micro_batch_size` parameter which allows users to set the batch size for doing generation during SPIN training.
+        previously the generation batch size was automatically set to the data parallel size (DP) of the model
 
 ### New features and optimizations
 - Add MoE Support for our reward models.
 - SFT/SteerLM: LoRA can now be enabled on all model layers
 - DPO: Enable LoRA on all model layers (In this case the actor will be reference model + LoRA weights, we can switch between actor/reference model by enabling/disabling LoRA)
-
+- PPO: Enable LoRA on all model layers (In this case the actor will be init policy + LoRA weights, we can switch between actor/init_policy model by enabling/disabling LoRA)
 ### Breaking changes
 
 ### Bug Fixes
@@ -20,6 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Fixed crash when calling the `generate()` method of an SFT model with pipeline parallelism greater than two
 - Fixed crash when calling the `generate()` method of an SFT model with `compute_logprob=True` and string inputs
 - Fixed crash when `model.micro_batch_size` > 1 in DPO
+- Fixed issue when `model.encoder_seq_length` is mismatched with `model.data.train_ds.max_seq_length` in SFT and SPIN.
+- Delete MegatronPretrainingRandomSampler from Aligner since it has been upstreamed into NeMo
 
 ## [0.2.0] - 2024-02
 ### New features and optimizations
