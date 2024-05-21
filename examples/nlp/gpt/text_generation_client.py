@@ -147,6 +147,7 @@ def main(
                             raw_job[data_id]["response"] = output
                             raw_job[data_id]["log(Q(y|a,x))"] = logp
                             f.write(json.dumps(raw_job[data_id], ensure_ascii=False) + "\n")
+                            f.flush()
                             finished_job.append(raw_job[data_id])
                         results.remove(subtask)
                         # results.children.remove(subtask)  # Remove the subtask from the list
