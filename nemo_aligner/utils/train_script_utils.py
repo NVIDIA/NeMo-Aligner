@@ -132,12 +132,17 @@ class FakeCheckpointCallback:
 def add_custom_checkpoint_callback(ptl_trainer, ptl_model):
     """get a function we can conveniently call within the trainer that saves the checkpoint
     """
+    print('%%1',ptl_trainer.callbacks)
     for callback in ptl_trainer.callbacks:
+        print('%%2', callback)
         if isinstance(callback, NeMoModelCheckpoint):
+            print('%%3')
             NeMoModelCheckpoint.custom_save_ckpt_func = custom_save_ckpt_func
             callback.custom_save = partial(callback.custom_save_ckpt_func, ptl_trainer, ptl_model)
+            print('%%4')
             return callback
 
+    print('%%5')
     return FakeCheckpointCallback()
 
 
