@@ -90,10 +90,12 @@ def main(cfg) -> None:
 
     if reward_model_type == RewardModelType.BINARY_RANKING:
         dataset_builder = build_train_valid_test_rm_datasets
-    elif reward_model_type == RewardModelType.REGRESSION:
+    elif reward_model_type in [RewardModelType.REGRESSION, RewardModelType.CATEGORICAL]:
         dataset_builder = build_train_valid_test_regression_rm_datasets
     else:
-        raise ValueError(f"Only support binary_ranking and regression reward model, but get {reward_model_type} ")
+        raise ValueError(
+            f"Only support binary_ranking, regression, and categorical reward model, but get {reward_model_type} "
+        )
 
     train_ds, validation_ds, _ = dataset_builder(
         cfg=cfg.model,

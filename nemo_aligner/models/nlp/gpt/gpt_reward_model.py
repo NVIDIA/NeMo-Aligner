@@ -170,6 +170,7 @@ class GPTRewardModel(GPTModel):
         num_attributes: int = 1,
         attribute_weights: Optional[List[Union[float, int]]] = None,
         merge_attributes: bool = False,
+        num_category: int = 1,
     ):
         super().__init__(
             config=config,
@@ -191,7 +192,7 @@ class GPTRewardModel(GPTModel):
         if post_process:
             self.rm_head = RewardModelHead(
                 self.config.hidden_size,
-                num_attributes,
+                num_attributes * num_category,
                 config=config,
                 init_method=self.config.init_method,
                 output_sequence=output_sequence,
