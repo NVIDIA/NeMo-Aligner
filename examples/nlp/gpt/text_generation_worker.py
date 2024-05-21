@@ -296,6 +296,31 @@ def start_worker(model, cfg, url, backend_url):
                 # compute the response logprob
                 if "data_ids" in batch:
                     output["data_ids"] = batch["data_ids"]
+                    if isinstance(batch["data_ids"][0], list):
+                        # data_ids is a list of lists [[prompt, response], [prompt, response]]
+                        # need to compute the logprob for each response
+                        prompt_str = [i[0] for i in batch["data_ids"]]
+                        full_str = [i[0] + i[1] for i in batch["data_ids"]]
+                        _, prompt_length = inference_strategy.tokenize_batch(
+                            prompt_str, length_params["max_length"], sampling_params["add_BOS"]
+                        )
+                        _, full_length = inference_strategy.tokenize_batch(
+                            full_str, length_params["max_length"], sampling_params["add_BOS"]
+                        )
+
+                        sft_logprob_list = []
+                        prompt_length = prompt_length - 1
+                        full_length = full_length - 1
+                        for tokens, logprob, start, end in zip(
+                            response["token_ids"], response["logprob"], prompt_length, full_length
+                        ):
+                            tokens = torch.tensor(tokens[1:])
+                            logprobs = logprob[start:end]
+                            tokens = tokens[start:end]
+                            all_logprob = logprobs[tokens != eod_id].sum().item()
+                            sft_logprob_list.append(all_logprob)
+                        output["sft_logprob"] = sft_logprob_list
+
                 output["time"] = time.time() - beg
                 if "filename" in batch:
                     with open(batch["filename"], "w", encoding="utf-8") as f:
