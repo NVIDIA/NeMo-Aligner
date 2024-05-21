@@ -58,16 +58,26 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
 
 def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train_end=False, save_top_only=False):
     """work around used so we can save models manually"""
+    print(f'&&1 {is_train_end=} {save_top_only=} {monitor_candidates=}')
     super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
+    print('&&3')
     if save_top_only:
+        print('&&4')
         return
 
+    print('&&5')
     super(NeMoModelCheckpoint, self)._save_last_checkpoint(trainer, monitor_candidates)
+    print('&&6')
 
     if is_train_end:
+        print('&&7')
         # stop the checkpoint logic from saving another last checkpoint
+        print('&&8')
         with patch.object(trainer, "val_check_interval", 0):
+            print('&&9')
             self.on_train_end(trainer, pl_module)
+            print('&&10')
+    print('&&11')
 
 
 def load_from_nemo(
