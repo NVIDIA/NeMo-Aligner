@@ -263,15 +263,21 @@ class SupervisedTrainer:
 
     def save(self, extra_candidates=None, is_train_end=False):
         """PTL based save"""
+        print('##1')
         torch.distributed.barrier()
+        print('##2')
 
         if extra_candidates is None:
             extra_candidates = {}
 
+        print('##3')
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
+        print('##4')
         monitor_candidates.update(extra_candidates)
+        print('##5')
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
+        print('##6')
 
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
