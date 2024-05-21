@@ -268,6 +268,7 @@ def start_worker(model, cfg, url, backend_url):
                     for end_string in sampling_params["end_strings"]:
                         if clean_response.endswith(end_string):
                             clean_response = clean_response[: -len(end_string)]
+                            clean_response = clean_response.strip()
                     clean_output_response.append(clean_response)
                 output = {}
                 output["responses"] = clean_output_response
