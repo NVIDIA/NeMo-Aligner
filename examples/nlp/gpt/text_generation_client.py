@@ -70,6 +70,12 @@ def main(
     # calculate the number of lines of the file cfg.dataset.data_prefix["train"]
     # tmp file
     tmp_file_path = output_file + ".tmp"
+    # get path of output file
+    path_name = os.path.dirname(output_file)
+    # server output
+    path_name = path_name + "/server_output/"
+    # mkdir if not exist
+    os.makedirs(path_name, exist_ok=True)
     keys = {}
     finished_job = []
     if os.path.exists(tmp_file_path):
@@ -98,7 +104,7 @@ def main(
             prompt += f"{special_tokens['turn_start']}{response_from}{special_tokens['end_of_name']}"
             if "label" in obj and obj["label"] is not None:
                 prompt += f"{special_tokens['label_start']}{obj['label']}{special_tokens['end_of_turn']}"
-            jobs += [(prompt, key) for i in range(replica)]
+            jobs += [(prompt, key, i) for i in range(replica)]
 
     text_generation_for_batch = get_text_generation_for_batch(server_url, backend_url)
 
@@ -107,6 +113,7 @@ def main(
         data = jobs[id : id + micro_batch_size]
         inputs = [input[0] for input in data]
         data_ids = [int(input[1]) for input in data]
+        replica_ids = [int(input[2]) for input in data]
         length_params = {
             "max_length": max_length,
         }
@@ -119,11 +126,14 @@ def main(
             "end_strings": ["<extra_id_1>", "\x11"],
             "all_probs": False,
         }
+        server_output_file = f"{path_name}/{id}.jsonl"
         job = {
             "inputs": inputs,
             "length_params": length_params,
             "sampling_params": sampling_params,
             "data_ids": data_ids,
+            "filename": server_output_file,
+            "replica_ids": replica_ids,
         }
         results.append(text_generation_for_batch.delay(job))
     global_pbar = tqdm(total=len(jobs), desc="Search Global Progress")

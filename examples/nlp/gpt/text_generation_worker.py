@@ -16,6 +16,7 @@ import torch.multiprocessing as mp
 
 mp.set_start_method("spawn", force=True)
 import datetime
+import json
 import os
 import random
 import time
@@ -37,7 +38,6 @@ from nemo.core.config import hydra_runner
 from nemo.utils import AppState, logging
 from nemo.utils.model_utils import inject_model_parallel_rank
 from nemo_aligner.utils.distributed import Timer, broadcast_python_obj
-from nemo_aligner.utils.train_script_utils import resolve_and_create_trainer
 
 """Script to start Reward Model training"""
 
@@ -297,6 +297,9 @@ def start_worker(model, cfg, url, backend_url):
                 if "data_ids" in batch:
                     output["data_ids"] = batch["data_ids"]
                 output["time"] = time.time() - beg
+                if "filename" in batch:
+                    with open(batch["filename"], "w", encoding="utf-8") as f:
+                        f.write(json.dumps(output, ensure_ascii=False) + "\n")
             except Exception as e:
                 print("ERROR", e)
                 import traceback
