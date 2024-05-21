@@ -105,8 +105,8 @@ def main(
     results = []
     for id in range(0, len(jobs), micro_batch_size):
         data = jobs[id : id + micro_batch_size]
-        inputs = [input[0].item() for input in data]
-        data_ids = [int(input[1].item()) for input in data]
+        inputs = [input[0] for input in data]
+        data_ids = [int(input[1]) for input in data]
         length_params = {
             "max_length": max_length,
         }
