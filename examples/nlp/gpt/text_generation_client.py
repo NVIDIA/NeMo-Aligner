@@ -101,14 +101,10 @@ def main(
             jobs += [(prompt, key) for i in range(replica)]
 
     text_generation_for_batch = get_text_generation_for_batch(server_url, backend_url)
-    job_array = np.array(jobs)
-    if len(job_array) != 0:
-        job_array_list = np.array_split(job_array, len(job_array) // micro_batch_size)
-    else:
-        job_array_list = []
 
     results = []
-    for data in job_array_list:
+    for id in range(0, len(jobs), micro_batch_size):
+        data = jobs[id : id + micro_batch_size]
         inputs = [input[0].item() for input in data]
         data_ids = [int(input[1].item()) for input in data]
         length_params = {
