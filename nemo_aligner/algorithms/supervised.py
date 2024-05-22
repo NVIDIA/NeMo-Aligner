@@ -233,11 +233,10 @@ class SupervisedTrainer:
                 )
 
                 if run_val:
-                    val_loss, val_metrics = self.run_validation()
+                    _, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
                     # so we use the incremented self.step
-                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
-                    val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
+                    self.logger.log_metrics(val_metrics, step=self.step, prefix="")
                     metrics.update(val_metrics)
 
                 global_pbar.set_postfix(metrics)
