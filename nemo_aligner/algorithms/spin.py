@@ -144,23 +144,24 @@ class SPINTrainer:
         ), f"rollout_micro_batch_size [{self.model.cfg.spin.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
         self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
         assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
-        
-        self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if 'trt_llm' in self.cfg else False
+
+        self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
             assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
-            self.trtllm_generate = GPTGenerateTRTLLM(model_cfg=self.model.cfg,
-                                    max_generation_length=self.length_params["max_length"],
-                                    max_input_len=self.cfg.trt_llm.get("max_input_len", 1024),
-                                    max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", 4096),
-                                    generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
-                                    unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
-                                    trt_model_type=self.cfg.trt_llm.get("model_type", "GPTForCausalLM"),
-                                    end_strings=self.sampling_params["end_strings"],
-                                    reshard_model=False,
-                                    sample_temperature=self.sampling_params["temperature"],
-                                    sample_top_k=self.sampling_params["top_k"],
-                                    sample_top_p=self.sampling_params["top_p"],
-                                    tokenizer=self.model.tokenizer,
+            self.trtllm_generate = GPTGenerateTRTLLM(
+                model_cfg=self.model.cfg,
+                max_generation_length=self.length_params["max_length"],
+                max_input_len=self.cfg.trt_llm.get("max_input_len", 1024),
+                max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", 4096),
+                generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
+                unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
+                trt_model_type=self.cfg.trt_llm.get("model_type", "GPTForCausalLM"),
+                end_strings=self.sampling_params["end_strings"],
+                reshard_model=False,
+                sample_temperature=self.sampling_params["temperature"],
+                sample_top_k=self.sampling_params["top_k"],
+                sample_top_p=self.sampling_params["top_p"],
+                tokenizer=self.model.tokenizer,
             )
 
     def validation_step(self, global_batch):
@@ -254,7 +255,7 @@ class SPINTrainer:
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
-        
+
         if self.use_trtllm_generation:
             actor_output = self.trtllm_generate.generate(inputs)
             response_tokens = actor_output["response_tokens"].cpu()
@@ -269,12 +270,12 @@ class SPINTrainer:
                 sampling_params=self.sampling_params,
                 strategy=strategy,
             )
-    
+
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
             response_lengths = strategy.get_lengths().cpu()
             max_response_length = response_lengths.max().item()
             response_tokens = torch.LongTensor(generations["token_ids"]).cpu()
-    
+
             # Sanity check to validate response length.
             if max_response_length != response_tokens.size(1):
                 # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode

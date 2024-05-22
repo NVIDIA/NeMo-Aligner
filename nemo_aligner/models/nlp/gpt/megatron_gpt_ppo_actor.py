@@ -92,21 +92,21 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self.use_trtllm_generation = self.cfg.ppo.trt_llm.enable
         if self.use_trtllm_generation:
             assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM was not able to be imported"
-            self.trtllm_generate = GPTGenerateTRTLLM(model_cfg=self.cfg,
-                                    max_generation_length=self.cfg.ppo.length_params.get("max_length", 1024),
-                                    max_input_len=self.cfg.ppo.trt_llm.get("max_input_len", 1024),
-                                    max_input_tokens=self.cfg.ppo.trt_llm.get("max_input_tokens", 4096),
-                                    generation_batch_size=self.cfg.ppo.get("rollout_micro_batch_size", 4),
-                                    unload_engine_train=self.cfg.ppo.trt_llm.get("unload_engine_train", False),
-                                    trt_model_type=self.cfg.ppo.trt_llm.get("model_type", "GPTForCausalLM"),
-                                    end_strings=self.cfg.ppo.sampling_params["end_strings"],
-                                    reshard_model=True,
-                                    sample_temperature=self.cfg.ppo.sampling_params["temperature"],
-                                    sample_top_k=self.cfg.ppo.sampling_params["top_k"],
-                                    sample_top_p=self.cfg.ppo.sampling_params["top_p"],
-                                    tokenizer=self.tokenizer,
+            self.trtllm_generate = GPTGenerateTRTLLM(
+                model_cfg=self.cfg,
+                max_generation_length=self.cfg.ppo.length_params.get("max_length", 1024),
+                max_input_len=self.cfg.ppo.trt_llm.get("max_input_len", 1024),
+                max_input_tokens=self.cfg.ppo.trt_llm.get("max_input_tokens", 4096),
+                generation_batch_size=self.cfg.ppo.get("rollout_micro_batch_size", 4),
+                unload_engine_train=self.cfg.ppo.trt_llm.get("unload_engine_train", False),
+                trt_model_type=self.cfg.ppo.trt_llm.get("model_type", "GPTForCausalLM"),
+                end_strings=self.cfg.ppo.sampling_params["end_strings"],
+                reshard_model=True,
+                sample_temperature=self.cfg.ppo.sampling_params["temperature"],
+                sample_top_k=self.cfg.ppo.sampling_params["top_k"],
+                sample_top_p=self.cfg.ppo.sampling_params["top_p"],
+                tokenizer=self.tokenizer,
             )
-            
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
