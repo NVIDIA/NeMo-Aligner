@@ -40,15 +40,17 @@ class MegatronGPTCategoricalRewardModel(MegatronGPTRegressionRewardModel):
         output_tensor: [B, num_attributes * num_category]
         label_tensor: [B, num_attributes]
         """
-        mask_val = int(self.cfg.get("loss_mask_val", -100))
+        mask_val = int(self.cfg.get("regression", {}).get("loss_mask_val", -100))
         mask = label_tensor != mask_val
         num_valid_attributes = mask.float().sum()
         assert num_valid_attributes > 0, "Invalid sample: all attributes in label are masked, please check your data!"
 
         # Reshape output_tensor to [B * num_attributes, num_category]
-        output_tensor = output_tensor.view(output_tensor.size(0) * self.cfg.num_attributes, self.cfg.num_category)
+        output_tensor = output_tensor.view(
+            output_tensor.size(0) * label_tensor.size(1), self.cfg.get("categorical", {}).num_category
+        )
         # Flatten label_tensor to [B * num_attributes]
-        label_tensor = label_tensor.view(-1).int()
+        label_tensor = label_tensor.view(-1).long()
         criterion = torch.nn.CrossEntropyLoss(ignore_index=mask_val)
         # Calculate the loss
         loss = criterion(output_tensor, label_tensor)

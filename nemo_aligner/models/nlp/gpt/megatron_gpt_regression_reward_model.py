@@ -114,7 +114,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
         return fwd_output_and_loss_func
 
     def loss_func(self, output_tensor, label_tensor):
-        mask_val = self.cfg.get("loss_mask_val", -100.0)
+        mask_val = self.cfg.get("regression", {}).get("loss_mask_val", -100.0)
         mask = label_tensor != mask_val
         num_valid_attributes = mask.float().sum()
         assert num_valid_attributes > 0, "Invalid sample: all attributes in label are masked, please check your data!"
