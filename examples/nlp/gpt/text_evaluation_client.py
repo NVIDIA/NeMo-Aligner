@@ -86,28 +86,46 @@ def main(
 
     jobs = []
     key_map = {}
-    with open(input_file, "r", encoding="utf-8") as f:
-        for line in f:
-            obj = json.loads(line)
-            prompt = get_prompt(obj["system"], obj["prompt_turns"])
-            response_from = "Assistant"
-            prompt += f"{special_tokens['turn_start']}{response_from}{special_tokens['end_of_name']}"
-            response = obj["response"]
-            response += f"{special_tokens['end_of_turn']}{special_tokens['turn_start']}"
+    # with open(input_file, "r", encoding="utf-8") as f:
+    #     for line in f:
+    #         obj = json.loads(line)
+    #         prompt = get_prompt(obj["system"], obj["prompt_turns"])
+    #         response_from = "Assistant"
+    #         prompt += f"{special_tokens['turn_start']}{response_from}{special_tokens['end_of_name']}"
+    #         response = obj["response"]
+    #         response += f"{special_tokens['end_of_turn']}{special_tokens['turn_start']}"
 
-            key = (prompt, response)
-            key_map[key] = obj
+    #         key = (prompt, response)
+    #         key_map[key] = obj
 
-            context = prompt + response
-            if key in keys:
-                continue
-            jobs += [(context, key)]
+    #         context = prompt + response
+    #         if key in keys:
+    #             continue
+    #         jobs += [(context, key)]
 
+    def generate_jobs(input_file, keys, special_tokens, key_map):
+        with open(input_file, "r", encoding="utf-8") as f:
+            for line in f:
+                obj = json.loads(line)
+                prompt = get_prompt(obj["system"], obj["prompt_turns"])
+                response_from = "Assistant"
+                prompt += f"{special_tokens['turn_start']}{response_from}{special_tokens['end_of_name']}"
+                response = obj["response"]
+                response += f"{special_tokens['end_of_turn']}{special_tokens['turn_start']}"
+
+                key = (prompt, response)
+                key_map[key] = obj
+                context = prompt + response
+                if key in keys:
+                    continue
+                yield (context, key)
+
+    jobs = generate_jobs(input_file, keys, special_tokens, key_map)
     text_generation_for_batch = get_text_generation_for_batch(server_url, backend_url)
 
     results = []
-    for id in range(0, len(jobs), micro_batch_size):
-        data = jobs[id : id + micro_batch_size]
+    for id, job in enumerate(jobs):
+        data = [job]
         inputs = [input[0] for input in data]
         p_r_pair = [input[1] for input in data]
         length_params = {
@@ -126,7 +144,7 @@ def main(
             "data_ids": p_r_pair,
         }
         results.append(text_generation_for_batch.delay(job))
-    global_pbar = tqdm(total=len(jobs), desc="Search Global Progress")
+    global_pbar = tqdm(total=len(results), desc="Search Global Progress")
     total_time = 0
     total_finished = 0
     with open(tmp_file_path, "a", encoding="utf-8") as f:
