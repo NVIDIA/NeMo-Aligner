@@ -15,6 +15,7 @@ from hydra._internal.utils import _run_hydra, get_args_parser
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig
 from tqdm import tqdm
+import traceback
 
 
 def get_text_generation_for_batch(url, backend_url):
@@ -153,12 +154,15 @@ def main(
                         # results.children.remove(subtask)  # Remove the subtask from the list
                 except TimeoutError:
                     global_pbar.write("Timeout")
+                    traceback.print_exc()
                     results.remove(subtask)
                 except amqp.exceptions.PreconditionFailed:
                     global_pbar.write("RabbitMQ connection failed")
+                    traceback.print_exc()
                     results.remove(subtask)
                 except Exception as e:
                     global_pbar.write(f"Exception: {e}")
+                    traceback.print_exc()
                     results.remove(subtask)
 
 
