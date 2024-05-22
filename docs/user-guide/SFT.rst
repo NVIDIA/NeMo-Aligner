@@ -186,8 +186,8 @@ Now that we have the data we will use NeMo-Aligner to do the supervised fine tun
                trainer.devices=8 \
                trainer.sft.max_steps=-1 \
                trainer.sft.limit_val_batches=40 \
-               trainer.sft.val_check_interval=1000 \
-               trainer.sft.save_interval=50 \
+               trainer.sft.val_check_interval=100 \
+               trainer.sft.save_interval=100 \
                model.megatron_amp_O2=True \
                model.restore_from_path=${PRETRAINED_ACTOR_NEMO_FILE} \
                model.optim.lr=5e-6 \
