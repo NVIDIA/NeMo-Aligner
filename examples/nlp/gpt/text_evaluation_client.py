@@ -140,7 +140,7 @@ def main(
                         total_finished += micro_batch_size
                         global_pbar.update(micro_batch_size)
                         global_pbar.write(
-                            f"Finished {data_ids} in {time_spent} seconds, total_time: {total_time}, average time: {total_time / total_finished}"
+                            f"Finished in {time_spent} seconds, total_time: {total_time}, average time: {total_time / total_finished}"
                         )
                         for data_id, logp in zip(data_ids, args["sft_logprob"]):
                             key = (data_id[0], data_id[1])
