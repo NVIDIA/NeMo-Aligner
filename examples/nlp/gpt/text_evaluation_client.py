@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import sys
+import traceback
 from typing import Any, Callable, Optional
 
 import amqp
@@ -15,7 +16,6 @@ from hydra._internal.utils import _run_hydra, get_args_parser
 from hydra.core.config_store import ConfigStore
 from omegaconf import DictConfig
 from tqdm import tqdm
-import traceback
 
 
 def get_text_generation_for_batch(url, backend_url):
@@ -54,6 +54,47 @@ def get_prompt(system_turn, prompt_turns):
     return prompt
 
 
+def chunk_work(results, tmp_file_path, key_map, keys, chunk_id, micro_batch_size=1):
+    global_pbar = tqdm(total=len(results), desc=f"Search Global Progress {chunk_id}")
+    total_time = 0
+    total_finished = 0
+    with open(tmp_file_path, "a", encoding="utf-8") as f:
+        while len(results) > 0:
+            for subtask in results:  # Iterate over a copy of the list
+                try:
+                    if subtask.ready():
+                        args = subtask.get()
+                        time_spent = args["time"]
+                        data_ids = args["data_ids"]
+                        total_time += time_spent
+                        total_finished += micro_batch_size
+                        global_pbar.update(micro_batch_size)
+                        global_pbar.write(
+                            f"Finished in {time_spent} seconds, total_time: {total_time}, average time: {total_time / total_finished}"
+                        )
+                        for data_id, logp in zip(data_ids, args["sft_logprob"]):
+                            key = (data_id[0], data_id[1])
+                            record = key_map[key]
+                            record["log(P(y|x))"] = logp
+                            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+                            f.flush()
+                            keys[key] = record
+                        results.remove(subtask)
+                        # results.children.remove(subtask)  # Remove the subtask from the list
+                except TimeoutError:
+                    global_pbar.write("Timeout")
+                    traceback.print_exc()
+                    results.remove(subtask)
+                except amqp.exceptions.PreconditionFailed:
+                    global_pbar.write("RabbitMQ connection failed")
+                    traceback.print_exc()
+                    results.remove(subtask)
+                except Exception as e:
+                    global_pbar.write(f"Exception: {e}")
+                    traceback.print_exc()
+                    results.remove(subtask)
+
+
 def main(
     micro_batch_size=1,
     input_file="input.jsonl",
@@ -61,6 +102,7 @@ def main(
     backend_url="rpc://",
     output_file="output.jsonl",
     use_greedy=True,
+    chunk_size=10,
 ):
     # calculate the number of lines of the file cfg.dataset.data_prefix["train"]
     # tmp file
@@ -85,7 +127,6 @@ def main(
                 keys[key] = obj
 
     jobs = []
-    key_map = {}
     # with open(input_file, "r", encoding="utf-8") as f:
     #     for line in f:
     #         obj = json.loads(line)
@@ -102,6 +143,8 @@ def main(
     #         if key in keys:
     #             continue
     #         jobs += [(context, key)]
+
+    key_map = {}
 
     def generate_jobs(input_file, keys, special_tokens, key_map):
         with open(input_file, "r", encoding="utf-8") as f:
@@ -124,6 +167,7 @@ def main(
     text_generation_for_batch = get_text_generation_for_batch(server_url, backend_url)
 
     results = []
+    chunk_id = 0
     for id, job in enumerate(jobs):
         data = [job]
         inputs = [input[0] for input in data]
@@ -144,44 +188,12 @@ def main(
             "data_ids": p_r_pair,
         }
         results.append(text_generation_for_batch.delay(job))
-    global_pbar = tqdm(total=len(results), desc="Search Global Progress")
-    total_time = 0
-    total_finished = 0
-    with open(tmp_file_path, "a", encoding="utf-8") as f:
-        while len(results) > 0:
-            for subtask in results:  # Iterate over a copy of the list
-                try:
-                    if subtask.ready():
-                        args = subtask.get()
-                        time_spent = args["time"]
-                        data_ids = args["data_ids"]
-                        total_time += time_spent
-                        total_finished += micro_batch_size
-                        global_pbar.update(micro_batch_size)
-                        global_pbar.write(
-                            f"Finished in {time_spent} seconds, total_time: {total_time}, average time: {total_time / total_finished}"
-                        )
-                        for data_id, logp in zip(data_ids, args["sft_logprob"]):
-                            key = (data_id[0], data_id[1])
-                            record = key_map[key]
-                            record['log(P(y|x))'] = logp
-                            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-                            f.flush()
-                            keys[key] = record
-                        results.remove(subtask)
-                        # results.children.remove(subtask)  # Remove the subtask from the list
-                except TimeoutError:
-                    global_pbar.write("Timeout")
-                    traceback.print_exc()
-                    results.remove(subtask)
-                except amqp.exceptions.PreconditionFailed:
-                    global_pbar.write("RabbitMQ connection failed")
-                    traceback.print_exc()
-                    results.remove(subtask)
-                except Exception as e:
-                    global_pbar.write(f"Exception: {e}")
-                    traceback.print_exc()
-                    results.remove(subtask)
+        if id != 0 and id % chunk_size == 0:
+            chunk_work(results, tmp_file_path, key_map, keys, chunk_id, micro_batch_size)
+            results = []
+            key_map.clear()
+            chunk_id += 1
+    chunk_work(results, tmp_file_path, key_map, keys, chunk_id, micro_batch_size)
 
 
 if __name__ == "__main__":
