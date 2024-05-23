@@ -36,8 +36,8 @@ class RLHFDataset(Dataset):
         self.seq_length = seq_length
         self.tokenizer = tokenizer
 
-        if "length_params" in cfg:
-            max_sample_length = seq_length - cfg.length_params.max_length
+        if "length_params" in cfg.ppo:
+            max_sample_length = seq_length - cfg.ppo.length_params.max_length
         else:
             max_sample_length = seq_length // 2
 
