@@ -314,6 +314,7 @@ class GPTSteerLMModel(GPTSFTModel):
             # compute the kl divergence between group['ws'] and group['base_weight']
             # for numerical stability, add a small value to the base_weight_p
             base_weight_p = base_weight_p + 1e-8
+            ws_weight = ws_weight + 1e-8
             distance = torch.sum(ws_weight * torch.log(ws_weight / base_weight_p))
             distances.append(distance)
         # get average distance
