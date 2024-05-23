@@ -269,6 +269,7 @@ class GPTSteerLMModel(GPTSFTModel):
         # make sure the batch sizes are the same
         assert len(set(sizes)) == 1, "Batch sizes are not the same"
         set_sync_funcs(self, True)
+        distances = []
         for group in batch:
             # calculate the baseline weights for each group of generated reponses
             # set the batch size for log likelihood calculation
@@ -305,10 +306,19 @@ class GPTSteerLMModel(GPTSFTModel):
             # noramliize the weight
             base_weight_p = base_weight_p / base_weight_p.sum()
             group["base_weight"] = base_weight_p
-            group["weight"] = group["ws"].cuda() - base_weight_p
+            ws_weight = group["ws"].cuda()
+            group["weight"] = ws_weight - base_weight_p
             group["avg_num_valid_tokens_in_ub"] = (
                 group["loss_mask"].sum(axis=-1).float().mean().repeat(len(base_weight))
             )
+            # compute the kl divergence between group['ws'] and group['base_weight']
+            # for numerical stability, add a small value to the base_weight_p
+            base_weight_p = base_weight_p + 1e-8
+            distance = torch.sum(ws_weight * torch.log(ws_weight / base_weight_p))
+            distances.append(distance)
+        # get average distance
+        distance = torch.stack(distances).mean()
+        distance = average_losses_across_data_parallel_group([distance])
 
         # compute the gbs which are all the responses generated
         dp_size = int(parallel_state.get_data_parallel_world_size())
@@ -344,5 +354,5 @@ class GPTSteerLMModel(GPTSFTModel):
         # Logging
         torch.distributed.broadcast(loss_mean, get_last_rank())
         loss_value = loss_mean.detach().item()
-        metrics = {"loss": loss_value}
+        metrics = {"loss": loss_value, "distance": distance.item()}
         return loss_value, metrics
