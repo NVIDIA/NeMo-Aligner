@@ -70,7 +70,9 @@ class SupervisedTrainer:
         # compute `max_steps`
         self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
 
-        self.dict_limit_val_batches = {k: compute_limit_batches(len(v), self.cfg.limit_val_batches) for k, v in val_dataloader.items()}
+        self.dict_limit_val_batches = {
+            k: compute_limit_batches(len(v), self.cfg.limit_val_batches) for k, v in val_dataloader.items()
+        }
         self.main_limit_val_batches = self.dict_limit_val_batches["validation"]
         self.set_max_steps()
 
@@ -97,7 +99,7 @@ class SupervisedTrainer:
             loss_means_, metrics_ = self.run_validation_one_dataset(k)
             loss_means.append(loss_means_)
             metrics.update(metrics_)
-        return mean(loss_means), metrics  # TODO: would we want weighted sum with ds lengths?
+        return mean(loss_means), metrics
 
     @torch.no_grad()
     def run_validation_one_dataset(self, key: str):
@@ -111,7 +113,7 @@ class SupervisedTrainer:
             zip(range(limit_val_batches), val_dataloader),
             total=limit_val_batches,
             leave=True,
-            desc="Validation steps", # TODO improve pbar with key maybe
+            desc="Validation steps",
         )
 
         for _, batch in val_pbar:
@@ -189,6 +191,11 @@ class SupervisedTrainer:
             return
 
         self.run_timer.start_time()
+
+        # Run validation if no training at all
+        if self.max_steps == 0:
+            _, val_metrics = self.run_validation()
+            self.logger.log_metrics(val_metrics, step=self.step, prefix="")
 
         for _ in epoch_iter:
             num_steps_in_epoch = min(
