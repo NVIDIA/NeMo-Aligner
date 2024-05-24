@@ -123,9 +123,9 @@ class GPTSteerLMModel(GPTSFTModel):
         # losses [batch_size, sequence_length]
         # loss per batch item, log(p) for all tokens in one batch item
         loss = torch.sum(losses * loss_mask, dim=-1)
-        # average log(p) in microbatch
+        # sum log(p) in microbatch
         loss = loss.sum()
-        # average lop(p) per token
+        # average lop(p) by the number of valid tokens in the microbatch and scale it by the number of microbatches
         loss = loss / avg_num_valid_tokens_in_ub[0]  # sequence level nll
         if parallel_state.get_context_parallel_world_size() > 1:
             torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
@@ -308,8 +308,19 @@ class GPTSteerLMModel(GPTSFTModel):
             group["base_weight"] = base_weight_p
             ws_weight = group["ws"].cuda()
             group["weight"] = ws_weight - base_weight_p
+            # group size is the number of responses generated
+            group_size = len(base_weight)
+            num_of_microbatches = group_size // mbs
+            # to compute the loss for each of the group batch,
+            # loss L_i^{jb}  is the loss element for batch $b$, microbatch item $j$ and $i$ item in the microbatch
+            # the loss we need is:  sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} sum_{i=0}^{mbs} (L_i^{jb}) / num_batches ,
+            # while the fwd-bwd function is used to compute the loss of average microbatch loss
+            # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches * num_of_microbatches)
+            # to makie it equivalent to the loss we care, we need to scale loss by num_of_microbatches
+            # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [(num_of_microbatches) * sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches * num_of_microbatches)
+            # also if we want to average the loss weighted by the inverse of number of loss_mass=1 tokens in the batch
             group["avg_num_valid_tokens_in_ub"] = (
-                group["loss_mask"].sum(axis=-1).float().mean().repeat(len(base_weight))
+                group["loss_mask"].sum(axis=-1).float().mean().repeat(group_size) / num_of_microbatches
             )
             # compute the kl divergence between group['ws'] and group['base_weight']
             # for numerical stability, add a small value to the base_weight_p
