@@ -322,7 +322,7 @@ def build_dataloader(
     pad_samples_to_global_batch_size=False,
     collate_fn=None,
     load_gbs=True,
-    use_random_sampler=True,
+    use_random_sampler=False,
 ):
     """Buld dataloader given an input dataset."""
 
