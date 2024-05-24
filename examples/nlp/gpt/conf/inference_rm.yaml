@@ -17,6 +17,8 @@ model:
   activations_checkpoint_method: null
   precision: ${trainer.precision}
 
+  forward_mbs: ${inference.micro_batch_size}
+
   reward_standardization:
     enable: False
     mean: null
@@ -25,3 +27,4 @@ model:
   regression:
     merge_attributes: False # whether to merge attribute values into a scalar
     attribute_weights: null # apply these weights to each attributes when merging them into a scalar
+
