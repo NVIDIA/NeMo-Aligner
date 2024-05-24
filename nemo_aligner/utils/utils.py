@@ -35,7 +35,6 @@ from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
 from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
-from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
@@ -50,6 +49,9 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     def restore_from(self, *args, **kwargs):
         if not self.__load_base_model_only:
             return super().restore_from(*args, **kwargs)
+
+        # Avoid circular import.
+        from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
         with patch.object(GPTRewardModel, "return_rm_head_in_state_dict", False):
             output = super().restore_from(*args, **kwargs)
