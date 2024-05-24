@@ -59,6 +59,7 @@ def remove_padded_prompts(response, nb_paddings):
 
 def init_distributed_parameters(trainer, cfg):
     app_state = AppState()
+<<<<<<< HEAD
     if (
         cfg.tensor_model_parallel_size > 1
         or cfg.pipeline_model_parallel_size > 1
@@ -76,6 +77,15 @@ def init_distributed_parameters(trainer, cfg):
             app_state.tensor_model_parallel_rank,
             app_state.pipeline_model_parallel_rank,
             app_state.expert_model_parallel_rank,
+=======
+    if cfg.tensor_model_parallel_size > 1 or cfg.pipeline_model_parallel_size > 1:
+        app_state.model_parallel_size = cfg.tensor_model_parallel_size * cfg.pipeline_model_parallel_size
+        app_state.tensor_model_parallel_size = cfg.tensor_model_parallel_size
+        app_state.pipeline_model_parallel_size = cfg.pipeline_model_parallel_size
+        (
+            app_state.tensor_model_parallel_rank,
+            app_state.pipeline_model_parallel_rank,
+>>>>>>> e6f0804689a6402cb7ed44651c76c37608017270
             app_state.model_parallel_size,
             app_state.data_parallel_size,
             app_state.pipeline_model_parallel_split_rank,
@@ -87,8 +97,13 @@ def init_distributed_parameters(trainer, cfg):
             pipeline_model_parallel_size_=cfg.pipeline_model_parallel_size,
             pipeline_model_parallel_split_rank_=cfg.pipeline_model_parallel_split_rank,
         )
+<<<<<<< HEAD
     # if trainer.num_devices and trainer.num_nodes:
     #     app_state.world_size = trainer.num_devices * trainer.num_nodes
+=======
+    if trainer.num_devices and trainer.num_nodes:
+        app_state.world_size = trainer.num_devices * trainer.num_nodes
+>>>>>>> e6f0804689a6402cb7ed44651c76c37608017270
 
 
 @hydra_runner(config_path="conf", config_name="gpt_inference")
