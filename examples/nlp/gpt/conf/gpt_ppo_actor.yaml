@@ -104,12 +104,12 @@ exp_manager:
   resume_ignore_no_checkpoint: True
   create_checkpoint_callback: True
   checkpoint_callback_params:
-    monitor: val_global_rewards
+    monitor: val_rewards
     save_top_k: 1
     mode: max
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt-{step}-{consumed_samples}-{ppo_optimization_step}-{epoch}-{val_global_rewards:.3f}'
+    filename: 'megatron_gpt-{step}-{consumed_samples}-{ppo_optimization_step}-{epoch}-{val_rewards:.3f}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
 
 pretrained_checkpoint:
