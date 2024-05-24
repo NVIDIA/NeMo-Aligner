@@ -33,7 +33,7 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, rebalance_nd_tensor
 from nemo_aligner.utils.server_utils import lock_method, pad_input
 from nemo_aligner.utils.train_utils import clip_gradients
-from nemo_aligner.utils.utils import apply_func_to_dict
+from nemo_aligner.utils.utils import apply_func_to_dict, clear_memory
 
 ENDPOINT_BIND_ADDRESS = "0.0.0.0"
 
@@ -326,6 +326,8 @@ class CriticServerTrainer:
             metrics["step_time"] = train_step_time
 
             self.model.finish_training_step()
+
+            clear_memory()
 
             grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
             grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
