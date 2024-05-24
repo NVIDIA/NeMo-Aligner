@@ -58,13 +58,19 @@ def main(cfg) -> None:
     ptl_model = ptl_model.cuda()
 
     dp_size = parallel_state.get_data_parallel_world_size()
-    max_batch_size = cfg.inference.micro_batch_size * dp_size
+    forward_mbs = cfg.inference.forward_mbs
 
     infer_fn = ptl_model.infer
     ptl_model.prepare_for_inference()
 
     if torch.distributed.get_rank() == 0:
-        infer_callable = RewardModelCallable(model_name="reward_model", infer_fn=infer_fn, lock=threading.Lock())
+        infer_callable = RewardModelCallable(
+            model_name="reward_model",
+            infer_fn=infer_fn,
+            tokenizer=ptl_model.tokenizer,
+            lock=threading.Lock(),
+            forward_mbs=forward_mbs,
+        )
         triton_config = TritonConfig(
             allow_http=True,
             allow_grpc=False,
@@ -72,8 +78,11 @@ def main(cfg) -> None:
             http_address=ENDPOINT_BIND_ADDRESS,
             http_port=cfg.inference.port,
         )
-        dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
-        model_config = ModelConfig(batching=True, max_batch_size=max_batch_size, batcher=dynamic_batcher)
+        dp_size = parallel_state.get_data_parallel_world_size()
+        preferred_batch_size = [dp_size * forward_mbs * (i + 1) for i in range(1000)]
+
+        dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000, preferred_batch_size=preferred_batch_size,)
+        model_config = ModelConfig(batching=True, max_batch_size=9999999, batcher=dynamic_batcher)
 
         with Triton(config=triton_config) as triton:
             triton.bind(

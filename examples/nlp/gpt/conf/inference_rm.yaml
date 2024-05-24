@@ -6,8 +6,10 @@ trainer:
   precision: bf16 # 16, 32, or bf16
 
 inference:
-  micro_batch_size: 4
+  micro_batch_size: 2
   port: 5555 # the port number for the inference server
+
+  forward_mbs: ${.micro_batch_size}
 
 rm_model_file: null
 

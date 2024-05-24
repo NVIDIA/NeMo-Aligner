@@ -14,6 +14,7 @@
 
 import math
 import threading
+import time
 from typing import Dict
 
 import numpy as np
@@ -22,20 +23,29 @@ from pytriton.decorators import batch
 from pytriton.exceptions import PyTritonUnrecoverableError
 from pytriton.model_config import Tensor
 
+from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, rebalance_nd_tensor
 from nemo_aligner.utils.server_utils import decode_bytes_ndarray, lock_method, pad_input
 
 MODEL_SEQ_LENGTH = 4096
 
 
-def process_inference_request(inputs, pad_to, pad_sequence_length_to_multiple=None):
+def process_inference_request(inputs, pad_to, pad_sequence_length_to_multiple=None, tokenizer=None):
     sentences = inputs.pop("sentences", None)
     if sentences is not None:
         sentences = decode_bytes_ndarray(sentences)
-    tokens = inputs.pop("tokens", None)
+        tokens = [tokenizer.text_to_ids(s) for s in sentences]
+        sentences = None
+        max_len = max(len(x) for x in tokens)
+        tokens, sequence_lengths = pad_batch(tokens, tokenizer.eos_id, max_len)
 
-    sequence_lengths = inputs.pop("sequence_lengths", None)
+        tokens = np.array(tokens, dtype=np.int64)
+        sequence_lengths = np.array(sequence_lengths, dtype=np.int64)[:, None]
+    else:
+        tokens = inputs.pop("tokens", None)
+        sequence_lengths = inputs.pop("sequence_lengths", None)
 
     assert sentences is not None or tokens is not None, "Both sentences and tokens cannot be None."
 
@@ -84,7 +94,9 @@ def run_rm_or_critic_inference(infer_fn, inputs, extra):
 
 
 class RewardModelCallable:
-    def __init__(self, *, model_name: str, infer_fn: callable, lock: threading.Lock):
+    def __init__(
+        self, *, model_name: str, infer_fn: callable, tokenizer: None, forward_mbs: None, lock: threading.Lock
+    ):
         self.model_name = model_name
         self.lock = lock
         self.infer_fn = infer_fn
@@ -95,6 +107,8 @@ class RewardModelCallable:
             Tensor(name="add_EOS", shape=(1,), dtype=np.bool_, optional=True),
         )
         self.outputs = (Tensor(name="rewards", shape=(1,), dtype=np.float32),)
+        self.tokenizer = tokenizer
+        self.forward_mbs = forward_mbs
 
     @batch
     @lock_method("self.lock")
@@ -102,9 +116,42 @@ class RewardModelCallable:
         choice = ServerSignal.FORWARD.cuda()
         torch.distributed.broadcast(choice, 0)
 
-        rewards = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
+        inputs, extra, prepad_sequence_length = process_inference_request(
+            inputs,
+            pad_to=self.forward_mbs * parallel_state.get_data_parallel_world_size(),
+            pad_sequence_length_to_multiple=None,
+            tokenizer=self.tokenizer,
+        )
+
+        rewards = self.run_inference(inputs=inputs, extra=extra)
 
         output_dict = {
             "rewards": rewards,
         }
+
         return output_dict
+
+    @torch.no_grad()
+    def run_inference(self, inputs=None, extra=None):
+        """only rank 0 has valid data
+        """
+        print(f"----start infer at {time.time()}")
+        tokens, lengths = None, None
+        dp_rank = parallel_state.get_data_parallel_rank()
+        dp_size = parallel_state.get_data_parallel_world_size()
+        is_rank_0 = torch.distributed.get_rank() == 0
+
+        if is_rank_0:
+            tokens = torch.as_tensor(inputs["inputs"], dtype=torch.long, device=torch.cuda.current_device())
+            lengths = torch.as_tensor(inputs["sequence_length"], dtype=torch.long, device=torch.cuda.current_device())
+
+        tokens = broadcast_2d_tensor(tokens, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank]
+        lengths = broadcast_2d_tensor(lengths, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank].squeeze(-1)
+
+        outputs = self.infer_fn(inputs=(tokens, lengths))
+
+        rewards = outputs
+        rewards = rebalance_nd_tensor(rewards, group=parallel_state.get_data_parallel_group()).squeeze().cpu().numpy()
+        rewards = rewards[: rewards.shape[0] - extra]
+
+        return rewards
