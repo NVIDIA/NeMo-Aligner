@@ -124,7 +124,7 @@ class GPTSteerLMModel(GPTSFTModel):
         # loss per batch item, log(p) for all tokens in one batch item
         loss = torch.sum(losses * loss_mask, dim=-1)
         # average log(p) in microbatch
-        loss = loss.mean()
+        loss = loss.sum()
         # average lop(p) per token
         loss = loss / avg_num_valid_tokens_in_ub[0]  # sequence level nll
         if parallel_state.get_context_parallel_world_size() > 1:
