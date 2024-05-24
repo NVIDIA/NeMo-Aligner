@@ -156,3 +156,7 @@ wandb
 .hydra/
 *.jsonl
 slurm*.out
+checkpoints/
+datasets/
+slurm*.out
+dump/
