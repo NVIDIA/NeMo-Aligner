@@ -101,6 +101,7 @@ def main(cfg) -> None:
     outputs = [None for _ in range(parallel_state.get_data_parallel_world_size())]
     torch.distributed.all_gather_object(outputs, rewards_all, parallel_state.get_data_parallel_group())
     output_tensor = torch.as_tensor(outputs).flatten()
+    print("### OUTPUT TENSOR SHAPE", output_tensor.shape)
     print("### OUTPUT TENSOR MEAN", output_tensor.mean())
     print("### OUTPUT TENSOR STD", output_tensor.std())
 
