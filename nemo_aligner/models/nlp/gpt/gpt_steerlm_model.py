@@ -274,7 +274,7 @@ class GPTSteerLMModel(GPTSFTModel):
             # calculate the baseline weights for each group of generated reponses
             # set the batch size for log likelihood calculation
             gbs, seq_length = group["tokens"].shape
-            mbs = int(self.cfg.data.steerlm2_micro_batch_size)
+            mbs = int(self.cfg.data.steerlm2_weight_micro_batch_size)
             dp_size = 1
             configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
