@@ -82,7 +82,7 @@ def main(cfg) -> None:
     ptl_model = ptl_model.cuda()
 
     dp_size = parallel_state.get_data_parallel_world_size()
-    forward_mbs = cfg.inference.forward_mbs
+    forward_mbs = cfg.model.forward_mbs
 
     infer_fn = ptl_model.infer
     ptl_model.prepare_for_inference()
