@@ -132,7 +132,7 @@ model:
       label_start: "\x12"
       end_of_turn: "\x0A"  # \0x0A is '\n'
       end_of_name: "\x0A"  # \0x0A is '\n'
-
+    steerlm2_micro_batch_size:  1
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
     num_workers: 1
     dataloader_type: single  # only supports single

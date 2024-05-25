@@ -274,7 +274,7 @@ class GPTSteerLMModel(GPTSFTModel):
             # calculate the baseline weights for each group of generated reponses
             # set the batch size for log likelihood calculation
             gbs, seq_length = group["tokens"].shape
-            mbs = int(self.cfg.data.train_ds.micro_batch_size)
+            mbs = int(self.cfg.data.steerlm2_micro_batch_size)
             dp_size = 1
             configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
@@ -335,7 +335,7 @@ class GPTSteerLMModel(GPTSFTModel):
         # compute the gbs which are all the responses generated
         dp_size = int(parallel_state.get_data_parallel_world_size())
         gbs = len(batch) * dp_size * sizes[0]
-        mbs = int(self.cfg.data.train_ds.micro_batch_size)
+        mbs = int(self.cfg.data.steerlm2_micro_batch_size)
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
         # restore the batch sizes for training
         set_sync_funcs(self, forward_only)
