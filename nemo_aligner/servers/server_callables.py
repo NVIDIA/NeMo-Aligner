@@ -124,6 +124,7 @@ class RewardModelCallable:
         )
 
         rewards = self.run_inference(inputs=inputs, extra=extra)
+        rewards = rewards[: rewards.shape[0] - extra]
 
         output_dict = {
             "rewards": rewards,
@@ -152,6 +153,5 @@ class RewardModelCallable:
 
         rewards = outputs
         rewards = rebalance_nd_tensor(rewards, group=parallel_state.get_data_parallel_group()).squeeze().cpu().numpy()
-        rewards = rewards[: rewards.shape[0] - extra]
 
         return rewards

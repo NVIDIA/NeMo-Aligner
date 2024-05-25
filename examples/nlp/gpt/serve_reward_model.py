@@ -26,12 +26,36 @@ from nemo.core.config import hydra_runner
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import RewardModelCallable
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, rebalance_nd_tensor
 from nemo_aligner.utils.train_script_utils import init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, set_autocast_gpu_dtype
 
 """PyTriton Based Inference Server for the Reward Model"""
 
 ENDPOINT_BIND_ADDRESS = "0.0.0.0"
+
+
+def run_inference(infer_fn, inputs=None, extra=None):
+    """only rank 0 has valid data
+    """
+    tokens, lengths = None, None
+    dp_rank = parallel_state.get_data_parallel_rank()
+    dp_size = parallel_state.get_data_parallel_world_size()
+    is_rank_0 = torch.distributed.get_rank() == 0
+
+    if is_rank_0:
+        tokens = torch.as_tensor(inputs["inputs"], dtype=torch.long, device=torch.cuda.current_device())
+        lengths = torch.as_tensor(inputs["sequence_length"], dtype=torch.long, device=torch.cuda.current_device())
+
+    tokens = broadcast_2d_tensor(tokens, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank]
+    lengths = broadcast_2d_tensor(lengths, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank].squeeze(-1)
+
+    outputs = infer_fn(inputs=(tokens, lengths))
+
+    rewards = outputs
+    rewards = rebalance_nd_tensor(rewards, group=parallel_state.get_data_parallel_group()).squeeze().cpu().numpy()
+
+    return rewards
 
 
 @hydra_runner(config_path="conf", config_name="inference_rm")
@@ -98,7 +122,7 @@ def main(cfg) -> None:
             choice = ServerSignal.INVALID.cuda()
             torch.distributed.broadcast(choice, 0)
             if choice.item() == ServerSignal.FORWARD:
-                infer_fn()
+                run_inference(infer_fn)
             else:
                 raise RuntimeError(f"Invalid operation: {choice.item()}")
 
