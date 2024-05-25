@@ -21,6 +21,7 @@ from pytorch_lightning.trainer.trainer import Trainer
 from pytriton.model_config import ModelConfig
 from pytriton.model_config.common import DynamicBatcher
 from pytriton.triton import Triton, TritonConfig
+from tqdm import tqdm
 
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
@@ -92,7 +93,7 @@ def main(cfg) -> None:
     )
 
     rewards_all = []
-    for batch in dataloader:
+    for batch in tqdm(dataloader):
         batch = tuple(map(torch.as_tensor, batch))
         rewards = infer_fn(batch).flatten().tolist()
         rewards_all.extend(rewards)

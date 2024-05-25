@@ -376,10 +376,17 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         attention_mask = attention_mask.expand(inference_batch_size, -1, -1, -1)
         inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask]
 
-        num_microbatches = divide(inference_batch_size, self.forward_mbs)
+        forward_mbs = self.forward_mbs
+
+        if inference_batch_size % forward_mbs != 0:
+            for i in range(1, forward_mbs + 1):
+                if inference_batch_size % i == 0:
+                    forward_mbs = i
+
+        num_microbatches = divide(inference_batch_size, forward_mbs)
         data_iter = get_iterator_k_split(inputs, num_microbatches)
 
-        rewards = self.forward_step(data_iter, self.forward_mbs, sequence_length, num_microbatches)
+        rewards = self.forward_step(data_iter, forward_mbs, sequence_length, num_microbatches)
 
         if parallel_state.is_pipeline_last_stage():
             rewards = torch.cat(rewards)
