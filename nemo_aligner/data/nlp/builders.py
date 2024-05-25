@@ -343,16 +343,12 @@ def build_dataloader(
         "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
 
-    # Megatron sampler
-    if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type == "single":
-        if use_random_sampler:
-            cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
-            common_params["seed"] = cfg.model.seed
-        else:
-            cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
-        batch_sampler = cls(**common_params)
+    if use_random_sampler:
+        cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
+        common_params["seed"] = cfg.model.seed
     else:
-        raise ValueError('`cfg.model.data.dataloader_type` must be set to "single"')
+        cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+    batch_sampler = cls(**common_params)
 
     return torch.utils.data.DataLoader(
         dataset,

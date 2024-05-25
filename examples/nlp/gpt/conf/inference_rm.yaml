@@ -9,6 +9,7 @@ inference:
   port: 5555 # the port number for the inference server
 
 rm_model_file: null
+dataset_path: null
 
 model:
   forward_mbs: 2
