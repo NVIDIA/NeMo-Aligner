@@ -156,9 +156,12 @@ def main(
                         global_pbar.write(
                             f"Finished {data_ids} in {time_spent} seconds, total_time: {total_time}, average time: {total_time / total_finished}"
                         )
-                        for data_id, output, logp in zip(data_ids, args["responses"], args["response_logprob"]):
+                        for data_id, output, logp, ends_properly in zip(
+                            data_ids, args["responses"], args["response_logprob"], args["ends_properly"]
+                        ):
                             raw_job[data_id]["response"] = output
                             raw_job[data_id]["log(Q(y|a,x))"] = logp
+                            raw_job[data_id]["ends_properly"] = ends_properly
                             f.write(json.dumps(raw_job[data_id], ensure_ascii=False) + "\n")
                             f.flush()
                             finished_job.append(raw_job[data_id])
@@ -173,24 +176,6 @@ def main(
                 except Exception as e:
                     global_pbar.write(f"Exception: {e}")
                     results.remove(subtask)
-
-    # with open(output_file, "w", encoding="utf-8") as f:
-    #     # group by data_id
-    #     groups = {}
-    #     for item in finished_job:
-    #         if item["data_id"] in groups:
-    #             groups[item["data_id"]].append(item)
-    #         else:
-    #             groups[item["data_id"]] = [item]
-    #     for key in groups:
-    #         if len(groups[key]) < replica_size:
-    #             print("Missing data for key:", key)
-    #             continue
-    #         one_record = groups[key][0]
-    #         one_record["responses"] = [
-    #             {"value": item["response"], "log(Q(y|a,x))": item["log(Q(y|a,x))"]} for item in groups[key]
-    #         ]
-    #         f.write(json.dumps(one_record, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":

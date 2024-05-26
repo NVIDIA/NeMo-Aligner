@@ -264,15 +264,19 @@ def start_worker(model, cfg, url, backend_url):
                 ]
                 # remove the end_strings from the output
                 clean_output_response = []
+                detected_end_strings = []
                 for clean_response in output_response:
+                    detected_end_string = False
                     for end_string in sampling_params["end_strings"]:
                         if clean_response.endswith(end_string):
                             clean_response = clean_response[: -len(end_string)]
                             clean_response = clean_response.strip()
+                            detected_end_string = True
                     clean_output_response.append(clean_response)
+                    detected_end_strings.append(detected_end_string)
                 output = {}
                 output["responses"] = clean_output_response
-
+                output["ends_properly"] = detected_end_strings
                 if "logprob" in response and response["logprob"] is not None:
                     eod_id = model.tokenizer.eos_id
                     # log probs need to offset by 1 because the first token has no log prob
