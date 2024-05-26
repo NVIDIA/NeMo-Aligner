@@ -14,6 +14,7 @@
 
 import itertools
 import json
+import os
 import threading
 import time
 from collections import UserDict, defaultdict
@@ -23,6 +24,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Callable
 
+import jsonlines
 import pandas as pd
 import requests
 import torch
@@ -456,6 +458,28 @@ class PPOTrainer:
         response_lengths = rollout_batch["response_lengths"]
         response_tokens = rollout_batch["response_tokens"]
         rewards = rollout_batch["rewards"]
+
+        if parallel_state.get_data_parallel_src_rank() == torch.distributed.get_rank():
+            file_name = os.path.join(
+                self.cfg.log_dir,
+                "rank_{}_dp_rank{}_step_{}_time_{}.jsonl".format(
+                    torch.distributed.get_rank(), parallel_state.get_data_parallel_rank(), self.step, time.time()
+                ),
+            )
+
+            to_write = [
+                {
+                    "reward": r.item(),
+                    "prompt": self.model.tokenizer.ids_to_text(toks[:p_length].tolist()),
+                    "response": self.model.tokenizer.ids_to_text(toks[p_length:r_length].tolist()),
+                }
+                for (r, p_length, r_length, toks) in zip(
+                    rewards, prompt_lengths, response_lengths, response_tokens, strict=True
+                )
+            ]
+
+            with jsonlines.open(file_name, mode="w") as writer:
+                writer.write_all(to_write)
 
         reward = rewards[0]
         prompt_length = prompt_lengths[0]
