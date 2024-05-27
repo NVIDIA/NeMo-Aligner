@@ -138,6 +138,19 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 loss2 = -advantages * ratios_clamped
                 actor_loss = masked_mean(torch.max(loss1, loss2), mask)
                 loss = actor_loss - scaled_entropy
+                is_loss_finite = bool(loss.isfinite().all())
+                if not is_loss_finite:
+                    is_loss1_finite = bool(loss1.isfinite().all())
+                    is_loss2_finite = bool(loss2.isfinite().all())
+                    are_curr_log_probs_finite = bool(curr_log_probs.isfinite().all())
+                    are_prev_log_probs_finite = bool(prev_log_probs.isfinite().all())
+                    are_ratios_finite = bool(ratios.isfinite().all())
+                    are_advantages_finite = bool(advantages.isfinite().all())
+                    logging.warning(
+                        f"Loss is not finite {is_loss1_finite=}, {is_loss2_finite}, {are_curr_log_probs_finite}, "
+                        f"{are_prev_log_probs_finite=}, {are_ratios_finite=}, {are_advantages_finite=}"
+                    )
+                    loss = torch.where(loss.isfinite(), loss, 0.0)
 
                 with torch.no_grad():
                     ppo_ratio = masked_mean(ratios.detach(), mask)
