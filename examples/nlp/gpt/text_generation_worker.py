@@ -189,6 +189,29 @@ def main(cfg) -> None:
 
 
 def start_worker(model, cfg, url, backend_url):
+    def process_input(batch, cfg):
+        length_params: LengthParam = {
+            "max_length": cfg.inference.tokens_to_generate,
+            "min_length": cfg.inference.min_tokens_to_generate,
+        }
+
+        sampling_params: SamplingParam = {
+            "use_greedy": cfg.inference.greedy,
+            "temperature": cfg.inference.temperature,
+            "top_k": cfg.inference.top_k,
+            "top_p": cfg.inference.top_p,
+            "repetition_penalty": cfg.inference.repetition_penalty,
+            "add_BOS": cfg.inference.add_BOS,
+            "all_probs": cfg.inference.all_probs,
+            "compute_logprob": cfg.inference.compute_logprob,
+            "end_strings": cfg.inference.end_strings,
+        }
+
+        length_params.update(batch["length_params"])
+        sampling_params.update(batch["sampling_params"])
+        inputs = batch["inputs"]
+        return {"inputs": inputs, "length_params": length_params, "sampling_params": sampling_params}
+
     if torch.distributed.get_rank() == 0:
         app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
 
@@ -198,29 +221,6 @@ def start_worker(model, cfg, url, backend_url):
 
         # 5 hrs timeout
         app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
-
-        def process_input(batch, cfg):
-            length_params: LengthParam = {
-                "max_length": cfg.inference.tokens_to_generate,
-                "min_length": cfg.inference.min_tokens_to_generate,
-            }
-
-            sampling_params: SamplingParam = {
-                "use_greedy": cfg.inference.greedy,
-                "temperature": cfg.inference.temperature,
-                "top_k": cfg.inference.top_k,
-                "top_p": cfg.inference.top_p,
-                "repetition_penalty": cfg.inference.repetition_penalty,
-                "add_BOS": cfg.inference.add_BOS,
-                "all_probs": cfg.inference.all_probs,
-                "compute_logprob": cfg.inference.compute_logprob,
-                "end_strings": cfg.inference.end_strings,
-            }
-
-            length_params.update(batch["length_params"])
-            sampling_params.update(batch["sampling_params"])
-            inputs = batch["inputs"]
-            return {"inputs": inputs, "length_params": length_params, "sampling_params": sampling_params}
 
         @app.task(
             bind=True,
