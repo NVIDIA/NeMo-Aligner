@@ -86,7 +86,8 @@ def main(
                 obj = json.loads(line)
                 key = obj["data_id"]
                 if key in keys:
-                    keys[key] += 1
+                    if "ends_properly" in obj and obj["ends_properly"]:
+                        keys[key] += 1
                 else:
                     keys[key] = 1
                 finished_job.append(obj)
