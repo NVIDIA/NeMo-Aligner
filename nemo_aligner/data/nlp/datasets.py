@@ -493,9 +493,12 @@ raw = """{prompt}"""
 # "content": "You're an expert Python programmer and mathematician. Help the user to solve this problem as accurate as possible. Make sure to put the answer (and only answer) inside \\boxed{{}}.",
 # }
 
-system ="You are Meta AI, a sophisticated and energetic AI Assistant. You excel at solving mathematical problems.\n\nYou will help the user to solve the question as accurate as possible. Make sure to put the answer (and only answer) inside \\boxed{{}}."
+system = "You are Meta AI, a sophisticated and energetic AI Assistant. You excel at solving mathematical problems.\n\nYou will help the user to solve the question as accurate as possible. Make sure to put the answer (and only answer) inside \\boxed{{}}."
 
-llama3 = {"system": system, "prompt_template": '<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{user}<|eot_id|><|start_header_id|>assistant<|end_header_id|>{generated_solution}'}
+llama3 = {
+    "system": system,
+    "prompt_template": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n{system}<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{user}<|eot_id|><|start_header_id|>assistant<|end_header_id|>{generated_solution}",
+}
 
 TEMPLATES = {
     "steerlm": steerlm_template,
@@ -505,7 +508,6 @@ TEMPLATES = {
     "raw": raw,
     "llama3": llama3,
 }
-
 
 
 @dataclass
@@ -556,8 +558,9 @@ class LLaMa3ChatDataset:
 
     def __getitem__(self, idx):
         item = deepcopy(self.ds[idx])
-
-        item["question"] = self.template['prompt_template'].format(system=self.template['system'], user=item["question"], generated_solution="")
+        item["question"] = self.template["prompt_template"].format(
+            system=self.template["system"], user=item["question"], generated_solution=""
+        )
         item["data_id"] = idx
         return item
 

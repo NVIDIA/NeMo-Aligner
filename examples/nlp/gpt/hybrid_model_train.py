@@ -295,7 +295,7 @@ def main(cfg) -> None:
         load_base_model_only=not cfg.pretrained_checkpoint.from_mcts_trained,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
-    
+
     tokenizer = ptl_model.tokenizer
 
     train_ds = LLaMa3ChatDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name, tokenizer)
