@@ -35,7 +35,7 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.deepsearch import DeepSearchTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader
-from nemo_aligner.data.nlp.datasets import MCTSDataset
+from nemo_aligner.data.nlp.datasets import LLaMa3ChatDataset
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
 from nemo_aligner.utils.customized_nlpdpstrategy import CustomMegatronTrainerBuilder
 from nemo_aligner.utils.deep_search.mcts.feedback_functions import GSK8KFeedbackDataset, MathSandBoxedFeedBack
@@ -259,13 +259,14 @@ def split_paths(data_paths, train_ds, val_ds, tokenizer):
         else:
             raise ValueError(f"cannot find set for {list_of_paths}")
 
+    print("#### TRAIN_PATHS", len(train_paths))
+    print("#### VALIDATION PATHS", len(validation_paths))
+
     return train_paths, validation_paths
 
 
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
-    train_ds = MCTSDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name)
-    val_ds = MCTSDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name)
 
     feedback = MathSandBoxedFeedBack(
         host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT")
@@ -294,6 +295,11 @@ def main(cfg) -> None:
         load_base_model_only=not cfg.pretrained_checkpoint.from_mcts_trained,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
+    
+    tokenizer = ptl_model.tokenizer
+
+    train_ds = LLaMa3ChatDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name, tokenizer)
+    val_ds = LLaMa3ChatDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name, tokenizer)
 
     train_policy_data_paths, val_policy_data_paths = split_paths(
         all_policy_data_paths, train_ds, val_ds, ptl_model.tokenizer
