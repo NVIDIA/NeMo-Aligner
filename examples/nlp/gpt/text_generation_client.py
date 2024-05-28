@@ -79,18 +79,16 @@ def main(
         # mkdir if not exist
         os.makedirs(path_name, exist_ok=True)
     keys = {}
-    finished_job = []
     if os.path.exists(tmp_file_path):
         with open(tmp_file_path, "r", encoding="utf-8") as f:
             for line in f:
                 obj = json.loads(line)
                 key = obj["data_id"]
-                if key in keys:
-                    if "ends_properly" in obj and obj["ends_properly"]:
+                if "ends_properly" in obj and obj["ends_properly"]:
+                    if key in keys:
                         keys[key] += 1
-                else:
-                    keys[key] = 1
-                finished_job.append(obj)
+                    else:
+                        keys[key] = 1
 
     raw_job = {}
     jobs = []
@@ -165,7 +163,6 @@ def main(
                             raw_job[data_id]["ends_properly"] = ends_properly
                             f.write(json.dumps(raw_job[data_id], ensure_ascii=False) + "\n")
                             f.flush()
-                            finished_job.append(raw_job[data_id])
                         results.remove(subtask)
                         # results.children.remove(subtask)  # Remove the subtask from the list
                 except TimeoutError:
