@@ -29,7 +29,7 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, rebalance_nd_tensor
 from nemo_aligner.utils.server_utils import decode_bytes_ndarray, lock_method, pad_input
 
-MODEL_SEQ_LENGTH = 4096
+MODEL_SEQ_LENGTH = 8192
 
 
 def process_inference_request(inputs, pad_to, pad_sequence_length_to_multiple=None, tokenizer=None):
