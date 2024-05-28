@@ -240,6 +240,8 @@ def split_paths(data_paths, train_ds, val_ds, tokenizer):
     train_paths = {}
     validation_paths = {}
 
+    other_paths = {}
+
     for k, list_of_paths in data_paths.items():
         item = torch.load(list_of_paths[0])
         toks = item["tokens"]
@@ -247,7 +249,7 @@ def split_paths(data_paths, train_ds, val_ds, tokenizer):
         if isinstance(toks[0], list):
             toks = toks[0]
 
-        curr_text = tokenizer.ids_to_text(toks[: item["context_length"]])
+        curr_text = tokenizer.tokenizer.decode(toks[: item["context_length"]])
 
         if isinstance(curr_text, list):
             curr_text = curr_text[0]
@@ -257,11 +259,16 @@ def split_paths(data_paths, train_ds, val_ds, tokenizer):
         elif curr_text in val_ds_str:
             validation_paths[k] = list_of_paths
         else:
-            raise ValueError(f"cannot find set for {list_of_paths}")
+            other_paths[f"{k}_other"] = list_of_paths
 
     print("#### TRAIN_PATHS", len(train_paths))
     print("#### VALIDATION PATHS", len(validation_paths))
 
+    for i in range(100):
+        k, v = train_paths.popitem()
+        validation_paths[k] = v
+
+    train_paths = train_paths | other_paths
     return train_paths, validation_paths
 
 
@@ -304,6 +311,7 @@ def main(cfg) -> None:
     train_policy_data_paths, val_policy_data_paths = split_paths(
         all_policy_data_paths, train_ds, val_ds, ptl_model.tokenizer
     )
+
     logging.info(
         "policy data presplit: {} post split train: {} val: {}".format(
             len(all_policy_data_paths), len(train_policy_data_paths), len(val_policy_data_paths)
