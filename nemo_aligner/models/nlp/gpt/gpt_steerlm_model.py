@@ -53,49 +53,6 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import configure_batch_sizes
 
-# def get_grouped_iterator_k_split(batch, num_microbatches):
-#     microbatches = []
-#     total_items = sum([len(group["tokens"]) for group in batch])
-#     assert (
-#         total_items % num_microbatches == 0
-#     ), f"total number of items in the batch {total_items} must be divisible by num_microbatches {num_microbatches}"
-#     assert (
-#         num_microbatches % len(batch) == 0
-#     ), f"num_microbatches {num_microbatches} must be divisible by the number of groups in the batch {len(batch)}"
-#     sub_num_microbatches = num_microbatches // len(batch)
-#     for group in batch:
-#         if isinstance(group, dict):
-#             items = list(group.items())
-#             split_batch = [torch.tensor_split(item[1], sub_num_microbatches, dim=0) for item in items]
-#             one_microbatches = [
-#                 [(items[i][0], split_batch[i][j]) for i in range(len(items))] for j in range(sub_num_microbatches)
-#             ]
-#             one_microbatches = [dict(elem) for elem in one_microbatches]
-#             microbatches.extend(one_microbatches)
-#
-#     return chain(microbatches)
-
-
-def get_grouped_iterator_k_split(group, sub_num_microbatches):
-    microbatches = []
-    # total_items = sum([len(group["tokens"]) for group in batch])
-    # assert (
-    #     total_items % num_microbatches == 0
-    # ), f"total number of items in the batch {total_items} must be divisible by num_microbatches {num_microbatches}"
-    # assert (
-    #     num_microbatches % len(batch) == 0
-    # ), f"num_microbatches {num_microbatches} must be divisible by the number of groups in the batch {len(batch)}"
-    if isinstance(group, dict):
-        items = list(group.items())
-        split_batch = [torch.tensor_split(item[1], sub_num_microbatches, dim=0) for item in items]
-        one_microbatches = [
-            [(items[i][0], split_batch[i][j]) for i in range(len(items))] for j in range(sub_num_microbatches)
-        ]
-        one_microbatches = [dict(elem) for elem in one_microbatches]
-        microbatches.extend(one_microbatches)
-
-    return chain(microbatches)
-
 
 def get_batch(data_iterator, tuning):
     """Generate a batch."""
@@ -145,10 +102,10 @@ class GPTSteerLMModel(GPTSFTModel):
         # losses [batch_size, sequence_length]
         # loss per batch item, log(p) for all tokens in one batch item
         loss = torch.sum(losses * loss_mask, dim=-1)
+        # average lop(p) by the number of valid tokens in the microbatch and scale it by the (number of microbatches / batch)
+        loss = loss / avg_num_valid_tokens_in_ub
         # sum log(p) in microbatch
         loss = loss.sum()
-        # average lop(p) by the number of valid tokens in the microbatch and scale it by the number of microbatches
-        loss = loss / avg_num_valid_tokens_in_ub[0]  # sequence level nll
         if parallel_state.get_context_parallel_world_size() > 1:
             torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
         return loss
@@ -323,6 +280,7 @@ class GPTSteerLMModel(GPTSFTModel):
             batch["avg_num_valid_tokens_in_ub"] = torch.cuda.FloatTensor(gbs)
 
             # split updated weights into groups of size response_size
+            num_of_batches = len(updated_weight) // response_size
             for i in range(0, len(updated_weight), response_size):
                 # the weights are negative log likelihood, to get log likelihood we need to negate the weights
                 # compute base weight
@@ -346,14 +304,13 @@ class GPTSteerLMModel(GPTSFTModel):
                 # loss L_i^{jb}  is the loss element for batch $b$, microbatch item $j$ and $i$ item in the microbatch
                 # the loss we need is:  sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} sum_{i=0}^{mbs} (L_i^{jb}) / num_batches ,
                 # while the fwd-bwd function is used to compute the loss of average microbatch loss
-                # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches * num_of_microbatches)
-                # to makie it equivalent to the loss we care, we need to scale loss by num_of_microbatches
-                # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [(num_of_microbatches) * sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches * num_of_microbatches)
+                # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [sum_{i=0}^{mbs} (L_i^{jb})] / (num_of_microbatches)
+                # to makie it equivalent to the loss we care, we need to scale loss by num_of_microbatches / num_batches
+                # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [(num_of_microbatches)/num_batches * sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches)
                 # also if we want to average the loss weighted by the inverse of number of loss_mass=1 tokens in the batch
-                batch["avg_num_valid_tokens_in_ub"][beg_idx:end_idx] = (
-                    batch["loss_mask"][beg_idx:end_idx].sum(axis=-1).float().mean().repeat(response_size)
-                    / num_of_microbatches
-                )
+                batch["avg_num_valid_tokens_in_ub"][beg_idx:end_idx] = batch["loss_mask"][beg_idx:end_idx].sum(
+                    axis=-1
+                ).float().mean().repeat(response_size) / (num_of_microbatches / num_of_batches)
                 # compute the kl divergence between group['ws'] and group['base_weight']
                 # for numerical stability, add a small value to the base_weight_p
                 base_weight_p = base_weight_p + 1e-8
@@ -364,21 +321,13 @@ class GPTSteerLMModel(GPTSFTModel):
             distance = torch.stack(distances).mean()
             distance = average_losses_across_data_parallel_group([distance])
 
-        # compute the gbs which are all the responses generated
-        # dp_size = int(parallel_state.get_data_parallel_world_size())
-        # gbs = len(batch) * dp_size * sizes[0]
-        # mbs = int(self.cfg.data.steerlm2_micro_batch_size)
-        # configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
-        # restore the batch sizes for training
         set_sync_funcs(self, forward_only)
-
         dp_size = int(parallel_state.get_data_parallel_world_size())
         gbs = dp_size * gbs
         mbs = int(self.cfg.data.steerlm2_micro_batch_size)
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
         # modify the iterator_k_split to iterate over all the data
-        # data_iter = get_grouped_iterator_k_split(group, sub_num_microbatches)
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
 
         fwd_loss_fn = self.get_forward_output_and_loss_func(forward_only)
