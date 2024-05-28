@@ -195,7 +195,7 @@ class DPOTrainer:
 
         self.run_timer.start_time()
 
-        for _ in epoch_iter:
+        for e in epoch_iter:
             loop_iter = range(self.step, self.max_steps)
 
             # TODO(geshen): to change for when we support > 1 epoch
@@ -207,7 +207,7 @@ class DPOTrainer:
                 initial=self.step,
                 total=self.max_steps,
                 leave=True,
-                desc="Training steps",
+                desc=f"Epoch {e} Training steps",
             )
 
             for _, global_batch in zip(loop_iter, global_pbar):
@@ -237,6 +237,8 @@ class DPOTrainer:
                     self.cfg.val_check_interval,
                     self.cfg.save_interval,
                     self.limit_val_batches,
+                    epoch=self.epoch,
+                    max_epochs=self.cfg.max_epochs,
                     run_time_exceeded=run_time_exceeded,
                 )
 

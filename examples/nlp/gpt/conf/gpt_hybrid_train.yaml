@@ -20,6 +20,7 @@ trainer:
 
     # how many epochs before we run val
     epoch_per_val: 1
+    log_dir: ${exp_manager.explicit_log_dir}
 
   # no need to change these
   logger: False # logger provided by exp_manager
