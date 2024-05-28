@@ -484,11 +484,55 @@ class SteerLM2Dataset(GPTSFTChatDataset):
         # noramlized weights
         ws = ws / ws.sum()
 
-        input_ids = [x[:-1] for x in batched_token_ids]
-        labels = [x[1:] for x in batched_token_ids]
-        loss_mask = [x[1:] for x in batched_masks]
+        # labels = [x[1:] for x in batched_token_ids]
+        # loss_mask = [x[1:] for x in batched_masks]
 
+        # max_length = max([len(x) for x in input_ids])
+        # if max_length > self.max_seq_length:
+        #     # truncate the sequences if it is longer than max_seq_length
+        #     input_ids = [x[: self.max_seq_length] for x in input_ids]
+        #     labels = [x[: self.max_seq_length] for x in labels]
+        #     loss_mask = [x[: self.max_seq_length] for x in loss_mask]
+
+        # # increase max length to nearest multiple of 4 or 8
+        # if self.pad_to_max_length:
+        #     max_length = self.max_seq_length
+        # else:
+        #     max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, 8))
+        # assert max_length <= self.max_seq_length
+
+        # attention_mask = [self._create_attention_mask(max_length) for _ in range(batch_size)]
+        # attention_mask = torch.stack(attention_mask)
+        # position_ids = [list(range(max_length)) for _ in range(batch_size)]
+        # position_ids = torch.LongTensor(position_ids)
+        # input_ids = torch.LongTensor(
+        #     self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        # )
+        # labels = torch.LongTensor(self._collate_item(labels, max_length=max_length, pad_id=self.tokenizer.eos_id))
+        # loss_mask = torch.LongTensor(self._collate_item(loss_mask, max_length=max_length, pad_id=0))
+        # ws = torch.FloatTensor(ws)
+        # logqs = torch.FloatTensor(logqs)
+
+        processed_batch = {
+            "input_ids": batched_token_ids,
+            "mask": batched_masks,
+            "ws": ws,
+            "log(Q(y|a,x))": logqs,
+        }
+        return processed_batch
+
+    def collate_fn(self, batch):
+        # return batch
+        input_ids = [item[:-1] for one_batch in batch for item in one_batch["input_ids"]]
+        labels = [item[1:] for one_batch in batch for item in one_batch["input_ids"]]
+        loss_mask = [item[1:] for one_batch in batch for item in one_batch["mask"]]
+        ws = [item.item() for one_batch in batch for item in one_batch["ws"]]
+        logqs = [item for one_batch in batch for item in one_batch["log(Q(y|a,x))"]]
+        num_responses = [len(one_batch["input_ids"]) for one_batch in batch for item in one_batch["input_ids"]]
+        # assert num_responses all have the same number and only one number
+        assert len(set(num_responses)) == 1
         max_length = max([len(x) for x in input_ids])
+
         if max_length > self.max_seq_length:
             # truncate the sequences if it is longer than max_seq_length
             input_ids = [x[: self.max_seq_length] for x in input_ids]
@@ -502,9 +546,9 @@ class SteerLM2Dataset(GPTSFTChatDataset):
             max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, 8))
         assert max_length <= self.max_seq_length
 
-        attention_mask = [self._create_attention_mask(max_length) for _ in range(batch_size)]
+        attention_mask = [self._create_attention_mask(max_length) for _ in batch]
         attention_mask = torch.stack(attention_mask)
-        position_ids = [list(range(max_length)) for _ in range(batch_size)]
+        position_ids = [list(range(max_length)) for _ in batch]
         position_ids = torch.LongTensor(position_ids)
         input_ids = torch.LongTensor(
             self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
@@ -513,6 +557,7 @@ class SteerLM2Dataset(GPTSFTChatDataset):
         loss_mask = torch.LongTensor(self._collate_item(loss_mask, max_length=max_length, pad_id=0))
         ws = torch.FloatTensor(ws)
         logqs = torch.FloatTensor(logqs)
+        num_responses = torch.LongTensor(num_responses)
 
         processed_batch = {
             "tokens": input_ids,
@@ -522,8 +567,7 @@ class SteerLM2Dataset(GPTSFTChatDataset):
             "position_ids": position_ids,
             "ws": ws,
             "log(Q(y|a,x))": logqs,
+            "num_responses": num_responses,
         }
-        return processed_batch
 
-    def collate_fn(self, batch):
-        return batch
+        return processed_batch
