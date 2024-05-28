@@ -114,13 +114,16 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
             parallel_logits = model(batch["tokens"], batch["position_ids"], batch["attention_mask"], labels=None,)
 
+            sampling_params = self._sampling_params if self._sampling_params['apply_to_logprobs']['loss'] else None
+
             def loss_func(parallel_logits):
                 mask = batch["mask"]
                 advantages = batch["advantages"]
                 prev_log_probs = batch["prev_log_probs"]
                 tokens = batch["tokens"]
-
-                curr_log_probs = from_parallel_logits_to_logprobs(vocab_parallel_logits=parallel_logits, target=tokens)
+                
+                prompt_lengths = torch.argmax(mask,dim=1) + 1 
+                curr_log_probs = from_parallel_logits_to_logprobs(vocab_parallel_logits=parallel_logits, target=tokens,sampling_params=sampling_params, prompt_lengths=prompt_lengths)
 
                 scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
                 if self.entropy_bonus > 0:
@@ -208,17 +211,18 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         """
 
     # inference calls
-    def get_logprob_output_only_func(self, inference_only=True):
+    def get_logprob_output_only_func(self, inference_only=True,apply_sampling_params=False):
         fwd_output_only_func = self.get_forward_output_only_func()
 
         def log_prob_output_only_func(dataloader_iter, model):
             batch = next(dataloader_iter)
 
-            output_tensor, _ = fwd_output_only_func(iter([batch,]), model)
-
+            output_tensor, _ = fwd_output_only_func(iter([batch[:-1],]), model)
+            sampling_params = self._sampling_params if apply_sampling_params else None 
             def id_func(output_tensor, non_loss_data=True):
                 logprobs = from_parallel_logits_to_logprobs(
-                    vocab_parallel_logits=output_tensor, target=batch[0], inference_only=inference_only
+                    vocab_parallel_logits=output_tensor, target=batch[0], inference_only=inference_only,
+                    sampling_params=sampling_params, prompt_lengths=batch[-1]
                 )
                 return logprobs
 
@@ -227,18 +231,18 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         return log_prob_output_only_func
 
     @torch.no_grad()
-    def get_inference_log_probs(self, response_tokens, forward_micro_batch_size):
+    def get_inference_log_probs(self, prompt_lengths, response_tokens, forward_micro_batch_size,apply_sampling_params=False):
         set_sync_funcs(self, forward_only=True)
 
         mbs, seq_length = response_tokens.size()
         num_microbatches = divide(mbs, forward_micro_batch_size)
         attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(response_tokens)
 
-        batch_iter = get_iterator_k_split([response_tokens, attention_mask, position_ids], num_microbatches)
+        batch_iter = get_iterator_k_split([response_tokens, attention_mask, position_ids,prompt_lengths], num_microbatches)
 
         fwd_bwd_function = get_forward_backward_func()
         logprobs_list = fwd_bwd_function(
-            forward_step_func=self.get_logprob_output_only_func(inference_only=True),
+            forward_step_func=self.get_logprob_output_only_func(inference_only=True,apply_sampling_params=apply_sampling_params),
             data_iterator=batch_iter,
             model=self.model,
             num_microbatches=num_microbatches,
@@ -298,7 +302,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         # TODO(geshen): get nemo generate to return the unaltered log probs
         log_probs = self.get_inference_log_probs(
-            response_tokens, forward_micro_batch_size=self.forward_micro_batch_size
+            prompt_lengths, response_tokens, forward_micro_batch_size=self.forward_micro_batch_size,
+            apply_sampling_params=self._sampling_params['apply_to_logprobs']['kl_penalty_actor']
         )
 
         rollout_batch = {
@@ -318,15 +323,17 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             with adapter_control(self):
                 # With adapters disabled (meaning using the init policy), calculate init_log_probs
                 for rollout_batch in rollout_batches:
-                    init_log_prob = self.get_inference_log_probs(
-                        rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
+                    init_log_prob = self.get_inference_log_probs(rollout_batch['prompt_lengths'].cuda(),
+                        rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size,
+						apply_sampling_params=self._sampling_params['apply_to_logprobs']['kl_penalty_ref']
                     )
                     init_log_probs.append(init_log_prob)
         else:
             with cpu_weight_swap(self, self.init_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
                 for rollout_batch in rollout_batches:
-                    init_log_prob = self.get_inference_log_probs(
-                        rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size
+                    init_log_prob = self.get_inference_log_probs(rollout_batch['prompt_lengths'].cuda(),
+                        rollout_batch["response_tokens"].cuda(), forward_micro_batch_size=self.forward_micro_batch_size,
+						apply_sampling_params=self._sampling_params['apply_to_logprobs']['kl_penalty_ref']
                     )
                     init_log_probs.append(init_log_prob)
 

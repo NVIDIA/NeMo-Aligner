@@ -22,6 +22,8 @@ from datetime import timedelta
 from typing import Dict, Optional, Union
 
 import torch
+import torch.nn.functional as F
+import torch.distributed
 from megatron.core import parallel_state, tensor_parallel
 
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
@@ -191,12 +193,93 @@ def _compute_distributed_log_softmax(vocab_parallel_logits):
     return vocab_parallel_logits - sum_exp_logits.log_().to(vocab_parallel_logits.dtype)
 
 
+
+def _compute_distributed_top_k_p(logits, k, p, rank, world_size):
+    """Expects a size B x S x V//TP tensor, computes a distributed top_k and top_p - setting all other logits to -Inf.
+        return shape B x S x V//TP where only global top-k-p values (across the V dimension) are not filtered (i.e. set to -Inf)
+    """
+    get_vocab_range = tensor_parallel.utils.VocabUtility.vocab_range_from_per_partition_vocab_size
+    partition_vocab_size = logits.size(-1)
+    vocab_start_index, vocab_end_index = get_vocab_range(partition_vocab_size, rank, world_size)
+
+    local_topk_values, local_topk_indices = torch.topk(logits, k=k, dim=-1)     #[B,S,k]
+    local_topk_indices += vocab_start_index
+    # Prepare containers for the gathered top-k values and indices from all GPUs
+    gathered_values = [torch.zeros_like(local_topk_values) for _ in range(world_size)]
+    gathered_indices = [torch.zeros_like(local_topk_indices) for _ in range(world_size)]
+    
+    # Gather top-k values and indices from all GPUs
+    torch.distributed.gather(local_topk_values, gathered_values if rank==0 else None, dst=0)
+    torch.distributed.gather(local_topk_indices, gathered_indices if rank==0 else None, dst = 0)
+    
+    if rank==0:     # only rank 0 will do the computation and scatter the outcome    
+        # Concatenate the gathered values and indices along a new dimension
+        all_values = torch.cat(gathered_values, dim=-1)         # [B,S,world_size*k]
+        all_indices = torch.cat(gathered_indices, dim=-1)
+
+        # Perform a global top-k operation to find the global top-k values and indices
+        global_topk_values, topk_indices = torch.topk(all_values, k=k, dim=-1)      #[B,S,k]
+        global_topk_indices = torch.gather(all_indices, -1, topk_indices)
+
+        # perform top_p
+        if p>0.0:
+            #todo: perform top_p and save in global_top_k_p_indices and spread to all ranks
+            # meanwhile...
+            sorted_logits,sorted_indices = torch.sort(global_topk_values,descending=True,dim=-1)    # [B,S,k] for each
+            cumulative_probs = torch.cumsum(F.softmax(sorted_logits,dim=-1),dim=-1)                 # [B,S,k]
+            global_top_k_p_indices = torch.gather(global_topk_indices,-1,sorted_indices)
+            sorted_indices_to_remove = cumulative_probs > p
+            global_top_k_p_indices = torch.where(sorted_indices_to_remove,torch.tensor(-1,dtype=torch.long),global_top_k_p_indices)     # the top_p are kept, the rest are set to -1 (so will be filtered in the following lines)
+    else:
+        global_top_k_p_indices = torch.empty_like(local_topk_indices,dtype=local_topk_indices.dtype,device=local_topk_indices.device)  # [B,S,k]
+
+    torch.distributed.broadcast(global_top_k_p_indices,src=0)
+
+    # generate a mask according to the rank    
+    # filter indices within the current rank's segment
+    mask_top_k_p_indices = (global_top_k_p_indices >= vocab_start_index) & (global_top_k_p_indices < vocab_end_index)  #[B,S,k] where only indices that are within the scope of current rank are True
+
+    # adjust indices to local index space
+    local_top_k_p_indices = global_top_k_p_indices - vocab_start_index
+    local_top_k_p_indices = torch.where(mask_top_k_p_indices,local_top_k_p_indices,torch.tensor(-1,dtype=torch.long))  #[B,S,k] - the global top_k_p indices are localized to the rank, or -1 if they are not in this rank's segment 
+
+    full_mask = torch.full_like(logits,-float('Inf'))
+    batch_indices,sequence_indices = torch.where(mask_top_k_p_indices.any(dim=-1))      # collect all b,s indices where there is a valid index in [b,s,:]
+    local_vocab_indices = local_top_k_p_indices[batch_indices,sequence_indices]         # collect the v indices per each [b,s]. should be up to k valid indices (not valid is -1)
+    # is there a better way to do it ?
+    valid_local_indx_mask = local_vocab_indices != -1
+    valid_local_batch_idx = batch_indices.unsqueeze(1).expand_as(valid_local_indx_mask)[valid_local_indx_mask]
+    valid_local_sequence_idx = sequence_indices.unsqueeze(1).expand_as(valid_local_indx_mask)[valid_local_indx_mask]
+    valid_local_vocab_idx = local_vocab_indices[valid_local_indx_mask]
+    full_mask[valid_local_batch_idx,valid_local_sequence_idx,valid_local_vocab_idx] = logits[valid_local_batch_idx,valid_local_sequence_idx,valid_local_vocab_idx]
+    return full_mask
+
+def _distributed_apply_sampling_params(logits,context_lengths,sampling_params,rank,world_size):
+    # apply the sampling params to the logits - focusing only on the generated tokens.
+    if sampling_params.get('use_greedy',False):
+        return logits
+    
+    context_length = context_lengths.min().item()
+    resp_logits = logits[:,context_length-1:]
+    # divide by temp
+    if sampling_params['temperature']!=1.0:
+        resp_logits/=sampling_params['temperature']
+    top_k = sampling_params['top_k']
+    top_p = sampling_params['top_p']
+    if top_k>0:        
+        # Note : currently assuming that top_p is applied only if top_k>0.  
+        resp_logits = _compute_distributed_top_k_p(resp_logits,top_k,top_p,rank, world_size)
+        
+    return logits
+
+
+
 class DistributedLogprob(torch.autograd.Function):
     """Function to get logprobs out and differentiate through it
     """
 
     @staticmethod
-    def forward(ctx, vocab_parallel_logits, target, inference_only=False, higher_stability=False):
+    def forward(ctx, vocab_parallel_logits, target, inference_only=False, higher_stability=False,sampling_params=None,prompt_lengths=None):
         get_vocab_range = tensor_parallel.utils.VocabUtility.vocab_range_from_per_partition_vocab_size
         partition_vocab_size = vocab_parallel_logits.size(-1)
         rank = parallel_state.get_tensor_model_parallel_rank()
@@ -207,6 +290,12 @@ class DistributedLogprob(torch.autograd.Function):
         target_mask = (target < vocab_start_index) | (target >= vocab_end_index)
         masked_target = target - vocab_start_index
         masked_target[target_mask] = 0
+        
+        # if sampling_params should be applied, apply them to the vocab_parallel_logits 
+        if sampling_params is not None:
+            if prompt_lengths is None:
+                prompt_lengths = torch.zeros(vocab_parallel_logits.size(0),device=vocab_parallel_logits.device,dtype=torch.int32)
+            vocab_parallel_logits = _distributed_apply_sampling_params(vocab_parallel_logits,prompt_lengths,sampling_params,rank, world_size)
 
         # higher stability uses a more numerically stable distributed log_softmax instead of softmax
         # however, it uses more VRAM because there is an unavoidable exp() OP on the entire logits tensor
@@ -248,7 +337,7 @@ class DistributedLogprob(torch.autograd.Function):
         grad_input.mul_(grad_output.unsqueeze(dim=-1))
 
         # if you add an argument to the forward method, then you must add a corresponding None here
-        return grad_input, None, None, None
+        return grad_input, None, None, None, None, None
 
 
 def calculate_distributed_entropy(vocab_parallel_logits, mask=None):
@@ -259,14 +348,14 @@ def calculate_distributed_entropy(vocab_parallel_logits, mask=None):
     return calculate_entropy(full_log_probs, mask)
 
 
-def from_parallel_logits_to_logprobs(vocab_parallel_logits, target, inference_only=False, higher_stability=False):
+def from_parallel_logits_to_logprobs(vocab_parallel_logits, target, inference_only=False, higher_stability=False,sampling_params=None,prompt_lengths=None):
     """get log probs out of a B x S x V//TP tensor
         NOTE: this function shifts the target, which means you must give it the unmodified targets
 
     Returns a B x S-1 tensor
     """
     target = target.roll(shifts=-1, dims=-1)
-    return DistributedLogprob.apply(vocab_parallel_logits, target, inference_only, higher_stability)[
+    return DistributedLogprob.apply(vocab_parallel_logits, target, inference_only, higher_stability,sampling_params,prompt_lengths)[
         :, :-1
     ].contiguous()
 
