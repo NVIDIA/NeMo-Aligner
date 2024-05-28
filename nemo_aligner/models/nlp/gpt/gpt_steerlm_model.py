@@ -24,6 +24,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pkg_resources import packaging
 from pytorch_lightning.trainer.trainer import Trainer
+from torch.distributed import barrier
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
@@ -52,26 +53,46 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import configure_batch_sizes
 
+# def get_grouped_iterator_k_split(batch, num_microbatches):
+#     microbatches = []
+#     total_items = sum([len(group["tokens"]) for group in batch])
+#     assert (
+#         total_items % num_microbatches == 0
+#     ), f"total number of items in the batch {total_items} must be divisible by num_microbatches {num_microbatches}"
+#     assert (
+#         num_microbatches % len(batch) == 0
+#     ), f"num_microbatches {num_microbatches} must be divisible by the number of groups in the batch {len(batch)}"
+#     sub_num_microbatches = num_microbatches // len(batch)
+#     for group in batch:
+#         if isinstance(group, dict):
+#             items = list(group.items())
+#             split_batch = [torch.tensor_split(item[1], sub_num_microbatches, dim=0) for item in items]
+#             one_microbatches = [
+#                 [(items[i][0], split_batch[i][j]) for i in range(len(items))] for j in range(sub_num_microbatches)
+#             ]
+#             one_microbatches = [dict(elem) for elem in one_microbatches]
+#             microbatches.extend(one_microbatches)
+#
+#     return chain(microbatches)
 
-def get_grouped_iterator_k_split(batch, num_microbatches):
+
+def get_grouped_iterator_k_split(group, sub_num_microbatches):
     microbatches = []
-    total_items = sum([len(group["tokens"]) for group in batch])
-    assert (
-        total_items % num_microbatches == 0
-    ), f"total number of items in the batch {total_items} must be divisible by num_microbatches {num_microbatches}"
-    assert (
-        num_microbatches % len(batch) == 0
-    ), f"num_microbatches {num_microbatches} must be divisible by the number of groups in the batch {len(batch)}"
-    sub_num_microbatches = num_microbatches // len(batch)
-    for group in batch:
-        if isinstance(group, dict):
-            items = list(group.items())
-            split_batch = [torch.tensor_split(item[1], sub_num_microbatches, dim=0) for item in items]
-            one_microbatches = [
-                [(items[i][0], split_batch[i][j]) for i in range(len(items))] for j in range(sub_num_microbatches)
-            ]
-            one_microbatches = [dict(elem) for elem in one_microbatches]
-            microbatches.extend(one_microbatches)
+    # total_items = sum([len(group["tokens"]) for group in batch])
+    # assert (
+    #     total_items % num_microbatches == 0
+    # ), f"total number of items in the batch {total_items} must be divisible by num_microbatches {num_microbatches}"
+    # assert (
+    #     num_microbatches % len(batch) == 0
+    # ), f"num_microbatches {num_microbatches} must be divisible by the number of groups in the batch {len(batch)}"
+    if isinstance(group, dict):
+        items = list(group.items())
+        split_batch = [torch.tensor_split(item[1], sub_num_microbatches, dim=0) for item in items]
+        one_microbatches = [
+            [(items[i][0], split_batch[i][j]) for i in range(len(items))] for j in range(sub_num_microbatches)
+        ]
+        one_microbatches = [dict(elem) for elem in one_microbatches]
+        microbatches.extend(one_microbatches)
 
     return chain(microbatches)
 
@@ -95,10 +116,11 @@ def get_batch(data_iterator, tuning):
         "loss_mask": data["loss_mask"],
         "attention_mask": data["attention_mask"],
         "position_ids": data["position_ids"],
-        "weight": data["weight"],
-        "avg_num_valid_tokens_in_ub": data["avg_num_valid_tokens_in_ub"],
     }
-
+    if "weight" in data:
+        batch.update({"weight": data["weight"]})
+    if "avg_num_valid_tokens_in_ub" in data:
+        batch.update({"avg_num_valid_tokens_in_ub": data["avg_num_valid_tokens_in_ub"]})
     return batch
 
 
@@ -173,7 +195,7 @@ class GPTSteerLMModel(GPTSFTModel):
                 if parallel_state.is_pipeline_first_stage():
                     required_keys.update(("tokens", "position_ids"))
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("labels", "loss_mask"))
+                    required_keys.update(("labels", "loss_mask", "weight", "avg_num_valid_tokens_in_ub"))
             if self.get_attention_mask_from_fusion and "attention_mask" in required_keys:
                 required_keys.remove("attention_mask")
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
@@ -295,76 +317,106 @@ class GPTSteerLMModel(GPTSFTModel):
                 micro_batch_size=get_micro_batch_size(),
                 seq_length=seq_length,
             )
-            updated_weight = torch.concatenate([i["loss"] for i in losses_forward])
-            # the weights are negative log likelihood, to get log likelihood we need to negate the weights
-            # compute base weight
-            base_weight = -updated_weight - group["log(Q(y|a,x))"].cuda()
-            # for numerical stability, subtract the max value
-            # calculate the probability vector
-            base_weight = base_weight - base_weight.max()
-            base_weight_p = torch.exp(base_weight)
-            # noramliize the weight
-            base_weight_p = base_weight_p / base_weight_p.sum()
-            group["base_weight"] = base_weight_p
-            ws_weight = group["ws"].cuda()
-            group["weight"] = ws_weight - base_weight_p
-            # group size is the number of responses generated
-            group_size = len(base_weight)
-            num_of_microbatches = group_size // mbs
-            # to compute the loss for each of the group batch,
-            # loss L_i^{jb}  is the loss element for batch $b$, microbatch item $j$ and $i$ item in the microbatch
-            # the loss we need is:  sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} sum_{i=0}^{mbs} (L_i^{jb}) / num_batches ,
-            # while the fwd-bwd function is used to compute the loss of average microbatch loss
-            # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches * num_of_microbatches)
-            # to makie it equivalent to the loss we care, we need to scale loss by num_of_microbatches
-            # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [(num_of_microbatches) * sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches * num_of_microbatches)
-            # also if we want to average the loss weighted by the inverse of number of loss_mass=1 tokens in the batch
-            group["avg_num_valid_tokens_in_ub"] = (
-                group["loss_mask"].sum(axis=-1).float().mean().repeat(group_size) / num_of_microbatches
-            )
-            # compute the kl divergence between group['ws'] and group['base_weight']
-            # for numerical stability, add a small value to the base_weight_p
-            base_weight_p = base_weight_p + 1e-8
-            ws_weight = ws_weight + 1e-8
-            distance = torch.sum(ws_weight * torch.log(ws_weight / base_weight_p))
-            distances.append(distance)
-        # get average distance
-        distance = torch.stack(distances).mean()
-        distance = average_losses_across_data_parallel_group([distance])
+            if parallel_state.is_pipeline_last_stage():
+                updated_weight = torch.concatenate([i["loss"] for i in losses_forward])
+                # the weights are negative log likelihood, to get log likelihood we need to negate the weights
+                # compute base weight
+                base_weight = -updated_weight - group["log(Q(y|a,x))"].cuda()
+                # for numerical stability, subtract the max value
+                # calculate the probability vector
+                base_weight = base_weight - base_weight.max()
+                base_weight_p = torch.exp(base_weight)
+                # noramliize the weight
+                base_weight_p = base_weight_p / base_weight_p.sum()
+                group["base_weight"] = base_weight_p
+                ws_weight = group["ws"].cuda()
+                group["weight"] = ws_weight - base_weight_p
+                # group size is the number of responses generated
+                group_size = len(base_weight)
+                num_of_microbatches = group_size // mbs
+                # to compute the loss for each of the group batch,
+                # loss L_i^{jb}  is the loss element for batch $b$, microbatch item $j$ and $i$ item in the microbatch
+                # the loss we need is:  sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} sum_{i=0}^{mbs} (L_i^{jb}) / num_batches ,
+                # while the fwd-bwd function is used to compute the loss of average microbatch loss
+                # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches * num_of_microbatches)
+                # to makie it equivalent to the loss we care, we need to scale loss by num_of_microbatches
+                # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [(num_of_microbatches) * sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches * num_of_microbatches)
+                # also if we want to average the loss weighted by the inverse of number of loss_mass=1 tokens in the batch
+                group["avg_num_valid_tokens_in_ub"] = (
+                    group["loss_mask"].sum(axis=-1).float().mean().repeat(group_size) / num_of_microbatches
+                )
+                # compute the kl divergence between group['ws'] and group['base_weight']
+                # for numerical stability, add a small value to the base_weight_p
+                base_weight_p = base_weight_p + 1e-8
+                ws_weight = ws_weight + 1e-8
+                distance = torch.sum(ws_weight * torch.log(ws_weight / base_weight_p))
+                distances.append(distance)
+        if parallel_state.is_pipeline_last_stage():
+            # get average distance
+            distance = torch.stack(distances).mean()
+            distance = average_losses_across_data_parallel_group([distance])
 
         # compute the gbs which are all the responses generated
-        dp_size = int(parallel_state.get_data_parallel_world_size())
-        gbs = len(batch) * dp_size * sizes[0]
-        mbs = int(self.cfg.data.steerlm2_micro_batch_size)
-        configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
+        # dp_size = int(parallel_state.get_data_parallel_world_size())
+        # gbs = len(batch) * dp_size * sizes[0]
+        # mbs = int(self.cfg.data.steerlm2_micro_batch_size)
+        # configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
         # restore the batch sizes for training
         set_sync_funcs(self, forward_only)
 
-        # modify the iterator_k_split to iterate over all the data
-        data_iter = get_grouped_iterator_k_split(batch, get_num_microbatches())
+        # sub_num_microbatches = get_num_microbatches() // len(batch)
 
-        fwd_loss_fn = self.get_forward_output_and_loss_func(forward_only)
+        losses = []
+        for group in batch:
+            # use torch barrier
+            _, seq_length = group["tokens"].shape
+            barrier()
+            # calculate the baseline weights for each group of generated reponses
+            # set the batch size for log likelihood calculation
+            dp_size = int(parallel_state.get_data_parallel_world_size())
+            gbs = dp_size * sizes[0]
+            mbs = int(self.cfg.data.steerlm2_micro_batch_size)
+            configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
-        losses_reduced = fwd_bwd_function(
-            forward_step_func=fwd_loss_fn,
-            data_iterator=data_iter,
-            model=self.model,
-            num_microbatches=get_num_microbatches(),
-            forward_only=forward_only,
-            micro_batch_size=get_micro_batch_size(),
-            seq_length=seq_length,
-        )
+            # modify the iterator_k_split to iterate over all the data
+            # data_iter = get_grouped_iterator_k_split(group, sub_num_microbatches)
+            data_iter = get_iterator_k_split(group, get_num_microbatches())
 
-        torch.cuda.synchronize()
+            # total_items = sum([len(group["tokens"]) for group in batch])
+            # assert (
+            #     total_items % get_num_microbatches() == 0
+            # ), f"total number of items in the batch {total_items} must be divisible by num_microbatches {get_num_microbatches()}"
+            # assert (
+            #     get_num_microbatches() % len(batch) == 0
+            # ), f"num_microbatches {get_num_microbatches()} must be divisible by the number of groups in the batch {len(batch)}"
+
+            fwd_loss_fn = self.get_forward_output_and_loss_func(forward_only)
+
+            losses_reduced = fwd_bwd_function(
+                forward_step_func=fwd_loss_fn,
+                data_iterator=data_iter,
+                model=self.model,
+                num_microbatches=get_num_microbatches(),
+                forward_only=forward_only,
+                micro_batch_size=get_micro_batch_size(),
+                seq_length=seq_length,
+            )
+            losses.append(losses_reduced)
+            torch.cuda.synchronize()
 
         # only the last stages of the pipeline return losses
         if parallel_state.is_pipeline_last_stage():
+            loss_mean = torch.concat(
+                [loss_reduced["avg"] for losses_reduced in losses for loss_reduced in losses_reduced]
+            ).mean()
             # average loss across micro batches
-            loss_mean = torch.concat([loss_reduced["avg"] for loss_reduced in losses_reduced]).mean()
+            # loss_mean = torch.concat([loss_reduced["avg"] for loss_reduced in losses_reduced]).mean()
         else:
             loss_mean = torch.tensor(0.0).cuda()
+            distance = torch.tensor(0.0).cuda()
         # Logging
         torch.distributed.broadcast(loss_mean, get_last_rank())
+        torch.distributed.broadcast(distance, get_last_rank())
         loss_value = loss_mean.detach().item()
-        metrics = {"loss": loss_value, "distance": distance.item()}
+        metrics = {"loss": loss_value, "distance": distance.detach().item()}
         return loss_value, metrics
