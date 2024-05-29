@@ -40,6 +40,9 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_validation_step,
 )
 from nemo_aligner.utils.utils import _get_autocast_dtype, configure_batch_sizes, get_iterator_k_split_list
+from nemo.collections.multimodal.parts.stable_diffusion.sdxl_pipeline import get_sampler_config
+from nemo.collections.multimodal.parts.stable_diffusion.sdxl_helpers import do_sample, get_unique_embedder_keys_from_conditioner, get_batch
+from omegaconf import OmegaConf
 
 BatchType = Mapping[str, torch.tensor]
 
@@ -63,15 +66,16 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         self.with_distributed_adam = self.with_distributed_adam
         self.model.first_stage_model.requires_grad_(False)
         self.distributed_adam_offload_manager = None
-        self.vae_batch_size = self.cfg.infer.get("vae_batch_size", 8)
-        self.height = self.cfg.infer.get("height", 512)
-        self.width = self.cfg.infer.get("width", 512)
-        self.downsampling_factor = self.cfg.infer.get("down_factor", 8)
         self.in_channels = self.model.model.diffusion_model.in_channels
-        self.unconditional_guidance_scale = self.cfg.infer.get("unconditional_guidance_scale", 7.5)
-        self.sampler_type = self.cfg.infer.get("sampler_type", "DDIM")
-        self.inference_steps = self.cfg.infer.get("inference_steps", 50)
-        self.eta = self.cfg.infer.get("eta", 0)
+        self.height = self.cfg.sampling.base.get('height', 512)
+        self.width = self.cfg.sampling.base.get('width', 512)
+        self.downsampling_factor = 2 ** (len(self.cfg.first_stage_config.ddconfig.get('ch_mult', [0])) - 1)    # one less than the 
+        self.downsampling_factor = int(self.downsampling_factor)
+
+        ## unconditional guidance scale, inference steps, eta are all given in sampler config, no need to rewrite here
+        # self.unconditional_guidance_scale = self.cfg.sampling.base.scale
+        # self.inference_steps = self.cfg.infer.get("inference_steps", 50)
+        # self.eta = self.cfg.infer.get("eta", 0)
         self.autocast_dtype = _get_autocast_dtype(self.cfg.precision)
         # Required by nemo_aligner/utils/train_utils
         self.initialize_ub = False
@@ -113,6 +117,14 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         mbs = int(self.cfg.micro_batch_size)
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
+    
+    def append_sdxl_size_keys(self, batch):
+        # helper function to append size and crop keys
+        batch_size = len(batch)
+        batch['original_size_as_tuple'] = torch.tensor([self.width, self.height], device=torch.cuda.current_device()).repeat(batch_size, 1)
+        batch['target_size_as_tuple'] = torch.tensor([self.width, self.height], device=torch.cuda.current_device()).repeat(batch_size, 1)
+        batch['crop_coords_top_left'] = torch.tensor([0, 0], device=torch.cuda.current_device()).repeat(batch_size, 1)
+        return batch
 
     @torch.no_grad()
     def generate_log_images(self, latents, batch, model):
@@ -120,49 +132,23 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         with torch.cuda.amp.autocast(
             enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
         ):
+            # get sampler (contains discretizer, scaler, guider)
+            params = self.cfg.sampling.base
+            sampler = get_sampler_config(params)    
 
-            sampler = sampling_utils.initialize_sampler(model, self.sampler_type.upper())
-
+            batch = self.append_sdxl_size_keys(batch)
             batch_size = len(batch)
-            cond, u_cond = sampling_utils.encode_prompt(
-                model.conditioner, batch, self.unconditional_guidance_scale
+
+            force_uc_zero_embeddings = ['txt', 'captions']   # force zero embeddings for text and captions
+            cond, u_cond = self.model.conditioner.get_unconditional_conditioning(
+                batch, batch_uc=None, force_uc_zero_embeddings=force_uc_zero_embeddings,
             )
+            additional_model_inputs = {}   # not necessary for now
 
-            _, intermediates = sampler.sample(
-                S=self.inference_steps,
-                conditioning=cond,
-                batch_size=batch_size,
-                shape=list(latents.shape[:1] + latents.shape[2:]),
-                verbose=False,
-                unconditional_guidance_scale=self.unconditional_guidance_scale,
-                unconditional_conditioning=u_cond,
-                eta=self.eta,
-                x_T=latents,
-                log_every_t=1,
-                truncation_steps=0,
-                return_logprobs=False,
-                return_mean_var=False,
-            )
-
-            # # transforms trajectores from a list of T+1 (b x image) tensors to a tensor of shape (b * (T+1), ...)
-            trajectories_predx0 = (
-                torch.stack(intermediates["pred_x0"], dim=0)
-                .transpose(0, 1)
-                .contiguous()
-                .view(-1, *intermediates["pred_x0"][0].shape[1:])
-            )
-
-            vae_decoder_output = []
-            idx_denoised_imgs = [self.inference_steps + (self.inference_steps + 1) * i for i in range(batch_size)]
-
-            for i in range(0, batch_size, self.vae_batch_size):
-                image = self.model.differentiable_decode_first_stage(
-                    trajectories_predx0[idx_denoised_imgs[i : i + self.vae_batch_size]]
-                )
-                vae_decoder_output.append(image)
-
-            vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
-            vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1) * 255.0
+            denoiser = lambda input, sigma, c: model.denoiser(model.model, input, sigma, c, **additional_model_inputs)
+            samples_z = sampler(denoiser, latents, cond=cond, uc=u_cond)
+            samples_x = model.decode_first_stage(samples_z)
+            vae_decoder_output = torch.clamp((samples_x + 1.0) / 2.0, min=0.0, max=1.0) * 255.0
 
             log_reward = [
                 self.reward_model.get_reward(
@@ -202,91 +188,72 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             images.append(image_draft_p[i])
             images.append(image_init[i])
             captions.append("DRaFT+: " + prompts[i] + ", Reward = " + str(reward_draft_p[i]))
-            captions.append("SD: " + prompts[i] + ", Reward = " + str(reward_init[i]))
+            captions.append("SDXL: " + prompts[i] + ", Reward = " + str(reward_init[i]))
 
         return vae_decoder_output_draft_p, images, captions
 
     def generate(
         self, batch, x_T,
     ):
-
         with torch.cuda.amp.autocast(
             enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
         ):
+            # batch_size = len(batch)
+            # device = torch.cuda.current_device()
+            batch = self.append_sdxl_size_keys(batch)
 
-            batch_size = len(batch)
-            prev_img_draft_p = x_T
-
-            device_draft_p = self.model.betas.device
-
-            sampler_draft_p = sampling_utils.initialize_sampler(self.model, self.sampler_type.upper())
-            sampler_init = sampling_utils.initialize_sampler(self.init_model, self.sampler_type.upper())
-
-            cond, u_cond = sampling_utils.encode_prompt(
-                self.model.conditioner, batch, self.unconditional_guidance_scale
-            )
-
-            sampler_draft_p.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
-            sampler_init.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
-
-            timesteps = sampler_draft_p.ddim_timesteps
-
-            time_range = np.flip(timesteps)
-            total_steps = timesteps.shape[0]
-
-            iterator = tqdm(time_range, desc=f"{sampler_draft_p.sampler.name} Sampler", total=total_steps)
-
-            list_eps_draft_p = []
-            list_eps_init = []
             truncation_steps = self.cfg.truncation_steps
+            force_uc_zero_embeddings = ['txt', 'captions'] 
+            ## initialize sampler
+            params = self.cfg.sampling.base
+            sampler = get_sampler_config(params)    # the sampler is agnostic to model, so we can share it
 
-            denoise_step_kwargs = {
-                "unconditional_guidance_scale": self.unconditional_guidance_scale,
-                "unconditional_conditioning": u_cond,
-            }
-            for i, step in enumerate(iterator):
-
-                denoise_step_args = [total_steps, i, batch_size, device_draft_p, step, cond]
-
-                if i < total_steps - truncation_steps:
-                    with torch.no_grad():
-                        img_draft_p, pred_x0_draft_p, eps_t_draft_p = sampler_draft_p.single_ddim_denoise_step(
-                            prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs
-                        )
-
-                        prev_img_draft_p = img_draft_p
-                else:
-
-                    img_draft_p, pred_x0_draft_p, eps_t_draft_p = sampler_draft_p.single_ddim_denoise_step(
-                        prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs
-                    )
-                    list_eps_draft_p.append(eps_t_draft_p)
-
-                    with torch.no_grad():
-                        _, _, eps_t_init = sampler_init.single_ddim_denoise_step(
-                            prev_img_draft_p, *denoise_step_args, **denoise_step_kwargs
-                        )
-                        list_eps_init.append(eps_t_init)
-
-                    prev_img_draft_p = img_draft_p
-
-            last_states = [pred_x0_draft_p]
-
-            trajectories_predx0 = (
-                torch.stack(last_states, dim=0).transpose(0, 1).contiguous().view(-1, *last_states[0].shape[1:])
+            c, uc = self.model.conditioner.get_unconditional_conditioning(
+                batch, batch_uc=None, force_uc_zero_embeddings=force_uc_zero_embeddings,
             )
-            t_eps_draft_p = torch.stack(list_eps_draft_p).to(torch.device("cuda"))
-            t_eps_init = torch.stack(list_eps_init).to(torch.device("cuda"))
+            additional_model_inputs = {}
 
-            vae_decoder_output = []
-            for i in range(0, batch_size, self.vae_batch_size):
-                image = self.model.differentiable_decode_first_stage(trajectories_predx0[i : i + self.vae_batch_size])
-                vae_decoder_output.append(image)
+            list_eps_draft= []
+            list_eps_init = []
 
-            vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
-            vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1) * 255.0
+            # get denoisers
+            denoiser_draft = lambda input, sigma, c: self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
+            denoiser_init  = lambda input, sigma, c: self.model_init.denoiser(self.model_init.model, input, sigma, c, **additional_model_inputs)
 
-            return vae_decoder_output, t_eps_draft_p, t_eps_init
+            # prep initial sampler config
+            x = x_T + 0
+            num_steps = sampler.num_steps
+            x, s_in, sigmas, num_sigmas, cond, uc = self.prepare_sampling_loop(x, cond, uc, num_steps)
+            # last step doesnt count since there is no additional sigma
+            total_steps = num_sigmas-1
+
+            iterator = tqdm(num_sigmas-1, desc=f"{sampler.__class__.__name__} Sampler", total=total_steps)
+            for i in enumerate(iterator):
+                gamma = sampler.get_gamma(sigmas, num_sigmas, i)
+                # with context(set_draft_grad_flag):
+                if i < total_steps - truncation_steps:
+                    # just run the sampling without storing any grad
+                    with torch.no_grad():
+                        x_next_draft, eps_draft = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_draft, x, cond, uc, gamma, return_noise=True)
+                        x = x_next_draft
+                else:
+                    # store computation graph of draft eps
+                    x_next_draft, eps_draft = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_draft, x, cond, uc, gamma, return_noise=True)
+                    list_eps_draft.append(eps_draft)
+                    with torch.no_grad():
+                        _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_init, x, cond, uc, gamma, return_noise=True)
+                        list_eps_init.append(eps_init)
+                    # set next \bar{x}
+                    x = x_next_draft
+            
+            # compile list of eps
+            t_eps_draft_p = torch.stack(list_eps_draft).to(torch.device('cuda'))
+            t_eps_init  = torch.stack(list_eps_init).to(torch.device('cuda'))
+            # generate image from last sample
+            image = self.model.differentiable_decode_first_stage(x)
+            image = torch.clamp((image + 1.0)/2.0, min=0.0, max=1.0) * 255.0
+
+            return image, t_eps_draft_p, t_eps_init
 
     def prepare_for_training(self):
         configure_batch_sizes(
@@ -378,7 +345,6 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                 metric_mean = torch.tensor(0.0, device=torch.cuda.current_device())
 
             torch.distributed.broadcast(metric_mean, get_last_rank())
-
             metrics[key] = metric_mean.cpu().item()
 
         return metrics["loss"], metrics

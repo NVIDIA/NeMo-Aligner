@@ -25,6 +25,7 @@ trainer:
   enable_model_summary: True
   val_check_interval: 20
 
+
 exp_manager:
   exp_dir: null
   name: ${name}
@@ -63,6 +64,51 @@ model:
   micro_batch_size: 1 # limited by GPU memory
   global_batch_size: 1 # will use more micro batches to reach global batch size
 
+  kl_coeff: 1.0
+  truncation_steps: 1
+
+  sampling:
+    base:
+      sampler: EulerEDMSampler
+      width: 512
+      height: 512
+      steps: 40
+      discretization: "LegacyDDPMDiscretization"
+      guider: "VanillaCFG"
+      thresholder: "None"
+      scale: 5.0
+      img2img_strength: 1.0
+      sigma_min: 0.0292
+      sigma_max: 14.6146
+      rho: 3.0
+      s_churn: 0.0
+      s_tmin: 0.0
+      s_tmax: 999.0
+      s_noise: 1.0
+      eta: 1.0
+      order: 4
+      orig_width: 1024
+      orig_height: 1024
+      crop_coords_top: 0
+      crop_coords_left: 0
+      aesthetic_score: 5.0
+      negative_aesthetic_score: 5.0
+
+  # infer:
+  #   unconditional_guidance_scale: 7.5
+  #   num_images_per_prompt: 1
+  #   height: 512
+  #   width: 512
+  #   down_factor: 8
+  #   inference_steps: 50
+  #   sampler_type: 'DDIM'
+  #   eta: 0
+  #   output_type: 'pil'
+  #   save_to_file: False
+  #   out_path: 'stable-diffusion-xl'
+  #   seed: 123
+  #   prompts:
+  #     - 'hammerhead'
 
   scale_factor: 0.13025
   disable_first_stage_autocast: True
@@ -95,10 +141,10 @@ model:
     discretization_config:
       _target_: nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.discretizer.LegacyDDPMDiscretization
 
-
   unet_config:
     _target_: nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel.UNetModel
-    from_NeMo: False
+    from_NeMo: True
+    from_pretrained: null 
     adm_in_channels: 2816
     num_classes: sequential
     use_checkpoint: False
@@ -119,7 +165,7 @@ model:
 
   first_stage_config:
     _target_: nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoencoder.AutoencoderKLInferenceWrapper
-    from_pretrained: /sdxl_ckpts/stable-diffusion-xl-base-1.0/vae/diffusion_pytorch_model.safetensors
+    from_pretrained: null #sdxl_ckpts/stable-diffusion-xl-base-1.0/vae/diffusion_pytorch_model.safetensors
     embed_dim: 4
     monitor: val/rec_loss
     ddconfig:
@@ -136,7 +182,6 @@ model:
       dropout: 0.0
     lossconfig:
       target: torch.nn.Identity
-
 
   conditioner_config:
     _target_: nemo.collections.multimodal.modules.stable_diffusion.encoders.modules.GeneralConditioner
@@ -183,20 +228,19 @@ model:
           _target_: nemo.collections.multimodal.modules.stable_diffusion.encoders.modules.ConcatTimestepEmbedderND
           outdim: 256  # multiplied by two
 
-
   data:
-    num_workers: 16
+    dataloader_type: "single"
+    num_workers: 1 #16
+    shuffle_data: False
     train:
-      dataset_path:
-        - YOUR_TRAINING_DATASET_WDINFO_FILE
-      augmentations:
-        resize_smallest_side: 256
-        horizontal_flip: False
-      filterings:
-
+        dataset_path:
+            - null
+    validation:
+        dataset_path: 
+            - null
     webdataset:
-      infinite_sampler: False
-      local_root_path: /datasets/coyo
+        infinite_sampler: False
+        local_root_path:  null 
 
   seed: 1234
   resume_from_checkpoint: null # manually set the checkpoint file to load from

@@ -50,7 +50,7 @@ def resolve_and_create_trainer(cfg, pop_trainer_key):
     with temp_pop_from_config(cfg.trainer, pop_trainer_key):
         return MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
 
-@hydra_runner(config_path="conf", config_name="draftp_sd")
+@hydra_runner(config_path="conf", config_name="draftp_sdxl")
 def main(cfg) -> None:
 
     logging.info("\n\n************** Experiment configuration ***********")
@@ -117,7 +117,7 @@ def main(cfg) -> None:
     ptl_model.reward_model = reward_model
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:12:00:00"))
+    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:24:00:00"))
 
     draft_p_trainer = SupervisedTrainer(
         cfg=cfg.trainer.draftp_sd,
