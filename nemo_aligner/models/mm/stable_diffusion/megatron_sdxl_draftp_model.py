@@ -83,6 +83,9 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         self.model.rampup_batch_size = False
         self.model.with_distributed_adam = False
 
+        params = self.cfg.sampling.base
+        self.sampler = get_sampler_config(params)    
+
     def finish_inference(self):
         return
 
@@ -118,9 +121,13 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
     
-    def append_sdxl_size_keys(self, batch):
-        # helper function to append size and crop keys
-        batch_size = len(batch)
+    def append_sdxl_size_keys(self, prompts):
+        # given list of prompts, convert into a batch
+        # also append size and crop keys
+        batch_size = len(prompts)
+        batch = dict()
+        batch['txt'] = prompts
+        batch['captions'] = prompts
         batch['original_size_as_tuple'] = torch.tensor([self.width, self.height], device=torch.cuda.current_device()).repeat(batch_size, 1)
         batch['target_size_as_tuple'] = torch.tensor([self.width, self.height], device=torch.cuda.current_device()).repeat(batch_size, 1)
         batch['crop_coords_top_left'] = torch.tensor([0, 0], device=torch.cuda.current_device()).repeat(batch_size, 1)
@@ -133,15 +140,16 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
         ):
             # get sampler (contains discretizer, scaler, guider)
-            params = self.cfg.sampling.base
-            sampler = get_sampler_config(params)    
+            #params = self.cfg.sampling.base
+            #sampler = get_sampler_config(params)    
+            sampler = self.sampler
 
-            batch = self.append_sdxl_size_keys(batch)
+            batch_c = self.append_sdxl_size_keys(batch)
             batch_size = len(batch)
 
             force_uc_zero_embeddings = ['txt', 'captions']   # force zero embeddings for text and captions
             cond, u_cond = self.model.conditioner.get_unconditional_conditioning(
-                batch, batch_uc=None, force_uc_zero_embeddings=force_uc_zero_embeddings,
+                batch_c, batch_uc=None, force_uc_zero_embeddings=force_uc_zero_embeddings,
             )
             additional_model_inputs = {}   # not necessary for now
 
@@ -200,16 +208,17 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         ):
             # batch_size = len(batch)
             # device = torch.cuda.current_device()
-            batch = self.append_sdxl_size_keys(batch)
+            batch_c = self.append_sdxl_size_keys(batch)
 
             truncation_steps = self.cfg.truncation_steps
             force_uc_zero_embeddings = ['txt', 'captions'] 
             ## initialize sampler
-            params = self.cfg.sampling.base
-            sampler = get_sampler_config(params)    # the sampler is agnostic to model, so we can share it
+            # params = self.cfg.sampling.base
+            # sampler = get_sampler_config(params)    # the sampler is agnostic to model, so we can share it
+            sampler = self.sampler
 
-            c, uc = self.model.conditioner.get_unconditional_conditioning(
-                batch, batch_uc=None, force_uc_zero_embeddings=force_uc_zero_embeddings,
+            cond, uc = self.model.conditioner.get_unconditional_conditioning(
+                batch_c, batch_uc=None, force_uc_zero_embeddings=force_uc_zero_embeddings,
             )
             additional_model_inputs = {}
 
@@ -218,17 +227,17 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
 
             # get denoisers
             denoiser_draft = lambda input, sigma, c: self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
-            denoiser_init  = lambda input, sigma, c: self.model_init.denoiser(self.model_init.model, input, sigma, c, **additional_model_inputs)
+            denoiser_init  = lambda input, sigma, c: self.init_model.denoiser(self.init_model.model, input, sigma, c, **additional_model_inputs)
 
             # prep initial sampler config
             x = x_T + 0
             num_steps = sampler.num_steps
-            x, s_in, sigmas, num_sigmas, cond, uc = self.prepare_sampling_loop(x, cond, uc, num_steps)
+            x, s_in, sigmas, num_sigmas, cond, uc = sampler.prepare_sampling_loop(x, cond, uc, num_steps)
             # last step doesnt count since there is no additional sigma
             total_steps = num_sigmas-1
 
-            iterator = tqdm(num_sigmas-1, desc=f"{sampler.__class__.__name__} Sampler", total=total_steps)
-            for i in enumerate(iterator):
+            iterator = tqdm(range(num_sigmas-1), desc=f"{sampler.__class__.__name__} Sampler", total=total_steps)
+            for i in iterator:
                 gamma = sampler.get_gamma(sigmas, num_sigmas, i)
                 # with context(set_draft_grad_flag):
                 if i < total_steps - truncation_steps:
