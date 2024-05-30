@@ -147,38 +147,77 @@ class MegatronGPTCategoricalRewardModel(MegatronGPTRegressionRewardModel):
         num_valid_attributes = mask.float().sum()
         assert num_valid_attributes > 0, "Invalid sample: all attributes in label are masked, please check your data!"
 
+        # Convert label_tensor to binary encoding
         num_category = self.cfg.get("categorical", {}).num_category
-
-        # Define the new label encoding for arbitrary num_category
-        # 0 -> [1,0,0,0,0]
-        # 1 -> [1,1,0,0,0,]
-        # ...
-        def label_encoding(label, num_category):
-            encoded_label = [0] * num_category
-            for i in range(label + 1):
-                encoded_label[i] = 1
-            return encoded_label
+        binary_label_tensor = torch.zeros(
+            label_tensor.size(0), label_tensor.size(1), num_category, device=label_tensor.device
+        )
+        for i in range(num_category):
+            binary_label_tensor[:, :, i] = (label_tensor >= i).float()
 
         # Reshape output_tensor to [B * num_attributes, num_category]
         output_tensor = output_tensor.view(output_tensor.size(0) * label_tensor.size(1), num_category)
+        # Flatten binary_label_tensor to [B * num_attributes, num_category]
+        binary_label_tensor = binary_label_tensor.view(-1, num_category)
 
-        # Convert label_tensor to the new encoding
-        label_tensor_encoded = torch.zeros_like(output_tensor)
-        for i, label in enumerate(label_tensor.view(-1).long()):
-            label_tensor_encoded[i] = torch.tensor(label_encoding(label.item(), num_category))
-
+        criterion = torch.nn.BCEWithLogitsLoss(reduction="none")
         # Calculate the loss
-        criterion = torch.nn.CrossEntropyLoss()
-        loss = criterion(output_tensor, label_tensor_encoded)
+        loss = criterion(output_tensor, binary_label_tensor)
+        loss = loss * mask.view(-1, 1).float()  # Apply mask
+        loss = loss.sum() / num_valid_attributes  # Average over valid attributes
 
-        mask = mask.view(-1)
-        _, predictions = torch.max(output_tensor, 1)
-        filtered_predictions = predictions[mask]
-        filtered_labels = label_tensor_encoded[mask]
-        correct_predictions = (filtered_predictions == filtered_labels.argmax(1)).float()
-        accuracy = correct_predictions.sum() / correct_predictions.numel()
+        # Calculate accuracy
+        with torch.no_grad():
+            predictions = torch.sigmoid(output_tensor) >= 0.5
+            filtered_predictions = predictions[mask.view(-1)]
+            filtered_labels = binary_label_tensor[mask.view(-1)]
+            correct_predictions = (filtered_predictions == filtered_labels).float().mean(dim=1)
+            accuracy = correct_predictions.sum() / correct_predictions.numel()
 
         return loss, accuracy
+
+    # def loss_func(self, output_tensor, label_tensor):
+    #     """
+    #     output_tensor: [B, num_attributes * num_category]
+    #     label_tensor: [B, num_attributes]
+    #     """
+    #     mask_val = int(self.cfg.get("regression", {}).get("loss_mask_val", -100))
+    #     mask = label_tensor != mask_val
+    #     num_valid_attributes = mask.float().sum()
+    #     assert num_valid_attributes > 0, "Invalid sample: all attributes in label are masked, please check your data!"
+
+    #     num_category = self.cfg.get("categorical", {}).num_category
+
+    #     # Define the new label encoding for arbitrary num_category
+    #     # 0 -> [1,0,0,0,0]
+    #     # 1 -> [1,1,0,0,0,]
+    #     # ...
+    #     def label_encoding(label, num_category):
+    #         encoded_label = [0] * num_category
+    #         for i in range(label + 1):
+    #             encoded_label[i] = 1
+    #         return encoded_label
+
+    #     # Reshape output_tensor to [B * num_attributes, num_category]
+    #     output_tensor = output_tensor.view(output_tensor.size(0) * label_tensor.size(1), num_category)
+
+    #     # Convert label_tensor to the new encoding
+    #     label_tensor_encoded = torch.zeros_like(output_tensor)
+    #     for i, label in enumerate(label_tensor.view(-1).long()):
+    #         label_tensor_encoded[i] = torch.tensor(label_encoding(label.item(), num_category))
+
+    #     # Calculate the loss
+    #     criterion = torch.nn.CrossEntropyLoss()
+    #     loss = criterion(output_tensor, label_tensor_encoded)
+
+    #     mask = mask.view(-1)
+    #     _, predictions = torch.max(output_tensor, 1)
+    #     filtered_predictions = predictions[mask]
+    #     filtered_labels = label_tensor_encoded[mask]
+    #     correct_predictions = (filtered_predictions == filtered_labels.argmax(1)).float()
+    #     accuracy = correct_predictions.sum() / correct_predictions.numel()
+
+    #     return loss, accuracy
 
     def get_loss_and_metrics(self, batch, forward_only):
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
