@@ -68,6 +68,10 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
     # Instatiating the model here
     ptl_model = MegatronSDXLDRaFTPModel(cfg.model, trainer).to(torch.cuda.current_device())
+
+    # torch.save(ptl_model.model.state_dict(), "diffusion_model.ckpt")
+    # input("Saved....")
+
     init_peft(ptl_model, cfg.model)
 
     trainer_restore_path = trainer.ckpt_path

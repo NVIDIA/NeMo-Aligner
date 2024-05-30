@@ -67,6 +67,8 @@ model:
   kl_coeff: 1.0
   truncation_steps: 1
 
+  restore_from_path: null
+
   sampling:
     base:
       sampler: EulerEDMSampler
@@ -143,7 +145,7 @@ model:
 
   unet_config:
     _target_: nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel.UNetModel
-    from_NeMo: False
+    from_NeMo: True
     from_pretrained: null 
     adm_in_channels: 2816
     num_classes: sequential

@@ -164,3 +164,6 @@ draft_p_saved_ckpts/
 draftp_xl_saved_ckpts/
 
 run_lr_*
+*ckpt
+unet_hf.txt
+unet_nemo.txt
