@@ -167,3 +167,4 @@ run_lr_*
 *ckpt
 unet_hf.txt
 unet_nemo.txt
+sdxl_draft_run*
