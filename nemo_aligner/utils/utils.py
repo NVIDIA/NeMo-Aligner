@@ -82,7 +82,7 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
     if save_top_only:
         return
 
-    super(NeMoModelCheckpoint, self)._save_last_checkpoint(trainer, monitor_candidates)
+    # super(NeMoModelCheckpoint, self)._save_last_checkpoint(trainer, monitor_candidates)
 
     if is_train_end:
         # stop the checkpoint logic from saving another last checkpoint
