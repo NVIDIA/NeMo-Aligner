@@ -620,36 +620,39 @@ class PPOTrainer:
                 step_metrics = {}
                 timing_metrics = {}
 
-                self.timer.start("rollout_time")
-                ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
+                critic_train_loop_amount = self.cfg.critic_warmup_steps if self.step == 0 else 1
 
-                self.timer.stop("rollout_time")
-                timing_metrics["rollout_time"] = self.timer.get("rollout_time")
+                for _ in range(critic_train_loop_amount):
+                    self.timer.start("rollout_time")
+                    ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
 
-                # send critic train
-                clear_memory()
-                start_time = time.time()
-                self.rm_critic.train(ppo_rollout_data)
-                end_time = time.time()
+                    self.timer.stop("rollout_time")
+                    timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
-                timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
-                timing_metrics.update(timer_metrics)
+                    # send critic train
+                    clear_memory()
+                    start_time = time.time()
+                    self.rm_critic.train(ppo_rollout_data)
+                    end_time = time.time()
 
-                # logging
-                table_metrics = metrics.pop("table")
-                self.train_df.loc[len(self.train_df)] = [
-                    self.step,
-                    table_metrics["prompt"],
-                    table_metrics["response"],
-                    table_metrics["reward"],
-                ]
-                metrics["epoch"] = self.epoch + 1
-                self.logger.log_metrics(
-                    metrics, step=self.step, prefix="train_rollouts/",
-                )
-                self.logger.log_table(
-                    key="table/train_rollouts", dataframe=self.train_df, step=self.step,
-                )
+                    timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
+                    timing_metrics.update(timer_metrics)
+
+                    # logging
+                    table_metrics = metrics.pop("table")
+                    self.train_df.loc[len(self.train_df)] = [
+                        self.step,
+                        table_metrics["prompt"],
+                        table_metrics["response"],
+                        table_metrics["reward"],
+                    ]
+                    metrics["epoch"] = self.epoch + 1
+                    self.logger.log_metrics(
+                        metrics, step=self.step, prefix="train_rollouts/",
+                    )
+                    self.logger.log_table(
+                        key="table/train_rollouts", dataframe=self.train_df, step=self.step,
+                    )
 
                 rollout_size = ppo_rollout_data["response_tokens"].size(0)
                 rollout_dataloader_iter = get_iterator_k_split(
