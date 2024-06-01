@@ -406,6 +406,8 @@ class PPOTrainer:
             )
             global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()
 
+        padded_rollout_sequence_length = global_rollout_batch["response_tokens"].size(-1)
+
         # the chunking must be outside of the TRT-LLM context because we do logprob calculation in nemo
         balanced_local_batch = global_rollout_batch.chunk(
             parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
@@ -437,7 +439,7 @@ class PPOTrainer:
             unbalanced_rm_value_batch = PPORolloutBatch.from_rollout_batches(
                 rm_value_rollout_batches,
                 eos_id=self.model.tokenizer.eos_id,
-                rollout_batch_seq_length=self.cfg.rollout_batch_seq_length,
+                rollout_batch_seq_length=padded_rollout_sequence_length,
             )
             global_rm_value_batch = unbalanced_rm_value_batch.gather_and_balance_globally()
 
