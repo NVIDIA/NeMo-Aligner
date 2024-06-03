@@ -1,4 +1,5 @@
 # log and data files
+hub
 *.model
 *.pkl
 *.pt
