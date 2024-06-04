@@ -17,6 +17,7 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
+from copy import deepcopy
 
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -39,6 +40,11 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
     temp_pop_from_config,
 )
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
+    LatentDiffusion,
+    MegatronLatentDiffusion,
+)
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion_engine import MegatronDiffusionEngine, DiffusionEngine
 
 mp.set_start_method("spawn", force=True)
 
@@ -68,11 +74,7 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
     # Instatiating the model here
     ptl_model = MegatronSDXLDRaFTPModel(cfg.model, trainer).to(torch.cuda.current_device())
-
-    # torch.save(ptl_model.model.state_dict(), "diffusion_model.ckpt")
-    # input("Saved....")
-
-    init_peft(ptl_model, cfg.model)
+    init_peft(ptl_model, cfg.model)   # init peft 
 
     trainer_restore_path = trainer.ckpt_path
 
@@ -120,6 +122,15 @@ def main(cfg) -> None:
     reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
     ptl_model.reward_model = reward_model
 
+    # init init model
+    init_cfg = deepcopy(cfg.model)
+    init_cfg.peft.peft_scheme = "none"
+    init_model = DiffusionEngine(init_cfg, None).to(torch.cuda.current_device()).eval()
+    # for p in init_model.parameters():
+    #     p.requires_grad = False
+    # init_model.train(mode=False) 
+    ptl_model.init_model = init_model
+
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
     timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:24:00:00"))
 
@@ -134,6 +145,7 @@ def main(cfg) -> None:
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
+        run_init_validation=True,
     )
 
     if custom_trainer_state_dict is not None:

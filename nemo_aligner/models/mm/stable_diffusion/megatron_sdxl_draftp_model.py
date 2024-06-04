@@ -43,6 +43,7 @@ from nemo_aligner.utils.utils import _get_autocast_dtype, configure_batch_sizes,
 from nemo.collections.multimodal.parts.stable_diffusion.sdxl_pipeline import get_sampler_config
 from nemo.collections.multimodal.parts.stable_diffusion.sdxl_helpers import do_sample, get_unique_embedder_keys_from_conditioner, get_batch
 from omegaconf import OmegaConf
+from copy import deepcopy
 
 BatchType = Mapping[str, torch.tensor]
 
@@ -60,8 +61,13 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
     def __init__(self, cfg, trainer):
 
         super().__init__(cfg, trainer=trainer)
-        # self.init_model = LatentDiffusion(cfg, None).to(torch.cuda.current_device()).eval()
-        self.init_model = DiffusionEngine(cfg, None).to(torch.cuda.current_device()).eval()
+        # init_cfg = deepcopy(cfg)
+        # init_cfg.peft.peft_scheme = "none"
+        # self.init_model = DiffusionEngine(init_cfg, None).to(torch.cuda.current_device()).eval()
+        # for p in self.init_model.parameters():
+        #     p.requires_grad = False
+        # self.init_model.train(mode=False)
+        self.init_model = None
         self.cfg = cfg
         self.with_distributed_adam = self.with_distributed_adam
         self.model.first_stage_model.requires_grad_(False)
@@ -185,9 +191,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(
-            latents, prompts, self.model
-        )
+        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(latents, prompts, self.model)
         image_init, reward_init, _ = self.generate_log_images(latents, prompts, self.init_model)
 
         images = []
