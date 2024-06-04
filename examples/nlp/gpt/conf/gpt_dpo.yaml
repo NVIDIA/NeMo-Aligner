@@ -61,6 +61,9 @@ model:
     log_prob_forward_micro_batch_size: 1
     ref_policy_kl_penalty: 0.2
     average_log_probs: False
+
+    dpo_loss_weight: 1
+    sft_loss_weight: 0
   
   #encoder_seq_length: 4096
   #max_position_embeddings: ${model.encoder_seq_length}
