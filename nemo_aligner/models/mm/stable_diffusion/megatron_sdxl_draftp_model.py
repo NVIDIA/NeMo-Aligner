@@ -261,9 +261,9 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                     list_eps_draft.append(eps_draft)
                     ##### TODO: uncomment this for base model
                     with torch.no_grad():
-                        with adapter_control(self.model.model):
+                        with adapter_control(self.model):
                             _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_draft, x, cond, uc, gamma, return_noise=True)
-                            # _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_init, x, cond, uc, gamma, return_noise=True)
+                        # _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_init, x, cond, uc, gamma, return_noise=True)
                         list_eps_init.append(eps_init)
                     # list_eps_init.append(eps_draft.detach())
                     # set next \bar{x}
