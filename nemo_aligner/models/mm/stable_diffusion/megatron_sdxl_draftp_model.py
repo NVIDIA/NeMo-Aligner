@@ -191,8 +191,8 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(latents, prompts, self.model)
-        image_init, reward_init, _ = self.generate_log_images(latents, prompts, self.init_model)
+        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(latents+0, prompts, self.model)
+        image_init, reward_init, _ = self.generate_log_images(latents+0, prompts, self.init_model)
 
         images = []
         captions = []
