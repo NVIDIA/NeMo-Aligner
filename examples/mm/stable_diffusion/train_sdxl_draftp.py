@@ -132,14 +132,14 @@ def main(cfg) -> None:
     reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
     ptl_model.reward_model = reward_model
 
-    # init init model
-    init_cfg = deepcopy(cfg.model)
-    init_cfg.peft.peft_scheme = "none"
-    init_model = DiffusionEngine(init_cfg, None).to(torch.cuda.current_device()).eval()
-    for p in init_model.parameters():
-        p.requires_grad = False
-    init_model.train(mode=False) 
-    ptl_model.init_model = init_model
+    # initialize base model
+    # init_cfg = deepcopy(cfg.model)
+    # init_cfg.peft.peft_scheme = "none"
+    # init_model = DiffusionEngine(init_cfg, None).to(torch.cuda.current_device()).eval()
+    # for p in init_model.parameters():
+    #     p.requires_grad = False
+    # init_model.train(mode=False) 
+    # ptl_model.init_model = init_model
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
     timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:24:00:00"))
@@ -155,7 +155,7 @@ def main(cfg) -> None:
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
-        run_init_validation=True,
+        run_init_validation=False,
     )
 
     if custom_trainer_state_dict is not None:

@@ -367,9 +367,13 @@ def adapter_control(model):
     """
     try:
         # Disable adapters before yielding control
+        print(type(model))
+        print("controlling adapters")
         for _, module in model.named_modules():
             if isinstance(module, AdapterModuleMixin) and module.is_adapter_available():
+                print(_)
                 module.set_enabled_adapters(enabled=False)
+        input()
         yield
     finally:
         # Re-enable adapters after operation

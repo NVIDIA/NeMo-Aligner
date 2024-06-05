@@ -23,6 +23,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
 from PIL import Image
 from tqdm import tqdm
+from nemo_aligner.utils.utils import adapter_control
 
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
@@ -192,7 +193,8 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             ).to(torch.cuda.current_device())
 
         image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(latents+0, prompts, self.model)
-        image_init, reward_init, _ = self.generate_log_images(latents+0, prompts, self.init_model)
+        with adapter_control(self.model):
+            image_init, reward_init, _ = self.generate_log_images(latents+0, prompts, self.model)
 
         images = []
         captions = []
@@ -231,7 +233,11 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
 
             # get denoisers
             denoiser_draft = lambda input, sigma, c: self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
-            denoiser_init  = lambda input, sigma, c: self.init_model.denoiser(self.init_model.model, input, sigma, c, **additional_model_inputs)
+            # denoiser_init  = lambda input, sigma, c: self.init_model.denoiser(self.init_model.model, input, sigma, c, **additional_model_inputs)
+            # def denoiser_init(input, sigma, c):
+            #     with adapter_control(self.model.model):
+            #         denoised = self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
+            #     return denoised
 
             # prep initial sampler config
             x = x_T + 0
@@ -253,15 +259,20 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                     # store computation graph of draft eps
                     x_next_draft, eps_draft = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_draft, x, cond, uc, gamma, return_noise=True)
                     list_eps_draft.append(eps_draft)
+                    ##### TODO: uncomment this for base model
                     with torch.no_grad():
-                        _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_init, x, cond, uc, gamma, return_noise=True)
+                        with adapter_control(self.model.model):
+                            _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_draft, x, cond, uc, gamma, return_noise=True)
+                            # _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_init, x, cond, uc, gamma, return_noise=True)
                         list_eps_init.append(eps_init)
+                    # list_eps_init.append(eps_draft.detach())
                     # set next \bar{x}
                     x = x_next_draft
             
             # compile list of eps
             t_eps_draft_p = torch.stack(list_eps_draft).to(torch.device('cuda'))
             t_eps_init  = torch.stack(list_eps_init).to(torch.device('cuda'))
+
             # generate image from last sample
             image = self.model.differentiable_decode_first_stage(x)
             image = torch.clamp((image + 1.0)/2.0, min=0.0, max=1.0) * 255.0
@@ -332,7 +343,6 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
 
             return output_tensor_draft_p, loss_func
         return fwd_output_and_loss_func
-
 
     def get_loss_and_metrics(self, batch, forward_only=False):
         data_iter = get_iterator_k_split_list(batch, get_num_microbatches())
