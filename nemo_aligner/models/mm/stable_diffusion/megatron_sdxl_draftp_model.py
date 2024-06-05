@@ -154,7 +154,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             batch_size = len(batch)
 
             force_uc_zero_embeddings = ['txt', 'captions']   # force zero embeddings for text and captions
-            cond, u_cond = self.model.conditioner.get_unconditional_conditioning(
+            cond, u_cond = model.conditioner.get_unconditional_conditioning(
                 batch_c, batch_uc=None, force_uc_zero_embeddings=force_uc_zero_embeddings,
             )
             additional_model_inputs = {}   # not necessary for now
