@@ -121,7 +121,7 @@ def build_train_valid_test_datasets(
             k: build_dataset_generic(
                 cls=cls,
                 cfg=cfg,
-                data_prefix=data_prefix["validation"],
+                data_prefix=data_prefix[k],
                 data_impl=data_impl,
                 num_samples=int(train_valid_test_num_samples[0]),
                 seq_length=seq_length,
