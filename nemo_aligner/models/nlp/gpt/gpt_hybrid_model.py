@@ -241,9 +241,27 @@ class GPTHybridModel(GPTModel):
         # from the parent
         sharded_state_dict = super().sharded_state_dict(prefix=prefix)
 
-        if not self.return_value_head_in_state_dict:
-            sharded_state_dict = {
-                k: v for k, v in sharded_state_dict.items() if not ("rm_head" in k or "value_head" in k)
-            }
+        if self.post_process and self.return_value_head_in_state_dict:
+            value_head_prefix = f"{prefix}value_head."
+            value_head_state_dict = self.value_head.sharded_state_dict(prefix=value_head_prefix)
+            sharded_state_dict.update(value_head_state_dict)
+
+            rm_head_prefix = f"{prefix}rm_head."
+            rm_head_state_dict = self.rm_head.state_dict(prefix=rm_head_prefix, keep_vars=True)
+
+            # weights are sharded row wise
+            weight_key = f"{rm_head_prefix}weight"
+
+            sharded_state_dict[weight_key] = make_tp_sharded_tensor_for_checkpoint(
+                tensor=rm_head_state_dict[weight_key],
+                key=weight_key,
+                replica_id=parallel_state.get_data_parallel_rank(),
+                allow_shape_mismatch=False,
+                tp_axis=1,
+            )
+
+            # biases are not sharded
+            bias_key = f"{rm_head_prefix}bias"
+            sharded_state_dict[bias_key] = make_sharded_tensor_for_checkpoint(rm_head_state_dict[bias_key], bias_key)
 
         return sharded_state_dict
