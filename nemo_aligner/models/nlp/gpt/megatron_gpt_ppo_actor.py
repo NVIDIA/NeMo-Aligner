@@ -61,7 +61,7 @@ try:
 
     GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
     HAVE_TRTLLM = True
-except (ImportError, ModuleNotFoundError, AttributeError):
+except (ImportError, ModuleNotFoundError):
     HAVE_TRTLLM = False
 
 
