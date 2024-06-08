@@ -70,6 +70,7 @@ model:
 
     oracle: True  # whether to use the oracle value for the search results, Default True, so it uses ground truth value when it reaches the terminal state
     turn_off_value: ${not:${pretrained_checkpoint.from_mcts_trained}}
+    simulate_value: False  # whether to estimate the value via simulation the value for the search results, default False
 
     kv_cache_in_cpu: True #  save kv cache in cpu memory
 

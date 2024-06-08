@@ -183,6 +183,7 @@ class MCTSParallel:
         terminate_fns=None,
         client_fun: Callable = None,
         has_value=True,
+        value_estimation_function=None,
     ):
         self.args = args
         self.tokenizer = tokenizer
@@ -193,6 +194,7 @@ class MCTSParallel:
         self.cache = {}
         self.has_value = has_value
         self.pad_id = pad_id
+        self.value_estimation_function = value_estimation_function
 
     def decode_text(self, state):
         decoded_text = self.tokenizer.decode(state)
@@ -240,6 +242,7 @@ class MCTSParallel:
         # get the action to execute and depths in the search tree
         actions = []
         action_length = []
+        data_ids = []
         for mappingIdx in expandable_search:
             node = ps[mappingIdx].node["node"]
             if isinstance(node.action, list):
@@ -260,10 +263,11 @@ class MCTSParallel:
             self.token_to_context_id(ps[mappingIdx].node["all_tokens"], ps[mappingIdx].node["node"])
             for mappingIdx in expandable_search
         ]
+        data_ids = [ps[mappingIdx].data_id for mappingIdx in expandable_search]
         # # verify context ids are the same
         # for old_context_id, new_context_id in zip(context_ids, new_context_ids):
         #     assert old_context_id == new_context_id
-        return actions, context_ids
+        return actions, context_ids, data_ids
 
     @torch.no_grad()
     def search(self, ps: List[ParallelSearch]):
@@ -401,9 +405,11 @@ class MCTSParallel:
 
             if len(expandable_search) > 0:
                 # compute the batched policy and value for the expandable search nodes
-                actions, context_ids = self.get_input_action_depth(ps, expandable_search)
+                input_actions, context_ids, data_ids = self.get_input_action_depth(ps, expandable_search)
                 #             result_dict = self.client.infer_batch(action=actions, depth=depths, context_ids=context_data, parameters={"session": self.session})
-                result_dict = self.client_fun(actions=actions, context_ids=context_ids, session_info=self.session)
+                result_dict = self.client_fun(
+                    actions=input_actions, context_ids=context_ids, session_info=self.session
+                )
 
                 actions = result_dict["action"]
                 policy = result_dict["policy"]  # [batch, top_k]
@@ -411,6 +417,11 @@ class MCTSParallel:
                     value = result_dict["value"]  # [batch]
                 else:
                     value = [None] * len(policy)
+
+                if self.value_estimation_function is not None:
+                    value = self.value_estimation_function(
+                        inputs=None, action=input_actions, context_ids=context_ids, data_ids=data_ids,
+                    )
 
             for i, mappingIdx in enumerate(expandable_search):
                 # node to expand

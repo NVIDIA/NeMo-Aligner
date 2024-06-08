@@ -107,6 +107,8 @@ class TRTLLMInference:
         self.bos_id = bos_id
         self.runner = runner_cls.from_dir(**runner_kwargs)
         self.tokenizer = tokenizer
+        self.engine_dir = cfg.trtllm.engine_path
+        self.minibatch_size = cfg.model.mcts.rollout_micro_batch_size
 
     def evaluate(self, batch_input_ids):
         with torch.no_grad():
@@ -150,17 +152,7 @@ class TRTLLMInference:
             context_tokens = [torch.tensor(tokenizer.encode(s)) for s in sentences]
         return context_tokens
 
-    def __call__(
-        self,
-        inputs=None,
-        action=None,
-        context_ids=None,
-        session_info=None,
-        tokens_to_generate=1,  # max search depth
-        top_k=0,
-        add_bos_token=False,  # add bos token at the beginning of the input text
-        **strategy_args,
-    ) -> OutputType:
+    def compute_context_tokens(self, inputs, context_ids, action, add_bos_token):
         if inputs is not None:
             context_tokens = self.tokenize_batch(inputs, add_bos_token)
         else:
@@ -175,6 +167,20 @@ class TRTLLMInference:
             context_tokens = [
                 torch.tensor(list(context_id) + action) for action, context_id in zip(action_tokens, context_ids)
             ]
+        return context_tokens
+
+    def __call__(
+        self,
+        inputs=None,
+        action=None,
+        context_ids=None,
+        session_info=None,
+        tokens_to_generate=1,  # max search depth
+        top_k=0,
+        add_bos_token=False,  # add bos token at the beginning of the input text
+        **strategy_args,
+    ) -> OutputType:
+        context_tokens = self.compute_context_tokens(inputs, context_ids, action, add_bos_token)
         outputs = self.evaluate(context_tokens)
         logits = outputs["generation_logits"][:, 0, 0]
 

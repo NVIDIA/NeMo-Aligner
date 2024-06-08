@@ -1,7 +1,9 @@
+import csv
 import json
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
+import numpy as np
 import sentencepiece
 import tensorrt_llm
 import tensorrt_llm.profiler as profiler
@@ -12,30 +14,24 @@ from tensorrt_llm.builder import get_engine_version
 from tensorrt_llm.logger import logger
 from tensorrt_llm.models.qwen.utils import make_context
 from tensorrt_llm.runtime import PYTHON_BINDINGS, ModelRunner, ModelRunnerCpp
-from tensorrt_llm.runtime.model_runner_cpp import ModelRunnerCppGptSession
 from tensorrt_llm.tools.ppl import ppl
 from transformers import AutoTokenizer, T5Tokenizer
 
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.collections.nlp.modules.common.transformer.text_generation import OutputType
-import numpy as np
-from typing import List
-import csv
 
 
 def to_word_list_format(
-    words: List[str],
-    tokenizer=None,
-    ref_str="green tea icecream",
+    words: List[str], tokenizer=None, ref_str="green tea icecream",
 ):
-    '''
+    """
     format of word_dict
         len(word_dict) should be same to batch_size
         word_dict[i] means the words for batch i
         This string can contains several sentences and split by ",".
         For example, if word_dict[2] = " I am happy, I am sad", then this function will return
         the ids for two short sentences " I am happy" and " I am sad".
-    '''
+    """
     assert tokenizer is not None, "need to set tokenizer"
 
     flat_ids = []
@@ -71,8 +67,9 @@ def to_word_list_format(
         flat_ids[i] = np.pad(ids, (0, pad_to - len(ids)), constant_values=0)
         offsets[i] = np.pad(offs, (0, pad_to - len(offs)), constant_values=-1)
 
-    return np.array([flat_ids, offsets], dtype="int32").transpose((1, 0, 2))   
-        
+    return np.array([flat_ids, offsets], dtype="int32").transpose((1, 0, 2))
+
+
 def read_model_name(engine_dir: str):
     engine_version = get_engine_version(engine_dir)
 
@@ -144,79 +141,40 @@ def load_tokenizer(
     return tokenizer, pad_id, end_id, bos_id
 
 
-
 class TRTLLMFastGeneration:
-    def __init__(self, cfg, end_id, pad_id, bos_id, tokenizer, stop_words=['<extra_id_1>', '\x11']) -> None:
-        # runner_cls = ModelRunnerCpp
-        runner_cls = ModelRunnerCppGptSession
+    def __init__(self, cfg, end_id, pad_id, bos_id, tokenizer, stop_words=["<extra_id_1>", "\x11"]) -> None:
+        runner_cls = ModelRunner
         runner_kwargs = dict(engine_dir=cfg.trtllm.engine_path, rank=0, debug_mode=False, gpu_weights_percent=1)
-        runner_kwargs.update(
-            max_batch_size=1,
-            max_input_len=1024,
-            max_output_len=1024,
-            max_beam_width=1,
-            max_attention_window_size=None,
-            sink_token_length=None,
-        )
         self.end_id = end_id
         self.pad_id = pad_id
         self.bos_id = bos_id
         self.runner = runner_cls.from_dir(**runner_kwargs)
         self.tokenizer = tokenizer
-        # stop_word_ids = to_word_list_format(stop_words, tokenizer)
-        # # self.stop_list = torch.from_numpy(stop_word_ids)[0].tolist()
-        # self.stop_list = torch.from_numpy(stop_word_ids).cuda().contiguous()
-
-        self.stop_list =  to_word_list_format(stop_words, tokenizer)
-
+        self.stop_list = to_word_list_format(stop_words, tokenizer)
         self.stop_list = torch.from_numpy(self.stop_list).cuda().contiguous()
-        # stop_word_ids = [tokenizer.encode(word) for word in stop_words]
-        # flat_stop_word_ids = [item for sublist in stop_word_ids for item in sublist]
-        # stop_word_lengths = [len(ids) for ids in stop_word_ids]
-
-        # stop_word_lengths = stop_word_lengths + [-1] * (len(flat_stop_word_ids) - len(stop_word_lengths))
-        # # self.stop_words_tensor = torch.tensor([flat_stop_word_ids, stop_word_lengths], dtype=torch.int32).cuda()
-        # self.stop_words_tensor = [flat_stop_word_ids, stop_word_lengths]
-
 
     def evaluate(self, batch_input_ids, max_new_tokens=1):
-        sampling_config = tensorrt_llm.runtime.SamplingConfig(
-            end_id=self.end_id,
-            pad_id=self.pad_id,  # TODO
-            temperature=0.1,
-            top_k=1,
-            top_p=0.0,
-            max_new_tokens=max_new_tokens,
-            stop_words_list=self.stop_list,
-            return_dict=True,
-            output_sequence_lengths=True,
-        )
         with torch.no_grad():
-            # outputs = self.runner.generate(
-            #     batch_input_ids, 
-            #      max_new_tokens=max_new_tokens,
-            #      max_attention_window_size=None,
-            #      sink_token_length=None,
-            #      end_id=self.end_id,
-            #      pad_id=self.pad_id,
-            #      temperature=0.1,
-            #      top_k=1,
-            #      top_p=0.0,
-            #      num_beams=1,
-            #      length_penalty=1.0,
-            #      early_stopping=True,
-            #      repetition_penalty=1.0,
-            #      presence_penalty=0.0,
-            #      frequency_penalty=0.0,
-            #      output_sequence_lengths=True,
-            #      return_dict=True,
-            #      medusa_choices=None,
-            #      stop_words_list=self.stop_list,
-            # )
             outputs = self.runner.generate(
-                batch_input_ids=batch_input_ids, 
-                sampling_config=sampling_config, 
-                streaming=False
+                batch_input_ids,
+                max_new_tokens=max_new_tokens,
+                max_attention_window_size=None,
+                sink_token_length=None,
+                end_id=self.end_id,
+                pad_id=self.pad_id,
+                temperature=0.1,
+                top_k=1,
+                top_p=0.0,
+                num_beams=1,
+                length_penalty=1.0,
+                early_stopping=True,
+                repetition_penalty=1.0,
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                output_sequence_lengths=True,
+                return_dict=True,
+                medusa_choices=None,
+                stop_words_list=self.stop_list,
             )
             torch.cuda.synchronize()
         return outputs
