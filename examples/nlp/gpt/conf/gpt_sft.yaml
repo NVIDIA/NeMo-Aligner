@@ -86,6 +86,10 @@ model:
   attention_dropout: 0.0
   ffn_dropout: 0.0
 
+  steerlm2:
+    forward_micro_batch_size:  1  # the micro batch size for the forward pass, used to compute the weights
+    micro_batch_size:  1 # the steerlm2 training micro batch size
+
   # can be used to customize behavior of model.generate for inference metrics
   # note that you have to specify all parameters explicitly even if they match defaults
   # as long as you change at least one parameter
@@ -132,8 +136,6 @@ model:
       label_start: "\x12"
       end_of_turn: "\x0A"  # \0x0A is '\n'
       end_of_name: "\x0A"  # \0x0A is '\n'
-    steerlm2_weight_micro_batch_size:  1
-    steerlm2_micro_batch_size:  1
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
     num_workers: 1
     dataloader_type: single  # only supports single

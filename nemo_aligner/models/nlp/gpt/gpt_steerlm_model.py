@@ -54,7 +54,7 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import configure_batch_sizes
 
 
-def get_batch(data_iterator, tuning):
+def get_batch(data_iterator):
     """Generate a batch."""
 
     # Broadcast data.
@@ -62,10 +62,6 @@ def get_batch(data_iterator, tuning):
         data = next(data_iterator)
     else:
         data = None
-
-    # return batch for GPT SFT
-    if tuning:
-        return data
 
     batch = {
         "tokens": data["tokens"],
@@ -84,18 +80,15 @@ def get_batch(data_iterator, tuning):
 class GPTSteerLMModel(GPTSFTModel):
     def loss_func(self, loss_mask, output_tensor):
         # loss is the nll loss for each token in the batch
-        losses = output_tensor.float()
         # losses [batch_size, sequence_length]
         # calculate sum of log(p) for all tokens in a one batch item
         # this will be later used to calculate the baseline weights
-        loss = torch.sum(losses * loss_mask, dim=-1)
-        # if parallel_state.get_context_parallel_world_size() > 1:
-        #     torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
+        loss = torch.sum(output_tensor * loss_mask, dim=-1)
         return loss
 
     def weight_loss_func(self, loss_mask, avg_num_valid_tokens_in_ub, output_tensor, weight):
         # loss is the nll loss for each token in the batch
-        losses = output_tensor.float()
+        losses = output_tensor
         loss_mask = loss_mask.float()
         # apply the per batch weight
         losses = losses * weight[:, None]
@@ -106,8 +99,6 @@ class GPTSteerLMModel(GPTSFTModel):
         loss = loss / avg_num_valid_tokens_in_ub
         # sum log(p) in microbatch
         loss = loss.sum()
-        if parallel_state.get_context_parallel_world_size() > 1:
-            torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
         return loss
 
     def get_forward_output_only_for_weight_func(self):
@@ -133,22 +124,16 @@ class GPTSteerLMModel(GPTSFTModel):
 
         return fwd_output_only_func
 
-    def get_forward_output_and_loss_func(self, validation_step=False, tuning=False):
+    def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
-
             # Get data batch
-            batch = get_batch(dataloader_iter, tuning)
-
+            batch = get_batch(dataloader_iter)
             # Transfer needed data to GPU
             required_keys = set()
-            max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
-            cu_seqlens_argmin = batch["cu_seqlens_argmin"] if "cu_seqlens_argmin" in batch else None
             if parallel_state.get_pipeline_model_parallel_world_size() == 1:
                 required_keys.update(batch.keys())
             else:
                 required_keys.add("attention_mask")
-                if "cu_seqlens" in batch:
-                    required_keys.add("cu_seqlens")
                 if parallel_state.is_pipeline_first_stage():
                     required_keys.update(("tokens", "position_ids"))
                 if parallel_state.is_pipeline_last_stage():
@@ -166,43 +151,7 @@ class GPTSteerLMModel(GPTSFTModel):
                 "position_ids": batch["position_ids"],
                 "attention_mask": None if self.get_attention_mask_from_fusion else batch["attention_mask"],
                 "labels": batch["labels"],
-                "loss_mask": batch["loss_mask"],
             }
-
-            if not self.mcore_gpt:
-                forward_args["checkpoint_activations_all_layers"] = checkpoint_activations_all_layers
-                if not self.use_loss_mask:
-                    forward_args.pop("loss_mask")
-            else:
-                # TODO: @eharper can we add this to mcore?
-                forward_args.pop("loss_mask")
-
-                if "cu_seqlens" in batch:  # packed sequence from GPTSFTPackedDataset
-                    # these args are passed eventually into TEDotProductAttention.forward()
-                    cu_seqlens = batch["cu_seqlens"].squeeze()  # remove batch size dimension (mbs=1)
-                    # remove -1 "paddings" added in collate_fn
-                    if cu_seqlens_argmin is not None:
-                        cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
-                    else:
-                        cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
-
-                    try:
-                        from megatron.core.packed_seq_params import PackedSeqParams
-                    except (ImportError, ModuleNotFoundError) as e:
-                        mcore_version = packaging.version.Version(version("megatron-core"))
-                        logging.error(
-                            f"megatron-core v{mcore_version} does not support training with packed sequence. "
-                            "Please use megatron-core >= 0.5.0, or set model.data.train_ds.packed_sequence=False"
-                        )
-                        raise e
-
-                    forward_args["packed_seq_params"] = PackedSeqParams(
-                        cu_seqlens_q=cu_seqlens,
-                        cu_seqlens_kv=cu_seqlens,
-                        max_seqlen_q=max_seqlen,
-                        max_seqlen_kv=max_seqlen,
-                        qkv_format="thd",
-                    )
 
             output_tensor = model(**forward_args)
 
@@ -211,47 +160,21 @@ class GPTSteerLMModel(GPTSFTModel):
                 loss_for_ub = self.weight_loss_func(
                     batch["loss_mask"], batch["avg_num_valid_tokens_in_ub"], output_tensor, batch["weight"]
                 )
-                cp_size = parallel_state.get_context_parallel_world_size()
-                if validation_step and not self.cfg.data.get("validation_drop_last", True):
-                    num_valid_tokens_in_ub = batch["num_valid_tokens_in_ub"]
-                    if loss_for_ub.isnan():
-                        assert batch["loss_mask"].count_nonzero() == 0, "Got NaN loss with non-empty input"
-                        loss_sum_for_ub = torch.zeros_like(num_valid_tokens_in_ub)
-                    else:
-                        loss_sum_for_ub = num_valid_tokens_in_ub * loss_for_ub
-
-                    loss_sum_and_ub_size_all_gpu = torch.cat(
-                        [
-                            loss_sum_for_ub.clone().detach().view(1),
-                            torch.tensor([num_valid_tokens_in_ub]).cuda().clone().detach(),
-                        ]
-                    )
-                    # Could potentially reduce num_valid_samples_in_microbatch and use that to aggregate instead of len(self._validation_ds)
-                    torch.distributed.all_reduce(
-                        loss_sum_and_ub_size_all_gpu, group=parallel_state.get_data_parallel_group()
-                    )
-                    return loss_for_ub * cp_size, {"loss_sum_and_ub_size": loss_sum_and_ub_size_all_gpu}
-                else:
-                    reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
-                    return loss_for_ub * cp_size, {"avg": reduced_loss}
+                reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
+                return loss_for_ub, {"avg": reduced_loss}
 
             return output_tensor, loss_func
 
         return fwd_output_and_loss_func
 
-    def get_loss_and_metrics(self, batch, forward_only):
-        """Take a data_iter which is an interator over the microbatches
-            and return loss as well as metrics
-        """
+    def compute_baselilne_weights(self, batch):
         # first compute the baseline weights
         set_sync_funcs(self, True)
-        distances = []
-
         # calculate the baseline weights for each group of generated reponses
         # set the batch size for log likelihood calculation
         response_size = batch["num_responses"][0].item()
         gbs, seq_length = batch["tokens"].shape
-        mbs = int(self.cfg.data.steerlm2_weight_micro_batch_size)
+        mbs = int(self.cfg.steerlm2.forward_micro_batch_size)
         dp_size = 1
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
@@ -272,59 +195,50 @@ class GPTSteerLMModel(GPTSFTModel):
             micro_batch_size=get_micro_batch_size(),
             seq_length=seq_length,
         )
+        distance = None
         if parallel_state.is_pipeline_last_stage():
             updated_weight = torch.concatenate([i["loss"] for i in losses_forward])
-
-            batch["base_weight"] = torch.cuda.FloatTensor(gbs)
-            batch["weight"] = torch.cuda.FloatTensor(gbs)
-            batch["avg_num_valid_tokens_in_ub"] = torch.cuda.FloatTensor(gbs)
-
+            base_weight = (
+                -updated_weight.reshape(-1, response_size) - batch["log(Q(y|a,x))"].reshape(-1, response_size).cuda()
+            )
+            base_weight_p = torch.nn.functional.softmax(base_weight, dim=-1)
+            ws_weight = batch["ws"].reshape(-1, response_size).cuda()
+            weight = ws_weight - base_weight_p
+            # group size is the number of responses generated
+            loss_mbs = int(self.cfg.steerlm2.micro_batch_size)
+            num_of_microbatches = gbs // loss_mbs
             # split updated weights into groups of size response_size
             num_of_batches = len(updated_weight) // response_size
-            for i in range(0, len(updated_weight), response_size):
-                # the weights are negative log likelihood, to get log likelihood we need to negate the weights
-                # compute base weight
-                beg_idx = i
-                end_idx = i + response_size
-                base_weight = -updated_weight[beg_idx:end_idx] - batch["log(Q(y|a,x))"][beg_idx:end_idx].cuda()
-                # for numerical stability, subtract the max value
-                # calculate the probability vector
-                base_weight = base_weight - base_weight.max()
-                base_weight_p = torch.exp(base_weight)
-                # noramliize the weight
-                base_weight_p = base_weight_p / base_weight_p.sum()
-                batch["base_weight"][beg_idx:end_idx] = base_weight_p
-                ws_weight = batch["ws"][beg_idx:end_idx].cuda()
-                batch["weight"][beg_idx:end_idx] = ws_weight - base_weight_p
-                # group size is the number of responses generated
-                loss_mbs = int(self.cfg.data.steerlm2_micro_batch_size)
+            avg_num_valid_tokens_in_ub = (
+                batch["loss_mask"]
+                .reshape(-1, response_size, seq_length)
+                .sum(axis=-1)
+                .float()
+                .mean(axis=-1, keepdim=True)
+                .repeat([1, response_size])
+            )
+            avg_num_valid_tokens_in_ub = avg_num_valid_tokens_in_ub / (num_of_microbatches / num_of_batches)
 
-                num_of_microbatches = gbs // loss_mbs
-                # to compute the loss for each of the group batch,
-                # loss L_i^{jb}  is the loss element for batch $b$, microbatch item $j$ and $i$ item in the microbatch
-                # the loss we need is:  sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} sum_{i=0}^{mbs} (L_i^{jb}) / num_batches ,
-                # while the fwd-bwd function is used to compute the loss of average microbatch loss
-                # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [sum_{i=0}^{mbs} (L_i^{jb})] / (num_of_microbatches)
-                # to makie it equivalent to the loss we care, we need to scale loss by num_of_microbatches / num_batches
-                # i.e. L = sum_{b=0}^{num_batches} sum_{j=0}^{num_of_microbatches} [(num_of_microbatches)/num_batches * sum_{i=0}^{mbs} (L_i^{jb})] / (num_batches)
-                # also if we want to average the loss weighted by the inverse of number of loss_mass=1 tokens in the batch
-                batch["avg_num_valid_tokens_in_ub"][beg_idx:end_idx] = batch["loss_mask"][beg_idx:end_idx].sum(
-                    axis=-1
-                ).float().mean().repeat(response_size) / (num_of_microbatches / num_of_batches)
-                # compute the kl divergence between group['ws'] and group['base_weight']
-                # for numerical stability, add a small value to the base_weight_p
-                base_weight_p = base_weight_p + 1e-8
-                ws_weight = ws_weight + 1e-8
-                distance = torch.sum(ws_weight * torch.log(ws_weight / base_weight_p))
-                distances.append(distance)
-            # get average distance
-            distance = torch.stack(distances).mean()
+            distance = ((ws_weight + 1e-8) * torch.log((ws_weight + 1e-8) / (base_weight_p + 1e-8))).sum(axis=1).mean()
             distance = average_losses_across_data_parallel_group([distance])
+
+            batch["base_weight"] = base_weight_p.reshape(-1)
+            batch["weight"] = weight.reshape(-1)
+            batch["avg_num_valid_tokens_in_ub"] = avg_num_valid_tokens_in_ub.reshape(-1).cuda()
+        return distance, seq_length, gbs
+
+    def get_loss_and_metrics(self, batch, forward_only):
+        """Take a data_iter which is an interator over the microbatches
+            and return loss as well as metrics
+        """
+        distance, seq_length, gbs = self.compute_baselilne_weights(batch)
+
+        fwd_bwd_function = get_forward_backward_func()
 
         set_sync_funcs(self, forward_only)
         dp_size = int(parallel_state.get_data_parallel_world_size())
         gbs = dp_size * gbs
-        mbs = int(self.cfg.data.steerlm2_micro_batch_size)
+        mbs = int(self.cfg.steerlm2.micro_batch_size)
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
         # modify the iterator_k_split to iterate over all the data
@@ -353,5 +267,5 @@ class GPTSteerLMModel(GPTSFTModel):
         torch.distributed.broadcast(loss_mean, get_last_rank())
         torch.distributed.broadcast(distance, get_last_rank())
         loss_value = loss_mean.detach().item()
-        metrics = {"loss": loss_value, "distance": distance.detach().item()}
+        metrics = {"loss": loss_value, "distance": distance.item()}
         return loss_value, metrics

@@ -17,6 +17,7 @@
 import os
 
 import numpy as np
+import scipy
 import torch
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
@@ -470,49 +471,11 @@ class SteerLM2Dataset(GPTSFTChatDataset):
             masks = [0] * num_prompt_tokens + [1] * (len(token_ids) - num_prompt_tokens)
             logqs.append(item["log(Q(y|a,x))"])
             logw = item["log(P(a|x,y))"] + item["log(P(y|x))"] - item["log(Q(y|a,x))"]
-            # for numerical stability
             logws.append(logw)
-            # logw = logw - logw.max()
-            # w = np.exp(logw)
-            # ws.append(w)
             batched_token_ids.append(token_ids)
             batched_masks.append(masks)
         logws = np.array(logws)
-        # for numerical stability
-        logws = logws - logws.max()
-        ws = np.exp(logws)
-        # noramlized weights
-        ws = ws / ws.sum()
-
-        # labels = [x[1:] for x in batched_token_ids]
-        # loss_mask = [x[1:] for x in batched_masks]
-
-        # max_length = max([len(x) for x in input_ids])
-        # if max_length > self.max_seq_length:
-        #     # truncate the sequences if it is longer than max_seq_length
-        #     input_ids = [x[: self.max_seq_length] for x in input_ids]
-        #     labels = [x[: self.max_seq_length] for x in labels]
-        #     loss_mask = [x[: self.max_seq_length] for x in loss_mask]
-
-        # # increase max length to nearest multiple of 4 or 8
-        # if self.pad_to_max_length:
-        #     max_length = self.max_seq_length
-        # else:
-        #     max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, 8))
-        # assert max_length <= self.max_seq_length
-
-        # attention_mask = [self._create_attention_mask(max_length) for _ in range(batch_size)]
-        # attention_mask = torch.stack(attention_mask)
-        # position_ids = [list(range(max_length)) for _ in range(batch_size)]
-        # position_ids = torch.LongTensor(position_ids)
-        # input_ids = torch.LongTensor(
-        #     self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
-        # )
-        # labels = torch.LongTensor(self._collate_item(labels, max_length=max_length, pad_id=self.tokenizer.eos_id))
-        # loss_mask = torch.LongTensor(self._collate_item(loss_mask, max_length=max_length, pad_id=0))
-        # ws = torch.FloatTensor(ws)
-        # logqs = torch.FloatTensor(logqs)
-
+        ws = scipy.special.softmax(logws)
         processed_batch = {
             "input_ids": batched_token_ids,
             "mask": batched_masks,

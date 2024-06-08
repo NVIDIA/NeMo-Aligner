@@ -123,6 +123,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         if cfg.model.get("pipeline_model_parallel_size", 1) > 0:
             gpt_cfg.pipeline_model_parallel_size = cfg.model.get("pipeline_model_parallel_size", 1)
         gpt_cfg.pipeline_model_parallel_split_rank = cfg.model.get("pipeline_model_parallel_split_rank", 0)
+        gpt_cfg.steerlm2 = cfg.model.steerlm2
 
         if cfg.model.data.get("chat", False):
             # chat model, overwrite the prompt template
