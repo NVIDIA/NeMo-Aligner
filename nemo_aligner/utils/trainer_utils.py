@@ -14,10 +14,10 @@
 
 from typing import Union
 
+from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingRandomSampler
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingRandomBatchSampler,
 )
-from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
 
 
 def compute_num_steps_per_epoch(

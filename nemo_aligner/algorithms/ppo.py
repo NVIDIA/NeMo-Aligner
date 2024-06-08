@@ -30,6 +30,7 @@ from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
+from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingRandomSampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo.utils import logging

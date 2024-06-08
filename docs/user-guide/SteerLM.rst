@@ -126,6 +126,7 @@ Note that you would need to set up multi-node training in your cluster env, depe
          pretrained_checkpoint.restore_from_path=/models/llama13b/llama13b.nemo \
          "model.data.data_prefix={train: ["data/merge_train_reg.jsonl"], validation: ["data/merge_val_reg.jsonl"], test: ["data/merge_val_reg.jsonl"]}" \
          exp_manager.explicit_log_dir=/results/reward_model_13b \
+         trainer.rm.save_interval=100 \
          trainer.rm.val_check_interval=10 \
          exp_manager.create_wandb_logger=True \
          exp_manager.wandb_logger_kwargs.project=steerlm \

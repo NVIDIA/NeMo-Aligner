@@ -1,7 +1,13 @@
 # CUDA 12.3
 FROM nvcr.io/nvidia/pytorch:24.02-py3
+FROM nvcr.io/nvidia/pytorch:24.02-py3
 
 ### config tags
+ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
+ARG TE_TAG=a51ff542dcb1f605aa54f9b0e1aaadb132acd53d
+ARG MLM_TAG=core_r0.7.0
+ARG NEMO_TAG=r2.0.0rc0
+ARG PYTRITON_VERSION=0.5.5
 ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
 ARG TE_TAG=bfe21c3d68b0a9951e5716fb520045db53419c5e
 ARG MLM_TAG=fbb375d4b5e88ce52f5f7125053068caff47f93f
