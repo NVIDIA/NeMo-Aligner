@@ -175,12 +175,11 @@ class GPTSteerLMModel(GPTSFTModel):
         response_size = batch["num_responses"][0].item()
         gbs, seq_length = batch["tokens"].shape
         mbs = int(self.cfg.steerlm2.forward_micro_batch_size)
-        dp_size = 1
-        configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
-
+        assert gbs % mbs == 0, "Global batch size must be divisible by micro batch size"
+        num_of_microbatches = gbs // mbs
         group_batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
 
-        data_iter = get_iterator_k_split(group_batch, get_num_microbatches())
+        data_iter = get_iterator_k_split(group_batch, num_of_microbatches)
 
         fwd_bwd_function = get_forward_backward_func()
 
@@ -190,9 +189,9 @@ class GPTSteerLMModel(GPTSFTModel):
             forward_step_func=fwd_loss_fn,
             data_iterator=data_iter,
             model=self.model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=num_of_microbatches,
             forward_only=True,
-            micro_batch_size=get_micro_batch_size(),
+            micro_batch_size=mbs,
             seq_length=seq_length,
         )
         distance = None
@@ -236,13 +235,12 @@ class GPTSteerLMModel(GPTSFTModel):
         fwd_bwd_function = get_forward_backward_func()
 
         set_sync_funcs(self, forward_only)
-        dp_size = int(parallel_state.get_data_parallel_world_size())
-        gbs = dp_size * gbs
         mbs = int(self.cfg.steerlm2.micro_batch_size)
-        configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
+        assert gbs % mbs == 0, "Global batch size must be divisible by micro batch size"
+        number_of_microbatches = gbs // mbs
 
         # modify the iterator_k_split to iterate over all the data
-        data_iter = get_iterator_k_split(batch, get_num_microbatches())
+        data_iter = get_iterator_k_split(batch, number_of_microbatches)
 
         fwd_loss_fn = self.get_forward_output_and_loss_func(forward_only)
 
@@ -250,9 +248,9 @@ class GPTSteerLMModel(GPTSFTModel):
             forward_step_func=fwd_loss_fn,
             data_iterator=data_iter,
             model=self.model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=number_of_microbatches,
             forward_only=forward_only,
-            micro_batch_size=get_micro_batch_size(),
+            micro_batch_size=mbs,
             seq_length=seq_length,
         )
         torch.cuda.synchronize()
