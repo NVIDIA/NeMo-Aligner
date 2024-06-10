@@ -19,7 +19,7 @@ from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 from copy import deepcopy
 
-from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
+# from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
@@ -45,8 +45,41 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm 
     MegatronLatentDiffusion,
 )
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion_engine import MegatronDiffusionEngine, DiffusionEngine
+from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
+from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy, NLPFSDPStrategy
 
 mp.set_start_method("spawn", force=True)
+
+class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
+    """Builder for SD model Trainer with overrides."""
+    def _training_strategy(self) -> NLPDDPStrategy:
+        """
+        Returns a DDP or a FSDP strategy passed to Trainer.strategy.  Copied from `sd_xl_train.py`
+        """
+        if self.cfg.model.get('fsdp', False):
+            logging.info("FSDP.")
+            assert (
+                not self.cfg.model.optim.get('name') == 'distributed_fused_adam'
+            ), 'Distributed optimizer cannot be used with FSDP.'
+            if self.cfg.model.get('megatron_amp_O2', False):
+                logging.info('Torch FSDP is not compatible with O2 precision recipe. Setting O2 `False`.')
+                self.cfg.model.megatron_amp_O2 = False
+            return NLPFSDPStrategy(
+                limit_all_gathers=self.cfg.model.get('fsdp_limit_all_gathers', True),
+                sharding_strategy=self.cfg.model.get('fsdp_sharding_strategy', 'full'),
+                cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),
+                grad_reduce_dtype=self.cfg.model.get('fsdp_grad_reduce_dtype', 32),
+                precision=self.cfg.trainer.precision,
+                use_orig_params=self.cfg.model.inductor,
+                set_buffer_dtype=self.cfg.get('fsdp_set_buffer_dtype', None),
+            )
+
+        return NLPDDPStrategy(
+            no_ddp_communication_hook=(not self.cfg.model.get('ddp_overlap')),
+            gradient_as_bucket_view=self.cfg.model.gradient_as_bucket_view,
+            find_unused_parameters=False,
+        )
+
 
 def resolve_and_create_trainer(cfg, pop_trainer_key):
     """resolve the cfg, remove the key before constructing the PTL trainer
