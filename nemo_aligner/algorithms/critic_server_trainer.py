@@ -264,9 +264,7 @@ class CriticServerTrainer:
         tokens = broadcast_2d_tensor(tokens, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank]
         lengths = broadcast_2d_tensor(lengths, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank].squeeze(-1)
 
-        breakpoint()
         outputs = self.infer_fn(inputs=(tokens, lengths))
-        breakpoint()
 
         if self.combine_rm_and_critic_server:
             rewards, values = outputs
