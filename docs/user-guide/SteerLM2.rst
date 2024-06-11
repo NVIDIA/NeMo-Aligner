@@ -1,4 +1,4 @@
-.. include:: /content/nemo.rsts
+.. .. include:: /content/nemo.rsts
 
 .. _model-aligner-steerlm2:
 
@@ -42,7 +42,7 @@ where :math:`w'_i` and :math:`b'_i` are normalized importance weights targeting 
 
 **Iterative Training (optional)**: SteerLM 2.0 can be conducted in iterations (e.g., :math:`n=2`) using the optimized policy after each iteration to sample responses and train an improved policy. In each iteration, multiple diverse responses are sampled from the current model and used for the next round of training.
 
-By iteratively training on this loss, SteerLM 2.0 can learn to generate responses $y$ that better conform to specified attribute values $a$ for a given prompt $x$.
+By iteratively training on this loss, SteerLM 2.0 can learn to generate responses :math:`y` that better conform to specified attribute values :math:`a` for a given prompt :math:`x`.
 
 Train a SteerLM 2.0 Model
 ###########################
@@ -62,11 +62,11 @@ To facilitate this training process, a specific data format is proposed:
 .. code-block:: json
 
    {
-   "system": "s",
+   "system": "system prompt",
    "prompt_turns": [
-      {"from": "User", "value": "x1"},
-      {"from": "Assistant", "value": "x2"},
-      {"from": "User", "value": "x3"}
+      {"from": "User", "value": "x_user_turn_1"},
+      {"from": "Assistant", "value": "x_assistant_turn_1"},
+      {"from": "User", "value": "x_user_turn_2"}
    ],
    "label": "a",
    "responses": [
