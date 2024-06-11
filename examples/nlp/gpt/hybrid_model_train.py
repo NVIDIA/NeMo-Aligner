@@ -263,11 +263,6 @@ def split_paths(data_paths, train_ds, val_ds, tokenizer):
 
     print("#### TRAIN_PATHS", len(train_paths))
     print("#### VALIDATION PATHS", len(validation_paths))
-
-    for i in range(100):
-        k, v = train_paths.popitem()
-        validation_paths[k] = v
-
     train_paths = train_paths | other_paths
     return train_paths, validation_paths
 
@@ -398,28 +393,28 @@ def main(cfg) -> None:
 
     assert cfg.trainer.deep_search.max_epochs > 0
 
-    val_policy_dataloader = build_dataloader(
-        cfg=cfg,
-        dataset=DatasetLoader(val_policy_data_paths),
-        consumed_samples=consumed_samples,
-        mbs=cfg.model.micro_batch_size,
-        gbs=cfg.model.global_batch_size,
-        load_gbs=True,
-        collate_fn=partial(mcts_collate_fn, eos_id),
-        shuffle=True,
-    )
+# val_policy_dataloader = build_dataloader(
+# cfg=cfg,
+# dataset=DatasetLoader(val_policy_data_paths),
+# consumed_samples=consumed_samples,
+# mbs=cfg.model.micro_batch_size,
+# gbs=cfg.model.global_batch_size,
+# load_gbs=True,
+# collate_fn=partial(mcts_collate_fn, eos_id),
+# shuffle=True,
+# )
 
     # TODO(geshen): can have different mbs
-    val_value_dataloader = build_dataloader(
-        cfg=cfg,
-        dataset=DatasetLoader(val_value_data_paths),
-        consumed_samples=consumed_samples_values,
-        mbs=cfg.model.micro_batch_size,
-        gbs=cfg.model.critic_global_batch_size,
-        load_gbs=True,
-        collate_fn=partial(mcts_value_collate_fn, eos_id),
-        shuffle=True,
-    )
+# val_value_dataloader = build_dataloader(
+# cfg=cfg,
+# dataset=DatasetLoader(val_value_data_paths),
+# consumed_samples=consumed_samples_values,
+# mbs=cfg.model.micro_batch_size,
+# gbs=cfg.model.critic_global_batch_size,
+# load_gbs=True,
+# collate_fn=partial(mcts_value_collate_fn, eos_id),
+# shuffle=True,
+# )
 
     # on the first time we ever save a checkpoint
     # these steps will be set correctly and subsequent resumes
@@ -451,8 +446,8 @@ def main(cfg) -> None:
         scheduler=scheduler,
         train_policy_dataloader=train_policy_dataloader,
         train_value_dataloader=train_value_dataloader,
-        val_policy_dataloader=val_policy_dataloader,
-        val_value_dataloader=val_value_dataloader,
+        val_policy_dataloader=None,
+        val_value_dataloader=None,
         val_dataloader_builder_func=val_dataloader_builder_func,
         train_dataloader_builder_func=train_dataloader_builder_func,
         feedback=feedback,

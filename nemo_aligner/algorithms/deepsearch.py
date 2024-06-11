@@ -421,8 +421,8 @@ class DeepSearchTrainer:
                     train_eval_metrics = self.run_train_evaluation()
                     step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
-                    loss_eval_metrics = self.run_loss_val()
-                    step_metrics.update({f"search_eval_{k}": v for k, v in loss_eval_metrics.items()})
+# loss_eval_metrics = self.run_loss_val()
+# step_metrics.update({f"search_eval_{k}": v for k, v in loss_eval_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch
