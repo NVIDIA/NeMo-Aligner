@@ -269,7 +269,10 @@ class CriticServerTrainer:
         if self.combine_rm_and_critic_server:
             rewards, values = outputs
             rewards = (
-                rebalance_nd_tensor(rewards, group=parallel_state.get_data_parallel_group()).squeeze().cpu().numpy()
+                rebalance_nd_tensor(rewards, group=parallel_state.get_data_parallel_group())
+                .squeeze(dim=(1,))
+                .cpu()
+                .numpy()
             )
 
         else:
