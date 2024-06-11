@@ -12,46 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from importlib.metadata import version
-from itertools import chain
-from typing import List, Optional, Tuple, Union
 
-import hydra
 import torch
-from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from omegaconf.dictconfig import DictConfig
-from pkg_resources import packaging
-from pytorch_lightning.trainer.trainer import Trainer
-from torch.distributed import barrier
+from megatron.core.utils import divide
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
 )
-from nemo.collections.nlp.modules.common.text_generation_strategy import TextGenerationStrategy
-from nemo.collections.nlp.modules.common.text_generation_utils import (
-    get_default_length_params,
-    get_default_sampling_params,
-)
-from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
-from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
-from nemo.utils import logging
-from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel
-from nemo_aligner.utils.train_utils import (
-    finish_validation_step,
-    grad_reductions,
-    prepare_for_training_step,
-    prepare_for_validation_step,
-    set_eval,
-    set_sync_funcs,
-    set_train,
-)
-from nemo_aligner.utils.utils import configure_batch_sizes
+from nemo_aligner.utils.train_utils import set_sync_funcs
 
 
 def get_batch(data_iterator):
@@ -175,8 +148,7 @@ class GPTSteerLMModel(GPTSFTModel):
         response_size = batch["num_responses"][0].item()
         gbs, seq_length = batch["tokens"].shape
         mbs = int(self.cfg.steerlm2.forward_micro_batch_size)
-        assert gbs % mbs == 0, "Global batch size must be divisible by micro batch size"
-        num_of_microbatches = gbs // mbs
+        num_of_microbatches = divide(gbs, mbs)
         group_batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
 
         data_iter = get_iterator_k_split(group_batch, num_of_microbatches)
@@ -236,8 +208,7 @@ class GPTSteerLMModel(GPTSFTModel):
 
         set_sync_funcs(self, forward_only)
         mbs = int(self.cfg.steerlm2.micro_batch_size)
-        assert gbs % mbs == 0, "Global batch size must be divisible by micro batch size"
-        number_of_microbatches = gbs // mbs
+        number_of_microbatches = divide(gbs, mbs)
 
         # modify the iterator_k_split to iterate over all the data
         data_iter = get_iterator_k_split(batch, number_of_microbatches)
@@ -253,7 +224,6 @@ class GPTSteerLMModel(GPTSFTModel):
             micro_batch_size=mbs,
             seq_length=seq_length,
         )
-        torch.cuda.synchronize()
 
         # only the last stages of the pipeline return losses
         if parallel_state.is_pipeline_last_stage():
