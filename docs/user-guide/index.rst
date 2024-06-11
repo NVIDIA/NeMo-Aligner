@@ -2,6 +2,18 @@
 
 .. include:: ModelAlignment.rsts
 
+.. toctree::
+   :maxdepth: 4
+   :titlesonly:
+
+   SFT.rst
+   RLHF.rst
+   SteerLM.rst
+   SteerLM2.rst
+   DPO.rst
+   SPIN.rst
+   DRaFTP.rst
+
 :ref:`Prerequisite Obtaining a Pre-Trained Model <prerequisite>`
    This section provides instructions on how to download pre-trained LLMs in .nemo format. The following section will use These base LLMs for further fine-tuning and alignment. 
 
@@ -22,14 +34,3 @@
 
 :ref:`Fine-tuning Stable Diffusion with DRaFT+ <model-aligner-draftp>`
    DRaFT+ is an algorithm for fine-tuning text-to-image generative diffusion models by directly backpropagating through a reward model which alleviates the mode collapse issues from DRaFT algorithm and improves diversity through regularization. 
-
-.. toctree::
-   :maxdepth: 4
-   :titlesonly:
-
-   SFT.rst
-   RLHF.rst
-   SteerLM.rst
-   DPO.rst
-   SPIN.rst
-   DRaFTP.rst
