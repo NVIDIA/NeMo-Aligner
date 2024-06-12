@@ -66,11 +66,16 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         super().__init__(cfg, trainer=trainer)
         # init_cfg = deepcopy(cfg)
         # init_cfg.peft.peft_scheme = "none"
-        # self.init_model = DiffusionEngine(init_cfg, None).to(torch.cuda.current_device()).eval()
-        # for p in self.init_model.parameters():
-        #     p.requires_grad = False
-        # self.init_model.train(mode=False)
+        ## initialize the base model
+        self.peft_scheme = cfg.peft.peft_scheme
         self.init_model = None
+        if cfg.peft.peft_scheme == 'none':
+            logging.info("Full finetuning, initializing a copy of the base model.")
+            self.init_model = DiffusionEngine(deepcopy(cfg), None).to(torch.cuda.current_device()).eval()
+            for p in self.init_model.parameters():
+                p.requires_grad = False
+            self.init_model.train(mode=False)
+
         self.cfg = cfg
         self.with_distributed_adam = self.with_distributed_adam
         self.model.first_stage_model.requires_grad_(False)
@@ -253,8 +258,10 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             ).to(torch.cuda.current_device())
 
         image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(latents+0, prompts, self.model)
-        with adapter_control(self.model):
-            image_init, reward_init, _ = self.generate_log_images(latents+0, prompts, self.model)
+        # run visualization with base model too
+        base_model = self.init_model or self.model
+        with adapter_control(base_model):
+            image_init, reward_init, _ = self.generate_log_images(latents+0, prompts, base_model)
 
         images = []
         captions = []
@@ -294,6 +301,8 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             # get denoisers
             denoiser_draft = lambda input, sigma, c: self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
             # denoiser_init  = lambda input, sigma, c: self.init_model.denoiser(self.init_model.model, input, sigma, c, **additional_model_inputs)
+            base_model = self.init_model or self.model
+            denoiser_base = lambda input, sigma, c: self.init_model.denoiser(base_model.model, input, sigma, c, **additional_model_inputs)
             # def denoiser_init(input, sigma, c):
             #     with adapter_control(self.model.model):
             #         denoised = self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
@@ -321,9 +330,9 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                     list_eps_draft.append(eps_draft)
                     ##### TODO: uncomment this for base model
                     with torch.no_grad():
-                        with adapter_control(self.model):
-                            _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_draft, x, cond, uc, gamma, return_noise=True)
-                        # _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_init, x, cond, uc, gamma, return_noise=True)
+                        base_model = self.init_model or self.model
+                        with adapter_control(base_model):
+                            _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_base, x, cond, uc, gamma, return_noise=True)
                         list_eps_init.append(eps_init)
                     # list_eps_init.append(eps_draft.detach())
                     # set next \bar{x}

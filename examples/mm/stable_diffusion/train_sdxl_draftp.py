@@ -55,7 +55,7 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoe
 from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model import Encoder, Decoder, ResnetBlock, AttnBlock
 from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel
 from nemo.collections.multimodal.modules.stable_diffusion.encoders.modules import FrozenOpenCLIPEmbedder, FrozenOpenCLIPEmbedder2, FrozenCLIPEmbedder
-# NeMo/nemo/collections/multimodal/modules/stable_diffusion/diffusionmodules/model.py
+from nemo.collections.nlp.modules.common.megatron.adapters.parallel_adapters import ParallelLinearAdapter
 
 # checkpointing
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (checkpoint_wrapper, CheckpointImpl, apply_activation_checkpointing)
@@ -76,13 +76,16 @@ class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
             if self.cfg.model.get('megatron_amp_O2', False):
                 logging.info('Torch FSDP is not compatible with O2 precision recipe. Setting O2 `False`.')
                 self.cfg.model.megatron_amp_O2 = False
+            
+            # Check if its a full-finetuning or PEFT
             return NLPFSDPStrategy(
                 limit_all_gathers=self.cfg.model.get('fsdp_limit_all_gathers', True),
                 sharding_strategy=self.cfg.model.get('fsdp_sharding_strategy', 'full'),
                 cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),  # offload on is not supported
                 grad_reduce_dtype=self.cfg.model.get('fsdp_grad_reduce_dtype', 32),
                 precision=self.cfg.trainer.precision,
-                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,MegatronCLIPRewardModel,FrozenOpenCLIPEmbedder,FrozenOpenCLIPEmbedder2,FrozenCLIPEmbedder}, #Encoder,AutoencoderKLInferenceWrapper},
+                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,MegatronCLIPRewardModel,\
+                                        FrozenOpenCLIPEmbedder,FrozenOpenCLIPEmbedder2,FrozenCLIPEmbedder,ParallelLinearAdapter}, 
                 use_orig_params=False, #self.cfg.model.inductor,
                 set_buffer_dtype=self.cfg.get('fsdp_set_buffer_dtype', None),
             )
@@ -175,7 +178,6 @@ def main(cfg) -> None:
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
-
     
     if cfg.model.get('activation_checkpointing', False):
         # call activation checkpointing here
