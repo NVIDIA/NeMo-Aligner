@@ -14,7 +14,7 @@ ARG MLM_TAG=fbb375d4b5e88ce52f5f7125053068caff47f93f
 ARG NEMO_TAG=1ff3a061da9751e4d645c8de66c0dfd27bd5d119
 ARG PYTRITON_VERSION=0.5.5
 ARG PROTOBUF_VERSION=4.24.4
-ARG ALIGNER_COMMIT=geshen/debug_critic
+ARG ALIGNER_COMMIT=main
 
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
