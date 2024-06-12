@@ -47,8 +47,6 @@ trainer:
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
       max_input_tokens: ${multiply:${trainer.ppo.trt_llm.max_input_len}, ${model.ppo.rollout_micro_batch_size}}
 
-      # The model type TRTLLM will build, supported models are listed at:
-      # https://github.com/NVIDIA/TensorRT-LLM/blob/v0.9.0/tensorrt_llm/models/__init__.py#L75
       model_type: LLaMAForCausalLM 
 
       # Unload and reload the TRTLLM engine before and after the training stage 
@@ -60,8 +58,6 @@ trainer:
       enable: False
       port: 12345
       host: null # if not provided, it will be automatically set
-
-    log_dir: ${exp_manager.explicit_log_dir}
 
   # no need to change these
   logger: False # logger provided by exp_manager
