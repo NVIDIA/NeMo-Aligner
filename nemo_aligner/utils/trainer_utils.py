@@ -21,12 +21,23 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 
 
 def compute_num_steps_per_epoch(
-    sampler: Union[MegatronPretrainingRandomSampler, MegatronPretrainingRandomBatchSampler]
+    sampler: Union[MegatronPretrainingRandomSampler, MegatronPretrainingRandomBatchSampler],
+    limit_train_batches: Union[int, float] = 1.0,
 ):
     if not sampler.drop_last:
         raise NotImplementedError("`drop_last=False` is not currently supported")
-
-    return sampler.total_samples // sampler.global_batch_size
+    
+    num_steps_per_epoch = sampler.total_samples // sampler.global_batch_size
+    
+    if limit_train_batches is None:
+        limit_train_batches = 1.0
+    
+    if limit_train_batches >= 0 and isinstance(limit_train_batches, float):
+        return min(num_steps_per_epoch, int(sampler.total_samples * limit_train_batches) // sampler.global_batch_size)
+    elif limit_train_batches >= 0 and isinstance(limit_train_batches, int):
+        return min(num_steps_per_epoch, limit_train_batches)
+    else:
+        return num_steps_per_epoch
 
 
 def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, float, None]):
