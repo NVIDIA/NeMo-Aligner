@@ -14,6 +14,7 @@
 
 import itertools
 import json
+import os
 import threading
 import time
 from collections import UserDict, defaultdict
@@ -23,6 +24,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import Callable
 
+import jsonlines
 import pandas as pd
 import requests
 import torch
@@ -405,6 +407,8 @@ class PPOTrainer:
             )
             global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()
 
+        padded_rollout_sequence_length = global_rollout_batch["response_tokens"].size(-1)
+
         # the chunking must be outside of the TRT-LLM context because we do logprob calculation in nemo
         balanced_local_batch = global_rollout_batch.chunk(
             parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
@@ -436,7 +440,7 @@ class PPOTrainer:
             unbalanced_rm_value_batch = PPORolloutBatch.from_rollout_batches(
                 rm_value_rollout_batches,
                 eos_id=self.model.tokenizer.eos_id,
-                rollout_batch_seq_length=self.cfg.rollout_batch_seq_length,
+                rollout_batch_seq_length=padded_rollout_sequence_length,
             )
             global_rm_value_batch = unbalanced_rm_value_batch.gather_and_balance_globally()
 
@@ -457,6 +461,28 @@ class PPOTrainer:
         response_lengths = rollout_batch["response_lengths"]
         response_tokens = rollout_batch["response_tokens"]
         rewards = rollout_batch["rewards"]
+
+        if parallel_state.get_data_parallel_src_rank() == torch.distributed.get_rank():
+            file_name = os.path.join(
+                self.cfg.log_dir,
+                "rank_{}_dp_rank{}_step_{}_time_{}.jsonl".format(
+                    torch.distributed.get_rank(), parallel_state.get_data_parallel_rank(), self.step, time.time()
+                ),
+            )
+
+            to_write = [
+                {
+                    "reward": r.item(),
+                    "prompt": self.model.tokenizer.ids_to_text(toks[:p_length].tolist()),
+                    "response": self.model.tokenizer.ids_to_text(toks[p_length:r_length].tolist()),
+                }
+                for (r, p_length, r_length, toks) in zip(
+                    rewards, prompt_lengths, response_lengths, response_tokens, strict=True
+                )
+            ]
+
+            with jsonlines.open(file_name, mode="w") as writer:
+                writer.write_all(to_write)
 
         reward = rewards[0]
         prompt_length = prompt_lengths[0]
@@ -595,36 +621,39 @@ class PPOTrainer:
                 step_metrics = {}
                 timing_metrics = {}
 
-                self.timer.start("rollout_time")
-                ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
+                critic_train_loop_amount = self.cfg.critic_warmup_steps if self.step == 0 else 1
 
-                self.timer.stop("rollout_time")
-                timing_metrics["rollout_time"] = self.timer.get("rollout_time")
+                for _ in range(critic_train_loop_amount):
+                    self.timer.start("rollout_time")
+                    ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
 
-                # send critic train
-                clear_memory()
-                start_time = time.time()
-                self.rm_critic.train(ppo_rollout_data)
-                end_time = time.time()
+                    self.timer.stop("rollout_time")
+                    timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
-                timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
-                timing_metrics.update(timer_metrics)
+                    # send critic train
+                    clear_memory()
+                    start_time = time.time()
+                    self.rm_critic.train(ppo_rollout_data)
+                    end_time = time.time()
 
-                # logging
-                table_metrics = metrics.pop("table")
-                self.train_df.loc[len(self.train_df)] = [
-                    self.step,
-                    table_metrics["prompt"],
-                    table_metrics["response"],
-                    table_metrics["reward"],
-                ]
-                metrics["epoch"] = self.epoch + 1
-                self.logger.log_metrics(
-                    metrics, step=self.step, prefix="train_rollouts/",
-                )
-                self.logger.log_table(
-                    key="table/train_rollouts", dataframe=self.train_df, step=self.step,
-                )
+                    timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
+                    timing_metrics.update(timer_metrics)
+
+                    # logging
+                    table_metrics = metrics.pop("table")
+                    self.train_df.loc[len(self.train_df)] = [
+                        self.step,
+                        table_metrics["prompt"],
+                        table_metrics["response"],
+                        table_metrics["reward"],
+                    ]
+                    metrics["epoch"] = self.epoch + 1
+                    self.logger.log_metrics(
+                        metrics, step=self.step, prefix="train_rollouts/",
+                    )
+                    self.logger.log_table(
+                        key="table/train_rollouts", dataframe=self.train_df, step=self.step,
+                    )
 
                 rollout_size = ppo_rollout_data["response_tokens"].size(0)
                 rollout_dataloader_iter = get_iterator_k_split(
