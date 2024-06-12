@@ -300,9 +300,8 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
 
             # get denoisers
             denoiser_draft = lambda input, sigma, c: self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
-            # denoiser_init  = lambda input, sigma, c: self.init_model.denoiser(self.init_model.model, input, sigma, c, **additional_model_inputs)
             base_model = self.init_model or self.model
-            denoiser_base = lambda input, sigma, c: self.init_model.denoiser(base_model.model, input, sigma, c, **additional_model_inputs)
+            denoiser_base = lambda input, sigma, c: base_model.denoiser(base_model.model, input, sigma, c, **additional_model_inputs)
             # def denoiser_init(input, sigma, c):
             #     with adapter_control(self.model.model):
             #         denoised = self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
