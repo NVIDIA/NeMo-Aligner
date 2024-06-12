@@ -11,8 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-import time
 from contextlib import nullcontext
 from enum import Enum
 
@@ -48,8 +46,6 @@ class StateDictState(Enum):
 class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
-
-        self.timestamp = time.time()
 
         # must be populated by the examples script
         self.rm_state_dict_cpu = None
@@ -208,11 +204,6 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         self.distributed_adam_offload_manager = None
 
     def infer_rm_critic(self, *args, **kwargs):
-
-        tic = time.time()
-        print(f"infer_rm_critic at {tic}, s since last: {tic-self.timestamp}")
-        self.timestamp = tic
-
         call_order = (self._infer_rm, self._infer_critic)
 
         original_state = self.loaded_state_dict
@@ -224,10 +215,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
         outputs = []
         for fn in call_order:
-            tic = time.time()
             output = fn(*args, **kwargs)
-            toc = time.time()
-            print(f"infer call took {toc-tic}")
             outputs.append(output)
 
         if original_state == StateDictState.CRITIC:
@@ -247,37 +235,24 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def _load_critic(self):
         if self.loaded_state_dict == StateDictState.REWARD:
-            start_time = time.time()
             self.load_state_dict(self.critic_state_dict_cpu)
-            print("### DONE LOADING CRITIC", time.time() - start_time)
 
             self.set_output_sequence_flag(True)
             self.loaded_state_dict = StateDictState.CRITIC
 
     def _load_rm(self):
         if self.loaded_state_dict == StateDictState.CRITIC:
-            start_time = time.time()
             self.load_state_dict(self.rm_state_dict_cpu)
-            print("### DONE LOADING RM", time.time() - start_time)
 
             self.set_output_sequence_flag(False)
             self.loaded_state_dict = StateDictState.REWARD
 
     def _infer_critic(self, *args, **kwargs):
-
-        tic = time.time()
         self._load_critic()
-        toc = time.time()
-        print(f"    _load_critic {toc-tic}")
         return self.infer(*args, **kwargs)
 
     def _infer_rm(self, *args, **kwargs):
-
-        tic = time.time()
         self._load_rm()
-        toc = time.time()
-        print(f"    _load_rm {toc-tic}")
-
         return self.infer(*args, **kwargs)
 
     def finish_training(self):
