@@ -62,8 +62,6 @@ class CriticServerTrainer:
         self.step = 0
         self.pad_sequence_length_to_multiple = cfg.pad_sequence_length_to_multiple
 
-        self.timestamp = time.time()
-
         # server parameters
         self.combine_rm_and_critic_server = cfg.combine_rm_and_critic_server
         self.infer_fn = model.infer_rm_critic if self.combine_rm_and_critic_server else model.infer
@@ -105,12 +103,6 @@ class CriticServerTrainer:
         choice = ServerSignal.FORWARD.cuda()
         torch.distributed.broadcast(choice, 0)
 
-        print(
-            "### RUNNING INFERENCE ON BATCH SIZE on step: {} batch size {}".format(
-                self.step, inputs["tokens"].shape[0]
-            )
-        )
-        start_time = time.time()
         inputs, extra, prepad_sequence_length = process_inference_request(
             inputs,
             pad_to=self.forward_mbs * parallel_state.get_data_parallel_world_size(),
@@ -124,9 +116,6 @@ class CriticServerTrainer:
             )
         else:
             values = values[:, :prepad_sequence_length]
-
-        end_time = time.time()
-        print("#### INFER TOOK", end_time - start_time)
 
         output = {
             "values": values,
@@ -250,7 +239,6 @@ class CriticServerTrainer:
     def run_inference(self, inputs=None, extra=None):
         """only rank 0 has valid data
         """
-        print(f"----start infer at {time.time()}")
         self.model.prepare_for_inference()
         tokens, lengths = None, None
         dp_rank = parallel_state.get_data_parallel_rank()
@@ -286,8 +274,6 @@ class CriticServerTrainer:
         return rewards, values
 
     def run_training(self, tokens=None, returns=None, prev_values=None, mask=None):
-        print(f"-----starting training {time.time()}--------")
-
         """assume that the batch is already padded
         """
         # broadcast to every rank and then split out the tensor after
@@ -352,8 +338,6 @@ class CriticServerTrainer:
         self.model.finish_training()
         torch.cuda.synchronize()
         torch.distributed.barrier()
-        print(f"-----finishing training {time.time()}--------")
-
         return loss_mean
 
     def save(self, extra_candidates=None, is_train_end=False, save_top_only=False):
