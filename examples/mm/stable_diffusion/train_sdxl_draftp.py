@@ -18,6 +18,7 @@ from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 from copy import deepcopy
+import os
 
 # from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -47,6 +48,7 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm 
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion_engine import MegatronDiffusionEngine, DiffusionEngine
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy, NLPFSDPStrategy
+from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel import UNetModel, ResBlock, SpatialTransformer, TimestepEmbedSequential
 
 mp.set_start_method("spawn", force=True)
 
@@ -67,10 +69,11 @@ class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
             return NLPFSDPStrategy(
                 limit_all_gathers=self.cfg.model.get('fsdp_limit_all_gathers', True),
                 sharding_strategy=self.cfg.model.get('fsdp_sharding_strategy', 'full'),
-                cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),
+                cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),  # offload on is not supported
                 grad_reduce_dtype=self.cfg.model.get('fsdp_grad_reduce_dtype', 32),
                 precision=self.cfg.trainer.precision,
-                use_orig_params=self.cfg.model.inductor,
+                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential},
+                use_orig_params=False, #self.cfg.model.inductor,
                 set_buffer_dtype=self.cfg.get('fsdp_set_buffer_dtype', None),
             )
 
@@ -104,6 +107,10 @@ def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
     wandb_login()
+
+    # set cuda device for each process
+    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    torch.cuda.set_device(local_rank)
 
     # TODO: has to be set true for PyTorch 1.12 and later.
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -162,7 +169,7 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
-    reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size)
+    reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size).to(torch.cuda.current_device())
     ptl_model.reward_model = reward_model
 
     # initialize base model
@@ -188,7 +195,7 @@ def main(cfg) -> None:
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
-        run_init_validation=True,
+        run_init_validation=False,
     )
 
     if custom_trainer_state_dict is not None:
@@ -199,4 +206,7 @@ def main(cfg) -> None:
 
 if __name__ == "__main__":
     print("Running main")
+    logging.setLevel(logging.DEBUG)
+    import logging as _logging
+    _logging.getLogger().setLevel(_logging.DEBUG)
     main()
