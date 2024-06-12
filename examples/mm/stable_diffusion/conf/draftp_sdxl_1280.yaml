@@ -72,8 +72,8 @@ model:
   sampling:
     base:
       sampler: EulerEDMSampler
-      width: 1536
-      height: 1536
+      width: 1280
+      height: 1280
       steps: 40
       discretization: "LegacyDDPMDiscretization"
       guider: "VanillaCFG"
@@ -89,8 +89,8 @@ model:
       s_noise: 1.0
       eta: 1.0
       order: 4
-      orig_width: 1536
-      orig_height: 1536
+      orig_width: 1280
+      orig_height: 1280
       crop_coords_top: 0
       crop_coords_left: 0
       aesthetic_score: 5.0

@@ -106,6 +106,7 @@ model:
   fsdp: True
   fsdp_set_buffer_dtype: null
   precache_mode: null # [text, both, null]
+  activation_checkpointing: true
 
   loss_fn_config:
     _target_: nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.loss.StandardDiffusionLoss
