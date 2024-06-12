@@ -37,7 +37,6 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_sp
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo.utils import logging
 from nemo_aligner.data.nlp.builders import collate_with_pad_to_max_batch
-from nemo_aligner.data.nlp.samplers import MegatronPretrainingRandomSampler
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     SyncTimer,
