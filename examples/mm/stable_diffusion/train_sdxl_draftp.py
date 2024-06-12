@@ -129,10 +129,10 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
     # Instatiating the model here
     ptl_model = MegatronSDXLDRaFTPModel(cfg.model, trainer).to(torch.cuda.current_device())
+    init_peft(ptl_model, cfg.model)   # init peft 
+
     reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size).to(torch.cuda.current_device())
     ptl_model.reward_model = reward_model
-
-    init_peft(ptl_model, cfg.model)   # init peft 
 
     trainer_restore_path = trainer.ckpt_path
 
