@@ -20,6 +20,7 @@ from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 from copy import deepcopy
 import os
+from functools import partial
 
 # from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -51,9 +52,13 @@ from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerB
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy, NLPFSDPStrategy
 from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel import UNetModel, ResBlock, SpatialTransformer, TimestepEmbedSequential
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoencoder import AutoencoderKL, AutoencoderKLInferenceWrapper
-from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model import Encoder, Decoder
+from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model import Encoder, Decoder, ResnetBlock, AttnBlock
 from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel
 from nemo.collections.multimodal.modules.stable_diffusion.encoders.modules import FrozenOpenCLIPEmbedder, FrozenOpenCLIPEmbedder2, FrozenCLIPEmbedder
+# NeMo/nemo/collections/multimodal/modules/stable_diffusion/diffusionmodules/model.py
+
+# checkpointing
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (checkpoint_wrapper, CheckpointImpl, apply_activation_checkpointing)
 
 mp.set_start_method("spawn", force=True)
 
@@ -170,6 +175,16 @@ def main(cfg) -> None:
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
+
+    
+    if cfg.model.get('activation_checkpointing', False):
+        # call activation checkpointing here
+        # checkpoint wrapper
+        logging.info("Applying activation checkpointing on UNet and Decoder.")
+        non_reentrant_wrapper = partial(checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT)
+        def checkpoint_check_fn(module):
+            return isinstance(module, (Decoder, UNetModel))
+        apply_activation_checkpointing(ptl_model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=checkpoint_check_fn)
 
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
