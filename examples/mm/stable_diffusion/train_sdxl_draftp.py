@@ -52,6 +52,8 @@ from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy, NLPFSDPStra
 from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel import UNetModel, ResBlock, SpatialTransformer, TimestepEmbedSequential
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoencoder import AutoencoderKL, AutoencoderKLInferenceWrapper
 from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model import Encoder, Decoder
+from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel
+from nemo.collections.multimodal.modules.stable_diffusion.encoders.modules import FrozenOpenCLIPEmbedder, FrozenOpenCLIPEmbedder2, FrozenCLIPEmbedder
 
 mp.set_start_method("spawn", force=True)
 
@@ -75,7 +77,7 @@ class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
                 cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),  # offload on is not supported
                 grad_reduce_dtype=self.cfg.model.get('fsdp_grad_reduce_dtype', 32),
                 precision=self.cfg.trainer.precision,
-                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder}, #Encoder,AutoencoderKLInferenceWrapper},
+                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,MegatronCLIPRewardModel,FrozenOpenCLIPEmbedder,FrozenOpenCLIPEmbedder2,FrozenCLIPEmbedder}, #Encoder,AutoencoderKLInferenceWrapper},
                 use_orig_params=False, #self.cfg.model.inductor,
                 set_buffer_dtype=self.cfg.get('fsdp_set_buffer_dtype', None),
             )
@@ -127,6 +129,9 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
     # Instatiating the model here
     ptl_model = MegatronSDXLDRaFTPModel(cfg.model, trainer).to(torch.cuda.current_device())
+    reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size).to(torch.cuda.current_device())
+    ptl_model.reward_model = reward_model
+
     init_peft(ptl_model, cfg.model)   # init peft 
 
     trainer_restore_path = trainer.ckpt_path
@@ -171,9 +176,6 @@ def main(cfg) -> None:
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
-
-    reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size).to(torch.cuda.current_device())
-    ptl_model.reward_model = reward_model
 
     # initialize base model
     # init_cfg = deepcopy(cfg.model)

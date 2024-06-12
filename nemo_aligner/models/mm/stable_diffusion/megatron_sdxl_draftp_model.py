@@ -100,12 +100,26 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
     ## Rewriting this to avoid ignoring the decoder, and just putting it in its own shard
     def configure_sharded_model(self):
         def find_frozen_submodules(model):
+            # ignore quant modules in vae
             def _ignore_first_stage_quant(name):
                 if "first_stage" in name:
                     if "quant" in name:
                         return True
                     return False
                 return True
+            
+            # do not ignore clip embedders
+            def _donot_ignore_embedders(name):
+                if 'conditioner' not in name:
+                    return True
+                if name == 'conditioner' or name == 'conditioner.embedders':  # do not ignore the main-level modules, we will ignore the submodules
+                    return False
+                else:
+                    if 'conditioner.embedders.0' in name:
+                        return False
+                    if 'conditioner.embedders.1' in name:
+                        return False
+                    return True
 
             frozen_submodules = []
             frozen_submodule_names = []
@@ -115,6 +129,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                     and list(module.parameters())
                     and all(not param.requires_grad for param in module.parameters())
                     and (_ignore_first_stage_quant(name))
+                    and (_donot_ignore_embedders(name))
                 ):
                     frozen_submodule_names.append(name)
                     frozen_submodules.append(module)
