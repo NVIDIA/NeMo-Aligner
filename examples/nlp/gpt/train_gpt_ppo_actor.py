@@ -192,7 +192,9 @@ def main(cfg) -> None:
                 batch_size = request.get_json()["batch_size"]
                 return shared_set.get_idx(batch_size)
 
-            flask_thread = threading.Thread(target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False), daemon=True)
+            flask_thread = threading.Thread(
+                target=lambda: app.run(host=flask_host, port=flask_port, use_reloader=False), daemon=True
+            )
             flask_thread.start()
 
         batch_iterator_cls = partial(HTTPBatchIterator, shared_set, flask_host, flask_port)
@@ -227,7 +229,7 @@ def main(cfg) -> None:
     # TODO: utilize context managers to avoid manual cleanup
     close_all_communicators()
 
-    print('Finished')
+    print("Finished")
 
 
 if __name__ == "__main__":
