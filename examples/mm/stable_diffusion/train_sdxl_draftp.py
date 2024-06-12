@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import torch
+import torch.distributed
 import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
@@ -49,6 +50,8 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy, NLPFSDPStrategy
 from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel import UNetModel, ResBlock, SpatialTransformer, TimestepEmbedSequential
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoencoder import AutoencoderKL, AutoencoderKLInferenceWrapper
+from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model import Encoder, Decoder
 
 mp.set_start_method("spawn", force=True)
 
@@ -72,7 +75,7 @@ class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
                 cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),  # offload on is not supported
                 grad_reduce_dtype=self.cfg.model.get('fsdp_grad_reduce_dtype', 32),
                 precision=self.cfg.trainer.precision,
-                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential},
+                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder}, #Encoder,AutoencoderKLInferenceWrapper},
                 use_orig_params=False, #self.cfg.model.inductor,
                 set_buffer_dtype=self.cfg.get('fsdp_set_buffer_dtype', None),
             )
@@ -180,6 +183,12 @@ def main(cfg) -> None:
     #     p.requires_grad = False
     # init_model.train(mode=False) 
     # ptl_model.init_model = init_model
+
+    if local_rank == 0:
+        print(ptl_model)
+        # import time
+        # time.sleep(10)
+    torch.distributed.barrier()
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
     timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:24:00:00"))
