@@ -1,18 +1,18 @@
 .. include:: /content/nemo.rsts
 
-.. include:: ModelAlignment.rsts
+.. include:: modelalignment.rsts
 
 .. toctree::
    :maxdepth: 4
    :titlesonly:
 
-   SFT.rst
-   RLHF.rst
-   SteerLM.rst
-   SteerLM2.rst
-   DPO.rst
-   SPIN.rst
-   DRaFTP.rst
+   sft.rst
+   rlhf.rst
+   steerlm.rst
+   steerlm2.rst
+   dpo.rst
+   spin.rst
+   draftp.rst
 
 :ref:`Prerequisite Obtaining a Pre-Trained Model <prerequisite>`
    This section provides instructions on how to download pre-trained LLMs in .nemo format. The following section will use These base LLMs for further fine-tuning and alignment. 
