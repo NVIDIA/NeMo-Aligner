@@ -391,7 +391,6 @@ def main(cfg) -> None:
         inference_only=False,
         has_value=cfg.pretrained_checkpoint.has_value_head,
         use_cpu=cfg.model.mcts.kv_cache_in_cpu,
-        cfg=cfg,
     )
 
     search_cache_dir = cfg.model.mcts.cache_dir

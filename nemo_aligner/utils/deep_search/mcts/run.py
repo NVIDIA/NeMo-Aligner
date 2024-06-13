@@ -2,6 +2,7 @@ import json
 from collections import namedtuple
 
 from nemo_aligner.utils.deep_search.mcts.mcts import DeepSearch, MCTSParallel, ParallelSearch
+from nemo_aligner.utils.deep_search.mcts.search_stop_criteria import SearchStopCriteria
 from nemo_aligner.utils.deep_search.mcts.state_transition_functions import (
     LocalStateTransitionFunction,
     MathtoolLocalStateTransitionFunction,
@@ -22,17 +23,7 @@ def dict_to_namedtuple(d):
 
 
 def run_mcts(
-    batch,
-    filename,
-    ptl_model,
-    score_fn,
-    eos_id,
-    bos_id,
-    pad_id,
-    inference_only=False,
-    has_value=True,
-    use_cpu=False,
-    cfg=None,
+    batch, filename, ptl_model, score_fn, eos_id, bos_id, pad_id, inference_only=False, has_value=True, use_cpu=False,
 ):
     mcts_cfg = ptl_model.cfg.mcts
 
@@ -71,10 +62,12 @@ def run_mcts(
         mcts_cfg.max_depth, end_strings=mcts_cfg.end_strings, end_tokens=[ptl_model.tokenizer.eos_id]
     )
 
+    stop_criteria = SearchStopCriteria(score_fn, [termination_condition], threshold=mcts_cfg.value_threshold)
+
     value_estimation_function = None
     if mcts_cfg.simulate_value:
         value_estimation_function = ValueApproximationFunction(
-            cfg, ptl_model.tokenizer.tokenizer, score_fn, [termination_condition], pad_id, mcts_cfg.add_bos_token
+            ptl_model.tokenizer.tokenizer, stop_criteria, pad_id, mcts_cfg.add_bos_token
         )
 
     mcts = MCTSParallel(
@@ -82,8 +75,7 @@ def run_mcts(
         ptl_model.tokenizer.tokenizer,
         pad_id,
         session_info="test_selfplay",
-        score_fn=score_fn,
-        terminate_fns=[termination_condition],
+        stop_criteria=stop_criteria,
         client_fun=client_fun,
         has_value=has_value,
         value_estimation_function=value_estimation_function,
@@ -113,17 +105,7 @@ def run_mcts(
 
 
 def run_trtllm_mcts(
-    batch,
-    filename,
-    trtllm_infer,
-    mcts_cfg,
-    score_fn,
-    eos_id,
-    bos_id,
-    pad_id,
-    inference_only=False,
-    has_value=True,
-    cfg=None,
+    batch, filename, trtllm_infer, mcts_cfg, score_fn, eos_id, bos_id, pad_id, inference_only=False, has_value=True,
 ):
 
     if mcts_cfg.environment == "code":
@@ -137,10 +119,12 @@ def run_trtllm_mcts(
         mcts_cfg.max_depth, end_strings=mcts_cfg.end_strings, end_tokens=[eos_id]
     )
 
+    stop_criteria = SearchStopCriteria(score_fn, [termination_condition], threshold=mcts_cfg.value_threshold)
+
     value_estimation_function = None
     if mcts_cfg.simulate_value:
         value_estimation_function = ValueApproximationFunction(
-            cfg, trtllm_infer.tokenizer, score_fn, [termination_condition], pad_id, mcts_cfg.add_bos_token
+            trtllm_infer.tokenizer, stop_criteria, pad_id, mcts_cfg.add_bos_token
         )
 
     mcts = MCTSParallel(
@@ -148,8 +132,7 @@ def run_trtllm_mcts(
         trtllm_infer.tokenizer,
         pad_id,
         session_info="test_selfplay",
-        score_fn=score_fn,
-        terminate_fns=[termination_condition],
+        stop_criteria=stop_criteria,
         client_fun=client_fun,
         has_value=has_value,
         value_estimation_function=value_estimation_function,

@@ -8,41 +8,17 @@ from nemo_aligner.utils.trtllm.trtllm_inference import TRTLLMInference
 
 
 class ValueApproximationFunction(TRTLLMInference):
-    def __init__(self, cfg, tokenizer, score_fn, terminate_fns, pad_id, add_bos_token=False):
+    def __init__(self, tokenizer, stop_criteria, pad_id, add_bos_token=False):
 
         host = os.getenv("TRTLLM_GEN_HOST", "localhost")
         port = os.getenv("TRTLLM_GEN_PORT", "5000")
         self.infer = TensorRTLLMModelClient(host=host, port=port)
-        self.score_fn = score_fn
-        self.terminate_fns = terminate_fns
+        self.stop_criteria = stop_criteria
         self.add_bos_token = add_bos_token
         self.pad_id = pad_id
         self.tokenizer = tokenizer
         self.max_depth_to_explore = 1024
         self.value_cache = {}
-
-    def get_value_and_terminated(self, text, data_id, depth, tokens):
-        terminate = False
-        for fun in self.terminate_fns:
-            if fun(text, depth, tokens):
-                terminate = True
-                break
-
-        value = 0.0
-        if terminate:
-            value = self.score_fn.score(text, data_id)
-        # check if the text ends properly
-        end_properly = False
-        for fun in self.terminate_fns:
-            if fun.ends_by_end_strings(text, tokens):
-                end_properly = True
-                break
-        has_answer = False
-        for fun in self.terminate_fns:
-            if fun.has_answer(text):
-                has_answer = True
-                break
-        return value, terminate, end_properly, has_answer
 
     def __call__(
         self, inputs=None, action=None, context_ids=None, data_ids=None,
@@ -80,7 +56,7 @@ class ValueApproximationFunction(TRTLLMInference):
                 generation_ids = out[i]["output_ids"]
                 full_ids = input_ids[i] + generation_ids
                 text = self.tokenizer.decode(full_ids)
-                value, terminate, end_properly, has_answer = self.get_value_and_terminated(
+                value, terminate, end_properly, has_answer = self.stop_criteria.get_value_and_terminated(
                     text, data_ids[i], i, full_ids
                 )
                 value = torch.tensor(value)

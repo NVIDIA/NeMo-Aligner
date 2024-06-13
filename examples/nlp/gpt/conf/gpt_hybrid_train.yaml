@@ -81,6 +81,8 @@ model:
 
     turn_off_kv_cache: False # turn off the kv cache for inference
 
+    value_threshold: 1.0 # the threshold for the value to be considered as a good response
+
     train:
       value_weight: 1 # weight of the value portion of the loss
       policy_weight: 1 # weight of the policy portion of the loss

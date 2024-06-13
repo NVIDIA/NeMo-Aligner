@@ -179,8 +179,7 @@ class MCTSParallel:
         tokenizer,
         pad_id,
         session_info="session",
-        score_fn=None,
-        terminate_fns=None,
+        stop_criteria=None,
         client_fun: Callable = None,
         has_value=True,
         value_estimation_function=None,
@@ -188,8 +187,7 @@ class MCTSParallel:
         self.args = args
         self.tokenizer = tokenizer
         self.session = session_info
-        self.score_fn = score_fn
-        self.terminate_fns = terminate_fns
+        self.stop_criteria = stop_criteria
         self.client_fun = client_fun
         self.cache = {}
         self.has_value = has_value
@@ -214,29 +212,6 @@ class MCTSParallel:
         all_tokens = node.get_all_tokens()
         text = self.decode_text(all_tokens)
         return text
-
-    def get_value_and_terminated(self, text, data_id, depth, tokens):
-        terminate = False
-        for fun in self.terminate_fns:
-            if fun(text, depth, tokens):
-                terminate = True
-                break
-
-        value = 0.0
-        if terminate:
-            value = self.score_fn.score(text, data_id)
-        # check if the text ends properly
-        end_properly = False
-        for fun in self.terminate_fns:
-            if fun.ends_by_end_strings(text, tokens):
-                end_properly = True
-                break
-        has_answer = False
-        for fun in self.terminate_fns:
-            if fun.has_answer(text):
-                has_answer = True
-                break
-        return value, terminate, end_properly, has_answer
 
     def get_input_action_depth(self, ps, expandable_search):
         # get the action to execute and depths in the search tree
@@ -358,7 +333,7 @@ class MCTSParallel:
                 # check the move is done or not, if yes, then backpropagate the value, no need to expand the node
                 all_tokens = node.get_all_tokens()
                 text = self.decode_text(all_tokens)
-                value, is_terminal, ends_properly, has_answer = self.get_value_and_terminated(
+                value, is_terminal, ends_properly, has_answer = self.stop_criteria.get_value_and_terminated(
                     text, spg.data_id, depth, all_tokens
                 )
 
@@ -399,6 +374,12 @@ class MCTSParallel:
                         "text": text,
                         "is_terminal": is_terminal,
                     }
+
+            for i in range(len(ps)):
+                data_id = ps[i].data_id
+                if self.stop_criteria.terminate[data_id]:
+                    # skip the search if a good solution is found
+                    ps[i].node = None
 
             # index of search instances that are expandable
             expandable_search = [mappingIdx for mappingIdx in range(len(ps)) if ps[mappingIdx].node is not None]
@@ -501,7 +482,9 @@ class DeepSearch:
         dp_rank = parallel_state.get_data_parallel_rank()
         # clear the cache
         self.mcts.cache = {}
-        self.mcts.value_estimation_function.value_cache = {}
+        if self.mcts.value_estimation_function is not None:
+            self.mcts.value_estimation_function.value_cache = {}
+        self.mcts.stop_criteria.reset()
         # serialize the partial result to disk
 
         if self.cache_dir is not None:
@@ -516,6 +499,7 @@ class DeepSearch:
 
         backup_root_states = [spg.state.copy() for spg in parallel_searches]
         return_value_memory = []
+        return_postive_negative_smaples = []
 
         count = 0
         # load the partial result from disk
@@ -599,88 +583,109 @@ class DeepSearch:
                 #  get the value and termination condition from the current taken `action`
                 text = self.mcts.decode_text(spg.state)
                 pb.write(text)
-                value, is_terminal, ends_properly, has_answer = self.mcts.get_value_and_terminated(
+                value, is_terminal, ends_properly, has_answer = self.mcts.stop_criteria.get_value_and_terminated(
                     text, spg.data_id, count, spg.state
                 )
 
-                if is_terminal:
-                    if self.inference_only:
-                        # if inference only, we only collect the best tokens from the inference
-                        all_tokens = tuple(spg.state)
-                        if all_tokens in self.mcts.cache:
-                            value = self.mcts.cache[all_tokens]
-                        else:
-                            value = -1
-                        return_memory.append(
-                            {
-                                "tokens": spg.state,
-                                "reward": value,
-                                "data_id": spg.data_id,
-                                "context_length": len(backup_root_states[i]),
-                                "full_text": self.mcts.decode_text(spg.state),
-                                "context": self.mcts.decode_text(backup_root_states[i]),
-                            }
-                        )
-                        # need to clean up the mcts cache starting from backup root states
-                        backup_root_node = backup_root_nodes[i]
-                        assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
-                        self.clear_search_db_cache(backup_root_node)
-                        # we can remove the search instance
-                        del parallel_searches[i]
-                        del backup_root_states[i]
-                        del backup_root_nodes[i]
-                        continue
-                    # loop through all the steps and add to the memory
-                    # need to update the value based on the game play at the end of the games
-                    # collects the value buffer if the response ends properly with <extra_id> or byte token
-                    # or if the response has the answer inside it
-                    if ends_properly or has_answer:
-                        # only collect the memory if it ends properly
-                        for tokens, hist_action_probs, actions in spg.memory:
-                            hist_outcome = value
-                            # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                            return_memory.append(
-                                {
-                                    "tokens": tokens,
-                                    "action_probs": hist_action_probs,
-                                    "reward": hist_outcome,
-                                    "actions": actions,
-                                    "data_id": spg.data_id,
-                                    "context_length": len(backup_root_states[i]),
-                                }
-                            )
-
-                    # process the value memory to get the value for each of the tokens
-                    value_mems = []
-                    for tokens, value, node in spg.value_memory:
-                        all_values = []
-                        all_tokens = []
-                        all_tokens += node.state[::-1]
-                        for _ in range(len(node.state)):
-                            all_values.append(node.value_sum / node.visit_count)
-                        while node.parent is not None:
-                            node = node.parent
-                            for _ in range(len(node.state)):
-                                all_values.append(node.value_sum / node.visit_count)
-                            all_tokens += node.state[::-1]
-                        all_tokens = all_tokens[::-1]
-                        all_values = all_values[::-1]
-                        assert tuple(all_tokens) == tuple(tokens)
-                        value_mems.append((tokens, all_values, value))
-                    return_value_memory.append(
-                        {
-                            "value_memory": value_mems,
-                            "data_id": spg.data_id,
-                            "backup_root_states": backup_root_states[i],
-                        }
-                    )
-
+                if self.mcts.stop_criteria.terminate[spg.data_id]:
+                    is_terminal = True
                     backup_root_node = backup_root_nodes[i]
                     assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
                     self.clear_search_db_cache(backup_root_node)
+                    for text in self.mcts.stop_criteria[spg.data_id]:
+
+                        results, tokens = self.mcts.stop_criteria[spg.data_id][text]
+                        return_postive_negative_smaples.append(
+                            {
+                                "value": results[0],
+                                "text": text,
+                                "tokens": tokens,
+                                "data_id": spg.data_id,
+                                "backup_root_states": backup_root_states[i],
+                            }
+                        )
                     del parallel_searches[i]
                     del backup_root_states[i]
                     del backup_root_nodes[i]
+
+                # if is_terminal:
+                #     if self.inference_only:
+                #         # if inference only, we only collect the best tokens from the inference
+                #         all_tokens = tuple(spg.state)
+                #         if all_tokens in self.mcts.cache:
+                #             value = self.mcts.cache[all_tokens]
+                #         else:
+                #             value = -1
+                #         return_memory.append(
+                #             {
+                #                 "tokens": spg.state,
+                #                 "reward": value,
+                #                 "data_id": spg.data_id,
+                #                 "context_length": len(backup_root_states[i]),
+                #                 "full_text": self.mcts.decode_text(spg.state),
+                #                 "context": self.mcts.decode_text(backup_root_states[i]),
+                #             }
+                #         )
+                #         # need to clean up the mcts cache starting from backup root states
+                #         backup_root_node = backup_root_nodes[i]
+                #         assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
+                #         self.clear_search_db_cache(backup_root_node)
+                #         # we can remove the search instance
+                #         del parallel_searches[i]
+                #         del backup_root_states[i]
+                #         del backup_root_nodes[i]
+                #         continue
+                #     # loop through all the steps and add to the memory
+                #     # need to update the value based on the game play at the end of the games
+                #     # collects the value buffer if the response ends properly with <extra_id> or byte token
+                #     # or if the response has the answer inside it
+                #     if ends_properly or has_answer:
+                #         # only collect the memory if it ends properly
+                #         for tokens, hist_action_probs, actions in spg.memory:
+                #             hist_outcome = value
+                #             # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                #             return_memory.append(
+                #                 {
+                #                     "tokens": tokens,
+                #                     "action_probs": hist_action_probs,
+                #                     "reward": hist_outcome,
+                #                     "actions": actions,
+                #                     "data_id": spg.data_id,
+                #                     "context_length": len(backup_root_states[i]),
+                #                 }
+                #             )
+
+                #     # process the value memory to get the value for each of the tokens
+                #     value_mems = []
+                #     for tokens, value, node in spg.value_memory:
+                #         all_values = []
+                #         all_tokens = []
+                #         all_tokens += node.state[::-1]
+                #         for _ in range(len(node.state)):
+                #             all_values.append(node.value_sum / node.visit_count)
+                #         while node.parent is not None:
+                #             node = node.parent
+                #             for _ in range(len(node.state)):
+                #                 all_values.append(node.value_sum / node.visit_count)
+                #             all_tokens += node.state[::-1]
+                #         all_tokens = all_tokens[::-1]
+                #         all_values = all_values[::-1]
+                #         assert tuple(all_tokens) == tuple(tokens)
+                #         value_mems.append((tokens, all_values, value))
+                #     return_value_memory.append(
+                #         {
+                #             "value_memory": value_mems,
+                #             "data_id": spg.data_id,
+                #             "backup_root_states": backup_root_states[i],
+                #         }
+                #     )
+
+                #     backup_root_node = backup_root_nodes[i]
+                #     assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
+                #     self.clear_search_db_cache(backup_root_node)
+                #     del parallel_searches[i]
+                #     del backup_root_states[i]
+                #     del backup_root_nodes[i]
             if self.save_flag:
 
                 pb.write(f"saving the search to disk {filename}")
@@ -704,4 +709,4 @@ class DeepSearch:
                 print(f"### SAVING CACHE TOOK {save_end - save_beg} SECONDS")
                 self.save_flag = False
 
-        return return_memory, return_value_memory
+        return return_memory, return_value_memory, return_postive_negative_smaples
