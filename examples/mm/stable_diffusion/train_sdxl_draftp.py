@@ -223,7 +223,7 @@ def main(cfg) -> None:
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
-        run_init_validation=False,
+        run_init_validation=True,
     )
 
     if custom_trainer_state_dict is not None:
