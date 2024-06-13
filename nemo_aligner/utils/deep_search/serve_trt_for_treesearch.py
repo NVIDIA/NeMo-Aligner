@@ -1,6 +1,7 @@
 import copy
 import json
 import sys
+import time
 import uuid
 from argparse import ArgumentParser
 from typing import List
@@ -10,6 +11,7 @@ import torch
 from flask import Flask, jsonify, request
 from flask_restful import Api, Resource
 from mpi4py import MPI
+from nemo_skills.inference.server.model import TensorRTLLMModel, postprocess_output, preprocess_request
 from nemo_skills.inference.server.serve_trt import (
     TensorRTLLM,
     TrtGetResult,
@@ -309,7 +311,7 @@ def _stream(
         output_string += matching_stop_word
         ends_properly = True
     output["output_ids"] = output["output_ids"][input_lengths[0] :]
-    output["text"] = output_string
+    output["generation"] = output_string
     output["ends_properly"] = ends_properly
     return output
 
@@ -318,8 +320,8 @@ class ExtendedTrtStartGeneration(TrtStartGeneration):
     def start_generation(
         self,
         prompt,
-        batch_input_ids,
-        input_lengths,
+        input_ids,
+        input_length,
         max_new_tokens,
         temperature,
         top_k,
@@ -330,8 +332,8 @@ class ExtendedTrtStartGeneration(TrtStartGeneration):
     ):
         return self.model.start_generation(
             prompt=prompt,
-            batch_input_ids=batch_input_ids,
-            input_lengths=input_lengths,
+            input_ids=input_ids,
+            input_length=input_length,
             max_output_token=max_new_tokens,
             top_k=top_k,
             top_p=top_p,
@@ -352,8 +354,8 @@ class ExtendedTrtStartGeneration(TrtStartGeneration):
             top_k = None
         data = dict(
             prompt=input_request.get("prompt", None),
-            batch_input_ids=input_request.get("batch_input_ids"),
-            input_lengths=input_request.get("input_lengths"),
+            input_ids=input_request.get("input_ids"),
+            input_length=input_request.get("input_length"),
             max_new_tokens=input_request.get("tokens_to_generate", 64),
             temperature=input_request.get("temperature", 1.0),
             top_k=top_k,
@@ -423,8 +425,8 @@ class ExtendedTensorRTLLM(TensorRTLLM):
     def start_generation(
         self,
         prompt,
-        batch_input_ids,
-        input_lengths,
+        input_ids,
+        input_length,
         max_output_token,
         top_k,
         top_p,
@@ -438,7 +440,8 @@ class ExtendedTensorRTLLM(TensorRTLLM):
             batch_input_ids, input_lengths = parse_input([prompt], self.tokenizer)
             batch_input_ids = batch_input_ids[0]
         else:
-            batch_input_ids = torch.tensor(batch_input_ids)
+            batch_input_ids = torch.tensor([input_ids])
+            input_lengths = [input_length]
         self.requests[idx] = self.executor.submit(
             self.get_output,
             batch_input_ids,
@@ -481,6 +484,85 @@ class TRTServer:
             data = None
             data = self.comm.bcast(data, root=0)
             server.start_generation(**data)
+
+
+class TensorRTLLMModelClient(TensorRTLLMModel):
+    """Note that the current implementation supports inflight-batching so
+    to make the most use of it, you should submit a large number of prompts
+    at the same time.
+
+    A good default value is 16-32 times bigger than the model's max batch size.
+    """
+
+    def generate(
+        self,
+        prompts: list[str] = None,
+        batch_input_ids: list[list[int]] = None,
+        input_lengths: list[int] = None,
+        tokens_to_generate: int = 512,
+        temperature: float = 0.0,
+        top_p: float = 0.95,
+        top_k: int = 0,
+        repetition_penalty: float = 1.0,
+        random_seed: int = 0,
+        stop_phrases: list[str] | None = None,
+        remove_stop_phrases: bool = True,
+    ) -> list[dict]:
+        if stop_phrases is None:
+            stop_phrases = []
+        request = {
+            "tokens_to_generate": tokens_to_generate,
+            "temperature": temperature,
+            "top_k": top_k,
+            "top_p": top_p,
+            "random_seed": random_seed,
+            "repetition_penalty": repetition_penalty,
+            "stop_words_list": stop_phrases,
+        }
+        preprocess_request(request)
+
+        generation_ids = []
+
+        if prompts is not None:
+            for prompt in prompts:
+                request["prompt"] = prompt
+                generation_ids.append(
+                    self.requests_lib.put(
+                        url="http://{}:{}/start_generation".format(self.server_host, self.server_port),
+                        data=json.dumps(request),
+                        headers={"Content-Type": "application/json"},
+                    ).json()
+                )
+        else:
+            for input_ids, lengths in zip(batch_input_ids, input_lengths):
+                request["input_ids"] = input_ids
+                request["input_length"] = lengths
+                generation_ids.append(
+                    self.requests_lib.put(
+                        url="http://{}:{}/start_generation".format(self.server_host, self.server_port),
+                        data=json.dumps(request),
+                        headers={"Content-Type": "application/json"},
+                    ).json()
+                )
+
+        outputs = [None] * len(generation_ids)
+        finished_count = 0
+        while finished_count < len(generation_ids):
+            time.sleep(0.1)
+            for pos, generation_id in enumerate(generation_ids):
+                if outputs[pos] is not None:
+                    continue
+                result = self.requests_lib.put(
+                    url="http://{}:{}/get_result".format(self.server_host, self.server_port),
+                    data=json.dumps({"generation_id": generation_id}),
+                    headers={"Content-Type": "application/json"},
+                ).json()
+                if result is not None:
+                    finished_count += 1
+                    outputs[pos] = result
+        if remove_stop_phrases:
+            postprocess_output(outputs, stop_phrases)
+        return outputs
 
 
 if __name__ == "__main__":
