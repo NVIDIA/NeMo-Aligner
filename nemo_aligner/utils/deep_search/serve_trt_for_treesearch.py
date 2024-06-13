@@ -1,16 +1,27 @@
+import copy
+import json
+import sys
+import uuid
 from argparse import ArgumentParser
-from mpi4py import MPI
-from nemo_skills.inference.server.serve_trt import TensorRTLLM, get_output_single, get_output, remove_stop_tokens, TrtStartGeneration, TrtGetResult, parse_input
+from typing import List
+
+import tensorrt_llm.bindings.executor as trtllm
+import torch
 from flask import Flask, jsonify, request
 from flask_restful import Api, Resource
-from typing import List
-import torch
-import tensorrt_llm.bindings.executor as trtllm
-import copy
-import uuid
-import sys
-import json
+from mpi4py import MPI
+from nemo_skills.inference.server.serve_trt import (
+    TensorRTLLM,
+    TrtGetResult,
+    TrtStartGeneration,
+    get_output,
+    get_output_single,
+    parse_input,
+    remove_stop_tokens,
+)
+
 from nemo.utils import logging
+
 
 def generate(
     runner,
@@ -118,8 +129,8 @@ def generate(
         # To prevent numerical overflow when the temperature is set to 0.0
         # Attributes of `trtllm.SamplingConfig` cannot be modified
         if "temperature" in sampling_params and sampling_params["temperature"] == 0.0:
-            sampling_params['temperature'] = None
-            sampling_params['top_k'] = 1
+            sampling_params["temperature"] = None
+            sampling_params["top_k"] = 1
 
         sampling_config = trtllm.SamplingConfig(**sampling_params)
     else:
@@ -143,7 +154,7 @@ def generate(
     if prompt_table is not None:
         prompt_table_data = runner._prepare_embedding_table(prompt_table)
         if prompt_tasks is not None:
-            task_indices = [int(t) for t in prompt_tasks.split(',')]
+            task_indices = [int(t) for t in prompt_tasks.split(",")]
             assert len(task_indices) == len(
                 batch_input_ids_list
             ), f"Number of supplied tasks ({len(task_indices)}) must match input batch size ({len(batch_input_ids_list)})"
@@ -256,8 +267,8 @@ def _stream(
             # checking every half of the required tokens to have overlapping checks
             if idx < num_tokens_to_check - 1 or idx % (num_tokens_to_check // 2) != 0:
                 continue
-            seq_length = output['sequence_lengths']
-            generation_suffix = output['output_ids'][0, 0, seq_length[0] - num_tokens_to_check : seq_length[0]]
+            seq_length = output["sequence_lengths"]
+            generation_suffix = output["output_ids"][0, 0, seq_length[0] - num_tokens_to_check : seq_length[0]]
             output_string = get_output_single(generation_suffix, 0, num_tokens_to_check, tokenizer, end_id)
             for stop_word in stop_words_list:
                 if stop_word in output_string:
@@ -274,7 +285,7 @@ def _stream(
             multi_responses = runner.session.await_responses(active_reqids)
         idx += 1
 
-    output_string = get_output(output['output_ids'], input_lengths, output['sequence_lengths'][0], tokenizer, end_id)[
+    output_string = get_output(output["output_ids"], input_lengths, output["sequence_lengths"][0], tokenizer, end_id)[
         0
     ]
     for stop_word in stop_words_list:
@@ -282,7 +293,7 @@ def _stream(
             matching_stop_word = stop_word
             break
     output = {
-        'output_ids': output['output_ids'][0, 0].tolist(),
+        "output_ids": output["output_ids"][0, 0].tolist(),
     }
     ends_properly = False
     if matching_stop_word is not None:
@@ -291,21 +302,22 @@ def _stream(
         end = seq_length[0]
         # find the token ids that stops at the stop word
         for i in range(beg, end):
-            if tokenizer.decode(output['output_ids'][:i]).endswith(stop_word):
-                output['output_ids'] = output['output_ids'][:i]
+            if tokenizer.decode(output["output_ids"][:i]).endswith(stop_word):
+                output["output_ids"] = output["output_ids"][:i]
                 break
         # adding it back, since we only need to remove what's *after* the stop phrase
         output_string += matching_stop_word
         ends_properly = True
-    output['output_ids'] = output['output_ids'][input_lengths[0]:]
-    output['text'] = output_string
-    output['ends_properly'] = ends_properly
+    output["output_ids"] = output["output_ids"][input_lengths[0] :]
+    output["text"] = output_string
+    output["ends_properly"] = ends_properly
     return output
 
-class ExtendedTrtStartGeneration(TrtStartGeneration):
 
+class ExtendedTrtStartGeneration(TrtStartGeneration):
     def start_generation(
         self,
+        prompt,
         batch_input_ids,
         input_lengths,
         max_new_tokens,
@@ -317,6 +329,7 @@ class ExtendedTrtStartGeneration(TrtStartGeneration):
         stop_words_list,
     ):
         return self.model.start_generation(
+            prompt=prompt,
             batch_input_ids=batch_input_ids,
             input_lengths=input_lengths,
             max_output_token=max_new_tokens,
@@ -338,6 +351,7 @@ class ExtendedTrtStartGeneration(TrtStartGeneration):
         if top_k == 0:
             top_k = None
         data = dict(
+            prompt=input_request.get("prompt", None),
             batch_input_ids=input_request.get("batch_input_ids"),
             input_lengths=input_request.get("input_lengths"),
             max_new_tokens=input_request.get("tokens_to_generate", 64),
@@ -356,7 +370,6 @@ class ExtendedTrtStartGeneration(TrtStartGeneration):
 
 
 class ExtendedTensorRTLLM(TensorRTLLM):
-
     def get_output(
         self,
         batch_input_ids,
@@ -409,6 +422,7 @@ class ExtendedTensorRTLLM(TensorRTLLM):
     @torch.no_grad()
     def start_generation(
         self,
+        prompt,
         batch_input_ids,
         input_lengths,
         max_output_token,
@@ -419,9 +433,12 @@ class ExtendedTensorRTLLM(TensorRTLLM):
         random_seed,
         stop_words_list,
     ):
-        # TODO: remove batch dimension since it's not needed anymore?
-        batch_input_ids = torch.tensor(batch_input_ids)
         idx = str(uuid.uuid4())
+        if prompt is not None:
+            batch_input_ids, input_lengths = parse_input([prompt], self.tokenizer)
+            batch_input_ids = batch_input_ids[0]
+        else:
+            batch_input_ids = torch.tensor(batch_input_ids)
         self.requests[idx] = self.executor.submit(
             self.get_output,
             batch_input_ids,
@@ -439,7 +456,6 @@ class ExtendedTensorRTLLM(TensorRTLLM):
 
 
 class TRTServer:
-
     def __init__(self, model_path: str):
         self.comm = MPI.COMM_WORLD
         self.rank = self.comm.Get_rank()
@@ -459,24 +475,15 @@ class TRTServer:
             self.worker_loop()
 
     def worker_loop(self):
-        server = TrtStartGeneration(self.model)
+        server = ExtendedTrtStartGeneration(self.model)
         while True:
             self.comm.Barrier()
             data = None
             data = self.comm.bcast(data, root=0)
             server.start_generation(**data)
 
+
 if __name__ == "__main__":
-
-    # class LogFilter(logging.Filter):
-    #     def filter(self, record):
-    #         filter_strings = ("\"PUT /get_result HTTP/1.1\" 200", "\"PUT /start_generation HTTP/1.1\" 200")
-    #         return all(filter_string not in record.getMessage() for filter_string in filter_strings)
-
-    # log = logging.getLogger('werkzeug')
-    # log.addFilter(LogFilter())
-    # logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
-
     parser = ArgumentParser()
     parser.add_argument("--model_path", required=True)
     parser.add_argument("--host", type=str, default="0.0.0.0")
