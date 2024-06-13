@@ -501,6 +501,7 @@ class DeepSearch:
         dp_rank = parallel_state.get_data_parallel_rank()
         # clear the cache
         self.mcts.cache = {}
+        self.mcts.value_estimation_function.value_cache = {}
         # serialize the partial result to disk
 
         if self.cache_dir is not None:
