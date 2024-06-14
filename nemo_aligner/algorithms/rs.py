@@ -23,15 +23,8 @@ from tqdm import tqdm
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
-from nemo_aligner.utils.distributed import (
-    SyncTimer,
-    pad_tensors_to_max_global_seq_len,
-    pad_batch,
-)
-from nemo_aligner.utils.ppo_utils import (
-    create_mask,
-    select_topk
-)
+from nemo_aligner.utils.distributed import SyncTimer, pad_batch, pad_tensors_to_max_global_seq_len
+from nemo_aligner.utils.ppo_utils import create_mask, select_topk
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict
@@ -62,7 +55,7 @@ class RSTrainer:
         generation_iter,
         duplicate_prompts,
         num_select,
-        rm_critic
+        rm_critic,
     ):
         self.cfg = cfg
         self.model = model
@@ -74,8 +67,8 @@ class RSTrainer:
         self.ckpt_callback = ckpt_callback
         self.generation_iter = generation_iter
         self.duplicate_prompts = duplicate_prompts
-        self.num_select=num_select
-        self.rm_critic=rm_critic
+        self.num_select = num_select
+        self.rm_critic = rm_critic
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -121,10 +114,13 @@ class RSTrainer:
             prompt_tokens = rollout_batch["prompt_tokens"]
 
             num_samples += prompt_lengths.size(0)
-            
-            # mask will mask out the loss on the prompt tokens
-            mask = create_mask(values=torch.zeros([response_tokens.shape[0], response_tokens.shape[1]-1]), prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
+            # mask will mask out the loss on the prompt tokens
+            mask = create_mask(
+                values=torch.zeros([response_tokens.shape[0], response_tokens.shape[1] - 1]),
+                prompt_lengths=prompt_lengths,
+                response_lengths=response_lengths,
+            )
 
             # collect everything we need to train actor
             rs_rollout_data["mask"].extend(post_process_tensor(mask))
@@ -159,29 +155,47 @@ class RSTrainer:
 
                 current_batch = None
                 inference_batch_duplicated = {
-                    'text':torch.concatenate([inference_batch['text']] * self.duplicate_prompts, dim=0), #input text padded to prompt_llen + max_response length
-                    'length':torch.concatenate([inference_batch['length']] * self.duplicate_prompts, dim=0),
-                    'attention_mask':inference_batch['attention_mask'],
-                    'loss_mask':torch.concatenate([inference_batch['loss_mask']] * self.duplicate_prompts, dim=0),
-                    'position_ids':torch.concatenate([inference_batch['position_ids']] * self.duplicate_prompts, dim=0),
+                    "text": torch.concatenate(
+                        [inference_batch["text"]] * self.duplicate_prompts, dim=0
+                    ),  # input text padded to prompt_llen + max_response length
+                    "length": torch.concatenate([inference_batch["length"]] * self.duplicate_prompts, dim=0),
+                    "attention_mask": inference_batch["attention_mask"],
+                    "loss_mask": torch.concatenate([inference_batch["loss_mask"]] * self.duplicate_prompts, dim=0),
+                    "position_ids": torch.concatenate(
+                        [inference_batch["position_ids"]] * self.duplicate_prompts, dim=0
+                    ),
                 }
                 for _ in range(self.generation_iter):
-                    
+
                     if current_batch is None:
-                        rollout_batch = self.model.infer(inference_batch_duplicated) # Note that critic mbs has to be set correctly
+                        rollout_batch = self.model.infer(
+                            inference_batch_duplicated
+                        )  # Note that critic mbs has to be set correctly
                         current_batch = rollout_batch
                         current_batch["prompt_tokens"] = inference_batch_duplicated["text"]
                     else:
                         rollout_batch = self.model.infer(inference_batch_duplicated)
                         # Need to pad response tokens before concatenating. Response tokens has prompts concatenated with responses.
-                        current_batch["response_tokens"], rollout_batch["response_tokens"] = pad_batch(current_batch["response_tokens"], rollout_batch["response_tokens"], self.model.tokenizer.eos_id)
-                        
-                        current_batch["response_tokens"] = torch.concatenate([current_batch["response_tokens"], rollout_batch["response_tokens"]], dim=0)
-                        current_batch["response_lengths"] = torch.concatenate([current_batch["response_lengths"], rollout_batch["response_lengths"]], dim=0)
-                        current_batch["prompt_lengths"] = torch.concatenate([current_batch["prompt_lengths"], rollout_batch["prompt_lengths"]], dim=0)
-                        current_batch["prompt_tokens"] = torch.concatenate([current_batch["prompt_tokens"], inference_batch_duplicated["text"]], dim=0)
+                        current_batch["response_tokens"], rollout_batch["response_tokens"] = pad_batch(
+                            current_batch["response_tokens"],
+                            rollout_batch["response_tokens"],
+                            self.model.tokenizer.eos_id,
+                        )
 
-                    rewards = self.rm_critic.infer_rm_critic(rollout_batch).result().detach()                    
+                        current_batch["response_tokens"] = torch.concatenate(
+                            [current_batch["response_tokens"], rollout_batch["response_tokens"]], dim=0
+                        )
+                        current_batch["response_lengths"] = torch.concatenate(
+                            [current_batch["response_lengths"], rollout_batch["response_lengths"]], dim=0
+                        )
+                        current_batch["prompt_lengths"] = torch.concatenate(
+                            [current_batch["prompt_lengths"], rollout_batch["prompt_lengths"]], dim=0
+                        )
+                        current_batch["prompt_tokens"] = torch.concatenate(
+                            [current_batch["prompt_tokens"], inference_batch_duplicated["text"]], dim=0
+                        )
+
+                    rewards = self.rm_critic.infer_rm_critic(rollout_batch).result().detach()
                     if "rewards" in current_batch:
                         current_batch["rewards"] = torch.concatenate([current_batch["rewards"], rewards], dim=0)
                     else:
@@ -191,12 +205,12 @@ class RSTrainer:
 
         else:
             for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
-                rollout_batch = self.model.infer(inference_batch) # Here we meed to get the prompts as well
+                rollout_batch = self.model.infer(inference_batch)  # Here we meed to get the prompts as well
 
-                rewards = self.rm_critic.infer_rm_critic(rollout_batch).result().detach()           
+                rewards = self.rm_critic.infer_rm_critic(rollout_batch).result().detach()
                 rollout_batch["rewards"] = rewards
                 rollout_batches.append(rollout_batch)
-                
+
         return rollout_batches, cpu_dict(self.compute_global_rollout_metrics(rollout_batches))
 
     def compute_global_rollout_metrics(self, rollout_batches):
@@ -227,7 +241,7 @@ class RSTrainer:
             metrics["prompt_lengths"] += prompt_lengths.sum()
             metrics["rewards"] += rewards.sum()
             num_samples += prompt_lengths.size(0)
-        
+
         tensor_to_accumulate = torch.tensor(
             [metrics["response_lengths"], metrics["prompt_lengths"], metrics["rewards"], num_samples],
             dtype=torch.float32,
@@ -263,7 +277,7 @@ class RSTrainer:
 
     @torch.no_grad()
     def generate_rollouts(self, dataloader_iter, num_microbatches):
-        
+
         self.model.prepare_for_inference()
         rollout_batches, rollout_metrics = self._run_inference(dataloader_iter, num_microbatches, is_validation=False)
 
@@ -280,12 +294,12 @@ class RSTrainer:
         self.model.prepare_for_training()
 
         for batch in dataloader_iter:
-            '''
+            """
             batch has [mask, advantages, prev_logprobs, response_tokens, rewards, values, returns]
             mask: [mbs, seq_len-1]
             response_tokens: [mbs, seq_len]
 
-            '''
+            """
             self.timer.start("train_step_time")
             self.optimizer.zero_grad()
 
@@ -352,7 +366,7 @@ class RSTrainer:
 
                 self.timer.start("rollout_time")
                 rs_rollout_data, metrics = self.generate_rollouts(dataloader_iter, num_rollout_micro_batches)
-                
+
                 self.timer.stop("rollout_time")
                 timing_metrics["rollout_time"] = self.timer.get("rollout_time")
 
@@ -371,16 +385,16 @@ class RSTrainer:
                 self.logger.log_table(
                     key="table/train_rollouts", dataframe=self.train_df, step=self.step,
                 )
-                
+
                 rollout_size = rs_rollout_data["response_tokens"].size(0)
-                rollout_dataloader_iter = get_iterator_k_split( # Does not have prompt info
+                rollout_dataloader_iter = get_iterator_k_split(  # Does not have prompt info
                     rs_rollout_data, divide(rollout_size, num_to_load_on_each_dp)
                 )
                 # start training
                 clear_memory()
                 self.timer.start("train_time")
                 self.run_training(rollout_dataloader_iter)
-                
+
                 self.timer.stop("train_time")
                 timing_metrics["train_time"] = self.timer.get("train_time")
 
@@ -442,7 +456,7 @@ class RSTrainer:
     def load_state_dict(self, state_dict):
         self.step = state_dict["step"]
         self.consumed_samples = state_dict["consumed_samples"]
-        self.rs_optimization_step = state_dict["ppo_optimization_step"] # Due to way we save checkpoint
+        self.rs_optimization_step = state_dict["ppo_optimization_step"]  # Due to way we save checkpoint
 
         loaded_values = [self.step, self.consumed_samples, self.rs_optimization_step]
 

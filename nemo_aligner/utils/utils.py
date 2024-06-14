@@ -389,7 +389,7 @@ def convert_to_amp_o2_format(state_dict):
             new_state_dict[new_key] = state_dict[key]
         else:
             new_state_dict[new_key] = state_dict[key]
-    
+
     return new_state_dict
 
 

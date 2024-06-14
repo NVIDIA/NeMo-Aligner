@@ -373,15 +373,14 @@ class Timer:
 
 
 def pad_batch(x, y, pad_value):
-    '''
+    """
     Given tensors of shape [N1, M1] and [N2, M2], will pad tensors to shape [N1, max(M1, M2)], [N2, max(M1, M2)]
-    '''
+    """
     if x.shape[1] > y.shape[1]:
         padding = (0, x.shape[1] - y.shape[1])
         y = torch.nn.functional.pad(y, padding, value=pad_value)
     elif x.shape[1] < y.shape[1]:
         padding = (0, y.shape[1] - x.shape[1])
         x = torch.nn.functional.pad(x, padding, value=pad_value)
-    
+
     return x, y
-    
