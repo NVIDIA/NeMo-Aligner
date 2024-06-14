@@ -35,7 +35,6 @@ def get_future_result(future, *keys):
     and broadcasts it to the model parallel group. Then it returns it as output.
     """
     output = None if future is None else future.result()
-
     results = []
 
     for key in keys:
@@ -73,6 +72,17 @@ class RMCriticFutureResult(FutureResult):
         self.rm_future = None
 
         return rewards, values
+
+
+class RMFutureResult(FutureResult):
+    def __init__(self, rm_future):
+        self.rm_future = rm_future
+
+    def result(self):
+        rewards = get_future_result(self.rm_future, "rewards")
+
+        return rewards
+
 
 
 class SaveFuture(FutureResult):
@@ -170,3 +180,42 @@ class RemoteGPTRMCriticClient:
             )
 
         return SaveFuture(save_future)
+
+
+@dataclass
+class RemoteGPTRMClient:
+    cfg: DictConfig
+
+    def __post_init__(self):
+        cfg = self.cfg
+
+        server_dict = {cfg.reward_model.name: (cfg.reward_model.ip, cfg.reward_model.port)}
+
+        self.communicator = HTTPCommunicator.create_http_communicator_from_dict(server_dict)
+        self.communicator.print_server_dict()
+        self.combine_rm_and_critic_server = self.cfg.combine_rm_and_critic_server
+        self.pad_to_length = self.cfg.pad_to_length
+
+    def infer_rm_critic(self, rollout_batch):
+        response_tokens = rollout_batch["response_tokens"].cpu()
+        og_seq_length = response_tokens.size(-1)
+
+        if self.pad_to_length is not None:
+            assert (
+                og_seq_length <= self.pad_to_length
+            ), f"original shape before padding {og_seq_length} is higher than {self.pad_to_length}"
+            response_tokens = torch.nn.functional.pad(
+                response_tokens, (0, self.pad_to_length - response_tokens.size(-1)), value=0
+            )
+
+        send_data = {
+            "tokens": response_tokens.numpy(),
+            "sequence_lengths": rollout_batch["response_lengths"].unsqueeze(1).cpu().numpy(),
+        }
+
+        rm_future = run_if_model_parallel_src(
+            self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data
+        )
+
+        return RMFutureResult(rm_future)
+

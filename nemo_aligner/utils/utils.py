@@ -344,7 +344,6 @@ def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O
 
     if offload_onto_cpu:
         offloaded_weights = retrieve_model_state_dict_in_cpu(resident_model, megatron_amp_O2=megatron_amp_O2)
-
     resident_model.load_state_dict(cpu_weights)
     return offloaded_weights
 
@@ -388,7 +387,9 @@ def convert_to_amp_o2_format(state_dict):
         if "model.module." not in key:
             new_key = key.replace("model.", "model.module.", 1)
             new_state_dict[new_key] = state_dict[key]
-
+        else:
+            new_state_dict[new_key] = state_dict[key]
+    
     return new_state_dict
 
 
