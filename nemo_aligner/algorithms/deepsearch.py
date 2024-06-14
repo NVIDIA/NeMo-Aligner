@@ -422,13 +422,11 @@ class DeepSearchTrainer:
 
                 if run_val or forced_run_val:
                     val_metrics = self.run_validation()
-
-                    # train_eval_metrics = self.run_train_evaluation()
-                    # step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
+                    train_eval_metrics = self.run_train_evaluation()
+                    step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
                     loss_eval_metrics = self.run_loss_val()
                     step_metrics.update({f"search_eval_{k}": v for k, v in loss_eval_metrics.items()})
-
 
                     val_metrics["total_accuracy"] = (loss_eval_metrics["value_accuracy"] + val_metrics["global_accuracy"]) / 2
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
