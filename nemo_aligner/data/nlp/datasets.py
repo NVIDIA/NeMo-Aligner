@@ -557,6 +557,9 @@ class LLaMa3ChatDataset:
         self.ds = ds
 
     def __getitem__(self, idx):
+        if isinstance(idx, str):
+            idx = int(idx.split("@")[0])
+
         item = deepcopy(self.ds[idx])
         item["question"] = self.template["prompt_template"].format(
             system=self.template["system"], user=item["question"], generated_solution=""
