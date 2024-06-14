@@ -124,6 +124,10 @@ def main(cfg) -> None:
             gbs=cfg.model.global_batch_size,
             load_gbs=True,
             use_random_sampler=False,
+            drop_last=cfg.model.data.get(
+                "validation_drop_last", True
+            ),  # TODO: without that, validation_drop_last has no effect. Note that there is also a cfg.model.data.validation_ds.drop_last but does not seem plugged to anything.
+            pad_samples_to_global_batch_size=True,  # TODO: without that, crash cause incomplete batch
         )
         for k, v in dict_validation_ds.items()
     }

@@ -182,48 +182,54 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             def loss_func(output_tensor):
                 # Loss per micro batch (ub).
                 loss_for_ub, acc_chosen = self.loss_func(output_tensor)
+
+                num_valid_pairs = (batch["loss_mask"].sum(dim=1) > 0).sum()
+
                 if validation_step and not self.cfg.data.get("validation_drop_last", True):
+                    # TODO eloi:
+                    # - Maybe would be better to always take this path?
+                    # - Trace accuracy averaging all the way up then
+
+                    num_pairs = batch["loss_mask"].size(0)
                     num_valid_tokens_in_ub = batch["loss_mask"].sum()
+
                     if loss_for_ub.isnan():
                         assert batch["loss_mask"].count_nonzero() == 0, "Got NaN loss with non-empty input"
                         loss_sum_for_ub = torch.zeros_like(num_valid_tokens_in_ub)
                     else:
                         loss_sum_for_ub = num_valid_tokens_in_ub * loss_for_ub
 
-                    loss_sum_and_ub_size_all_gpu = torch.cat(
-                        [
-                            loss_sum_for_ub.clone().detach().view(1),
-                            torch.tensor([num_valid_tokens_in_ub]).cuda().clone().detach(),
-                        ]
-                    )
-                    torch.distributed.all_reduce(
-                        loss_sum_and_ub_size_all_gpu, group=parallel_state.get_data_parallel_group()
-                    )
-                    out_chosen, out_rejected = gather_and_split_rewards(output_tensor)
+                    num_ok = acc_chosen * num_pairs
 
-                    return (
-                        loss_for_ub,
-                        {
-                            "loss_sum_and_ub_size": loss_sum_and_ub_size_all_gpu,
-                            "out_chosen": out_chosen,
-                            "out_rejected": out_rejected,
-                        },
+                    # TODO eloi debug it with an incomplete batch
+
+                    tensor_to_reduce = torch.stack([loss_sum_for_ub, num_valid_tokens_in_ub, num_valid_pairs, num_ok,])
+                    torch.distributed.all_reduce(tensor_to_reduce, group=parallel_state.get_data_parallel_group())
+                    loss_sum_for_ub, num_valid_tokens_in_ub, num_valid_pairs, num_ok = tensor_to_reduce
+
+                    reduced_loss = (
+                        loss_sum_for_ub / num_valid_tokens_in_ub
+                        if num_valid_tokens_in_ub > 0
+                        else torch.zeros_like(loss_sum_for_ub)
                     )
+                    reduced_acc = num_ok / num_valid_pairs if num_valid_pairs > 0 else torch.zeros_like(num_ok)
+
                 else:
                     reduced_loss = average_losses_across_data_parallel_group([loss_for_ub])
                     reduced_acc = average_losses_across_data_parallel_group([acc_chosen])
 
-                    out_chosen, out_rejected = gather_and_split_rewards(output_tensor)
+                out_chosen, out_rejected = gather_and_split_rewards(output_tensor)
 
-                    return (
-                        loss_for_ub,
-                        {
-                            "avg": reduced_loss,
-                            "acc": reduced_acc,
-                            "out_chosen": out_chosen,
-                            "out_rejected": out_rejected,
-                        },
-                    )
+                return (
+                    loss_for_ub,
+                    {
+                        "num_valid_pairs": num_valid_pairs,
+                        "avg": reduced_loss,
+                        "acc": reduced_acc,
+                        "out_chosen": out_chosen,
+                        "out_rejected": out_rejected,
+                    },
+                )
 
             return output_tensor, loss_func
 
@@ -270,16 +276,17 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             rewards_all_std = rewards_all.std()
 
             # average loss across micro batches
-            loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
-            loss_tensor = torch.concat(loss_tensors_list)
-            loss_mean = loss_tensor.mean()
-            acc_tensors_list = [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch]
+            # TODO eloi be careful here, should not average directly
+            # TODO eloi: validation and train do not produce the same kind of shapes...clean it
+            num_valid_pairs = torch.stack(
+                [loss_reduced["num_valid_pairs"] for loss_reduced in losses_reduced_per_micro_batch]
+            )
+            loss_tensor = torch.cat([loss_reduced["avg"].view(1) for loss_reduced in losses_reduced_per_micro_batch])
+            acc_tensor = torch.cat([loss_reduced["acc"].view(1) for loss_reduced in losses_reduced_per_micro_batch])
 
-            if len(acc_tensors_list) == 1:
-                acc_tensor = acc_tensors_list[0]
-            elif len(acc_tensors_list) > 1:
-                acc_tensor = torch.concat(acc_tensors_list)
-            acc_mean = acc_tensor.mean()
+            loss_mean = (loss_tensor * num_valid_pairs).sum() / num_valid_pairs.sum()
+            acc_mean = (acc_tensor * num_valid_pairs).sum() / num_valid_pairs.sum()
+
         else:
 
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
