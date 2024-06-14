@@ -337,7 +337,6 @@ class DeepSearchTrainer:
             ]
 
         self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
-        self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
 
         return val_metrics
 
@@ -371,7 +370,9 @@ class DeepSearchTrainer:
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
 
         if self.step == 0:
-            self.run_validation()
+            val_metrics = self.run_validation()
+            self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+
             self.run_train_evaluation()
 
         for e in epoch_iter:
@@ -422,6 +423,7 @@ class DeepSearchTrainer:
 
                 if run_val or forced_run_val:
                     val_metrics = self.run_validation()
+
                     train_eval_metrics = self.run_train_evaluation()
                     step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
 
@@ -430,6 +432,8 @@ class DeepSearchTrainer:
 
                     val_metrics["total_accuracy"] = (loss_eval_metrics["value_accuracy"] + val_metrics["global_accuracy"]) / 2
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
+
+                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch
