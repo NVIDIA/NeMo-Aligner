@@ -201,7 +201,7 @@ class DeepSearchTrainer:
     def run_loss_val(self):
         self.model.prepare_for_inference()
 
-        value_losses, policy_losses = [], []
+        value_losses, policy_losses, value_num_correct, value_num_total = [], [], [], []
 
         num_policy_batches = min(self.cfg.num_policy_batches, len(self.val_policy_dataloader))
         policy_batches = [output[1] for output in zip(range(num_policy_batches), self.val_policy_dataloader)]
@@ -218,6 +218,8 @@ class DeepSearchTrainer:
             batch["amount_of_batches"] = len(value_batches)
             value_metrics = self.val_single_step(batch, TrainMode.VALUE_ONLY)
             value_losses.append(value_metrics["loss"])
+            value_num_total.append(value_metrics["num_total"])
+            value_num_correct.append(value_metrics["num_correct"])
 
         metrics = {}
 
@@ -225,7 +227,11 @@ class DeepSearchTrainer:
         policy_loss = sum(policy_losses)
 
         if len(value_losses) > 0:
+            num_total_all = sum(value_num_total)
+            num_correct_all = sum(value_num_correct)
             metrics.update({"value_loss": value_loss})
+            if num_total_all > 0:
+                metrics.update({"value_accuracy": num_correct_all / num_total_all})
 
         if len(policy_losses) > 0:
             metrics.update({"policy_loss": policy_loss})
@@ -416,13 +422,16 @@ class DeepSearchTrainer:
 
                 if run_val or forced_run_val:
                     val_metrics = self.run_validation()
+
+                    # train_eval_metrics = self.run_train_evaluation()
+                    # step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
+
+                    loss_eval_metrics = self.run_loss_val()
+                    step_metrics.update({f"search_eval_{k}": v for k, v in loss_eval_metrics.items()})
+
+
+                    val_metrics["total_accuracy"] = (loss_eval_metrics["value_accuracy"] + val_metrics["global_accuracy"]) / 2
                     step_metrics.update({f"val_{k}": v for k, v in val_metrics.items()})
-
-                    train_eval_metrics = self.run_train_evaluation()
-                    step_metrics.update({f"train_eval_{k}": v for k, v in train_eval_metrics.items()})
-
-# loss_eval_metrics = self.run_loss_val()
-# step_metrics.update({f"search_eval_{k}": v for k, v in loss_eval_metrics.items()})
 
                 step_metrics.update(timing_metrics)
                 step_metrics["epoch"] = self.epoch

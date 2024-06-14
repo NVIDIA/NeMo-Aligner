@@ -171,6 +171,7 @@ class MegatronGPTHybridModel(MegatronGPTModel):
 
     def compute_value_loss(self, batch, values):
         value_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
+        num_correct_and_total = torch.tensor([0, 0], dtype=torch.float32, device=torch.cuda.current_device())
 
         if batch["train_mode"][0] == TrainMode.VALUE_ONLY and (self.value_loss_weight > 0):
             # TODO(geshen); the mask contains the last <extra_id_1> token as well
@@ -178,12 +179,24 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             # because the model is forced to stop by nemo generate anyway
             mask = batch["mcts_mask"]
             token_values = batch["token_values"]
+            response_lengths = batch["response_length"]
 
             # TODO(geshen): change to cross entropy
             value_loss = torch.nn.functional.binary_cross_entropy_with_logits(values, token_values, reduction="none")
             value_loss = compute_masked_per_sample_average(self.value_loss_weight * value_loss, mask, dim=-1)
 
-        return value_loss
+            with torch.no_grad():
+                idx = range(response_lengths.size(0)), response_lengths - 1
+                gt = (token_values[idx] >= 0.5)
+                # 0 or 1
+                pred = (values[idx].sigmoid() >= 0.5)
+                num_correct = (pred == gt).sum()
+                num_total = pred.numel()
+
+                num_correct_and_total[0] = num_correct
+                num_correct_and_total[1] = num_total
+
+        return value_loss, num_correct_and_total
 
     def compute_policy_loss(self, batch, logits):
         policy_loss = torch.tensor([0], dtype=torch.float32, device=torch.cuda.current_device())
@@ -251,12 +264,14 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                 logits = parallel_logits
 
                 policy_loss = self.compute_policy_loss(batch, logits)
-                value_loss = self.compute_value_loss(batch, values)
+                value_loss, num_correct_and_total = self.compute_value_loss(batch, values)
 
                 loss = (value_loss - policy_loss) / divisor
                 reduced_loss, reduced_value_loss, reduced_policy_loss = average_losses_across_data_parallel_group(
                     [loss, value_loss / divisor, policy_loss / divisor]
                 )
+
+                torch.distributed.all_reduce(num_correct_and_total, group=parallel_state.get_data_parallel_group())
 
                 return (
                     loss,
@@ -264,6 +279,8 @@ class MegatronGPTHybridModel(MegatronGPTModel):
                         "loss": reduced_loss.detach(),
                         "value_loss": reduced_value_loss.detach(),
                         "policy_loss": -reduced_policy_loss.detach(),
+                        "num_correct": num_correct_and_total[0],
+                        "num_total": num_correct_and_total[1],
                     },
                 )
 
@@ -326,6 +343,25 @@ class MegatronGPTHybridModel(MegatronGPTModel):
             torch.distributed.broadcast(metric_mean, get_last_rank())
 
             metrics[key] = metric_mean.cpu().item()
+        
+        num_correct = torch.tensor(0.0, device=torch.cuda.current_device())
+        num_total = torch.tensor(0.0, device=torch.cuda.current_device())
+        if losses_reduced_per_micro_batch:
+            num_correct = torch.stack(
+                [loss_reduced['num_correct'] for loss_reduced in losses_reduced_per_micro_batch]
+            ).sum()
+            num_total = torch.stack(
+                [loss_reduced['num_total'] for loss_reduced in losses_reduced_per_micro_batch]
+            ).sum()
+
+            num_correct.fill_(num_correct)
+            num_total.fill_(num_total)
+
+        torch.distributed.broadcast(num_correct, get_last_rank())
+        torch.distributed.broadcast(num_total, get_last_rank())
+
+        metrics["num_correct"] = num_correct.cpu().item()
+        metrics["num_total"] = num_total.cpu().item()
 
         return metrics["loss"], metrics
 

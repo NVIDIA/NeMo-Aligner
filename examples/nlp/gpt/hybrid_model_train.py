@@ -233,40 +233,6 @@ def mcts_value_collate_fn(eos_id, batches):
     return final_dict | {"mcts_mask": mask}
 
 
-def split_paths(data_paths, train_ds, val_ds, tokenizer):
-    train_ds_str = set(item["question"] for item in train_ds)
-    val_ds_str = set(item["question"] for item in val_ds)
-
-    train_paths = {}
-    validation_paths = {}
-
-    other_paths = {}
-
-    for k, list_of_paths in data_paths.items():
-        item = torch.load(list_of_paths[0])
-        toks = item["tokens"]
-
-        if isinstance(toks[0], list):
-            toks = toks[0]
-
-        curr_text = tokenizer.tokenizer.decode(toks[: item["context_length"]])
-
-        if isinstance(curr_text, list):
-            curr_text = curr_text[0]
-
-        if curr_text in train_ds_str:
-            train_paths[k] = list_of_paths
-        elif curr_text in val_ds_str:
-            validation_paths[k] = list_of_paths
-        else:
-            other_paths[f"{k}_other"] = list_of_paths
-
-    print("#### TRAIN_PATHS", len(train_paths))
-    print("#### VALIDATION PATHS", len(validation_paths))
-    train_paths = train_paths | other_paths
-    return train_paths, validation_paths
-
-
 @hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
 
@@ -274,7 +240,8 @@ def main(cfg) -> None:
         host=os.getenv("NEMO_SKILLS_SANDBOX_HOST"), port=os.getenv("NEMO_SKILLS_SANDBOX_PORT")
     )
 
-    all_policy_data_paths, all_value_data_paths = get_paths(cfg.mcts_data_file)
+    train_policy_data_paths, train_value_data_paths = get_paths(cfg.mcts_data_file)
+    val_policy_data_paths, val_value_data_paths = get_paths(cfg.mcts_data_file_val)
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
     cfg.model.value = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model.value)
@@ -302,25 +269,6 @@ def main(cfg) -> None:
 
     train_ds = LLaMa3ChatDataset(cfg.dataset.data_prefix["train"], cfg.dataset.prompt_template_name, tokenizer)
     val_ds = LLaMa3ChatDataset(cfg.dataset.data_prefix["validation"], cfg.dataset.prompt_template_name, tokenizer)
-
-    train_policy_data_paths, val_policy_data_paths = split_paths(
-        all_policy_data_paths, train_ds, val_ds, ptl_model.tokenizer
-    )
-
-    logging.info(
-        "policy data presplit: {} post split train: {} val: {}".format(
-            len(all_policy_data_paths), len(train_policy_data_paths), len(val_policy_data_paths)
-        )
-    )
-
-    train_value_data_paths, val_value_data_paths = split_paths(
-        all_value_data_paths, train_ds, val_ds, ptl_model.tokenizer
-    )
-    logging.info(
-        "value data presplit: {} post split train: {} val: {}".format(
-            len(all_value_data_paths), len(train_value_data_paths), len(val_value_data_paths)
-        )
-    )
 
     trainer_restore_path = trainer.ckpt_path
     if trainer_restore_path is not None:
@@ -393,28 +341,28 @@ def main(cfg) -> None:
 
     assert cfg.trainer.deep_search.max_epochs > 0
 
-# val_policy_dataloader = build_dataloader(
-# cfg=cfg,
-# dataset=DatasetLoader(val_policy_data_paths),
-# consumed_samples=consumed_samples,
-# mbs=cfg.model.micro_batch_size,
-# gbs=cfg.model.global_batch_size,
-# load_gbs=True,
-# collate_fn=partial(mcts_collate_fn, eos_id),
-# shuffle=True,
-# )
+    val_policy_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset=DatasetLoader(val_policy_data_paths),
+        consumed_samples=consumed_samples,
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.global_batch_size,
+        load_gbs=True,
+        collate_fn=partial(mcts_collate_fn, eos_id),
+        shuffle=True,
+    )
 
     # TODO(geshen): can have different mbs
-# val_value_dataloader = build_dataloader(
-# cfg=cfg,
-# dataset=DatasetLoader(val_value_data_paths),
-# consumed_samples=consumed_samples_values,
-# mbs=cfg.model.micro_batch_size,
-# gbs=cfg.model.critic_global_batch_size,
-# load_gbs=True,
-# collate_fn=partial(mcts_value_collate_fn, eos_id),
-# shuffle=True,
-# )
+    val_value_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset=DatasetLoader(val_value_data_paths),
+        consumed_samples=consumed_samples_values,
+        mbs=cfg.model.micro_batch_size,
+        gbs=cfg.model.critic_global_batch_size,
+        load_gbs=True,
+        collate_fn=partial(mcts_value_collate_fn, eos_id),
+        shuffle=True,
+    )
 
     # on the first time we ever save a checkpoint
     # these steps will be set correctly and subsequent resumes
@@ -446,8 +394,8 @@ def main(cfg) -> None:
         scheduler=scheduler,
         train_policy_dataloader=train_policy_dataloader,
         train_value_dataloader=train_value_dataloader,
-        val_policy_dataloader=None,
-        val_value_dataloader=None,
+        val_policy_dataloader=val_policy_dataloader,
+        val_value_dataloader=val_value_dataloader,
         val_dataloader_builder_func=val_dataloader_builder_func,
         train_dataloader_builder_func=train_dataloader_builder_func,
         feedback=feedback,
