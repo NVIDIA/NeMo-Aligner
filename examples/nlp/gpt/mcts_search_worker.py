@@ -63,7 +63,7 @@ def groupby(key, output):
 
 
 def compute_metric_from_output(output):
-    return_memory, _ = output
+    return_memory, _, return_positive_negative_samples = output
     return_memory = groupby("data_id", return_memory)
 
     num_correct = 0

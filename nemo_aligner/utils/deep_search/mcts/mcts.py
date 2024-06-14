@@ -377,7 +377,7 @@ class MCTSParallel:
 
             for i in range(len(ps)):
                 data_id = ps[i].data_id
-                if self.stop_criteria.terminate[data_id]:
+                if data_id in self.stop_criteria.terminate and self.stop_criteria.terminate[data_id]:
                     # skip the search if a good solution is found
                     ps[i].node = None
 
@@ -587,14 +587,13 @@ class DeepSearch:
                     text, spg.data_id, count, spg.state
                 )
 
-                if self.mcts.stop_criteria.terminate[spg.data_id]:
-                    is_terminal = True
+                if spg.data_id in self.mcts.stop_criteria.terminate and self.mcts.stop_criteria.terminate[spg.data_id]:
                     backup_root_node = backup_root_nodes[i]
                     assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
                     self.clear_search_db_cache(backup_root_node)
-                    for text in self.mcts.stop_criteria[spg.data_id]:
+                    for text in self.mcts.stop_criteria.evaluation_cache[spg.data_id]:
 
-                        results, tokens = self.mcts.stop_criteria[spg.data_id][text]
+                        results, tokens = self.mcts.stop_criteria.evaluation_cache[spg.data_id][text]
                         return_postive_negative_smaples.append(
                             {
                                 "value": results[0],
@@ -604,88 +603,93 @@ class DeepSearch:
                                 "backup_root_states": backup_root_states[i],
                             }
                         )
+                        if results[0] >= self.mcts.stop_criteria.threshold:
+                            pb.write(f"### FOUND A GOOD SAMPLE ###")
+                            pb.write(f"{text}")
+
                     del parallel_searches[i]
                     del backup_root_states[i]
                     del backup_root_nodes[i]
+                    continue
 
-                # if is_terminal:
-                #     if self.inference_only:
-                #         # if inference only, we only collect the best tokens from the inference
-                #         all_tokens = tuple(spg.state)
-                #         if all_tokens in self.mcts.cache:
-                #             value = self.mcts.cache[all_tokens]
-                #         else:
-                #             value = -1
-                #         return_memory.append(
-                #             {
-                #                 "tokens": spg.state,
-                #                 "reward": value,
-                #                 "data_id": spg.data_id,
-                #                 "context_length": len(backup_root_states[i]),
-                #                 "full_text": self.mcts.decode_text(spg.state),
-                #                 "context": self.mcts.decode_text(backup_root_states[i]),
-                #             }
-                #         )
-                #         # need to clean up the mcts cache starting from backup root states
-                #         backup_root_node = backup_root_nodes[i]
-                #         assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
-                #         self.clear_search_db_cache(backup_root_node)
-                #         # we can remove the search instance
-                #         del parallel_searches[i]
-                #         del backup_root_states[i]
-                #         del backup_root_nodes[i]
-                #         continue
-                #     # loop through all the steps and add to the memory
-                #     # need to update the value based on the game play at the end of the games
-                #     # collects the value buffer if the response ends properly with <extra_id> or byte token
-                #     # or if the response has the answer inside it
-                #     if ends_properly or has_answer:
-                #         # only collect the memory if it ends properly
-                #         for tokens, hist_action_probs, actions in spg.memory:
-                #             hist_outcome = value
-                #             # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
-                #             return_memory.append(
-                #                 {
-                #                     "tokens": tokens,
-                #                     "action_probs": hist_action_probs,
-                #                     "reward": hist_outcome,
-                #                     "actions": actions,
-                #                     "data_id": spg.data_id,
-                #                     "context_length": len(backup_root_states[i]),
-                #                 }
-                #             )
+                if is_terminal:
+                    if self.inference_only:
+                        # if inference only, we only collect the best tokens from the inference
+                        all_tokens = tuple(spg.state)
+                        if all_tokens in self.mcts.cache:
+                            value = self.mcts.cache[all_tokens]
+                        else:
+                            value = -1
+                        return_memory.append(
+                            {
+                                "tokens": spg.state,
+                                "reward": value,
+                                "data_id": spg.data_id,
+                                "context_length": len(backup_root_states[i]),
+                                "full_text": self.mcts.decode_text(spg.state),
+                                "context": self.mcts.decode_text(backup_root_states[i]),
+                            }
+                        )
+                        # need to clean up the mcts cache starting from backup root states
+                        backup_root_node = backup_root_nodes[i]
+                        assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
+                        self.clear_search_db_cache(backup_root_node)
+                        # we can remove the search instance
+                        del parallel_searches[i]
+                        del backup_root_states[i]
+                        del backup_root_nodes[i]
+                        continue
+                    # loop through all the steps and add to the memory
+                    # need to update the value based on the game play at the end of the games
+                    # collects the value buffer if the response ends properly with <extra_id> or byte token
+                    # or if the response has the answer inside it
+                    if ends_properly or has_answer:
+                        # only collect the memory if it ends properly
+                        for tokens, hist_action_probs, actions in spg.memory:
+                            hist_outcome = value
+                            # returns the tokens, the improved policy, the outcome score, the actions for imporoved pollicy and the data id
+                            return_memory.append(
+                                {
+                                    "tokens": tokens,
+                                    "action_probs": hist_action_probs,
+                                    "reward": hist_outcome,
+                                    "actions": actions,
+                                    "data_id": spg.data_id,
+                                    "context_length": len(backup_root_states[i]),
+                                }
+                            )
 
-                #     # process the value memory to get the value for each of the tokens
-                #     value_mems = []
-                #     for tokens, value, node in spg.value_memory:
-                #         all_values = []
-                #         all_tokens = []
-                #         all_tokens += node.state[::-1]
-                #         for _ in range(len(node.state)):
-                #             all_values.append(node.value_sum / node.visit_count)
-                #         while node.parent is not None:
-                #             node = node.parent
-                #             for _ in range(len(node.state)):
-                #                 all_values.append(node.value_sum / node.visit_count)
-                #             all_tokens += node.state[::-1]
-                #         all_tokens = all_tokens[::-1]
-                #         all_values = all_values[::-1]
-                #         assert tuple(all_tokens) == tuple(tokens)
-                #         value_mems.append((tokens, all_values, value))
-                #     return_value_memory.append(
-                #         {
-                #             "value_memory": value_mems,
-                #             "data_id": spg.data_id,
-                #             "backup_root_states": backup_root_states[i],
-                #         }
-                #     )
+                    # process the value memory to get the value for each of the tokens
+                    value_mems = []
+                    for tokens, value, node in spg.value_memory:
+                        all_values = []
+                        all_tokens = []
+                        all_tokens += node.state[::-1]
+                        for _ in range(len(node.state)):
+                            all_values.append(node.value_sum / node.visit_count)
+                        while node.parent is not None:
+                            node = node.parent
+                            for _ in range(len(node.state)):
+                                all_values.append(node.value_sum / node.visit_count)
+                            all_tokens += node.state[::-1]
+                        all_tokens = all_tokens[::-1]
+                        all_values = all_values[::-1]
+                        assert tuple(all_tokens) == tuple(tokens)
+                        value_mems.append((tokens, all_values, value))
+                    return_value_memory.append(
+                        {
+                            "value_memory": value_mems,
+                            "data_id": spg.data_id,
+                            "backup_root_states": backup_root_states[i],
+                        }
+                    )
 
-                #     backup_root_node = backup_root_nodes[i]
-                #     assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
-                #     self.clear_search_db_cache(backup_root_node)
-                #     del parallel_searches[i]
-                #     del backup_root_states[i]
-                #     del backup_root_nodes[i]
+                    backup_root_node = backup_root_nodes[i]
+                    assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
+                    self.clear_search_db_cache(backup_root_node)
+                    del parallel_searches[i]
+                    del backup_root_states[i]
+                    del backup_root_nodes[i]
             if self.save_flag:
 
                 pb.write(f"saving the search to disk {filename}")
