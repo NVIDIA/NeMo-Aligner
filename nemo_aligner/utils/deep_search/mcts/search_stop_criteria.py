@@ -17,6 +17,11 @@ class SearchStopCriteria:
 
         value = 0.0
         if terminate:
+            # TODO, debug
+            print("******************* terminate", text)
+            print('tokens', tokens)
+            print('depth', depth)
+            print('data_id', data_id)
             value = self.score_fn.score(text, data_id)
         # check if the text ends properly
         end_properly = False
