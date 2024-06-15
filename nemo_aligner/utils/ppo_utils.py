@@ -88,20 +88,19 @@ def create_mask(values, prompt_lengths, response_lengths):
         mask[i, prompt_lengths[i] - 1 : response_lengths[i] - 1] = 1.0
     return mask
 
+
 def select_topk(batch, num_select=1):
-    '''
+    """
     Function to select the topk responses for each unique prompt in a batch
-    '''
+    """
     unique_prompts = torch.unique(batch["prompt_tokens"], dim=0)
     selected_idx = []
-    
+
     for i in range(len(unique_prompts)):
         prompt_idx = torch.arange(len(batch["prompt_tokens"]))[(batch["prompt_tokens"] == unique_prompts[i]).all(1)]
         sorted_idx = zip(prompt_idx, batch["rewards"][(batch["prompt_tokens"] == unique_prompts[i]).all(1)])
         sorted_idx = sorted(sorted_idx, key=lambda x: x[1])
-        selected_idx += [x[0].item() for x in sorted_idx[-1 * num_select:]]
+        selected_idx += [x[0].item() for x in sorted_idx[-1 * num_select :]]
 
-    selected_batch = {
-        k:batch[k][selected_idx] for k in batch.keys()
-    }
+    selected_batch = {k: batch[k][selected_idx] for k in batch.keys()}
     return selected_batch

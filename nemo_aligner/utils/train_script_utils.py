@@ -226,7 +226,7 @@ def temp_pop_from_config(cfg, name_to_temporarily_remove):
 
 
 def compute_mbs(num_rollout_samples, rollout_micro_batch_size, num_rollout_per_prompt, data_parallel_world_size):
-    '''
+    """
     Batch Size Logic:
 
     User Specifies:
@@ -257,17 +257,21 @@ def compute_mbs(num_rollout_samples, rollout_micro_batch_size, num_rollout_per_p
     C2: Either rollout_micro_batch_size % N == 0 or N % rollout_micro_batch_size == 0
     C3: cfg.model.ppo.num_rollout_per_prompt % DP == 0
 
-    '''
+    """
 
     if num_rollout_samples % rollout_micro_batch_size != 0:
         raise Exception("num_rollout_samples must be divisible by rollout_micro_batch_size")
 
     N = max(1, num_rollout_per_prompt // data_parallel_world_size)
     if not (rollout_micro_batch_size % N == 0 or N % rollout_micro_batch_size == 0):
-        raise Exception("Must have cfg.model.ppo.rollout_micro_batch_size % N == 0 or N % cfg.model.ppo.rollout_micro_batch_size == 0")
-    
-    if (not num_rollout_per_prompt % data_parallel_world_size == 0):
-        raise Exception("Must have cfg.model.ppo.num_rollout_per_prompt % parallel_state.get_data_parallel_world_size() == 0")
+        raise Exception(
+            "Must have cfg.model.ppo.rollout_micro_batch_size % N == 0 or N % cfg.model.ppo.rollout_micro_batch_size == 0"
+        )
+
+    if not num_rollout_per_prompt % data_parallel_world_size == 0:
+        raise Exception(
+            "Must have cfg.model.ppo.num_rollout_per_prompt % parallel_state.get_data_parallel_world_size() == 0"
+        )
 
     if N < rollout_micro_batch_size:
         mbs = rollout_micro_batch_size // N
@@ -277,5 +281,5 @@ def compute_mbs(num_rollout_samples, rollout_micro_batch_size, num_rollout_per_p
         mbs = 2
         generation_iter = int(N / rollout_micro_batch_size) * 2
         duplicate_prompts = int(rollout_micro_batch_size / 2)
-    
+
     return mbs, generation_iter, duplicate_prompts, N

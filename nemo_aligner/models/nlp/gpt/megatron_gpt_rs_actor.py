@@ -32,10 +32,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
-from nemo_aligner.utils.distributed import (
-    broadcast_2d_tensor_within_pp,
-    from_parallel_logits_to_logprobs,
-)
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp, from_parallel_logits_to_logprobs
 from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
 from nemo_aligner.utils.train_utils import (
     grad_reductions,
@@ -71,7 +68,7 @@ class MegatronGPTRSModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenera
 
     def get_actor_forward_output_and_loss_func(self):
         def fwd_output_and_loss_func(data_iterator, model):
-            
+
             batch = next(data_iterator)
             response_tokens = batch["response_tokens"]
             mask = batch["mask"]
@@ -111,25 +108,18 @@ class MegatronGPTRSModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenera
                 mask = batch["mask"]
                 tokens = batch["tokens"]
 
-                
-
                 curr_log_probs = from_parallel_logits_to_logprobs(vocab_parallel_logits=parallel_logits, target=tokens)
-                loss = -1 * masked_mean(curr_log_probs, mask) # Loss is mean logits on response tokens
+                loss = -1 * masked_mean(curr_log_probs, mask)  # Loss is mean logits on response tokens
 
                 reduced_actor_loss = average_losses_across_data_parallel_group([loss])
                 return (
                     loss,
-                    {
-                        "loss": reduced_actor_loss,
-                    },
+                    {"loss": reduced_actor_loss,},
                 )
 
             return parallel_logits, loss_func
 
         return fwd_output_and_loss_func
-
-
-    
 
     def prepare_for_training(self):
         configure_batch_sizes(
@@ -208,7 +198,7 @@ class MegatronGPTRSModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenera
 
         mbs, seq_length = response_tokens.size()
         num_microbatches = divide(mbs, forward_micro_batch_size)
-        
+
         attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(response_tokens)
 
         batch_iter = get_iterator_k_split([response_tokens, attention_mask, position_ids], num_microbatches)

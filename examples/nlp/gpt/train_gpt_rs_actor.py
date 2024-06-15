@@ -32,13 +32,13 @@ from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
+    compute_mbs,
     extract_optimizer_scheduler_from_ptl_model,
     init_distributed,
     init_peft,
     init_using_ptl,
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
-    compute_mbs
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
@@ -67,11 +67,7 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
 
     ptl_model = load_from_nemo(
-        MegatronGPTRSModel,
-        cfg.model,
-        trainer,
-        strict=True,
-        restore_path=cfg.pretrained_checkpoint.restore_from_path,
+        MegatronGPTRSModel, cfg.model, trainer, strict=True, restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
     init_peft(ptl_model, cfg.model)
@@ -111,10 +107,12 @@ def main(cfg) -> None:
     # collate fn to pad to the max seq length in the batch
     collate_fn = collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg)
 
-    mbs, generation_iter, duplicate_prompts, N = compute_mbs(num_rollout_samples=cfg.model.rs.num_rollout_samples, 
-                                                             rollout_micro_batch_size=cfg.model.rs.rollout_micro_batch_size,
-                                                             num_rollout_per_prompt=cfg.model.rs.num_rollout_per_prompt, 
-                                                             data_parallel_world_size=parallel_state.get_data_parallel_world_size())
+    mbs, generation_iter, duplicate_prompts, N = compute_mbs(
+        num_rollout_samples=cfg.model.rs.num_rollout_samples,
+        rollout_micro_batch_size=cfg.model.rs.rollout_micro_batch_size,
+        num_rollout_per_prompt=cfg.model.rs.num_rollout_per_prompt,
+        data_parallel_world_size=parallel_state.get_data_parallel_world_size(),
+    )
 
     train_dataloader = build_dataloader(
         cfg=cfg,
@@ -181,6 +179,7 @@ def main(cfg) -> None:
         rs_trainer.load_state_dict(custom_trainer_state_dict)
 
     rs_trainer.fit()
+
 
 if __name__ == "__main__":
     main()

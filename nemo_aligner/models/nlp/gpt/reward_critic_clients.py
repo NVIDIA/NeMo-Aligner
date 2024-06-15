@@ -84,7 +84,6 @@ class RMFutureResult(FutureResult):
         return rewards
 
 
-
 class SaveFuture(FutureResult):
     def __init__(self, pytriton_save_future):
         self.pytriton_save_future = pytriton_save_future
@@ -218,4 +217,3 @@ class RemoteGPTRMClient:
         )
 
         return RMFutureResult(rm_future)
-
