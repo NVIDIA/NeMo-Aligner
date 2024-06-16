@@ -388,7 +388,7 @@ def convert_to_amp_o2_format(state_dict):
             new_key = key.replace("model.", "model.module.", 1)
             new_state_dict[new_key] = state_dict[key]
         else:
-            new_state_dict[new_key] = state_dict[key]
+            new_state_dict[key] = state_dict[key]
 
     return new_state_dict
 
