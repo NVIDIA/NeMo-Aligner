@@ -35,6 +35,12 @@ To start, we must first get a pretrained model to align. There are 2 models we r
                python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py \
                    --input_name_or_path /path/to/llama --output_path /output_path/mcore_gpt.nemo
 
+    .. tab-item:: Nemotron-340B
+        :sync: key3
+
+        #. Download the model from `Huggingface <https://huggingface.co/nvidia/Nemotron-4-340B-Base>`__.
+        #. For all scripts you can point ``*.restore_from_path`` to the directory you downloaded. Note: because of the 340B's size, it's recommended to use TP8 PP24 which will be safe for algorithms in aligner.
+
 After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Aligner.
 
 .. note::
