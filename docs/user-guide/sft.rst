@@ -9,7 +9,7 @@ The NeMo framework supports efficient model alignment via the NeMo Aligner codeb
 
 All algorithms in NeMo Aligner will work with any NeMo GPT based model. `Here <https://github.com/NVIDIA/NeMo/tree/main/scripts/nlp_language_modeling>`__ is a collection of scripts that convert popular models from HuggingFace to ``.nemo`` format.
 
-To start, we must first get a pretrained model to align. There are 2 models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes we will use the smaller 2B model. 
+To start, we must first get a pretrained model to align. There are 3 models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes we will use the smaller 2B model. 
 
 .. tab-set::
 
@@ -34,6 +34,13 @@ To start, we must first get a pretrained model to align. There are 2 models we r
 
                python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py \
                    --input_name_or_path /path/to/llama --output_path /output_path/mcore_gpt.nemo
+
+    .. tab-item:: Nemotron-340B
+        :sync: key3
+
+        #. Download the model from `Huggingface <https://huggingface.co/nvidia/Nemotron-4-340B-Base>`__.
+        #. For all scripts you can point ``*.restore_from_path`` to the directory you downloaded. 
+           NOTE: because of the 340B's size, it's recommended to use TP8 PP24 which will be safe for algorithms in aligner.
 
 After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Aligner.
 
