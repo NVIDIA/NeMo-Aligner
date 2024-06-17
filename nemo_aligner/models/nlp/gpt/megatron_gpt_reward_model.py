@@ -186,10 +186,6 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                 num_valid_pairs = (batch["loss_mask"].sum(dim=1) > 0).sum()
 
                 if validation_step and not self.cfg.data.get("validation_drop_last", True):
-                    # TODO eloi:
-                    # - Maybe would be better to always take this path?
-                    # - Trace accuracy averaging all the way up then
-
                     num_pairs = batch["loss_mask"].size(0)
                     num_valid_tokens_in_ub = batch["loss_mask"].sum()
 
@@ -200,8 +196,6 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                         loss_sum_for_ub = num_valid_tokens_in_ub * loss_for_ub
 
                     num_ok = acc_chosen * num_pairs
-
-                    # TODO eloi debug it with an incomplete batch
 
                     tensor_to_reduce = torch.stack([loss_sum_for_ub, num_valid_tokens_in_ub, num_valid_pairs, num_ok,])
                     torch.distributed.all_reduce(tensor_to_reduce, group=parallel_state.get_data_parallel_group())
@@ -276,8 +270,6 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             rewards_all_std = rewards_all.std()
 
             # average loss across micro batches
-            # TODO eloi be careful here, should not average directly
-            # TODO eloi: validation and train do not produce the same kind of shapes...clean it
             num_valid_pairs = torch.stack(
                 [loss_reduced["num_valid_pairs"] for loss_reduced in losses_reduced_per_micro_batch]
             )
@@ -309,6 +301,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         metrics = {
             "loss": loss_mean,
             "acc": acc_mean,
+            "num_valid_pairs": (batch["loss_mask"].sum(dim=1) > 0).sum(),
             "rewards_chosen_mean": rewards_chosen_mean,
             "rewards_rejected_mean": rewards_rejected_mean,
             "rewards_all_mean": rewards_all_mean,

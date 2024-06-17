@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from collections import defaultdict
-from statistics import mean
 
+import numpy as np
 import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
@@ -94,20 +94,22 @@ class SupervisedTrainer:
     @torch.no_grad()
     def run_validation(self):
         loss_means = []
+        dataset_sizes = []
         metrics = {}
-        for k in self.val_dataloader:
-            loss_means_, metrics_ = self.run_validation_one_dataset(k)
-            loss_means.append(loss_means_)
-            metrics.update(metrics_)
-        return mean(loss_means), metrics
+        for dataset_name, val_dataloader in self.val_dataloader.items():
+            loss_mean_, metrics_ = self.run_validation_one_dataset(dataset_name)
+            loss_means.append(loss_mean_)
+            dataset_sizes.append(len(val_dataloader.dataset))
+            metrics.update({f"{dataset_name}/{k}": v for k, v in metrics_.items()})
+        return np.average(loss_means, weights=dataset_sizes), metrics
 
     @torch.no_grad()
-    def run_validation_one_dataset(self, key: str):
+    def run_validation_one_dataset(self, dataset_name: str):
         loss_means = []
         val_metrics = defaultdict(list)
 
-        limit_val_batches = self.dict_limit_val_batches[key]
-        val_dataloader = self.val_dataloader[key]
+        limit_val_batches = self.dict_limit_val_batches[dataset_name]
+        val_dataloader = self.val_dataloader[dataset_name]
 
         val_pbar = tqdm(
             zip(range(limit_val_batches), val_dataloader),
@@ -138,12 +140,12 @@ class SupervisedTrainer:
             log_val_metrics = {f"val_{k}": v for k, v in metrics.items()}
             val_pbar.set_postfix(log_val_metrics)
 
-        val_metrics = {k: mean(v) for k, v in val_metrics.items()}
+        weights = val_metrics["num_valid_pairs"] if "num_valid_pairs" in val_metrics else None
+        val_metrics = {k: np.average(v, weights=weights) for k, v in val_metrics.items() if k != "num_valid_pairs"}
         val_metrics.update(self.inference_metrics_handler.compute())
-        val_metrics = {f"{key}/{k}": v for k, v in val_metrics.items()}  # One wandb tab per validation dataset
         self.inference_metrics_handler.reset()
 
-        return mean(loss_means), val_metrics
+        return np.average(loss_means, weights=weights), val_metrics
 
     def train_single_step(self, batch):
         self.optimizer.zero_grad()
