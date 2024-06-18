@@ -30,6 +30,7 @@ def compute_num_steps_per_epoch(
     num_steps_per_epoch = sampler.total_samples // sampler.global_batch_size
     return compute_limit_batches(num_steps_per_epoch, limit_train_batches)
 
+
 def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, float, None]):
     if limit_batches is None:
         limit_batches = 1.0
