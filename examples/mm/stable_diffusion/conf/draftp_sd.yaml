@@ -207,7 +207,7 @@ model:
 
   data:
       dataloader_type: "single"
-      num_workers: 1 #16
+      num_workers: 0
       shuffle_data: False
       train:
           dataset_path:
