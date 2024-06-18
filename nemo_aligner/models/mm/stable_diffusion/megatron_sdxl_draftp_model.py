@@ -79,6 +79,9 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         self.cfg = cfg
         self.with_distributed_adam = self.with_distributed_adam
         self.model.first_stage_model.requires_grad_(False)
+        # delete encoder
+        del self.model.first_stage_model.encoder
+
         self.distributed_adam_offload_manager = None
         self.in_channels = self.model.model.diffusion_model.in_channels
         self.height = self.cfg.sampling.base.get('height', 512)
@@ -125,6 +128,16 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                     if 'conditioner.embedders.1' in name:
                         return False
                     return True
+            
+            # do not ignore diffusion model, this has to be sharded
+            def _donot_ignore_diffusion_model(name):
+                if 'diffusion_model' in name:
+                    if 'time_embed' in name or 'label_emb' in name:   # ignore these modules for sharding
+                        return True
+                    # we will allow input_layers, middle_layers, output_layers, and out
+                    return False
+                else:
+                    return True
 
             frozen_submodules = []
             frozen_submodule_names = []
@@ -135,6 +148,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                     and all(not param.requires_grad for param in module.parameters())
                     and (_ignore_first_stage_quant(name))
                     and (_donot_ignore_embedders(name))
+                    and (_donot_ignore_diffusion_model(name))
                 ):
                     frozen_submodule_names.append(name)
                     frozen_submodules.append(module)

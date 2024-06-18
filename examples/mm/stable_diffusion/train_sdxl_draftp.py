@@ -21,6 +21,7 @@ from omegaconf.omegaconf import OmegaConf, open_dict
 from copy import deepcopy
 import os
 from functools import partial
+from torch import nn
 
 # from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -84,8 +85,11 @@ class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
                 cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),  # offload on is not supported
                 grad_reduce_dtype=self.cfg.model.get('fsdp_grad_reduce_dtype', 32),
                 precision=self.cfg.trainer.precision,
-                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,MegatronCLIPRewardModel,\
-                                        FrozenOpenCLIPEmbedder,FrozenOpenCLIPEmbedder2,FrozenCLIPEmbedder,ParallelLinearAdapter}, 
+                ## nn Sequential is supposed to capture the `t_embed`, `label_emb`, `out` layers in the unet
+                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,ResnetBlock,AttnBlock,nn.Sequential,\
+                                        MegatronCLIPRewardModel,FrozenOpenCLIPEmbedder,FrozenOpenCLIPEmbedder2,FrozenCLIPEmbedder,\
+                                        ParallelLinearAdapter}, 
+                # extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,ResnetBlock,AttnBlock,SpatialTransformer,ResBlock,\
                 use_orig_params=False, #self.cfg.model.inductor,
                 set_buffer_dtype=self.cfg.get('fsdp_set_buffer_dtype', None),
             )
@@ -127,9 +131,9 @@ def main(cfg) -> None:
 
     # TODO: has to be set true for PyTorch 1.12 and later.
     torch.backends.cuda.matmul.allow_tf32 = True
-    cfg.model.data.train.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)]
+    cfg.model.data.train.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices * cfg.trainer.num_nodes)]
     cfg.model.data.validation.dataset_path = [
-        cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)
+        cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices * cfg.trainer.num_nodes)
     ]
 
     trainer = resolve_and_create_trainer(cfg, "draftp_sd")
