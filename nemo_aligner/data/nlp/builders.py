@@ -117,17 +117,21 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="train",
         )
-        validation_ds = build_dataset_generic(
-            cls=cls,
-            cfg=cfg,
-            data_prefix=data_prefix["validation"],
-            data_impl=data_impl,
-            num_samples=int(train_valid_test_num_samples[0]),
-            seq_length=seq_length,
-            seed=seed,
-            tokenizer=tokenizer,
-            name="validation",
-        )
+        keys_val = [k for k in data_prefix if k.startswith("validation")]
+        dict_validation_ds = {
+            k: build_dataset_generic(
+                cls=cls,
+                cfg=cfg,
+                data_prefix=data_prefix[k],
+                data_impl=data_impl,
+                num_samples=int(train_valid_test_num_samples[0]),
+                seq_length=seq_length,
+                seed=seed,
+                tokenizer=tokenizer,
+                name="validation",
+            )
+            for k in keys_val
+        }
         test_ds = build_dataset_generic(
             cls=cls,
             cfg=cfg,
@@ -139,7 +143,7 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="test",
         )
-        return train_ds, validation_ds, test_ds
+        return train_ds, dict_validation_ds, test_ds
 
     else:
         # Single dataset.
