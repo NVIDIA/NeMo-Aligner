@@ -28,7 +28,14 @@ def compute_num_steps_per_epoch(
         raise NotImplementedError("`drop_last=False` is not currently supported")
 
     num_steps_per_epoch = sampler.total_samples // sampler.global_batch_size
-    return compute_limit_batches(num_steps_per_epoch, limit_train_batches)
+    
+    if limit_train_batches is None or limit_train_batches > 1.0:
+        limit_train_batches = 1.0
+    
+    if limit_train_batches >= 0:
+        return compute_limit_batches(num_steps_per_epoch, limit_train_batches)
+    else:
+        return num_steps_per_epoch
 
 
 def compute_limit_batches(number_of_batches: int, limit_batches: Union[int, float, None]):
