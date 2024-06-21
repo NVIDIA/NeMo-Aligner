@@ -57,6 +57,7 @@ from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model
 from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel
 from nemo.collections.multimodal.modules.stable_diffusion.encoders.modules import FrozenOpenCLIPEmbedder, FrozenOpenCLIPEmbedder2, FrozenCLIPEmbedder
 from nemo.collections.nlp.modules.common.megatron.adapters.parallel_adapters import ParallelLinearAdapter
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 # checkpointing
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (checkpoint_wrapper, CheckpointImpl, apply_activation_checkpointing)
@@ -189,7 +190,7 @@ def main(cfg) -> None:
         logging.info("Applying activation checkpointing on UNet and Decoder.")
         non_reentrant_wrapper = partial(checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT)
         def checkpoint_check_fn(module):
-            return isinstance(module, (Decoder, UNetModel))
+            return isinstance(module, (Decoder, UNetModel, MegatronCLIPRewardModel))
         apply_activation_checkpointing(ptl_model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=checkpoint_check_fn)
 
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
@@ -197,15 +198,6 @@ def main(cfg) -> None:
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
-
-    # initialize base model
-    # init_cfg = deepcopy(cfg.model)
-    # init_cfg.peft.peft_scheme = "none"
-    # init_model = DiffusionEngine(init_cfg, None).to(torch.cuda.current_device()).eval()
-    # for p in init_model.parameters():
-    #     p.requires_grad = False
-    # init_model.train(mode=False) 
-    # ptl_model.init_model = init_model
 
     if local_rank == 0:
         print(ptl_model)
@@ -227,11 +219,13 @@ def main(cfg) -> None:
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
-        run_init_validation=True,
+        run_init_validation=False,
     )
 
     if custom_trainer_state_dict is not None:
         draft_p_trainer.load_state_dict(custom_trainer_state_dict)
+
+    torch.cuda.empty_cache()
 
     draft_p_trainer.fit()
 
