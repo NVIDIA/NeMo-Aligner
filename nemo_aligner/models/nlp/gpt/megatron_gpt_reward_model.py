@@ -72,7 +72,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             self.rew_mean = cfg.reward_standardization.mean
             self.rew_std = cfg.reward_standardization.std
 
-        self.forward_micro_batch_size = self.cfg.forward_micro_batch_size
+        self.forward_micro_batch_size = self.cfg.get("forward_micro_batch_size", self.cfg.micro_batch_size)
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""

@@ -115,6 +115,8 @@ class CriticServerTrainer:
         )
         rewards, values = self.run_inference(inputs=inputs, extra=extra)
 
+        # if the inference request has extra padding that it doesn't need
+        # then we will pad it back up to the expected padding when returning the values
         if prepad_sequence_length > values.shape[1]:
             values = np.pad(
                 values, ((0, 0), (0, prepad_sequence_length - values.shape[1])), mode="constant", constant_values=0
@@ -183,7 +185,7 @@ class CriticServerTrainer:
                 http_port=self.port,
             )
 
-            preferred_batch_size = list(range(1, MAX_BATCH + 1, self.pad_batch_to_multiple))
+            preferred_batch_size = list(range(self.pad_batch_to_multiple, MAX_BATCH + 1, self.pad_batch_to_multiple))
             dynamic_batcher = DynamicBatcher(
                 max_queue_delay_microseconds=self.max_queue_delay_microseconds,
                 preferred_batch_size=preferred_batch_size,
