@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Breaking changes
 
 ### Bug Fixes
+- Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.
 
 ## [0.3.1] - 2024-05
 - SPIN: added `rollout_micro_batch_size` parameter which allows users to set the batch size for doing generation during SPIN training.
@@ -20,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - SFT/SteerLM: LoRA can now be enabled on all model layers
 - DPO: Enable LoRA on all model layers (In this case the actor will be reference model + LoRA weights, we can switch between actor/reference model by enabling/disabling LoRA)
 - PPO: Enable LoRA on all model layers (In this case the actor will be init policy + LoRA weights, we can switch between actor/init_policy model by enabling/disabling LoRA)
+- SteerLM 2.0: Add the SteerLM 2.0 model alignment method.
 ### Breaking changes
 
 ### Bug Fixes
