@@ -48,12 +48,11 @@ def prepare_args():
     parser.add_argument("--port", type=int, default=5555)
     parser.add_argument("--host", type=str, default="localhost")
     parser.add_argument("--model_name", type=str, default="reward_model")
-    parser.add_argument("--add-eos", action="store_true")
     return parser.parse_args()
 
 
 def get_reward(
-    sentences: List[str], add_EOS=False, host="localhost", port=5555, model_name="reward_model",
+    sentences: List[str], host="localhost", port=5555, model_name="reward_model",
 ):
     sentences = _str_list2numpy(sentences)
 
@@ -61,8 +60,7 @@ def get_reward(
 
     with FuturesModelClient(f"{host}:{port}", model_name) as client:
         for sen in np.split(sentences, sentences.shape[0]):
-            add_EOS_arr = np.ones_like(sen, dtype=bool) * add_EOS
-            future = client.infer_batch(sentences=sen, add_EOS=add_EOS_arr)
+            future = client.infer_batch(sentences=sen)
             futures.append(future)
 
     all_result_dicts = [f.result() for f in futures]
@@ -95,7 +93,7 @@ def main(args):
     fout = open(inference_output, "a", encoding="utf-8")
 
     # to warm up the jit
-    _ = get_reward(["hello world!"], add_EOS=args.add_eos, host=args.host, port=args.port, model_name=args.model_name)
+    _ = get_reward(["hello world!"], host=args.host, port=args.port, model_name=args.model_name)
 
     all_samples, inputs = [], []
 
@@ -126,9 +124,7 @@ def main(args):
     for idx in trange(0, len(all_samples)):
         input = inputs[idx]
         sample = all_samples[idx]
-        rewards_all, _ = get_reward(
-            sample, add_EOS=args.add_eos, host=args.host, port=args.port, model_name=args.model_name
-        )
+        rewards_all, _ = get_reward(sample, host=args.host, port=args.port, model_name=args.model_name)
 
         t = 0
         for turn in input["conversations"]:
