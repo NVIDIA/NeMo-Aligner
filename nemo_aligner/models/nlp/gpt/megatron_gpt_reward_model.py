@@ -361,11 +361,11 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         else:
             raise NotImplementedError("string inputs not yet supported")
 
-        print("#### shape", context_tokens_tensor.size(), torch.distributed.get_rank())
         context_tokens_tensor = context_tokens_tensor.cuda()
         context_length_tensor = context_length_tensor.cuda()
 
         inference_batch_size, sequence_length = context_tokens_tensor.size()
+        forward_micro_batch_size = self.forward_micro_batch_size
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
             context_tokens_tensor,
             self.tokenizer.eos_id,
@@ -376,12 +376,10 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         attention_mask = attention_mask.expand(inference_batch_size, -1, -1, -1)
         inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask]
 
-        forward_micro_batch_size = self.forward_micro_batch_size
-
-        if inference_batch_size % forward_micro_batch_size != 0:
-            for i in range(1, forward_micro_batch_size + 1):
-                if inference_batch_size % i == 0:
-                    forward_micro_batch_size = i
+        # if it's not divisible by forward micro batch size,
+        # then try our best to find a smaller one that is divisible
+        while inference_batch_size % forward_micro_batch_size != 0:
+            forward_micro_batch_size -= 1
 
         num_microbatches = divide(inference_batch_size, forward_micro_batch_size)
         data_iter = get_iterator_k_split(inputs, num_microbatches)
