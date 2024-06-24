@@ -70,24 +70,22 @@ class GPTGenerateTRTLLM:
             batch_input_ids.append(prompt_tokens[idx][0 : prompt_lengths[idx]].cpu())
 
         output_dict = self.trt_llm_exporter.model_runner.generate(
-            batch_input_ids=batch_input_ids, 
-            sampling_config=self.sampling_config, 
-            streaming=False
+            batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
         )
 
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
         output_ids = torch.squeeze(output_dict["output_ids"], dim=1).long()
         resp_lens = torch.squeeze(output_dict["sequence_lengths"], dim=1).long()
-        
-        #TRTLLM with PP erroneously inserts padding so have to remove it here
+
+        # TRTLLM with PP erroneously inserts padding so have to remove it here
         if parallel_state.get_pipeline_model_parallel_world_size() > 1:
             max_prompt_len = prompt_lengths.max().item()
             _output_ids = torch.full_like(input=output_ids, fill_value=self.tokenizer.eos_id)
             for idx in range(prompt_tokens.shape[0]):
-                gen_len = (resp_lens[idx]-prompt_lengths[idx]).item()
-                response = output_ids[idx, max_prompt_len:max_prompt_len+gen_len]
-                prompt_response = torch.cat((prompt_tokens[idx][:prompt_lengths[idx]],response))
-                _output_ids[idx, :prompt_response.size(0)] = prompt_response
+                gen_len = (resp_lens[idx] - prompt_lengths[idx]).item()
+                response = output_ids[idx, max_prompt_len : max_prompt_len + gen_len]
+                prompt_response = torch.cat((prompt_tokens[idx][: prompt_lengths[idx]], response))
+                _output_ids[idx, : prompt_response.size(0)] = prompt_response
             output_ids = _output_ids
 
         max_len = (prompt_lengths + resp_lens).max().item()
