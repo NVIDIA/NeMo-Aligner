@@ -95,7 +95,13 @@ def run_rm_or_critic_inference(infer_fn, inputs, extra):
 
 class RewardModelCallable:
     def __init__(
-        self, *, model_name: str, infer_fn: callable, tokenizer: None, forward_mbs: None, lock: threading.Lock
+        self,
+        *,
+        model_name: str,
+        infer_fn: callable,
+        tokenizer: None,
+        forward_micro_batch_size: None,
+        lock: threading.Lock,
     ):
         self.model_name = model_name
         self.lock = lock
@@ -108,7 +114,7 @@ class RewardModelCallable:
         )
         self.outputs = (Tensor(name="rewards", shape=(1,), dtype=np.float32),)
         self.tokenizer = tokenizer
-        self.forward_mbs = forward_mbs
+        self.forward_micro_batch_size = forward_micro_batch_size
 
     @batch
     @lock_method("self.lock")
@@ -118,7 +124,7 @@ class RewardModelCallable:
 
         inputs, extra, prepad_sequence_length = process_inference_request(
             inputs,
-            pad_to=self.forward_mbs * parallel_state.get_data_parallel_world_size(),
+            pad_to=self.forward_micro_batch_size * parallel_state.get_data_parallel_world_size(),
             pad_sequence_length_to_multiple=None,
             tokenizer=self.tokenizer,
         )

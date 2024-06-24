@@ -72,7 +72,7 @@ model:
 
   # if the inference microbatch size is big, it's possible
   # to split it using forward mbs and run inference iteratively
-  forward_mbs: 8
+  forward_micro_batch_size: 8
 
   encoder_seq_length: 4096
   max_position_embeddings: ${model.encoder_seq_length}

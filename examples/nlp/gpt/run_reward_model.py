@@ -83,8 +83,8 @@ def main(cfg) -> None:
     dataloader = build_dataloader(
         cfg=cfg,
         dataset=ds,
-        mbs=cfg.model.forward_mbs,
-        gbs=cfg.model.forward_mbs * dp_size,
+        mbs=cfg.model.forward_micro_batch_size,
+        gbs=cfg.model.forward_micro_batch_size * dp_size,
         collate_fn=collate_fn,
         load_gbs=True,
         use_random_sampler=False,

@@ -82,7 +82,7 @@ def main(cfg) -> None:
     ptl_model = ptl_model.cuda()
 
     dp_size = parallel_state.get_data_parallel_world_size()
-    forward_mbs = cfg.model.forward_mbs
+    forward_micro_batch_size = cfg.model.forward_micro_batch_size
 
     infer_fn = ptl_model.infer
     ptl_model.prepare_for_inference()
@@ -93,7 +93,7 @@ def main(cfg) -> None:
             infer_fn=infer_fn,
             tokenizer=ptl_model.tokenizer,
             lock=threading.Lock(),
-            forward_mbs=forward_mbs,
+            forward_micro_batch_size=forward_micro_batch_size,
         )
         triton_config = TritonConfig(
             allow_http=True,
@@ -103,7 +103,7 @@ def main(cfg) -> None:
             http_port=cfg.inference.port,
         )
         dp_size = parallel_state.get_data_parallel_world_size()
-        preferred_batch_size = [dp_size * forward_mbs * (i + 1) for i in range(1000)]
+        preferred_batch_size = [dp_size * forward_micro_batch_size * (i + 1) for i in range(1000)]
 
         dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000, preferred_batch_size=preferred_batch_size,)
         model_config = ModelConfig(batching=True, max_batch_size=9999999, batcher=dynamic_batcher)

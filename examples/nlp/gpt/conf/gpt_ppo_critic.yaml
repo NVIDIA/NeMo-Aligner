@@ -22,7 +22,7 @@ trainer:
 
     # this should be set at the model level
     gbs: ${model.global_batch_size}
-    inference_micro_batch_size: ${model.forward_mbs}
+    inference_micro_batch_size: ${model.forward_micro_batch_size}
 
   # do not change these trainer args
   logger: False # logger provided by exp_manager
@@ -67,7 +67,7 @@ model:
 
   # if the inference microbatch size is big, it's possible
   # to split it using forward mbs and run inference iteratively
-  forward_mbs: ${.micro_batch_size}
+  forward_micro_batch_size: ${.micro_batch_size}
 
   # RM args
   use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model

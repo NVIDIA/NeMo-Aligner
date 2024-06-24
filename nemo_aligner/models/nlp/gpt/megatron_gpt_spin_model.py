@@ -584,20 +584,20 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         local_batch_size, seq_len = global_batch[0].shape
         global_batch_size = local_batch_size * dp_size
 
-        forward_mbs = self.cfg.spin.log_prob_forward_micro_batch_size
-        forward_mbs_times_dp = forward_mbs * dp_size
+        forward_micro_batch_size = self.cfg.spin.log_prob_forward_micro_batch_size
+        forward_micro_batch_size_times_dp = forward_micro_batch_size * dp_size
 
-        data_iter = get_iterator_k_split(global_batch, global_batch_size // forward_mbs_times_dp)
+        data_iter = get_iterator_k_split(global_batch, global_batch_size // forward_micro_batch_size_times_dp)
 
         fwd_bwd_function = get_forward_backward_func()
         logprobs_list = fwd_bwd_function(
             forward_step_func=self.get_logprob_output_only_func(inference_only=True),
             data_iterator=data_iter,
             model=self.model,
-            num_microbatches=global_batch_size // forward_mbs_times_dp,
+            num_microbatches=global_batch_size // forward_micro_batch_size_times_dp,
             forward_only=True,
             seq_length=seq_len,
-            micro_batch_size=forward_mbs,
+            micro_batch_size=forward_micro_batch_size,
             collect_non_loss_data=True,
         )
 
