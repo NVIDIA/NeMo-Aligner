@@ -174,12 +174,18 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 )
 
                 preference_loss, acc_chosen = self.loss_func(
-                    per_token_logps, ref_logprobs, labels[:, 1:], gt_rewards, average_log_probs=self.preference_avg_log_probs
+                    per_token_logps,
+                    ref_logprobs,
+                    labels[:, 1:],
+                    gt_rewards,
+                    average_log_probs=self.preference_avg_log_probs,
                 )
 
                 sft_loss = torch.zeros_like(preference_loss)
                 if self.sft_loss_weight != 0:
-                    sft_loss = self.sft_loss_func(per_token_logps, labels[:, 1:], average_log_probs=self.sft_avg_log_probs)
+                    sft_loss = self.sft_loss_func(
+                        per_token_logps, labels[:, 1:], average_log_probs=self.sft_avg_log_probs
+                    )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
                 (
@@ -189,8 +195,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     reduced_acc,
                 ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss, acc_chosen])
 
-                out_chosen, out_rejected = self.gather_and_split_rewards(per_token_logps, ref_logprobs, labels,
-                                                                         average_log_probs=self.preference_avg_log_probs)
+                out_chosen, out_rejected = self.gather_and_split_rewards(
+                    per_token_logps, ref_logprobs, labels, average_log_probs=self.preference_avg_log_probs
+                )
 
                 return (
                     loss,
