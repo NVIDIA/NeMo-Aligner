@@ -51,8 +51,11 @@ class GSK8KFeedbackDataset(Feedback):
             score = float(self.sandbox.is_output_correct(response, answer))
         except Exception as e:
             print("############ Inference failed ############")
-            print(answer, response)
-            print(e)
+            print('answer', answer, 'response', response)
+            print("ERROR", e)
+            # print the stack trace
+            import traceback
+            traceback.print_exc()
             score = 0.0
         finally:
             return score

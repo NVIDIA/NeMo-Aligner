@@ -14,6 +14,7 @@ if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)
 VALUE_DATA_FILE = "value_data_{data_id}.pt"
 POLICY_DATA_FILE = "policy_data_{data_id}.pt"
+PN_DATA_FILE = "pn_data_{data_id}.pt"
 
 GLOBAL_CONTEXT_LENGTH_DICT = {}
 
@@ -139,6 +140,7 @@ length_of_policy_after_filter = 0
 length_of_policy_after_wrong_question_filter = 0
 finished_ids = set()
 num_questions_correct = 0
+data_ids_to_sample_map = {}
 for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
     print(p)
     save_file = torch.load(p)
@@ -146,9 +148,10 @@ for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
     total_data_ids.update(data_ids)
     x = save_file["mcts_outputs"]
 
-    assert len(x[1::2]) == len(x[::2])
+    assert len(x[1:2]) == len(x[2:3])
+    assert len(x[0:1]) == len(x[2:3])
 
-    for output_policy, output_value in zip(x[::2], x[1::2]):
+    for output_policy, output_value, postive_negative in zip(x[0:1], x[1:2], x[2:3]):
         # values.extend(batch_value_memory(output_value))
         # policies.extend(batch_policy_memory(output_policy))
         values = batch_value_memory(output_value)
@@ -175,6 +178,26 @@ for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
         for value in values:
             filename = os.path.join(OUTPUT_DIR, VALUE_DATA_FILE.format(data_id=value["data_id"]))
             torch.save(value, filename)
+        
+        dedup_dict = {}
+        for pn_samples in postive_negative:
+            key = (pn_samples["value"], pn_samples["text"])
+            dedup_dict[key] = pn_samples
+
+        for key in dedup_dict:
+            sample = dedup_dict[key]
+            filename = os.path.join(OUTPUT_DIR, PN_DATA_FILE.format(data_id=sample["data_id"]))
+            torch.save(sample, filename)
+            gdata_id = sample["data_id"].split('@')[0]
+            if gdata_id in data_ids_to_sample_map:
+                postive_number, negative_number = data_ids_to_sample_map[gdata_id]
+            else:
+                postive_number, negative_number = 0, 0
+            if key[0] >= 1.0:
+                postive_number += 1
+            else:
+                negative_number += 1
+            data_ids_to_sample_map[gdata_id] = (postive_number, negative_number)
 
 
 print("### FILTERING OUT empty lists")
@@ -188,6 +211,26 @@ print("length of policies after filtering", length_of_policy_after_filter)
 print("not finished ids", total_data_ids - finished_ids)
 
 print("total data ids", len(total_data_ids))
+
+# compute number of correct answers
+num_correct_gdata_id = 0
+num_positive_negative_pairs = 0
+num_negative_only_pairs = 0
+num_positive_only_pairs = 0
+for gdata_id in data_ids_to_sample_map:
+    if data_ids_to_sample_map[gdata_id][0] > 0:
+        num_correct_gdata_id += 1
+    if data_ids_to_sample_map[gdata_id][0] > 0 and data_ids_to_sample_map[gdata_id][1] > 0:
+        num_positive_negative_pairs += 1
+    if data_ids_to_sample_map[gdata_id][0] == 0 and data_ids_to_sample_map[gdata_id][1] > 0:
+        num_negative_only_pairs += 1
+    if data_ids_to_sample_map[gdata_id][0] > 0 and data_ids_to_sample_map[gdata_id][1] == 0:
+        num_positive_only_pairs += 1
+
+print(f"number of correct gdata_id: {num_correct_gdata_id} / {len(data_ids_to_sample_map)} = {num_correct_gdata_id / len(data_ids_to_sample_map)}")
+print(f"number of positive negative pairs: {num_positive_negative_pairs} / {len(data_ids_to_sample_map)} = {num_positive_negative_pairs / len(data_ids_to_sample_map)}")
+print(f"number of negative only pairs: {num_negative_only_pairs} / {len(data_ids_to_sample_map)} = {num_negative_only_pairs / len(data_ids_to_sample_map)}")
+print(f"number of positive only pairs: {num_positive_only_pairs} / {len(data_ids_to_sample_map)} = {num_positive_only_pairs / len(data_ids_to_sample_map)}")
 
 data_metrics = {
     "num_questions_correct": num_questions_correct,
