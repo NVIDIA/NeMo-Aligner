@@ -296,6 +296,8 @@ Run the following command in the background to launch a RM and PPO critic traini
       model.offload_adam_states=True \
       model.micro_batch_size=1 \
       model.global_batch_size=64 \
+      model.optim.lr=3e-7 \
+      model.optim.sched.min_lr=9e-8 \
       model.seed=1234 \
       exp_manager.explicit_log_dir=<path to critic output dir>
 
@@ -310,6 +312,8 @@ Run the following command to launch actor training and a reference policy server
       exp_manager.explicit_log_dir=<path to actor output dir> \
       model.micro_batch_size=1 \
       model.global_batch_size=64 \
+      model.optim.lr=3e-8 \
+      model.optim.sched.min_lr=9e-9 \
       ++model.activations_checkpoint_granularity=selective \
       ++model.activations_checkpoint_method=uniform \
       model.optim.lr=9e-8 \
