@@ -29,9 +29,9 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import (
+    copy_model_states_to_cpu,
     load_and_override_model_config,
     load_from_nemo,
-    retrieve_model_state_dict_in_cpu,
     set_autocast_gpu_dtype,
 )
 
@@ -66,10 +66,10 @@ def main(cfg) -> None:
         # to run the critic and RM together
         # we move to CPU and swap them
         # so we need to retrieve the state here before PTL load
-        rm_state_dict = retrieve_model_state_dict_in_cpu(
-            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
+        rm_state_dict_cpu = copy_model_states_to_cpu(
+            ptl_model, cpu_dict=None, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False), sync=True,
         )
-        ptl_model.rm_state_dict = rm_state_dict
+        ptl_model.rm_state_dict_cpu = rm_state_dict_cpu
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
@@ -93,7 +93,6 @@ def main(cfg) -> None:
         scheduler=scheduler,
         logger=logger,
         ckpt_callback=ckpt_callback,
-        gbs=cfg.model.global_batch_size,
     )
 
     if custom_trainer_state_dict is not None:

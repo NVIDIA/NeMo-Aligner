@@ -6,12 +6,13 @@ trainer:
   precision: bf16 # 16, 32, or bf16
 
 inference:
-  micro_batch_size: 4
   port: 5555 # the port number for the inference server
 
 rm_model_file: null
+dataset_path: null
 
 model:
+  forward_mbs: 2
   sequence_parallel: False
   activations_checkpoint_granularity: null
   activations_checkpoint_method: null

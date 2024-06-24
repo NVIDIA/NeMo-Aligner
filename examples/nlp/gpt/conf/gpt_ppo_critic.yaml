@@ -19,6 +19,12 @@ trainer:
     max_steps: 10000
     gradient_clip_val: 1.0
 
+    gbs: ${model.global_batch_size}
+    forward_mbs: ${model.forward_mbs}
+    pad_sequence_length_to_multiple: null
+
+    max_queue_delay_microseconds: 2000
+
   # do not change these trainer args
   logger: False # logger provided by exp_manager
   enable_checkpointing: False
@@ -59,6 +65,10 @@ model:
     enable: False
     mean: null
     std: null 
+
+  # if the inference microbatch size is big, it's possible
+  # to split it using forward mbs and run inference iteratively
+  forward_mbs: ${trainer.ppo.inference_micro_batch_size}
 
   # RM args
   use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model
