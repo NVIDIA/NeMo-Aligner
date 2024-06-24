@@ -40,10 +40,10 @@ where || denotes string concatenation and *prompt1* and *prompt2* are different 
 
 An example JSONL file can look like the following::
 
-  {"text": User: When did Virgin Australia start operating?\nAssistant: 31 August 2000}
-  {"text": User: When did Virgin Australia start operating?\nAssistant: I refuse to answer this question.}
-  {"text": User: What is 6*10?\nAssistant: 60}
-  {"text": User: What is 6*10?\nAssistant: 90}
+  {"text": "User: When did Virgin Australia start operating?\nAssistant: 31 August 2000"}
+  {"text": "User: When did Virgin Australia start operating?\nAssistant: I refuse to answer this question."}
+  {"text": "User: What is 6*10?\nAssistant: 60"}
+  {"text": "User: What is 6*10?\nAssistant: 90"}
   ...
 
 
@@ -61,8 +61,6 @@ To launch reward model training, you must start with a pretrained or SFT trained
             GPFS="/path/to/nemo-aligner-repo"
             TRAIN_DATA_PATH="/path/to/train_comparisons.jsonl"
             VALID_DATA_PATH="/path/to/test_comparisons.jsonl"
-
-            GPFS="/path/to/nemo-aligner-repo"
 
             python -u ${GPFS}/examples/nlp/gpt/train_reward_model.py \
                trainer.num_nodes=1 \

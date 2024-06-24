@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Next Version]
+
+### New features and optimizations
+
+### Breaking changes
+
+### Bug Fixes
+- Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.
+
+## [0.3.1] - 2024-05
 - SPIN: added `rollout_micro_batch_size` parameter which allows users to set the batch size for doing generation during SPIN training.
         previously the generation batch size was automatically set to the data parallel size (DP) of the model
 
@@ -12,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - SFT/SteerLM: LoRA can now be enabled on all model layers
 - DPO: Enable LoRA on all model layers (In this case the actor will be reference model + LoRA weights, we can switch between actor/reference model by enabling/disabling LoRA)
 - PPO: Enable LoRA on all model layers (In this case the actor will be init policy + LoRA weights, we can switch between actor/init_policy model by enabling/disabling LoRA)
+- SteerLM 2.0: Add the SteerLM 2.0 model alignment method.
 ### Breaking changes
 
 ### Bug Fixes
@@ -24,6 +34,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Fixed crash when `model.micro_batch_size` > 1 in DPO
 - Fixed issue when `model.encoder_seq_length` is mismatched with `model.data.train_ds.max_seq_length` in SFT and SPIN.
 - Delete MegatronPretrainingRandomSampler from Aligner since it has been upstreamed into NeMo
+
+## [0.3.0] - 2024-05
+
+### New features and optimizations
+- Special TRT-LLM release. See [Accelerated-RLHF](https://github.com/NVIDIA/NeMo-Aligner/blob/v0.3.0.trtllm/Accelerated-RLHF.md) and [Accelerated-RLHF-Release](https://github.com/NVIDIA/NeMo-Aligner/releases/tag/v0.3.0.trtllm) for more details.
 
 ## [0.2.0] - 2024-02
 ### New features and optimizations

@@ -1,6 +1,7 @@
 # NVIDIA NeMo-Aligner
 
 # Latest News
+- We released Nemotron-4-340B [Base](https://huggingface.co/nvidia/Nemotron-4-340B-Base), [Instruct](https://huggingface.co/nvidia/Nemotron-4-340B-Instruct), [Reward](https://huggingface.co/nvidia/Nemotron-4-340B-Reward). The Instruct and Reward variants are trained in Nemo-Aligner. Please see the [Helpsteer2](https://arxiv.org/abs/2406.08673) paper for more details on the reward model training.
 - We released a beta version of accelerated generation support in the RLHF pipeline. This is still very much work in process but adds significant speedup to the RLHF training. For more details see [Accelerated-RLHF](https://github.com/NVIDIA/NeMo-Aligner/blob/v0.3.0.trtllm/Accelerated-RLHF.md) and the special [Accelerated-RLHF-Release](https://github.com/NVIDIA/NeMo-Aligner/releases/tag/v0.3.0.trtllm).
 - [NeMo-Aligner Paper](https://arxiv.org/abs/2405.01481) is now out on arxiv!
 

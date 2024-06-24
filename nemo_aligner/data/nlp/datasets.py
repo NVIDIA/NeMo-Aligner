@@ -17,9 +17,11 @@
 import os
 
 import numpy as np
+import scipy
 import torch
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.core import Dataset
 from nemo.utils import logging
 
@@ -429,3 +431,106 @@ class RegressionRewardModelDataset(RewardModelDataset):
             "labels": label_tensor,
         }
         return output
+
+
+class SteerLM2Dataset(GPTSFTChatDataset):
+    def get_prompt(self, system_turn, prompt_turns):
+        prompt = f"{self.special_tokens['system_turn_start']}System{self.special_tokens['end_of_name']}"
+        prompt += f"{system_turn}{self.special_tokens['end_of_turn']}"
+        for turn in prompt_turns:
+            prompt += f"{self.special_tokens['turn_start']}{turn['from']}{self.special_tokens['end_of_name']}"
+            prompt += f"{turn['value']}{self.special_tokens['end_of_turn']}"
+        return prompt
+
+    def _process_example(self, example):
+        """
+        Create an example by concatenating text and answer.
+        Truncation is carried out when needed, but it is performed only on the prompt side.
+        BOS, EOS, and SEP, are added if specified.
+        """
+        assert len(example["prompt_turns"]) % 2 == 1, "Number of prompt turns should be odd"
+        prompt = self.get_prompt(example["system"], example["prompt_turns"])
+        batched_token_ids = []
+        batched_masks = []
+        response_from = example["responses"][0]["from"]
+        assert [item["from"] for item in example["responses"]] == [response_from] * len(
+            example["responses"]
+        ), "All responses should be from the same person"
+        prompt += f"{self.special_tokens['turn_start']}{response_from}{self.special_tokens['end_of_name']}"
+        if "label" in example and example["label"] is not None:
+            prompt += f"{self.special_tokens['label_start']}{example['label']}{self.special_tokens['end_of_turn']}"
+        prompt_tokens = self.tokenizer.text_to_ids(prompt)
+        num_prompt_tokens = len(prompt_tokens)
+        batch_size = len(example["responses"])
+        logws = []
+        logqs = []
+        for item in example["responses"]:
+            full_text = prompt
+            full_text += item["value"] + self.special_tokens["end_of_turn"] + self.special_tokens["turn_start"]
+            token_ids = self.tokenizer.text_to_ids(full_text)
+            masks = [0] * num_prompt_tokens + [1] * (len(token_ids) - num_prompt_tokens)
+            logqs.append(item["log(Q(y|a,x))"])
+            logw = item["log(P(a|x,y))"] + item["log(P(y|x))"] - item["log(Q(y|a,x))"]
+            logws.append(logw)
+            batched_token_ids.append(token_ids)
+            batched_masks.append(masks)
+        logws = np.array(logws)
+        ws = scipy.special.softmax(logws)
+        processed_batch = {
+            "input_ids": batched_token_ids,
+            "mask": batched_masks,
+            "ws": ws,
+            "log(Q(y|a,x))": logqs,
+        }
+        return processed_batch
+
+    def collate_fn(self, batch):
+        # return batch
+        input_ids = [item[:-1] for one_batch in batch for item in one_batch["input_ids"]]
+        labels = [item[1:] for one_batch in batch for item in one_batch["input_ids"]]
+        loss_mask = [item[1:] for one_batch in batch for item in one_batch["mask"]]
+        ws = [item.item() for one_batch in batch for item in one_batch["ws"]]
+        logqs = [item for one_batch in batch for item in one_batch["log(Q(y|a,x))"]]
+        num_responses = [len(one_batch["input_ids"]) for one_batch in batch for item in one_batch["input_ids"]]
+        # assert num_responses all have the same number and only one number
+        assert len(set(num_responses)) == 1
+        max_length = max([len(x) for x in input_ids])
+
+        if max_length > self.max_seq_length:
+            # truncate the sequences if it is longer than max_seq_length
+            input_ids = [x[: self.max_seq_length] for x in input_ids]
+            labels = [x[: self.max_seq_length] for x in labels]
+            loss_mask = [x[: self.max_seq_length] for x in loss_mask]
+
+        # increase max length to nearest multiple of 4 or 8
+        if self.pad_to_max_length:
+            max_length = self.max_seq_length
+        else:
+            max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, 8))
+        assert max_length <= self.max_seq_length
+
+        attention_mask = [self._create_attention_mask(max_length) for _ in batch]
+        attention_mask = torch.stack(attention_mask)
+        position_ids = [list(range(max_length)) for _ in batch]
+        position_ids = torch.LongTensor(position_ids)
+        input_ids = torch.LongTensor(
+            self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        )
+        labels = torch.LongTensor(self._collate_item(labels, max_length=max_length, pad_id=self.tokenizer.eos_id))
+        loss_mask = torch.LongTensor(self._collate_item(loss_mask, max_length=max_length, pad_id=0))
+        ws = torch.FloatTensor(ws)
+        logqs = torch.FloatTensor(logqs)
+        num_responses = torch.LongTensor(num_responses)
+
+        processed_batch = {
+            "tokens": input_ids,
+            "labels": labels,
+            "attention_mask": attention_mask,
+            "loss_mask": loss_mask,
+            "position_ids": position_ids,
+            "ws": ws,
+            "log(Q(y|a,x))": logqs,
+            "num_responses": num_responses,
+        }
+
+        return processed_batch
