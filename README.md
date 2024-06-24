@@ -60,7 +60,6 @@ is stability, so it may not track the very latest versions of those 3 packages. 
 Alternatively, you can build the NeMo Dockerfile here [NeMo Dockerfile](https://github.com/NVIDIA/NeMo/blob/main/Dockerfile) and add `RUN pip install nemo-aligner` at the end.
 
 ## Future work
-- Add Rejection Sampling support
 - We will continue improving the stability of the PPO learning phase.
 - Improve the performance of RLHF
 
