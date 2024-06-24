@@ -37,6 +37,10 @@ from nemo_aligner.utils.utils import apply_func_to_dict
 
 ENDPOINT_BIND_ADDRESS = "0.0.0.0"
 
+# once we merge the critic and actor configs
+# we should set this to num_rollout_samples in the actor
+MAX_BATCH = 9999999
+
 
 class CriticServerTrainer:
     r"""Class that implements the critic training via PyTriton requests.
@@ -58,15 +62,16 @@ class CriticServerTrainer:
         self.scheduler = scheduler
         self.ckpt_callback = ckpt_callback
         self.gbs = cfg.gbs
-        self.forward_mbs = cfg.forward_mbs
         self.step = 0
-        self.pad_sequence_length_to_multiple = cfg.pad_sequence_length_to_multiple
+
+        self.pad_sequence_length_to_multiple = cfg.get("pad_sequence_length_to_multiple", None)
+        self.max_queue_delay_microseconds = cfg.get("max_queue_delay_microseconds", 2000)
+        self.pad_batch_to_multiple = cfg.inference_micro_batch_size * parallel_state.get_data_parallel_world_size()
 
         # server parameters
         self.combine_rm_and_critic_server = cfg.combine_rm_and_critic_server
         self.infer_fn = model.infer_rm_critic if self.combine_rm_and_critic_server else model.infer
         self.port = cfg.port
-        self.max_inference_batch_size = cfg.inference_micro_batch_size * parallel_state.get_data_parallel_world_size()
 
         # PyTriton args
         self.infer_inputs = (
@@ -105,7 +110,7 @@ class CriticServerTrainer:
 
         inputs, extra, prepad_sequence_length = process_inference_request(
             inputs,
-            pad_to=self.forward_mbs * parallel_state.get_data_parallel_world_size(),
+            pad_to=self.pad_batch_to_multiple,
             pad_sequence_length_to_multiple=self.pad_sequence_length_to_multiple,
         )
         rewards, values = self.run_inference(inputs=inputs, extra=extra)
@@ -177,18 +182,15 @@ class CriticServerTrainer:
                 http_address=ENDPOINT_BIND_ADDRESS,
                 http_port=self.port,
             )
-            # try to find a common multiple of forward mbs and dp so we don't need to pad
-            dp_size = parallel_state.get_data_parallel_world_size()
-            preferred_batch_size = [dp_size * self.forward_mbs * (i + 1) for i in range(1000)]
 
-            # 1 second latency max
+            preferred_batch_size = list(range(1, MAX_BATCH + 1, self.pad_batch_to_multiple))
             dynamic_batcher = DynamicBatcher(
-                max_queue_delay_microseconds=self.cfg.max_queue_delay_microseconds,
+                max_queue_delay_microseconds=self.max_queue_delay_microseconds,
                 preferred_batch_size=preferred_batch_size,
             )
 
             # we cut the batch into pieces so we don't need to have a max batch size
-            infer_model_config = ModelConfig(batching=True, max_batch_size=9999999, batcher=dynamic_batcher)
+            infer_model_config = ModelConfig(batching=True, max_batch_size=MAX_BATCH, batcher=dynamic_batcher)
             # the model will split the train batch by itself
             train_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
             save_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
