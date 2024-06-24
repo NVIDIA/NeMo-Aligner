@@ -19,11 +19,11 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import replace
 from functools import partial
 from typing import Iterator, List
 from unittest.mock import patch
-from copy import deepcopy
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
