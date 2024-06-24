@@ -226,60 +226,53 @@ def temp_pop_from_config(cfg, name_to_temporarily_remove):
 
 
 def compute_mbs(num_rollout_samples, rollout_micro_batch_size, num_rollout_per_prompt, data_parallel_world_size):
-    """
+    '''
     Batch Size Logic:
 
     User Specifies:
     - rollout_micro_batch_size: Number of generations we are able to fit on one worker
     - num_rollout_samples: This is the number of generations we want to generate in each pass
     - num_rollout_per_prompt: The number of rollout samples for any given prompt
-    - data_parallel_world_size: Number of workers
 
     We need to get:
     - mbs: The number of prompts to load per worker
     - duplicate: The number of times to duplicate each prompt
     - generation_iter: number of iterations to run generation for
-
-    We first compute N as the number of generations per data_parallel_world_size worker:
-    N = cfg.model.ppo.num_rollout_per_prompt // data_parallel_world_size
     
-    if N <= rollout_micro_batch_size:
-        duplicate = N
-        mbs = rollout_micro_batch_size / N # We want to fill out the microbatch size with as many prompts as possible
+    if num_rollout_per_prompt * 2 < rollout_micro_batch_size:
+        duplicate = num_rollout_per_prompt
+        mbs = rollout_micro_batch_size / num_rollout_per_prompt # We want to fill out the microbatch size with as many prompts as possible
         generation_iter = 1
-    elif N > rollout_micro_batch_size:
-        mbs = 1 # In this case we want to generate more responses than our micro_batch_size, so we have to split the generation up across devices/iterations
-        generation_iter = N / rollout_micro_batch_size
-        duplicate = rollout_micro_batch_size
+    else:
+        mbs = 2 # In this case we want to generate more responses than our micro_batch_size, so we have to split the generation up across devices/iterations. However, 2 is the minimum size allowed
+        duplicate = rollout_micro_batch_size / 2
+        generation_iter =  num_rollout_per_prompt / duplicate
+        
     
     Constraints:
     C1: gbs % mbs = 0
     C2: Either rollout_micro_batch_size % N == 0 or N % rollout_micro_batch_size == 0
     C3: cfg.model.ppo.num_rollout_per_prompt % DP == 0
 
-    """
+    '''
 
     if num_rollout_samples % rollout_micro_batch_size != 0:
         raise Exception("num_rollout_samples must be divisible by rollout_micro_batch_size")
 
     N = max(1, num_rollout_per_prompt // data_parallel_world_size)
     if not (rollout_micro_batch_size % N == 0 or N % rollout_micro_batch_size == 0):
-        raise Exception(
-            "Must have cfg.model.ppo.rollout_micro_batch_size % N == 0 or N % cfg.model.ppo.rollout_micro_batch_size == 0"
-        )
-
-    if not num_rollout_per_prompt % data_parallel_world_size == 0:
-        raise Exception(
-            "Must have cfg.model.ppo.num_rollout_per_prompt % parallel_state.get_data_parallel_world_size() == 0"
-        )
-
-    if N < rollout_micro_batch_size:
-        mbs = rollout_micro_batch_size // N
+        raise Exception("Must have cfg.model.ppo.rollout_micro_batch_size % N == 0 or N % cfg.model.ppo.rollout_micro_batch_size == 0")
+    
+    if (not num_rollout_per_prompt % data_parallel_world_size == 0) and num_rollout_per_prompt > data_parallel_world_size:
+        raise Exception("Must have cfg.model.ppo.num_rollout_per_prompt % parallel_state.get_data_parallel_world_size() == 0")
+    
+    if num_rollout_per_prompt * 2 < rollout_micro_batch_size:
+        mbs = int(rollout_micro_batch_size / num_rollout_per_prompt)
         generation_iter = 1
-        duplicate_prompts = N
+        duplicate_prompts = num_rollout_per_prompt
     else:
-        mbs = 2
-        generation_iter = int(N / rollout_micro_batch_size) * 2
+        mbs = 2 # minimum we can do
         duplicate_prompts = int(rollout_micro_batch_size / 2)
-
+        generation_iter = int(num_rollout_per_prompt / duplicate_prompts)
+    
     return mbs, generation_iter, duplicate_prompts, N
