@@ -364,6 +364,7 @@ def copy_model_states_to_cpu(model, cpu_dict=None, megatron_amp_O2=True, sync=Tr
 
     return cpu_dict
 
+
 @torch.no_grad()
 def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O2=True):
     """swap the state dict with a specified state dict, and offload the current state dict onto CPU
