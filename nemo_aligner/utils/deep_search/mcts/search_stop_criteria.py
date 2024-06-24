@@ -5,6 +5,7 @@ class SearchStopCriteria:
         self.evaluation_cache = {}
         self.threshold = threshold
         self.terminate = {}
+        self.max_value = {}
 
     def get_value_and_terminated(self, text, data_id, depth, tokens):
         if data_id in self.evaluation_cache and text in self.evaluation_cache[data_id]:
@@ -37,11 +38,16 @@ class SearchStopCriteria:
             self.evaluation_cache[data_id][text] = (result, tokens)
         if value >= self.threshold:
             self.terminate[data_id] = True
+        if data_id not in self.max_value:
+            self.max_value[data_id] = value
+        else:
+            self.max_value[data_id] = max(self.max_value[data_id], value)
         return result
 
     def reset(self):
         self.terminate = {}
         self.evaluation_cache = {}
+        self.max_value = {}
 
     def __str__(self):
         return self.__class__.__name__

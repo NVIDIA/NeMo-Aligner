@@ -2,12 +2,12 @@ import os
 import re
 from typing import List
 
+import numpy as np
 import pandas as pd
 from datasets import load_dataset
 from nemo_skills.code_execution.math_grader import extract_answer
 from nemo_skills.code_execution.sandbox import LocalSandbox
 from pytriton.client import FuturesModelClient
-import numpy as np
 
 from nemo_aligner.utils.deep_search.mcts.reward_functions import _str_list2numpy, get_reward
 
@@ -51,10 +51,11 @@ class GSK8KFeedbackDataset(Feedback):
             score = float(self.sandbox.is_output_correct(response, answer))
         except Exception as e:
             print("############ Inference failed ############")
-            print('answer', answer, 'response', response)
+            print("answer", answer, "response", response)
             print("ERROR", e)
             # print the stack trace
             import traceback
+
             traceback.print_exc()
             score = 0.0
         finally:
@@ -165,8 +166,9 @@ class HelpSteerFeedback(Feedback):
         except Exception as e:
             print("############ Inference failed ############")
             print(e)
-            # print stacktrace 
+            # print stacktrace
             import traceback
+
             traceback.print_exc()
             score = 0.0
         finally:

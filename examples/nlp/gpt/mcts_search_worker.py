@@ -40,7 +40,12 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHybridModel
-from nemo_aligner.utils.deep_search.mcts.feedback_functions import DummyScore, GSK8KFeedbackDataset, HelpSteerFeedback, SteerLMFeedback
+from nemo_aligner.utils.deep_search.mcts.feedback_functions import (
+    DummyScore,
+    GSK8KFeedbackDataset,
+    HelpSteerFeedback,
+    SteerLMFeedback,
+)
 from nemo_aligner.utils.deep_search.mcts.run import run_mcts
 from nemo_aligner.utils.distributed import broadcast_2d_tensor
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed, resolve_and_create_trainer
@@ -277,7 +282,7 @@ def get_dataset(cfg):
     elif cfg.model.mcts.feedback == "steerlm":
         score_fn = SteerLMFeedback()
     elif cfg.model.mcts.feedback == "helpsteer":
-        score_fn = HelpSteerFeedback()
+        score_fn = HelpSteerFeedback(cfg.model.mcts.reward_weights)
     elif cfg.model.mcts.feedback == "dummy":
         score_fn = DummyScore()
     else:

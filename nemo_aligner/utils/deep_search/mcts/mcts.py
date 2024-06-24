@@ -586,7 +586,10 @@ class DeepSearch:
                 value, is_terminal, ends_properly, has_answer = self.mcts.stop_criteria.get_value_and_terminated(
                     text, spg.data_id, count, spg.state
                 )
-
+                if spg.data_id in self.mcts.stop_criteria.max_value:
+                    # print out the maximum value
+                    max_value = self.mcts.stop_criteria.max_value[spg.data_id]
+                    pb.write(f"### MAX VALUE FOR DATA ID {spg.data_id} IS {max_value}")
                 if spg.data_id in self.mcts.stop_criteria.terminate and self.mcts.stop_criteria.terminate[spg.data_id]:
                     backup_root_node = backup_root_nodes[i]
                     assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)

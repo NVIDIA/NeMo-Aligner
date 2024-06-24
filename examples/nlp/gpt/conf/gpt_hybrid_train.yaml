@@ -76,7 +76,7 @@ model:
 
     environment: null  # the environment for MCTS to interact with, default None, can be set to "code" for running code
     feedback: math # the feedback function used for the search, ['math', 'steerlm']
-    weight: [0.0, 0.0, 0.0, 0.0, 0.65, 0.8, 0.45, 0.0, 0.0]
+    reward_weights: [0.0, 0.0, 0.0, 0.0, 0.65, 0.8, 0.45, 0.0, 0.0] # reward weights for the helpsteer reward function
 
     child_threshold: 0.01 # the probability threshold for the child nodes to be expanded
 

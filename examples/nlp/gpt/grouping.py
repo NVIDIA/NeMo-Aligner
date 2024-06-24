@@ -178,7 +178,7 @@ for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
         for value in values:
             filename = os.path.join(OUTPUT_DIR, VALUE_DATA_FILE.format(data_id=value["data_id"]))
             torch.save(value, filename)
-        
+
         dedup_dict = {}
         for pn_samples in postive_negative:
             key = (pn_samples["value"], pn_samples["text"])
@@ -188,7 +188,7 @@ for p in tqdm(sorted(Path(CACHE_DIR).glob("*.pt"))):
             sample = dedup_dict[key]
             filename = os.path.join(OUTPUT_DIR, PN_DATA_FILE.format(data_id=sample["data_id"]))
             torch.save(sample, filename)
-            gdata_id = sample["data_id"].split('@')[0]
+            gdata_id = sample["data_id"].split("@")[0]
             if gdata_id in data_ids_to_sample_map:
                 postive_number, negative_number = data_ids_to_sample_map[gdata_id]
             else:
@@ -227,10 +227,18 @@ for gdata_id in data_ids_to_sample_map:
     if data_ids_to_sample_map[gdata_id][0] > 0 and data_ids_to_sample_map[gdata_id][1] == 0:
         num_positive_only_pairs += 1
 
-print(f"number of correct gdata_id: {num_correct_gdata_id} / {len(data_ids_to_sample_map)} = {num_correct_gdata_id / len(data_ids_to_sample_map)}")
-print(f"number of positive negative pairs: {num_positive_negative_pairs} / {len(data_ids_to_sample_map)} = {num_positive_negative_pairs / len(data_ids_to_sample_map)}")
-print(f"number of negative only pairs: {num_negative_only_pairs} / {len(data_ids_to_sample_map)} = {num_negative_only_pairs / len(data_ids_to_sample_map)}")
-print(f"number of positive only pairs: {num_positive_only_pairs} / {len(data_ids_to_sample_map)} = {num_positive_only_pairs / len(data_ids_to_sample_map)}")
+print(
+    f"number of correct gdata_id: {num_correct_gdata_id} / {len(data_ids_to_sample_map)} = {num_correct_gdata_id / len(data_ids_to_sample_map)}"
+)
+print(
+    f"number of positive negative pairs: {num_positive_negative_pairs} / {len(data_ids_to_sample_map)} = {num_positive_negative_pairs / len(data_ids_to_sample_map)}"
+)
+print(
+    f"number of negative only pairs: {num_negative_only_pairs} / {len(data_ids_to_sample_map)} = {num_negative_only_pairs / len(data_ids_to_sample_map)}"
+)
+print(
+    f"number of positive only pairs: {num_positive_only_pairs} / {len(data_ids_to_sample_map)} = {num_positive_only_pairs / len(data_ids_to_sample_map)}"
+)
 
 data_metrics = {
     "num_questions_correct": num_questions_correct,
