@@ -26,7 +26,7 @@ from nemo.core.config import hydra_runner
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import RewardModelCallable
-from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, rebalance_nd_tensor
+from nemo_aligner.utils.distributed import broadcast_2d_tensor, rebalance_nd_tensor
 from nemo_aligner.utils.train_script_utils import init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, set_autocast_gpu_dtype
 
