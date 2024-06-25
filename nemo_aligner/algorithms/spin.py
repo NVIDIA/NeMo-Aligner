@@ -25,6 +25,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
@@ -39,6 +40,7 @@ from nemo_aligner.utils.utils import (
 
 try:
     from tensorrt_llm.bindings import GptSession
+
     from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 
     GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
