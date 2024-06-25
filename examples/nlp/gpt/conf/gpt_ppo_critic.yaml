@@ -8,6 +8,8 @@ trainer:
   precision: bf16
 
   ppo:
+    # this sets the preferred batch size for PyTrition
+    inference_micro_batch_size: ${model.forward_micro_batch_size}
     port: 5556
 
     # run rm and critic together
@@ -22,7 +24,6 @@ trainer:
 
     # this should be set at the model level
     gbs: ${model.global_batch_size}
-    inference_micro_batch_size: ${model.forward_micro_batch_size}
 
   # do not change these trainer args
   logger: False # logger provided by exp_manager
