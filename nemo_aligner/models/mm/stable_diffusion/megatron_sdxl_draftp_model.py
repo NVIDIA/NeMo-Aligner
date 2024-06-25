@@ -12,29 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
 from typing import Mapping
 
 import numpy as np
 import torch
-from torch import nn
 import wandb
 from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
+from omegaconf import OmegaConf
 from PIL import Image
+from torch import nn
 from tqdm import tqdm
-from nemo_aligner.utils.utils import adapter_control
-from nemo.utils import logging
 
 import nemo.collections.multimodal.parts.stable_diffusion.pipeline as sampling_utils
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion_engine import (
+    DiffusionEngine,
+    MegatronDiffusionEngine,
+)
 from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
     LatentDiffusion,
     MegatronLatentDiffusion,
 )
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion_engine import MegatronDiffusionEngine, DiffusionEngine
+from nemo.collections.multimodal.parts.stable_diffusion.sdxl_helpers import (
+    do_sample,
+    get_batch,
+    get_unique_embedder_keys_from_conditioner,
+)
+from nemo.collections.multimodal.parts.stable_diffusion.sdxl_pipeline import get_sampler_config
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo.utils import logging
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
@@ -42,11 +52,12 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_training_step,
     prepare_for_validation_step,
 )
-from nemo_aligner.utils.utils import _get_autocast_dtype, configure_batch_sizes, get_iterator_k_split_list
-from nemo.collections.multimodal.parts.stable_diffusion.sdxl_pipeline import get_sampler_config
-from nemo.collections.multimodal.parts.stable_diffusion.sdxl_helpers import do_sample, get_unique_embedder_keys_from_conditioner, get_batch
-from omegaconf import OmegaConf
-from copy import deepcopy
+from nemo_aligner.utils.utils import (
+    _get_autocast_dtype,
+    adapter_control,
+    configure_batch_sizes,
+    get_iterator_k_split_list,
+)
 
 BatchType = Mapping[str, torch.tensor]
 
@@ -69,7 +80,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         ## initialize the base model
         self.peft_scheme = cfg.peft.peft_scheme
         self.init_model = None
-        if cfg.peft.peft_scheme == 'none':
+        if cfg.peft.peft_scheme == "none":
             logging.info("Full finetuning, initializing a copy of the base model.")
             self.init_model = DiffusionEngine(deepcopy(cfg), None).to(torch.cuda.current_device()).eval()
             for p in self.init_model.parameters():
@@ -84,9 +95,11 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
 
         self.distributed_adam_offload_manager = None
         self.in_channels = self.model.model.diffusion_model.in_channels
-        self.height = self.cfg.sampling.base.get('height', 512)
-        self.width = self.cfg.sampling.base.get('width', 512)
-        self.downsampling_factor = 2 ** (len(self.cfg.first_stage_config.ddconfig.get('ch_mult', [0])) - 1)    # one less than the 
+        self.height = self.cfg.sampling.base.get("height", 512)
+        self.width = self.cfg.sampling.base.get("width", 512)
+        self.downsampling_factor = 2 ** (
+            len(self.cfg.first_stage_config.ddconfig.get("ch_mult", [0])) - 1
+        )  # one less than the
         self.downsampling_factor = int(self.downsampling_factor)
 
         ## unconditional guidance scale, inference steps, eta are all given in sampler config, no need to rewrite here
@@ -101,8 +114,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         self.model.with_distributed_adam = False
 
         params = self.cfg.sampling.base
-        self.sampler = get_sampler_config(params)    
-
+        self.sampler = get_sampler_config(params)
 
     ##############
     ## Rewriting this to avoid ignoring the decoder, and just putting it in its own shard
@@ -115,24 +127,26 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                         return True
                     return False
                 return True
-            
+
             # do not ignore clip embedders
             def _donot_ignore_embedders(name):
-                if 'conditioner' not in name:
+                if "conditioner" not in name:
                     return True
-                if name == 'conditioner' or name == 'conditioner.embedders':  # do not ignore the main-level modules, we will ignore the submodules
+                if (
+                    name == "conditioner" or name == "conditioner.embedders"
+                ):  # do not ignore the main-level modules, we will ignore the submodules
                     return False
                 else:
-                    if 'conditioner.embedders.0' in name:
+                    if "conditioner.embedders.0" in name:
                         return False
-                    if 'conditioner.embedders.1' in name:
+                    if "conditioner.embedders.1" in name:
                         return False
                     return True
-            
+
             # do not ignore diffusion model, this has to be sharded
             def _donot_ignore_diffusion_model(name):
-                if 'diffusion_model' in name:
-                    if 'time_embed' in name or 'label_emb' in name:   # ignore these modules for sharding
+                if "diffusion_model" in name:
+                    if "time_embed" in name or "label_emb" in name:  # ignore these modules for sharding
                         return True
                     # we will allow input_layers, middle_layers, output_layers, and out
                     return False
@@ -163,7 +177,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             frozen_submodule_names, frozen_submodules = find_frozen_submodules(self.model)
             for submodule in frozen_submodule_names:
                 logging.debug(f"Ignoring state {submodule} in FSDP.")
-            self.trainer.strategy.kwargs['ignored_states'] = frozen_submodules
+            self.trainer.strategy.kwargs["ignored_states"] = frozen_submodules
             # FSDP requires uniform status of require_grads
             # Diffusion models like SD has frozen parts and needs to be added to 'ignored_states' from sharding for FSDP to work
             self.model = self.trainer.strategy._setup_model(self.model)
@@ -206,17 +220,21 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         mbs = int(self.cfg.micro_batch_size)
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
-    
+
     def append_sdxl_size_keys(self, prompts):
         # given list of prompts, convert into a batch
         # also append size and crop keys
         batch_size = len(prompts)
         batch = dict()
-        batch['txt'] = prompts
-        batch['captions'] = prompts
-        batch['original_size_as_tuple'] = torch.tensor([self.width, self.height], device=torch.cuda.current_device()).repeat(batch_size, 1)
-        batch['target_size_as_tuple'] = torch.tensor([self.width, self.height], device=torch.cuda.current_device()).repeat(batch_size, 1)
-        batch['crop_coords_top_left'] = torch.tensor([0, 0], device=torch.cuda.current_device()).repeat(batch_size, 1)
+        batch["txt"] = prompts
+        batch["captions"] = prompts
+        batch["original_size_as_tuple"] = torch.tensor(
+            [self.width, self.height], device=torch.cuda.current_device()
+        ).repeat(batch_size, 1)
+        batch["target_size_as_tuple"] = torch.tensor(
+            [self.width, self.height], device=torch.cuda.current_device()
+        ).repeat(batch_size, 1)
+        batch["crop_coords_top_left"] = torch.tensor([0, 0], device=torch.cuda.current_device()).repeat(batch_size, 1)
         return batch
 
     @torch.no_grad()
@@ -226,18 +244,18 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
         ):
             # get sampler (contains discretizer, scaler, guider)
-            #params = self.cfg.sampling.base
-            #sampler = get_sampler_config(params)    
+            # params = self.cfg.sampling.base
+            # sampler = get_sampler_config(params)
             sampler = self.sampler
 
             batch_c = self.append_sdxl_size_keys(batch)
             batch_size = len(batch)
 
-            force_uc_zero_embeddings = ['txt', 'captions']   # force zero embeddings for text and captions
+            force_uc_zero_embeddings = ["txt", "captions"]  # force zero embeddings for text and captions
             cond, u_cond = model.conditioner.get_unconditional_conditioning(
                 batch_c, batch_uc=None, force_uc_zero_embeddings=force_uc_zero_embeddings,
             )
-            additional_model_inputs = {}   # not necessary for now
+            additional_model_inputs = {}  # not necessary for now
 
             denoiser = lambda input, sigma, c: model.denoiser(model.model, input, sigma, c, **additional_model_inputs)
             samples_z = sampler(denoiser, latents, cond=cond, uc=u_cond)
@@ -271,11 +289,13 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                 generator=None,
             ).to(torch.cuda.current_device())
 
-        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(latents+0, prompts, self.model)
+        image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(
+            latents + 0, prompts, self.model
+        )
         # run visualization with base model too
         base_model = self.init_model or self.model
         with adapter_control(base_model):
-            image_init, reward_init, _ = self.generate_log_images(latents+0, prompts, base_model)
+            image_init, reward_init, _ = self.generate_log_images(latents + 0, prompts, base_model)
 
         images = []
         captions = []
@@ -298,7 +318,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             batch_c = self.append_sdxl_size_keys(batch)
 
             truncation_steps = self.cfg.truncation_steps
-            force_uc_zero_embeddings = ['txt', 'captions'] 
+            force_uc_zero_embeddings = ["txt", "captions"]
             ## initialize sampler
             # params = self.cfg.sampling.base
             # sampler = get_sampler_config(params)    # the sampler is agnostic to model, so we can share it
@@ -309,13 +329,17 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             )
             additional_model_inputs = {}
 
-            list_eps_draft= []
+            list_eps_draft = []
             list_eps_init = []
 
             # get denoisers
-            denoiser_draft = lambda input, sigma, c: self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
+            denoiser_draft = lambda input, sigma, c: self.model.denoiser(
+                self.model.model, input, sigma, c, **additional_model_inputs
+            )
             base_model = self.init_model or self.model
-            denoiser_base = lambda input, sigma, c: base_model.denoiser(base_model.model, input, sigma, c, **additional_model_inputs)
+            denoiser_base = lambda input, sigma, c: base_model.denoiser(
+                base_model.model, input, sigma, c, **additional_model_inputs
+            )
             # def denoiser_init(input, sigma, c):
             #     with adapter_control(self.model.model):
             #         denoised = self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
@@ -326,38 +350,58 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             num_steps = sampler.num_steps
             x, s_in, sigmas, num_sigmas, cond, uc = sampler.prepare_sampling_loop(x, cond, uc, num_steps)
             # last step doesnt count since there is no additional sigma
-            total_steps = num_sigmas-1
+            total_steps = num_sigmas - 1
 
-            iterator = tqdm(range(num_sigmas-1), desc=f"{sampler.__class__.__name__} Sampler", total=total_steps)
+            iterator = tqdm(range(num_sigmas - 1), desc=f"{sampler.__class__.__name__} Sampler", total=total_steps)
             for i in iterator:
                 gamma = sampler.get_gamma(sigmas, num_sigmas, i)
                 # with context(set_draft_grad_flag):
                 if i < total_steps - truncation_steps:
                     # just run the sampling without storing any grad
                     with torch.no_grad():
-                        x_next_draft, eps_draft = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_draft, x, cond, uc, gamma, return_noise=True)
+                        x_next_draft, eps_draft = sampler.sampler_step(
+                            s_in * sigmas[i],
+                            s_in * sigmas[i + 1],
+                            denoiser_draft,
+                            x,
+                            cond,
+                            uc,
+                            gamma,
+                            return_noise=True,
+                        )
                         x = x_next_draft
                 else:
                     # store computation graph of draft eps
-                    x_next_draft, eps_draft = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_draft, x, cond, uc, gamma, return_noise=True)
+                    x_next_draft, eps_draft = sampler.sampler_step(
+                        s_in * sigmas[i], s_in * sigmas[i + 1], denoiser_draft, x, cond, uc, gamma, return_noise=True
+                    )
                     list_eps_draft.append(eps_draft)
                     ##### TODO: uncomment this for base model
                     with torch.no_grad():
                         base_model = self.init_model or self.model
                         with adapter_control(base_model):
-                            _, eps_init = sampler.sampler_step(s_in * sigmas[i], s_in * sigmas[i+1], denoiser_base, x, cond, uc, gamma, return_noise=True)
+                            _, eps_init = sampler.sampler_step(
+                                s_in * sigmas[i],
+                                s_in * sigmas[i + 1],
+                                denoiser_base,
+                                x,
+                                cond,
+                                uc,
+                                gamma,
+                                return_noise=True,
+                            )
                         list_eps_init.append(eps_init)
                     # list_eps_init.append(eps_draft.detach())
                     # set next \bar{x}
                     x = x_next_draft
-            
+
             # compile list of eps
-            t_eps_draft_p = torch.stack(list_eps_draft).to(torch.device('cuda'))
-            t_eps_init  = torch.stack(list_eps_init).to(torch.device('cuda'))
+            t_eps_draft_p = torch.stack(list_eps_draft).to(torch.device("cuda"))
+            t_eps_init = torch.stack(list_eps_init).to(torch.device("cuda"))
 
             # generate image from last sample
             image = self.model.differentiable_decode_first_stage(x)
-            image = torch.clamp((image + 1.0)/2.0, min=0.0, max=1.0) * 255.0
+            image = torch.clamp((image + 1.0) / 2.0, min=0.0, max=1.0) * 255.0
 
             return image, t_eps_draft_p, t_eps_init
 
@@ -424,6 +468,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                 )
 
             return output_tensor_draft_p, loss_func
+
         return fwd_output_and_loss_func
 
     def get_loss_and_metrics(self, batch, forward_only=False):

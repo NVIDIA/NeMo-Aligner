@@ -48,7 +48,7 @@ class SupervisedTrainer:
         logger,
         ckpt_callback,
         run_timer,
-        run_init_validation=False
+        run_init_validation=False,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -58,7 +58,7 @@ class SupervisedTrainer:
         self.cfg = cfg
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.run_init_validation = run_init_validation   # do we run validation in the beginning before any training
+        self.run_init_validation = run_init_validation  # do we run validation in the beginning before any training
 
         # this timer checks if we should stop training
         self.run_timer = run_timer

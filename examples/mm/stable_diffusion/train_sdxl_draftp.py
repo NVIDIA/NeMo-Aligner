@@ -12,16 +12,58 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+from copy import deepcopy
+from functools import partial
+
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
-from copy import deepcopy
-import os
-from functools import partial
 from torch import nn
+
+# checkpointing
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointImpl,
+    apply_activation_checkpointing,
+    checkpoint_wrapper,
+)
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion_engine import (
+    DiffusionEngine,
+    MegatronDiffusionEngine,
+)
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoencoder import (
+    AutoencoderKL,
+    AutoencoderKLInferenceWrapper,
+)
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
+    LatentDiffusion,
+    MegatronLatentDiffusion,
+)
+from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model import (
+    AttnBlock,
+    Decoder,
+    Encoder,
+    ResnetBlock,
+)
+from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel import (
+    ResBlock,
+    SpatialTransformer,
+    TimestepEmbedSequential,
+    UNetModel,
+)
+from nemo.collections.multimodal.modules.stable_diffusion.encoders.modules import (
+    FrozenCLIPEmbedder,
+    FrozenOpenCLIPEmbedder,
+    FrozenOpenCLIPEmbedder2,
+)
+from nemo.collections.nlp.modules.common.megatron.adapters.parallel_adapters import ParallelLinearAdapter
+from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
+from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy, NLPFSDPStrategy
 
 # from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -31,7 +73,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.mm import text_webdataset
 from nemo_aligner.data.nlp.builders import build_dataloader
-from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
+from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel, get_reward_model
 from nemo_aligner.models.mm.stable_diffusion.megatron_sdxl_draftp_model import MegatronSDXLDRaFTPModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -44,59 +86,54 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
     temp_pop_from_config,
 )
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
-    LatentDiffusion,
-    MegatronLatentDiffusion,
-)
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion_engine import MegatronDiffusionEngine, DiffusionEngine
-from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
-from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy, NLPFSDPStrategy
-from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel import UNetModel, ResBlock, SpatialTransformer, TimestepEmbedSequential
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoencoder import AutoencoderKL, AutoencoderKLInferenceWrapper
-from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model import Encoder, Decoder, ResnetBlock, AttnBlock
-from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel
-from nemo.collections.multimodal.modules.stable_diffusion.encoders.modules import FrozenOpenCLIPEmbedder, FrozenOpenCLIPEmbedder2, FrozenCLIPEmbedder
-from nemo.collections.nlp.modules.common.megatron.adapters.parallel_adapters import ParallelLinearAdapter
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-
-# checkpointing
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (checkpoint_wrapper, CheckpointImpl, apply_activation_checkpointing)
 
 mp.set_start_method("spawn", force=True)
 
+
 class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
     """Builder for SD model Trainer with overrides."""
+
     def _training_strategy(self) -> NLPDDPStrategy:
         """
         Returns a DDP or a FSDP strategy passed to Trainer.strategy.  Copied from `sd_xl_train.py`
         """
-        if self.cfg.model.get('fsdp', False):
+        if self.cfg.model.get("fsdp", False):
             logging.info("FSDP.")
             assert (
-                not self.cfg.model.optim.get('name') == 'distributed_fused_adam'
-            ), 'Distributed optimizer cannot be used with FSDP.'
-            if self.cfg.model.get('megatron_amp_O2', False):
-                logging.info('Torch FSDP is not compatible with O2 precision recipe. Setting O2 `False`.')
+                not self.cfg.model.optim.get("name") == "distributed_fused_adam"
+            ), "Distributed optimizer cannot be used with FSDP."
+            if self.cfg.model.get("megatron_amp_O2", False):
+                logging.info("Torch FSDP is not compatible with O2 precision recipe. Setting O2 `False`.")
                 self.cfg.model.megatron_amp_O2 = False
-            
+
             # Check if its a full-finetuning or PEFT
             return NLPFSDPStrategy(
-                limit_all_gathers=self.cfg.model.get('fsdp_limit_all_gathers', True),
-                sharding_strategy=self.cfg.model.get('fsdp_sharding_strategy', 'full'),
-                cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),  # offload on is not supported
-                grad_reduce_dtype=self.cfg.model.get('fsdp_grad_reduce_dtype', 32),
+                limit_all_gathers=self.cfg.model.get("fsdp_limit_all_gathers", True),
+                sharding_strategy=self.cfg.model.get("fsdp_sharding_strategy", "full"),
+                cpu_offload=self.cfg.model.get("fsdp_cpu_offload", False),  # offload on is not supported
+                grad_reduce_dtype=self.cfg.model.get("fsdp_grad_reduce_dtype", 32),
                 precision=self.cfg.trainer.precision,
                 ## nn Sequential is supposed to capture the `t_embed`, `label_emb`, `out` layers in the unet
-                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,ResnetBlock,AttnBlock,nn.Sequential,\
-                                        MegatronCLIPRewardModel,FrozenOpenCLIPEmbedder,FrozenOpenCLIPEmbedder2,FrozenCLIPEmbedder,\
-                                        ParallelLinearAdapter}, 
+                extra_fsdp_wrap_module={
+                    UNetModel,
+                    TimestepEmbedSequential,
+                    Decoder,
+                    ResnetBlock,
+                    AttnBlock,
+                    nn.Sequential,
+                    MegatronCLIPRewardModel,
+                    FrozenOpenCLIPEmbedder,
+                    FrozenOpenCLIPEmbedder2,
+                    FrozenCLIPEmbedder,
+                    ParallelLinearAdapter,
+                },
                 # extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,ResnetBlock,AttnBlock,SpatialTransformer,ResBlock,\
-                use_orig_params=False, #self.cfg.model.inductor,
-                set_buffer_dtype=self.cfg.get('fsdp_set_buffer_dtype', None),
+                use_orig_params=False,  # self.cfg.model.inductor,
+                set_buffer_dtype=self.cfg.get("fsdp_set_buffer_dtype", None),
             )
 
         return NLPDDPStrategy(
-            no_ddp_communication_hook=(not self.cfg.model.get('ddp_overlap')),
+            no_ddp_communication_hook=(not self.cfg.model.get("ddp_overlap")),
             gradient_as_bucket_view=self.cfg.model.gradient_as_bucket_view,
             find_unused_parameters=False,
         )
@@ -109,10 +146,13 @@ def resolve_and_create_trainer(cfg, pop_trainer_key):
     OmegaConf.resolve(cfg)
     with temp_pop_from_config(cfg.trainer, pop_trainer_key):
         return MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
-    
+
+
 def wandb_login():
-    import wandb
     import os
+
+    import wandb
+
     # get environment variable
     env = os.environ.get("WANDB")
     if env is not None:
@@ -127,12 +167,14 @@ def main(cfg) -> None:
     wandb_login()
 
     # set cuda device for each process
-    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
 
     # TODO: has to be set true for PyTorch 1.12 and later.
     torch.backends.cuda.matmul.allow_tf32 = True
-    cfg.model.data.train.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices * cfg.trainer.num_nodes)]
+    cfg.model.data.train.dataset_path = [
+        cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices * cfg.trainer.num_nodes)
+    ]
     cfg.model.data.validation.dataset_path = [
         cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices * cfg.trainer.num_nodes)
     ]
@@ -142,9 +184,11 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
     # Instatiating the model here
     ptl_model = MegatronSDXLDRaFTPModel(cfg.model, trainer).to(torch.cuda.current_device())
-    init_peft(ptl_model, cfg.model)   # init peft 
+    init_peft(ptl_model, cfg.model)  # init peft
 
-    reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size).to(torch.cuda.current_device())
+    reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size).to(
+        torch.cuda.current_device()
+    )
     ptl_model.reward_model = reward_model
 
     trainer_restore_path = trainer.ckpt_path
@@ -183,15 +227,19 @@ def main(cfg) -> None:
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
-    
-    if cfg.model.get('activation_checkpointing', False):
+
+    if cfg.model.get("activation_checkpointing", False):
         # call activation checkpointing here
         # checkpoint wrapper
         logging.info("Applying activation checkpointing on UNet and Decoder.")
         non_reentrant_wrapper = partial(checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT)
+
         def checkpoint_check_fn(module):
             return isinstance(module, (Decoder, UNetModel, MegatronCLIPRewardModel))
-        apply_activation_checkpointing(ptl_model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=checkpoint_check_fn)
+
+        apply_activation_checkpointing(
+            ptl_model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=checkpoint_check_fn
+        )
 
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
@@ -234,5 +282,6 @@ if __name__ == "__main__":
     print("Running main")
     logging.setLevel(logging.DEBUG)
     import logging as _logging
+
     _logging.getLogger().setLevel(_logging.DEBUG)
     main()
