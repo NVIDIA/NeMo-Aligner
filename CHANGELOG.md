@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [0.3.1] - 2024-05
 - SPIN: added `rollout_micro_batch_size` parameter which allows users to set the batch size for doing generation during SPIN training.
         previously the generation batch size was automatically set to the data parallel size (DP) of the model
+- SPIN: added wandb logging of average generation length and a small sample of generated responses (in plaintext) along with corresponding prompts
 
 ### New features and optimizations
 - Add MoE Support for our reward models.
