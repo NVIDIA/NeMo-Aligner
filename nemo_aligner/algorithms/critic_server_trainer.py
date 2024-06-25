@@ -53,7 +53,7 @@ class CriticServerTrainer:
         ranks what to do
     """
 
-    def __init__(self, cfg, model, optimizer, scheduler, logger, ckpt_callback):
+    def __init__(self, cfg, model, optimizer, scheduler, logger, ckpt_callback, tokenize_func):
         self.lock = threading.Lock()
         self.logger = logger
         self.cfg = cfg
@@ -67,6 +67,7 @@ class CriticServerTrainer:
         self.pad_sequence_length_to_multiple = cfg.get("pad_sequence_length_to_multiple", None)
         self.max_queue_delay_microseconds = cfg.get("max_queue_delay_microseconds", 2000)
         self.pad_batch_to_multiple = cfg.inference_micro_batch_size * parallel_state.get_data_parallel_world_size()
+        self.tokenize_func = tokenize_func
 
         # server parameters
         self.combine_rm_and_critic_server = cfg.combine_rm_and_critic_server
@@ -112,6 +113,7 @@ class CriticServerTrainer:
             inputs,
             pad_to=self.pad_batch_to_multiple,
             pad_sequence_length_to_multiple=self.pad_sequence_length_to_multiple,
+            tokenize_func=self.tokenize_func,
         )
         rewards, values = self.run_inference(inputs=inputs, extra=extra)
 

@@ -14,14 +14,14 @@
 
 """Utilities for generating text."""
 
+import math
 from typing import Any, List
 
 import torch
-
 from megatron.core import parallel_state
-from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
-from nemo.utils import logging
 
+from nemo.collections.nlp.modules.common.lm_utils import pad_batch
+from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
 
 
@@ -74,27 +74,8 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
         return lengths.flatten()
 
 
-def pad_batch(batch, pad_id):
-    """batch each element of the batch to be the size of the longest sequence
-    """
-    context_lengths = []
-    max_context_length = max([len(tokens) for tokens in batch])
-    for tokens in batch:
-        context_length = len(tokens)
-        if context_length < max_context_length:
-            tokens.extend([pad_id] * (max_context_length - context_length))
-        context_lengths.append(context_length)
-    return batch, context_lengths
-
-
-def tokenize_batch(tokenizer, sentences, max_len, add_BOS, add_EOS=False):
+def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False, pad_sequence_length_to_multiple=None):
     """convert the sentences into lists of tokens, pad them to the same length, add bos tokens if it is needed
-    Args:
-        sentences (List[str]): list of input sentences in str format.
-        max_len (int): max number of tokens to generate.
-        add_BOS (bool): whether to add the BOS token at the beginning
-    Returns:
-        Tuple[torch.Tensor], the tokenized and padded torch tensor and the token context length tensor.
     """
 
     def tokenize(sentence):
@@ -109,9 +90,14 @@ def tokenize_batch(tokenizer, sentences, max_len, add_BOS, add_EOS=False):
         return output
 
     context_tokens = list(map(tokenize, sentences))
+    max_sequence_length = max(len(x) for x in context_tokens)
 
+    pad_length = max_len
+    if pad_sequence_length_to_multiple is not None:
+        pad_length = math.ceil(max_sequence_length / pad_sequence_length_to_multiple) * pad_sequence_length_to_multiple
+
+    context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.eos_id, pad_length - max_sequence_length)
     context_tokens = [x[:max_len] for x in context_tokens]
-    context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.eos_id)
     context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
     context_length_tensor = torch.cuda.LongTensor(context_lengths)
     return context_tokens_tensor, context_length_tensor

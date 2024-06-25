@@ -19,6 +19,7 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.critic_server_trainer import CriticServerTrainer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_critic import MegatronGPTCriticModel
+from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -86,6 +87,16 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
+    def tokenize_func(sentences, pad_sequence_length_to_multiple=None):
+        return tokenize_batch(
+            sentences=sentences,
+            tokenizer=ptl_model.tokenizer,
+            max_len=ptl_model.cfg.encoder_seq_length,
+            add_BOS=False,
+            add_EOS=False,
+            pad_sequence_length_to_multiple=pad_sequence_length_to_multiple,
+        )
+
     critic_trainer = CriticServerTrainer(
         cfg=cfg.trainer.ppo,
         model=ptl_model,
@@ -93,6 +104,7 @@ def main(cfg) -> None:
         scheduler=scheduler,
         logger=logger,
         ckpt_callback=ckpt_callback,
+        tokenize_func=tokenize_func,
     )
 
     if custom_trainer_state_dict is not None:
