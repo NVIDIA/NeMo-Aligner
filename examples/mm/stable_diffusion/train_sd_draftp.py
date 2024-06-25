@@ -42,7 +42,6 @@ from nemo_aligner.utils.train_script_utils import (
 
 mp.set_start_method("spawn", force=True)
 
-
 def resolve_and_create_trainer(cfg, pop_trainer_key):
     """resolve the cfg, remove the key before constructing the PTL trainer
         and then restore it after
@@ -50,7 +49,6 @@ def resolve_and_create_trainer(cfg, pop_trainer_key):
     OmegaConf.resolve(cfg)
     with temp_pop_from_config(cfg.trainer, pop_trainer_key):
         return MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
-
 
 @hydra_runner(config_path="conf", config_name="draftp_sd")
 def main(cfg) -> None:
@@ -141,4 +139,5 @@ def main(cfg) -> None:
 
 
 if __name__ == "__main__":
+    print("Running main")
     main()
