@@ -16,7 +16,6 @@ from collections import defaultdict
 from statistics import mean
 
 import torch
-from megatron.core import parallel_state
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
@@ -37,6 +36,16 @@ from nemo_aligner.utils.utils import (
     cpu_weight_swap,
     retrieve_model_state_dict_in_cpu,
 )
+
+try:
+    from tensorrt_llm.bindings import GptSession
+    from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
+
+    GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
+    HAVE_TRTLLM = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TRTLLM = False
+
 
 """
 GPTSFTChatDataset output is dict with keys: ['input_ids', 'mask', 'context_ids', 'answer_ids', 'metadata']
@@ -135,6 +144,25 @@ class SPINTrainer:
         self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
         assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
 
+        self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
+        if self.use_trtllm_generation:
+            assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
+            self.trtllm_generate = GPTGenerateTRTLLM(
+                model_cfg=self.model.cfg,
+                max_generation_length=self.length_params["max_length"],
+                max_input_len=self.cfg.trt_llm.get("max_input_len", 1024),
+                max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", 4096),
+                generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
+                unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
+                trt_model_type=self.cfg.trt_llm.get("model_type", "GPTForCausalLM"),
+                end_strings=self.sampling_params["end_strings"],
+                reshard_model=False,
+                sample_temperature=self.sampling_params["temperature"],
+                sample_top_k=self.sampling_params["top_k"],
+                sample_top_p=self.sampling_params["top_p"],
+                tokenizer=self.model.tokenizer,
+            )
+
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
         self.model.prepare_for_validation_step()
@@ -204,6 +232,9 @@ class SPINTrainer:
     @torch.no_grad()
     def get_generations(self, list_of_batches):
         self.model.prepare_for_inference()
+        if self.use_trtllm_generation:
+            # at this point self.model is the reference policy from cpu_weight_swap
+            self.trtllm_generate.refit(self.model)
 
         prompt_lengths = torch.cat([b["prompt_lengths"] for b in list_of_batches], dim=0)
         batch_max_length = prompt_lengths.max().item()
@@ -222,38 +253,46 @@ class SPINTrainer:
         )
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
+        inputs = (prompt_tokens, prompt_lengths)
 
-        strategy = TrackLengthGPTModelTextGenerationStrategy(
-            model=self.model, context_lengths=prompt_lengths, max_length=adj_generation_length
-        )
-        generations = self.model.generate(
-            inputs=(prompt_tokens, prompt_lengths),
-            length_params=self.length_params | {"max_length": adj_generation_length},
-            sampling_params=self.sampling_params,
-            strategy=strategy,
-        )
+        if self.use_trtllm_generation:
+            actor_output = self.trtllm_generate.generate(inputs)
+            response_tokens = actor_output["response_tokens"].cpu()
+            response_lengths = actor_output["response_lengths"].cpu()
+        else:
+            strategy = TrackLengthGPTModelTextGenerationStrategy(
+                model=self.model, context_lengths=prompt_lengths, max_length=adj_generation_length
+            )
+            generations = self.model.generate(
+                inputs=inputs,
+                length_params=self.length_params | {"max_length": adj_generation_length},
+                sampling_params=self.sampling_params,
+                strategy=strategy,
+            )
 
-        # this is a 1D LongTensor with the length of the responses where response is prompt+response
-        response_lengths = strategy.get_lengths().cpu()
-        max_response_length = response_lengths.max().item()
-        response_tokens = torch.LongTensor(generations["token_ids"]).cpu()
+            # this is a 1D LongTensor with the length of the responses where response is prompt+response
+            response_lengths = strategy.get_lengths().cpu()
+            max_response_length = response_lengths.max().item()
+            response_tokens = torch.LongTensor(generations["token_ids"]).cpu()
 
-        # Sanity check to validate response length.
-        if max_response_length != response_tokens.size(1):
-            # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
-            # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
-            # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
-            # and remove the `if` below.
-            if (
-                max_response_length >= response_tokens.size(1)
-                or response_tokens.size(1) != batch_max_length + adj_generation_length
-            ):
-                raise AssertionError(
-                    f"max response length ({max_response_length}) does not match the size of "
-                    f"`response_tokens` ({response_tokens.size(1)})"
-                )
+            # Sanity check to validate response length.
+            if max_response_length != response_tokens.size(1):
+                # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
+                # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
+                # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
+                # and remove the `if` below.
+                if (
+                    max_response_length >= response_tokens.size(1)
+                    or response_tokens.size(1) != batch_max_length + adj_generation_length
+                ):
+                    raise AssertionError(
+                        f"max response length ({max_response_length}) does not match the size of "
+                        f"`response_tokens` ({response_tokens.size(1)})"
+                    )
 
         self.model.finish_inference()
+        if self.use_trtllm_generation:
+            self.trtllm_generate.free()
 
         return response_tokens, response_lengths
 
