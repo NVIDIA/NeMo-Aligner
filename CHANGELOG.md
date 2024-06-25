@@ -22,6 +22,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - DPO: Enable LoRA on all model layers (In this case the actor will be reference model + LoRA weights, we can switch between actor/reference model by enabling/disabling LoRA)
 - PPO: Enable LoRA on all model layers (In this case the actor will be init policy + LoRA weights, we can switch between actor/init_policy model by enabling/disabling LoRA)
 - SteerLM 2.0: Add the SteerLM 2.0 model alignment method.
+- Added support for float values for `val_check_interval` for SFT
+- Added support for `limit_train_batches` as a float or int to DPO, SPIN, and SFT. This functionality mirrors the same parameter in PTL
 ### Breaking changes
 
 ### Bug Fixes
@@ -34,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Fixed crash when `model.micro_batch_size` > 1 in DPO
 - Fixed issue when `model.encoder_seq_length` is mismatched with `model.data.train_ds.max_seq_length` in SFT and SPIN.
 - Delete MegatronPretrainingRandomSampler from Aligner since it has been upstreamed into NeMo
+- Fixed SPIN not correctly using its `val_check_interval` parameter
 
 ## [0.3.0] - 2024-05
 

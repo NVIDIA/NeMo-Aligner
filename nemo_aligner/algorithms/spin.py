@@ -109,13 +109,13 @@ class SPINTrainer:
         self.ckpt_callback = ckpt_callback
 
         # compute `max_steps`
-        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
-        if (limit_train_batches := self.cfg.get("limit_train_batches")) is not None and limit_train_batches >= 0:
-            self.num_steps_per_epoch = min(self.num_steps_per_epoch, limit_train_batches)
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(
+            self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
+        )
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
-            int(self.cfg.val_check_interval * self._train_dataloader_len)
+            int(self.cfg.val_check_interval * self.num_steps_per_epoch)
             if isinstance(self.cfg.val_check_interval, float)
             else self.cfg.val_check_interval
         )
@@ -330,7 +330,7 @@ class SPINTrainer:
                     run_val, save_model, is_train_end = check_progress(
                         self.step,
                         self.max_steps,
-                        self.cfg.val_check_interval,
+                        self.val_check_interval,
                         self.cfg.save_interval,
                         self.limit_val_batches,
                         run_time_exceeded=run_time_exceeded,
