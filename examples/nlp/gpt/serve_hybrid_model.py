@@ -23,6 +23,7 @@ from pytriton.model_config import ModelConfig
 from pytriton.model_config.common import DynamicBatcher
 from pytriton.triton import Triton, TritonConfig
 
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, SamplingParam
 from nemo.collections.nlp.parts.nlp_overrides import CustomProgressBar, NLPDDPStrategy
 from nemo.core.config import hydra_runner
@@ -31,8 +32,13 @@ from nemo_aligner.models.nlp.gpt.megatron_gpt_hybrid_model import MegatronGPTHyb
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.utils.deep_search.search_callables import SearchCallable
 from nemo_aligner.utils.deep_search.text_gen_utils import search
-from nemo_aligner.utils.deep_search.text_generation_strategy import HybridGPTSearchTextGenerationStrategy
-from nemo_aligner.utils.train_script_utils import init_distributed
+from nemo_aligner.utils.deep_search.text_generation_strategy import (
+    GPTSearchTextGenerationStrategy,
+    HybridGPTSearchTextGenerationStrategy,
+    NoKVCacheGPTSearchTextGenerationStrategy,
+    NoKVCacheHybridGPTSearchTextGenerationStrategy,
+)
+from nemo_aligner.utils.train_script_utils import init_distributed, resolve_and_create_trainer
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
 try:
@@ -53,7 +59,7 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 mp.set_start_method("spawn", force=True)
 
 
-@hydra_runner(config_path="conf", config_name="gpt_hybrid_infer")
+@hydra_runner(config_path="conf", config_name="gpt_hybrid_train")
 def main(cfg) -> None:
     """
     Binary ranking reward models use comparison based objective similar to the one found in the
@@ -61,7 +67,11 @@ def main(cfg) -> None:
     Regression reward models use a MSE loss to fit multi-attribute numeric labels for each data point.
     """
 
-    hybrid_model_cls = MegatronGPTHybridModel
+    has_value = cfg.pretrained_checkpoint.has_value_head
+    if has_value:
+        hybrid_model_cls = MegatronGPTHybridModel
+    else:
+        hybrid_model_cls = MegatronGPTModel
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
@@ -69,13 +79,14 @@ def main(cfg) -> None:
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
+    trainer = resolve_and_create_trainer(cfg, "deep_search")
 
-    trainer = Trainer(
-        strategy=NLPDDPStrategy(timeout=datetime.timedelta(seconds=18000)),
-        **cfg.trainer,
-        callbacks=[CustomProgressBar()],
-    )
-
+    #     trainer = Trainer(
+    #         strategy=NLPDDPStrategy(timeout=datetime.timedelta(seconds=18000)),
+    #         **cfg.trainer,
+    #         callbacks=[CustomProgressBar()],
+    #     )
+    #
     # logger = CustomLoggerWrapper(trainer.loggers)
 
     ptl_model = load_from_nemo(
@@ -100,10 +111,20 @@ def main(cfg) -> None:
     # ptl_model.save_to("hybrid_model.nemo")
 
     dp_size = parallel_state.get_data_parallel_world_size()
-    max_batch_size = cfg.inference.micro_batch_size * dp_size
+    mcts_cfg = ptl_model.cfg.mcts
+    max_batch_size = mcts_cfg.rollout_micro_batch_size * dp_size
+    use_cpu = mcts_cfg.kv_cache_in_cpu
 
-    # strategy_args = {"strategy": strategy}
-    strategy = HybridGPTSearchTextGenerationStrategy(ptl_model)
+    if has_value:
+        if mcts_cfg.turn_off_kv_cache:
+            strategy = NoKVCacheHybridGPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
+        else:
+            strategy = HybridGPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
+    else:
+        if mcts_cfg.turn_off_kv_cache:
+            strategy = NoKVCacheGPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
+        else:
+            strategy = GPTSearchTextGenerationStrategy(ptl_model, use_cpu=use_cpu)
     strategy_args = {"strategy": strategy}
 
     def get_infer_fn(model, top_k, max_depth, add_bos_token, **strategy_args):
@@ -123,9 +144,7 @@ def main(cfg) -> None:
 
         return infer_fn
 
-    infer_fn = get_infer_fn(
-        ptl_model, cfg.inference.top_k, cfg.inference.tokens_to_generate, cfg.inference.add_bos_token, **strategy_args
-    )
+    infer_fn = get_infer_fn(ptl_model, mcts_cfg.top_k, mcts_cfg.max_depth, mcts_cfg.add_bos_token, **strategy_args)
     # infer_fn = lambda : None
     # r = infer_fn(["hello", "ok"], context_ids=['context1', 'context2'], session_info='session')
     # print(r)
@@ -141,7 +160,7 @@ def main(cfg) -> None:
             allow_grpc=False,
             allow_metrics=False,
             http_address=ENDPOINT_BIND_ADDRESS,
-            http_port=cfg.inference.port,
+            http_port=cfg.model.inference.port,
         )
         dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
         model_config = ModelConfig(batching=True, max_batch_size=max_batch_size, batcher=dynamic_batcher)

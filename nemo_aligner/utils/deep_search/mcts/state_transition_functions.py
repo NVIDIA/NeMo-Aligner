@@ -186,8 +186,9 @@ class MathtoolLocalStateTransitionFunction(EnvironmentStateTransitionFunction):
 
 
 class RemoteStateTransitionFunction(StateTransitionFunction):
-    def __init__(self, host_url, model_name, inference_timeout_s=600):
+    def __init__(self, host_url, model_name, threshold, inference_timeout_s=600):
         self.client = ModelClient(host_url, model_name, inference_timeout_s=inference_timeout_s)
+        self.threshold = threshold
 
     def __call__(self, sentences=None, actions=None, context_ids=None, session_info=None):
         context_ids = encode_context_data(context_ids)
@@ -201,4 +202,25 @@ class RemoteStateTransitionFunction(StateTransitionFunction):
             result_dict = self.client.infer_batch(
                 action=actions, context_ids=context_ids, parameters={"session": session_info}
             )
+
+        threshold = self.threshold  # min probability threshold
+        probablities = result_dict["policy"]
+        actions = result_dict["action"]
+        update_probablities = []
+        update_actions = []
+        for prob, one_actions in zip(probablities, actions):
+            selected = prob >= threshold
+            if sum(selected) > 0:
+                # not empty
+                select_prob = prob[selected]
+                select_action = one_actions[selected].tolist()
+                update_probablities.append(select_prob)
+                update_actions.append(select_action)
+            else:
+                # if all the probablities are less than the threshold
+                # use all the probablities
+                update_probablities.append(prob)
+                update_actions.append(one_actions.tolist())
+        result_dict["policy"] = update_probablities
+        result_dict["action"] = update_actions
         return result_dict

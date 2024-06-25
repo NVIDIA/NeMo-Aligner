@@ -22,6 +22,9 @@ model:
   mcore_gpt: True
   share_embeddings_and_output_weights: False
   mcts:
+    has_value_head: False
+    turn_off_kv_cache: True
+    kv_cache_in_cpu: True
 
     train:
       value_weight: 1 # weight of the value portion of the loss

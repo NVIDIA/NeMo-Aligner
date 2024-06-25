@@ -91,6 +91,7 @@ model:
   inference:
 
     micro_batch_size: 16
+    port: 2323
 
     sampling_params:
       use_greedy: True # Whether or not to use sampling ; use greedy decoding otherwise
