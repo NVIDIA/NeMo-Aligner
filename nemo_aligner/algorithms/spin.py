@@ -135,7 +135,7 @@ class SPINTrainer:
         ), f"rollout_micro_batch_size [{self.model.cfg.spin.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
         self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
         assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
-        
+
         # for wandb table
         self.train_df = pd.DataFrame(columns=["step", "prompt", "response"])
 
@@ -202,23 +202,18 @@ class SPINTrainer:
         if grad_norm is not None:
             trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
-        
+
         num_samples = 0
         gen_lengths = 0
-        num_samples += global_batch['actual'].shape[0]
-        gen_lengths += global_batch['generated_lengths'].sum()
+        num_samples += global_batch["actual"].shape[0]
+        gen_lengths += global_batch["generated_lengths"].sum()
         tensor_to_accumulate = torch.tensor(
-            [gen_lengths, num_samples],
-            dtype=torch.float32,
-            device=torch.cuda.current_device(),
+            [gen_lengths, num_samples], dtype=torch.float32, device=torch.cuda.current_device(),
         )
         torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())
 
-        (
-            global_response_lengths,
-            global_num_samples,
-        ) = tensor_to_accumulate.tolist()
-        metrics['avg_generated_lengths'] = (global_response_lengths / global_num_samples)
+        (global_response_lengths, global_num_samples,) = tensor_to_accumulate.tolist()
+        metrics["avg_generated_lengths"] = global_response_lengths / global_num_samples
 
         return loss_mean, {**metrics, **trainer_metrics}
 
@@ -364,11 +359,22 @@ class SPINTrainer:
                         self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                         val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
                         metrics.update(val_metrics)
-                        
+
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
                         if torch.distributed.get_rank() == 0 and parallel_state.get_data_parallel_rank() == 0:
-                            self.train_df.loc[len(self.train_df)] = [self.step - 1, self.model.tokenizer.ids_to_text(global_batch["prompts_only"][0].tolist()), self.model.tokenizer.ids_to_text(global_batch["generated"][0][len(global_batch["prompts_only"][0]):(len(global_batch["prompts_only"][0]) + global_batch["generated_lengths"][0].item())].tolist())]
+                            self.train_df.loc[len(self.train_df)] = [
+                                self.step - 1,
+                                self.model.tokenizer.ids_to_text(global_batch["prompts_only"][0].tolist()),
+                                self.model.tokenizer.ids_to_text(
+                                    global_batch["generated"][0][
+                                        len(global_batch["prompts_only"][0]) : (
+                                            len(global_batch["prompts_only"][0])
+                                            + global_batch["generated_lengths"][0].item()
+                                        )
+                                    ].tolist()
+                                ),
+                            ]
                             self.logger.log_table(
                                 key="table/train_generations", dataframe=self.train_df, step=self.step - 1,
                             )
