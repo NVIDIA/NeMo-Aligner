@@ -458,6 +458,7 @@ class DeepSearch:
         self.top_k = top_k
         # Start the timer
         self.timer = threading.Timer(timer_seconds, self.save_data)
+        self.timer.daemon = True
         self.timer.start()
 
     def save_data(self):

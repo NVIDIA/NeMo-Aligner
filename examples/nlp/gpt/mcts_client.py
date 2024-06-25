@@ -165,6 +165,8 @@ def main(cfg) -> None:
     # mcts.search(ps)
     buffer = ds.search(ps, "test")
 
+    print(buffer)
+
 
 if __name__ == "__main__":
     main()
