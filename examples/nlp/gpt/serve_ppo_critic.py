@@ -19,6 +19,7 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.critic_server_trainer import CriticServerTrainer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_critic import MegatronGPTCriticModel
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -105,6 +106,7 @@ def main(cfg) -> None:
         logger=logger,
         ckpt_callback=ckpt_callback,
         tokenize_func=tokenize_func,
+        gbs=ptl_model.cfg.global_batch_size,
     )
 
     if custom_trainer_state_dict is not None:

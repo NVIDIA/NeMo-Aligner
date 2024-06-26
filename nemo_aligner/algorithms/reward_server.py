@@ -14,7 +14,7 @@
 
 import threading
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
@@ -41,7 +41,7 @@ class RewardModelServer:
     tokenize_func: Callable
     model_name: str
     port: int
-    inference_micro_batch_size: int
+    inference_micro_batch_size: Union[int, List]
     pad_sequence_length_to_multiple: Optional[int] = None
     max_queue_delay_microseconds: float = 2000
 
@@ -53,7 +53,13 @@ class RewardModelServer:
             Tensor(name="sequence_lengths", shape=(-1,), dtype=np.int64, optional=True),
         )
         self.outputs = (Tensor(name="rewards", shape=(1,), dtype=np.float32),)
-        self.pad_batch_to_multiple = self.inference_micro_batch_size * parallel_state.get_data_parallel_world_size()
+        if isinstance(self.inference_micro_batch_size, int):
+            self.inference_micro_batch_size = [self.inference_micro_batch_size]
+
+        self.preferred_batch_size = [
+            item * parallel_state.get_data_parallel_world_size() for item in self.inference_micro_batch_size
+        ]
+        self.pad_batch_to_multiple = min(self.preferred_batch_size)
 
     @batch
     @lock_method("self.lock")

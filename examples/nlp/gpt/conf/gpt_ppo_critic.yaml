@@ -20,9 +20,8 @@ trainer:
     pad_sequence_length_to_multiple: null
     max_queue_delay_microseconds: 2000
 
-    # this should be set at the model level
-    gbs: ${model.global_batch_size}
-    inference_micro_batch_size: ${model.forward_micro_batch_size}
+    inference_micro_batch_size:
+      - ${model.forward_micro_batch_size}
 
   # do not change these trainer args
   logger: False # logger provided by exp_manager

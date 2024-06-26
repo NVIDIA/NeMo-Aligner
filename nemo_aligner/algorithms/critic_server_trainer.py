@@ -52,7 +52,7 @@ class CriticServerTrainer:
         ranks what to do
     """
 
-    def __init__(self, cfg, model, optimizer, scheduler, logger, ckpt_callback, tokenize_func):
+    def __init__(self, cfg, model, optimizer, scheduler, logger, ckpt_callback, tokenize_func, gbs):
         self.lock = threading.Lock()
         self.logger = logger
         self.cfg = cfg
@@ -60,16 +60,24 @@ class CriticServerTrainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.ckpt_callback = ckpt_callback
-        self.gbs = cfg.gbs
+        self.gbs = gbs
         self.step = 0
 
         self.pad_sequence_length_to_multiple = cfg.get("pad_sequence_length_to_multiple", None)
-        self.max_queue_delay_microseconds = cfg.get("max_queue_delay_microseconds", 2000)
-        self.pad_batch_to_multiple = cfg.inference_micro_batch_size * parallel_state.get_data_parallel_world_size()
         self.tokenize_func = tokenize_func
 
         # server parameters
         self.combine_rm_and_critic_server = cfg.combine_rm_and_critic_server
+        self.max_queue_delay_microseconds = cfg.get("max_queue_delay_microseconds", 2000)
+
+        inference_micro_batch_size = cfg.inference_micro_batch_size
+        if isinstance(inference_micro_batch_size, int):  # for backwards compatability
+            inference_micro_batch_size = [inference_micro_batch_size]
+        self.preferred_batch_sizes = [
+            item * parallel_state.get_data_parallel_world_size() for item in inference_micro_batch_size
+        ]
+        self.pad_batch_to_multiple = min(self.preferred_batch_sizes)
+
         self.infer_fn = model.infer_rm_critic if self.combine_rm_and_critic_server else model.infer
         self.port = cfg.port
 
@@ -134,7 +142,7 @@ class CriticServerTrainer:
 
     @sample
     @lock_method("self.lock")
-    def server_save(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
+    def server_save(self, **_: np.ndarray) -> Dict[str, np.ndarray]:
         # tell other ranks to start inference
         choice = ServerSignal.SAVE.cuda()
         torch.distributed.broadcast(choice, 0)
@@ -185,7 +193,10 @@ class CriticServerTrainer:
                 http_port=self.port,
             )
 
-            dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=self.max_queue_delay_microseconds,)
+            dynamic_batcher = DynamicBatcher(
+                max_queue_delay_microseconds=self.max_queue_delay_microseconds,
+                preferred_batch_size=self.preferred_batch_sizes,
+            )
 
             # we cut the batch into pieces so we don't need to have a max batch size
             infer_model_config = ModelConfig(batching=True, max_batch_size=MAX_BATCH, batcher=dynamic_batcher)
