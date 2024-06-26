@@ -462,10 +462,13 @@ class DeepSearch:
         self.timer = threading.Timer(timer_seconds, self.save_data)
         self.timer.daemon = True
         self.timer.start()
+        self.reset_exit_search_timer()
+    
+    def reset_exit_search_timer(self):
         self.exit = False
-        self.exit_search_timer = threading.Timer(wall_time_seconds, self.exit_search)
+        self.exit_search_timer = threading.Timer(self.wall_time_seconds, self.exit_search)
         self.exit_search_timer.daemon = True
-        self.exit_search_timer.start()
+
 
     def save_data(self):
         print("### TIMER TRIGGER")
@@ -490,6 +493,7 @@ class DeepSearch:
                         stack.append((child, c_id + tuple(child.state)))
 
     def search(self, parallel_searches: List[ParallelSearch], filename):
+        self.exit_search_timer.start()
         dp_rank = parallel_state.get_data_parallel_rank()
         # clear the cache
         self.mcts.cache = {}
@@ -549,6 +553,8 @@ class DeepSearch:
                 # loop from large to small so that we can remove search instances as we go
                 for i in range(len(parallel_searches))[::-1]:
                     spg = parallel_searches[i]
+                    best = 0
+                    best_text = ""
                     if spg.data_id in self.mcts.stop_criteria.evaluation_cache:
                         backup_root_node = backup_root_nodes[i]
                         assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
@@ -565,15 +571,20 @@ class DeepSearch:
                                     "backup_root_states": backup_root_states[i],
                                 }
                             )
-                            if results[0] >= self.mcts.stop_criteria.threshold:
-                                pb.write(f"### FOUND A GOOD SAMPLE {results[0]} ###")
-                                pb.write(f"{text}")
-                            else:
-                                pb.write(f"### THE BEST SAMPLE SO FAR {results[0]} ###")
-                                pb.write(f"{text}")
+                            if results[0] > best:
+                                best = results[0]
+                                best_text = text
                         del parallel_searches[i]
                         del backup_root_states[i]
                         del backup_root_nodes[i]
+                        if best >= self.mcts.stop_criteria.threshold:
+                            pb.write(f"### data_id: {spg.data_id} FOUND A GOOD SAMPLE {best} ###")
+                            pb.write(f"{best_text}")
+                        else:
+                            pb.write(f"### data_id: {spg.data_id} THE BEST SAMPLE SO FAR {best} ###")
+                            pb.write(f"{best_text}")
+
+                self.reset_exit_search_timer()
                 break
             # loop from large to small so that we can remove search instances as we go
             for i in range(len(parallel_searches))[::-1]:
