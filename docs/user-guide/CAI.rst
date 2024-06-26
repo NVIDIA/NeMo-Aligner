@@ -113,17 +113,17 @@ Run an inference server in the background using the following command:
 
 .. code-block:: bash
 
-   python examples/nlp/cai/inference_service.py \
+   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py \
            gpt_model_file=/models/mistral/mistral-7b-Instruct.nemo \
            pipeline_model_parallel_split_rank=0 \
+           server=True \
            tensor_model_parallel_size=8 \
            pipeline_model_parallel_size=1 \
            trainer.precision=bf16 \
            trainer.devices=8 \
            trainer.num_nodes=1 \
            port=5999 \
-           ++tokenizer.library=huggingface \
-           ++tokenizer.type=mistralai/Mistral-7B-Instruct-v0.1
+           web_server=False
 
 Please wait for the server to be ready before proceeding.
 
@@ -208,17 +208,17 @@ The following command will run the inference server:
 
 .. code-block:: bash
 
-   python examples/nlp/cai/inference_service.py \
+   python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py \
            gpt_model_file=/path/to/sft_log_dir/checkpoints/megatron_gpt_sft.nemo \
            pipeline_model_parallel_split_rank=0 \
+           server=True \
            tensor_model_parallel_size=8 \
            pipeline_model_parallel_size=1 \
            trainer.precision=bf16 \
            trainer.devices=8 \
            trainer.num_nodes=1 \
            port=5999 \
-           ++tokenizer.library=huggingface \
-           ++tokenizer.type=mistralai/Mistral-7B-Instruct-v0.1
+           web_server=False
 
 Please wait for the server to be ready before proceeding.
 
@@ -333,17 +333,17 @@ To start inference, run an inference server in the background using the followin
 
 .. code-block:: bash
 
-   python examples/nlp/cai/inference_service.py \
+      python /opt/NeMo/examples/nlp/language_modeling/megatron_gpt_eval.py \
            gpt_model_file=/results/mistral-7b-rl-cai-aligned.nemo \
            pipeline_model_parallel_split_rank=0 \
+           server=True \
            tensor_model_parallel_size=8 \
            pipeline_model_parallel_size=1 \
            trainer.precision=bf16 \
            trainer.devices=8 \
            trainer.num_nodes=1 \
            port=1427 \
-           ++tokenizer.library=huggingface \
-           ++tokenizer.type=mistralai/Mistral-7B-Instruct-v0.1
+           web_server=False
 
 Please wait for the server to be ready before proceeding.
 
