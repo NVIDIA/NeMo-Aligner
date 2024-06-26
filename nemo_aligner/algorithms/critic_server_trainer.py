@@ -29,7 +29,7 @@ from nemo.utils import logging
 from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import process_inference_request
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, rebalance_nd_tensor
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, run_distributed_inference
 from nemo_aligner.utils.server_utils import lock_method, pad_input
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import apply_func_to_dict
@@ -78,7 +78,6 @@ class CriticServerTrainer:
             Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
             Tensor(name="tokens", shape=(-1,), dtype=np.int64, optional=True),
             Tensor(name="sequence_lengths", shape=(-1,), dtype=np.int64, optional=True),
-            Tensor(name="add_EOS", shape=(1,), dtype=np.bool_, optional=True),
         )
         self.infer_outputs = [
             Tensor(name="values", shape=(-1,), dtype=np.float32),
@@ -114,7 +113,7 @@ class CriticServerTrainer:
             pad_sequence_length_to_multiple=self.pad_sequence_length_to_multiple,
             tokenize_func=self.tokenize_func,
         )
-        rewards, values = self.run_inference(inputs=inputs, extra=extra)
+        rewards, values = self.run_inference(inputs=inputs)
 
         # if the inference request has extra padding that it doesn't need
         # then we will pad it back up to the expected padding when returning the values
@@ -241,37 +240,13 @@ class CriticServerTrainer:
                 raise RuntimeError(f"Invalid operation: {op}")
 
     @torch.no_grad()
-    def run_inference(self, inputs=None, extra=None):
+    def run_inference(self, inputs=None):
         """only rank 0 has valid data
         """
         self.model.prepare_for_inference()
-        tokens, lengths = None, None
-        dp_rank = parallel_state.get_data_parallel_rank()
-        dp_size = parallel_state.get_data_parallel_world_size()
-        is_rank_0 = torch.distributed.get_rank() == 0
-
-        if is_rank_0:
-            tokens = torch.as_tensor(inputs["inputs"], dtype=torch.long, device=torch.cuda.current_device())
-            lengths = torch.as_tensor(inputs["sequence_length"], dtype=torch.long, device=torch.cuda.current_device())
-
-        tokens = broadcast_2d_tensor(tokens, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank]
-        lengths = broadcast_2d_tensor(lengths, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank].squeeze(-1)
-
-        outputs = self.infer_fn(inputs=(tokens, lengths))
-
-        if self.combine_rm_and_critic_server:
-            rewards, values = outputs
-            rewards = (
-                rebalance_nd_tensor(rewards, group=parallel_state.get_data_parallel_group()).squeeze(1).cpu().numpy()
-            )
-
-        else:
-            values = outputs
-            rewards = None
-
-        values = rebalance_nd_tensor(values, group=parallel_state.get_data_parallel_group()).cpu().numpy()
-
+        rewards, values = run_distributed_inference(inputs, self.infer_fn, self.combine_rm_and_critic_server)
         self.model.finish_inference()
+
         torch.distributed.barrier()
         return rewards, values
 

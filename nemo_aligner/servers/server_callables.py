@@ -55,10 +55,9 @@ class RewardModelCallable:
         *,
         model_name: str,
         infer_fn: callable,
-        tokenizer: None,
+        tokenize_func: None,
         forward_micro_batch_size: None,
         lock: threading.Lock,
-        tokenize_func=None,
     ):
         self.model_name = model_name
         self.lock = lock
@@ -70,9 +69,8 @@ class RewardModelCallable:
             Tensor(name="add_EOS", shape=(1,), dtype=np.bool_, optional=True),
         )
         self.outputs = (Tensor(name="rewards", shape=(1,), dtype=np.float32),)
-        self.tokenizer = tokenizer
-        self.forward_micro_batch_size = forward_micro_batch_size
         self.tokenize_func = tokenize_func
+        self.forward_micro_batch_size = forward_micro_batch_size
 
     @batch
     @lock_method("self.lock")
@@ -84,7 +82,6 @@ class RewardModelCallable:
             inputs,
             pad_to=self.forward_micro_batch_size * parallel_state.get_data_parallel_world_size(),
             pad_sequence_length_to_multiple=None,
-            tokenizer=self.tokenizer,
             tokenize_func=self.tokenize_func,
         )
 

@@ -7,9 +7,12 @@ trainer:
 
 inference:
   port: 5555 # the port number for the inference server
+  inference_micro_batch_size: ${model.forward_micro_batch_size}
+  model_name: "reward_model"
+  pad_sequence_length_to_multiple: None
+  max_queue_delay_microseconds: 2000
 
 rm_model_file: null
-dataset_path: null
 
 model:
   forward_micro_batch_size: 2
