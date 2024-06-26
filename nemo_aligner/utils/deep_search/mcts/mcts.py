@@ -443,6 +443,7 @@ class DeepSearch:
         temperature: float,
         strategy=None,
         timer_seconds: int = 10.0,
+        wall_time_seconds: int = 1200.0,
         top_k: int = 50,
         cache_dir: str = None,
         inference_only: bool = False,
@@ -456,14 +457,23 @@ class DeepSearch:
         # if inference_only is True, then the search will only run the inference and not the self play
         self.inference_only = inference_only
         self.top_k = top_k
+        self.wall_time_seconds = wall_time_seconds
         # Start the timer
         self.timer = threading.Timer(timer_seconds, self.save_data)
         self.timer.daemon = True
         self.timer.start()
+        self.exit = False
+        self.exit_search_timer = threading.Timer(wall_time_seconds, self.exit_search)
+        self.exit_search_timer.daemon = True
+        self.exit_search_timer.start()
 
     def save_data(self):
         print("### TIMER TRIGGER")
         self.save_flag = True
+
+    def exit_search(self):
+        print("### TIMER TRIGGER")
+        self.exit = True
 
     def clear_search_db_cache(self, backup_root_node):
         if self.strategy is not None and self.strategy.use_kv_cache:
@@ -534,6 +544,37 @@ class DeepSearch:
 
             if count == 1:
                 backup_root_nodes = [spg.root for spg in parallel_searches]
+            if self.exit:
+                pb.write(f"### EXITING SEARCH DUE TO MAX TIME {self.wall_time_seconds} REACHED")
+                # loop from large to small so that we can remove search instances as we go
+                for i in range(len(parallel_searches))[::-1]:
+                    spg = parallel_searches[i]
+                    if spg.data_id in self.mcts.stop_criteria.evaluation_cache:
+                        backup_root_node = backup_root_nodes[i]
+                        assert tuple(backup_root_states[i]) == tuple(backup_root_nodes[i].state)
+                        self.clear_search_db_cache(backup_root_node)
+                        for text in self.mcts.stop_criteria.evaluation_cache[spg.data_id]:
+
+                            results, tokens = self.mcts.stop_criteria.evaluation_cache[spg.data_id][text]
+                            return_postive_negative_smaples.append(
+                                {
+                                    "value": results[0],
+                                    "text": text,
+                                    "tokens": tokens,
+                                    "data_id": spg.data_id,
+                                    "backup_root_states": backup_root_states[i],
+                                }
+                            )
+                            if results[0] >= self.mcts.stop_criteria.threshold:
+                                pb.write(f"### FOUND A GOOD SAMPLE {results[0]} ###")
+                                pb.write(f"{text}")
+                            else:
+                                pb.write(f"### THE BEST SAMPLE SO FAR {results[0]} ###")
+                                pb.write(f"{text}")
+                        del parallel_searches[i]
+                        del backup_root_states[i]
+                        del backup_root_nodes[i]
+                break
             # loop from large to small so that we can remove search instances as we go
             for i in range(len(parallel_searches))[::-1]:
                 spg = parallel_searches[i]

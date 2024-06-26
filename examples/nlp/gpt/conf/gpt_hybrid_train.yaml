@@ -62,6 +62,7 @@ model:
     max_depth: 500  # maxium depth of the search tree
 
     save_timer: 13500 # save the intermediate search results at 3 hours and 45 minutes
+    max_wall_time: 1200 # maxium wall time for each search, 20 minutes
     cache_dir: null  # cache dir for the search results
 
     top_k: 50

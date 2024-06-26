@@ -151,6 +151,7 @@ def main(cfg) -> None:
         mcts_cfg.temperature,
         None,
         mcts_cfg.save_timer,
+        mcts_cfg.max_wall_time,
         mcts_cfg.top_k,
         mcts_cfg.cache_dir,
         inference_only=False,
