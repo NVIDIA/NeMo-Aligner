@@ -17,6 +17,8 @@ trainer:
     max_steps: 10000
     gradient_clip_val: 1.0
 
+    # if specified, we will try to strip out all unnecessary
+    # padding of inference request and pad to a multiple
     pad_sequence_length_to_multiple: null
     max_queue_delay_microseconds: 2000
 
