@@ -109,7 +109,7 @@ def remove_long_dialogs(
 
 
 def remote_inference(
-    prompt: Union[List[str], str],
+    prompt: Union[str, dict, List[str], List[dict], List[List[dict]]],
     port: int,
     host: str,
     temperature: Optional[float] = None,
@@ -142,15 +142,51 @@ def remote_inference(
     import json
     import requests
 
+    def _is_chat_message(message: Union[dict, List[dict], List[List[dict]]]):
+        """
+        chat message can be one of the following (examples):
+        1. { "content": "some user message", "role": "User" }
+        2. [{ "content": "some user message", "role": "User" }]
+        3. [ [{ "content": "user message #1", "role": "User" }],
+             [{ "content": "assistant response", "role": "Assistant" }],
+             [{ "content": "user message #2", "role": "User" }]
+           ]
+        """
+        if isinstance(message, dict):
+            message = [[message]]
+            return True, message
+        elif isinstance(message, list):
+            if isinstance(message[0], dict):
+                if all(isinstance(m, dict) for m in message):
+                    message = [message]
+                    return True, message
+            elif isinstance(message[0], list):
+                if all(isinstance(m, list) and all(isinstance(turn, dict) for turn in m) for m in message):
+                    return True, message
+
+        return False, message
+
     assert port >= 0
-    assert isinstance(prompt, (str, list))
+    assert isinstance(prompt, (str, dict, list))
     if not isinstance(prompt, list):
-        prompt = [prompt]
-    assert all(isinstance(p, str) for p in prompt)
+        if isinstance(prompt, dict):
+            prompt = [[prompt]]
+        elif isinstance(prompt, str):
+            prompt = [prompt]
+        else:
+            raise "invalid prompt format"
+
+    if isinstance(prompt[0], str):
+        assert all(isinstance(p, str) for p in prompt), "Not all items are strings"
+    else:
+        is_chat_message, prompt = _is_chat_message(prompt)
+        if not is_chat_message:
+            raise "invalid prompt format"
 
     if end_strings is not None:
         if not isinstance(end_strings, list):
             end_strings = [end_strings]
+        assert all(s is not None for s in end_strings)
 
     def request_data(request):
         headers = {"Content-Type": "application/json"}
