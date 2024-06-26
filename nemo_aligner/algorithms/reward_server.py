@@ -89,11 +89,7 @@ class RewardModelServer:
                 http_port=self.port,
             )
 
-            preferred_batch_size = list(range(self.pad_batch_to_multiple, MAX_BATCH + 1, self.pad_batch_to_multiple))
-            dynamic_batcher = DynamicBatcher(
-                max_queue_delay_microseconds=self.max_queue_delay_microseconds,
-                preferred_batch_size=preferred_batch_size,
-            )
+            dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=1,)
 
             # we cut the batch into pieces so we don't need to have a max batch size
             infer_model_config = ModelConfig(batching=True, max_batch_size=MAX_BATCH, batcher=dynamic_batcher)
