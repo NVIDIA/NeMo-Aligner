@@ -418,6 +418,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             forward_only=True,
             seq_length=sequence_length,
             micro_batch_size=micro_batch_size,
+            collect_non_loss_data=True,
         )
         return output_tensor
 
@@ -432,8 +433,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             if not parallel_state.is_pipeline_last_stage():
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
-            def id_func(output_tensor):
-                return output_tensor, output_tensor
+            def id_func(output_tensor, non_loss_data=True):
+                return output_tensor
 
             return output_tensor, id_func
 
