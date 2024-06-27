@@ -76,7 +76,7 @@ class ValueApproximationFunction(TRTLLMInference):
                 import traceback
 
                 traceback.print_exc()
-                raise e
+                infer_results = [torch.tensor(0.0)] * len(input_ids)
         # replace None with the results
         for i in range(len(results)):
             if results[i] is None:
