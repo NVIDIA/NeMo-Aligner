@@ -42,7 +42,7 @@ class RewardModelServer:
     model_name: str
     port: int
     inference_micro_batch_size: Union[int, List]
-    pad_sequence_length_to_multiple: Optional[int] = None
+    strip_sequence_length_to_multiple: Optional[int]
     max_queue_delay_microseconds: float = 2000
 
     def __post_init__(self):
@@ -69,9 +69,9 @@ class RewardModelServer:
 
         inputs, extra, _ = process_inference_request(
             inputs,
-            pad_to=self.pad_batch_to_multiple,
-            pad_sequence_length_to_multiple=self.pad_sequence_length_to_multiple,
+            pad_to_multiple=self.pad_batch_to_multiple,
             tokenize_func=self.tokenize_func,
+            strip_sequence_length_to_multiple=self.strip_sequence_length_to_multiple,
         )
 
         _, rewards = run_distributed_inference(

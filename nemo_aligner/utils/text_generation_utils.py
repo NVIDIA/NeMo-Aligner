@@ -74,7 +74,7 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
         return lengths.flatten()
 
 
-def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False, pad_sequence_length_to_multiple=None):
+def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False):
     """convert the sentences into lists of tokens, pad them to the same length, add bos tokens if it is needed
     """
 
@@ -92,11 +92,7 @@ def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False, 
     context_tokens = list(map(tokenize, sentences))
     max_sequence_length = max(len(x) for x in context_tokens)
 
-    pad_length = max_len
-    if pad_sequence_length_to_multiple is not None:
-        pad_length = math.ceil(max_sequence_length / pad_sequence_length_to_multiple) * pad_sequence_length_to_multiple
-
-    context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.eos_id, pad_length - max_sequence_length)
+    context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.eos_id, max_len - max_sequence_length)
     context_tokens = [x[:max_len] for x in context_tokens]
     context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
     context_length_tensor = torch.cuda.LongTensor(context_lengths)

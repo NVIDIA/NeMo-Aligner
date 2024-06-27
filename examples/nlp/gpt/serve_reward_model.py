@@ -51,14 +51,13 @@ def main(cfg) -> None:
     ptl_model = ptl_model.cuda()
     ptl_model.prepare_for_inference()
 
-    def tokenize_func(sentences, pad_sequence_length_to_multiple=None):
+    def tokenize_func(sentences):
         return tokenize_batch(
             sentences=sentences,
             tokenizer=ptl_model.tokenizer,
             max_len=ptl_model.cfg.encoder_seq_length,
             add_BOS=False,
             add_EOS=False,
-            pad_sequence_length_to_multiple=pad_sequence_length_to_multiple,
         )
 
     inference_cfg = cfg.inference
@@ -69,7 +68,7 @@ def main(cfg) -> None:
         model_name=inference_cfg.get("model_name", "reward_model"),
         port=inference_cfg.get("port", 5555),
         inference_micro_batch_size=inference_cfg.get("inference_micro_batch_size", 2),
-        pad_sequence_length_to_multiple=inference_cfg.get("pad_sequence_length_to_multiple", None),
+        strip_sequence_length_to_multiple=inference_cfg.get("strip_sequence_length_to_multiple", None),
         max_queue_delay_microseconds=inference_cfg.get("max_queue_delay_microseconds", 2000),
     )
     server.run_server()

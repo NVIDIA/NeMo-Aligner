@@ -63,12 +63,12 @@ class CriticServerTrainer:
         self.gbs = gbs
         self.step = 0
 
-        self.pad_sequence_length_to_multiple = cfg.get("pad_sequence_length_to_multiple", None)
         self.tokenize_func = tokenize_func
 
         # server parameters
         self.combine_rm_and_critic_server = cfg.combine_rm_and_critic_server
         self.max_queue_delay_microseconds = cfg.get("max_queue_delay_microseconds", 2000)
+        self.strip_sequence_length_to_multiple = cfg.get("strip_sequence_length_to_multiple", None)
 
         inference_micro_batch_size = cfg.inference_micro_batch_size
         if isinstance(inference_micro_batch_size, int):  # for backwards compatability
@@ -117,9 +117,9 @@ class CriticServerTrainer:
 
         inputs, extra, prepad_sequence_length = process_inference_request(
             inputs,
-            pad_to=self.pad_batch_to_multiple,
-            pad_sequence_length_to_multiple=self.pad_sequence_length_to_multiple,
+            pad_to_multiple=self.pad_batch_to_multiple,
             tokenize_func=self.tokenize_func,
+            strip_sequence_length_to_multiple=self.strip_sequence_length_to_multiple,
         )
         rewards, values = self.run_inference(inputs=inputs)
 
