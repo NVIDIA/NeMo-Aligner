@@ -13,6 +13,7 @@
    dpo.rst
    spin.rst
    draftp.rst
+   CAI.rst
 
 :ref:`Prerequisite Obtaining a Pre-Trained Model <prerequisite>`
    This section provides instructions on how to download pre-trained LLMs in .nemo format. The following section will use These base LLMs for further fine-tuning and alignment. 
@@ -34,3 +35,5 @@
 
 :ref:`Fine-tuning Stable Diffusion with DRaFT+ <model-aligner-draftp>`
    DRaFT+ is an algorithm for fine-tuning text-to-image generative diffusion models by directly backpropagating through a reward model which alleviates the mode collapse issues from DRaFT algorithm and improves diversity through regularization. 
+:ref:`Constitutional AI: Harmlessness from AI Feedback <model-aligner-cai>`
+   CAI is an alignment method by Anthropic allowing incorporation of AI feedback for LLM model alignment. The feedback is based on a small set of principles (Constitution) guiding the model towards the desired behavior - being helpful, honest and harmless.
