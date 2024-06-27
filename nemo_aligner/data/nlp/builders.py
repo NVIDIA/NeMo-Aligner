@@ -22,7 +22,6 @@ from functools import partial
 
 import numpy as np
 import torch
-from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
