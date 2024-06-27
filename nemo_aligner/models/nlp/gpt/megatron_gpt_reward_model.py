@@ -353,22 +353,13 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         finish_validation_step(self)
 
     def infer(
-        self,
-        inputs: Union[List[str], torch.Tensor, List[dict]],
-        add_BOS=False,
-        add_EOS=False,
-        pad_sequence_length_to_multiple=None,
+        self, inputs: Union[List[str], torch.Tensor, List[dict]], add_BOS=False, add_EOS=False,
     ):
         if isinstance(inputs, tuple):
             context_tokens_tensor, context_length_tensor = inputs
         else:
             context_tokens_tensor, context_length_tensor = tokenize_batch(
-                inputs,
-                self.tokenizer,
-                self.cfg.encoder_seq_length,
-                add_BOS=add_BOS,
-                add_EOS=add_EOS,
-                pad_sequence_length_to_multiple=pad_sequence_length_to_multiple,
+                inputs, self.tokenizer, self.cfg.encoder_seq_length, add_BOS=add_BOS, add_EOS=add_EOS,
             )
 
         context_tokens_tensor = context_tokens_tensor.cuda()

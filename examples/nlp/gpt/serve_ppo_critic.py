@@ -88,14 +88,13 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
-    def tokenize_func(sentences, pad_sequence_length_to_multiple=None):
+    def tokenize_func(sentences):
         return tokenize_batch(
             sentences=sentences,
             tokenizer=ptl_model.tokenizer,
             max_len=ptl_model.cfg.encoder_seq_length,
             add_BOS=False,
             add_EOS=False,
-            pad_sequence_length_to_multiple=pad_sequence_length_to_multiple,
         )
 
     critic_trainer = CriticServerTrainer(
