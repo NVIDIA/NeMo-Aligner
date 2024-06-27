@@ -89,7 +89,7 @@ def generate_responses_batch(prompt_list: list, inference_config: dict, prompt_t
         prompt_template.format_messages({"content": p, "role": UserAssistantPromptTemplate.Role.User})
         for p in prompt_list
     ]
-    responses = model_remote_inference(prompts, inference_config=inference_config, eos_token=prompt_template.eos_token)
+    responses = model_remote_inference(prompts, inference_config=inference_config)
     assert len(responses) == num_prompts
     stripped_responses = [prompt_template.extract_response(r) for r in responses]
 
@@ -101,11 +101,8 @@ def generate_responses_batch(prompt_list: list, inference_config: dict, prompt_t
     return s_batch
 
 
-def model_remote_inference(prompt, inference_config: dict, eos_token: str):
+def model_remote_inference(prompt, inference_config: dict):
     sentences = remote_inference(prompt=prompt, **inference_config)
-
-    sentences = [s + eos_token if not s.endswith(eos_token) else s for s in sentences]
-
     return sentences
 
 
@@ -203,6 +200,17 @@ def prepare_args():
     group_prompt_template.add_argument("--bos_token", type=str, default=None)
     group_prompt_template.add_argument("--eos_token", type=str, default="<extra_id_1>")
     group_prompt_template.add_argument("--response_extract_pattern", type=str, default="<extra_id_1>Assistant\n")
+
+    """
+        prompt template configuration example: <extra_id_*> template
+            --user_format "<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n"
+            --assistant_format "{MESSAGE}\n"
+            --system_format "<extra_id_0>System\n{MESSAGE}\n"
+            --system_default_message ""
+            --eos_token "<extra_id_1>"
+            --response_extract_pattern "<extra_id_1>Assistant\n"
+            --add_bos False
+    """
 
     args = parser.parse_args()
     assert os.path.isfile(args.red_teaming_file_path)

@@ -17,6 +17,7 @@ import json
 import os
 import os.path
 import random
+from typing import Union, List
 
 import numpy as np
 import tqdm
@@ -46,11 +47,8 @@ def generate_chat_prompt(sample: dict):
     return _conversation_formatter(messages=[prompt, revision])
 
 
-def model_remote_inference(prompt, inference_config: dict, eos_token: str):
+def model_remote_inference(prompt, inference_config: dict):
     sentences = remote_inference(prompt=prompt, **inference_config)
-
-    sentences = [s + eos_token if not s.endswith(eos_token) else s for s in sentences]
-
     return sentences
 
 
@@ -61,6 +59,7 @@ def generate_cai_batch_sample(
     revision_list,
     inference_config: dict,
     prompt_template_config: dict,
+    apply_chat_template: bool
 ):
     assert isinstance(prompt_list, list)
     if not isinstance(critique_list, list):
@@ -85,9 +84,8 @@ def generate_cai_batch_sample(
     ]
 
     chat_batch = model_remote_inference(
-        [prompt_template.format_messages(p) for p in initial_prompt_batch],
-        inference_config=inference_config,
-        eos_token=prompt_template.eos_token,
+        [prompt_template.format_messages(p) if apply_chat_template else p for p in initial_prompt_batch],
+        inference_config=inference_config
     )
 
     assert len(chat_batch) == num_prompts
@@ -104,9 +102,8 @@ def generate_cai_batch_sample(
     ]
 
     chat_batch = model_remote_inference(
-        [prompt_template.format_messages(p) for p in critique_request_batch],
-        inference_config=inference_config,
-        eos_token=prompt_template.eos_token,
+        [prompt_template.format_messages(p) if apply_chat_template else p for p in critique_request_batch],
+        inference_config=inference_config
     )
     assert len(chat_batch) == num_prompts
     critique_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
@@ -122,9 +119,8 @@ def generate_cai_batch_sample(
     ]
 
     chat_batch = model_remote_inference(
-        [prompt_template.format_messages(p) for p in revision_request_prompt_batch],
-        inference_config=inference_config,
-        eos_token=prompt_template.eos_token,
+        [prompt_template.format_messages(p) if apply_chat_template else p for p in revision_request_prompt_batch],
+        inference_config=inference_config
     )
     assert len(chat_batch) == num_prompts
     revision_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
@@ -193,6 +189,7 @@ def generate_cai_dataset(
     save_file_path: str,
     inference_config: dict,
     prompt_template_config: dict,
+    apply_chat_template: bool
 ):
     """
     @param batch_size: inference batch size
@@ -204,6 +201,7 @@ def generate_cai_dataset(
     @param num_examples:
     @param inference_config:
     @param prompt_template_config:
+    @param apply_chat_template:
     @return:
     """
     assert batch_size > 0
@@ -254,6 +252,7 @@ def generate_cai_dataset(
             revision_list=revision_list,
             inference_config=inference_config,
             prompt_template_config=prompt_template_config,
+            apply_chat_template=apply_chat_template
         )
         assert len(cai_batch_sample) == len(red_teaming_prompts_list)
 
@@ -414,7 +413,7 @@ def prepare_args():
     parser.add_argument("--helpfulness-dataset-path", type=str, required=True, default=None)
 
     group_inference = parser.add_argument_group("inference", "inference (service) arguments")
-    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="False")
+    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
     group_inference.add_argument("--top_k", type=int, default=1)
     group_inference.add_argument("--top_p", type=float, default=0.9)
     group_inference.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
@@ -433,18 +432,53 @@ def prepare_args():
 
     # prompt template
     group_prompt_template = parser.add_argument_group("prompt_template", "prompt template")
-    group_prompt_template.add_argument("--user_format", type=str, default="[INST] {MESSAGE} [/INST]")
-    group_prompt_template.add_argument("--assistant_format", type=str, default="{MESSAGE}</s> ")
+    group_prompt_template.add_argument("--apply_chat_template", type=str, choices=["True", "False"], default="False")
+    group_prompt_template.add_argument("--user_format", type=str, default=None)
+    group_prompt_template.add_argument("--assistant_format", type=str, default=None)
     group_prompt_template.add_argument("--system_format", type=str, default=None)
     group_prompt_template.add_argument("--system_default_message", type=str, default=None)
-    group_prompt_template.add_argument("--bos_token", type=str, default="<s>")
-    group_prompt_template.add_argument("--eos_token", type=str, default="</s>")
+    group_prompt_template.add_argument("--bos_token", type=str, default=None)
+    group_prompt_template.add_argument("--eos_token", type=str, default=None)
     group_prompt_template.add_argument("--response_extract_pattern", type=str, default="[/INST]")
+
+    """
+    prompt template configuration example: <extra_id_*> template
+        --apply_chat_template True
+        --user_format "<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n"
+        --assistant_format "{MESSAGE}\n"
+        --system_format "<extra_id_0>System\n{MESSAGE}\n"
+        --system_default_message ""
+        --eos_token "<extra_id_1>"
+        --response_extract_pattern "<extra_id_1>Assistant\n"
+        --add_bos False
+        
+    
+    prompt template configuration example: mistral-instruct-7B
+        --apply_chat_template False
+        --response_extract_pattern "[/INST]"
+        --add_bos True
+        
+    NOTE: setting 'apply_chat_template' to False as chat template is going to be applied when 
+    invoking remote inference with megatron_gpt_eval.py service.
+    
+    
+    prompt template configuration example: Mistral-Instruct-7B, converted to nemo, 
+        using huggingface tokenizer and not using nemo tokenizer:
+    
+    -apply_chat_template True
+        --user_format "[INST] {MESSAGE} [/INST]"
+        --assistant_format "{MESSAGE}</s> "
+        --bos_token "<s>"
+        --eos_token "</s>"
+        --response_extract_pattern "[/INST]"
+        --add_bos False
+    """
 
     args = parser.parse_args()
     args.add_bos = args.add_bos == "True"
     args.all_probs = args.all_probs == "True"
     args.greedy = args.greedy == "True"
+    args.apply_chat_template = args.apply_chat_template == "True"
 
     assert os.path.isfile(args.red_teaming_prompts_dataset_path)
     assert os.path.isfile(args.few_shot_prompts_dataset_path)
@@ -517,6 +551,7 @@ def main():
         save_file_path=args.output_filepath,
         inference_config=inference_config,
         prompt_template_config=prompt_template_config,
+        apply_chat_template=args.apply_chat_template
     )
 
     print("Blending CAI samples with the helpfulness dataset...")

@@ -124,7 +124,7 @@ def remote_inference(
     end_strings: Optional[Union[List[str], str]] = None,
 ):
     """
-    @param prompt:
+    @param prompt: list of strings or list of dict (e.g., [{"content": "some user message", "role": "User"}, ...])
     @param port: The port number on which the inference service is running.
     @param host: The hostname or IP address of the inference service.
     @param temperature:
@@ -323,35 +323,34 @@ class PromptTemplate:
         role_message_format: Dict[str, str],
         bos_token: Optional[str] = None,
         eos_token: Optional[str] = None,
-        response_extract_pattern: Optional[str] = None,
+        response_extract_pattern: Optional[str] = None
     ):
         """
-
         @param role_message_format: dict of (key:role-name, value:role-message-format).
         example (for mistraL): dict(User="[INST] {MESSAGE} [/INST]", Assistant="{MESSAGE}</s> ")
         @param bos_token: begin-of-sequence token (optional)
         @param eos_token: end-of-sequence token (optional)
-        @response_extract_pattern: (optional)
+        @param response_extract_pattern: (optional)
 
         example: Mistral
 
-        mistral_prompt_template = PromptTemplate(
-            dict(
-                User="[INST] {MESSAGE} [/INST]",
-                Assistant="{MESSAGE}</s> "
-            ),
-            bos_token="<s>",
-            eos_token="</s>",
-            response_extract_pattern="[/INST]"
+        example: <extra_id_*> chat template
+        user_assistant_format = UserAssistantPromptTemplate(
+            user_format="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
+            assistant_format="{MESSAGE}\n",
+            system_format="<extra_id_0>System\n{MESSAGE}\n",
+            system_default_message="",
+            eos_token="<extra_id_1>",
+            response_extract_pattern="<extra_id_1>Assistant\n",
         )
 
         # single message (e.g., user prompt)
-        prompt = mistral_prompt_template.format_message(
+        prompt = user_assistant_format.format_message(
             {"role": "User", "content": "Calculate the sum of 2 and 3."}
         )
 
         # a conversation
-        prompt = mistral_prompt_template.format_message(
+        prompt = user_assistant_format.format_message(
             [
                 {"role": "User", "content": "Calculate the sum of 2 and 3."},
                 {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
@@ -364,7 +363,6 @@ class PromptTemplate:
             PromptTemplate.is_valid_role_message_template(message_template)
             for message_template in role_message_format.values()
         )
-
         self.role_message_template = role_message_format.copy()
         self.bos_token = bos_token
         self.eos_token = eos_token
@@ -395,7 +393,7 @@ class PromptTemplate:
     def create_message(self, role: str, content: str):
         """
         Creates a single dictionary item with provided role and content.
-        @param role_name: role name
+        @param role: role name
         @param content:message content
         @return:
         """
@@ -454,9 +452,23 @@ class UserAssistantPromptTemplate(PromptTemplate):
         @param eos_token: end-of-sequence token (optional)
         @param response_extract_pattern: (optional)
 
+        example: <extra_id_*> chat template
+        user_assistant_format = UserAssistantPromptTemplate(
+            user_format="<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n",
+            assistant_format="{MESSAGE}\n",
+            system_format="<extra_id_0>System\n{MESSAGE}\n",
+            system_default_message="",
+            eos_token="<extra_id_1>",
+            response_extract_pattern="<extra_id_1>Assistant\n",
+        )
 
-        example: Mistral
 
+        example: Mistral-Instruct-7B (converted to nemo, invoking remote inference with megatron_gpt_eval.py service)
+         user_assistant_format = UserAssistantPromptTemplate(
+            response_extract_pattern="[/INST]",
+        )
+
+        example: Mistral-Instruct-7B (converted to nemo, using huggingface tokenizer and not using nemo tokenizer)
         user_assistant_format = UserAssistantPromptTemplate(
             user_format="[INST] {MESSAGE} [/INST]",
             assistant_format="{MESSAGE}</s> ",
@@ -465,6 +477,9 @@ class UserAssistantPromptTemplate(PromptTemplate):
             response_extract_pattern="[/INST]"
         )
         """
+        user_format = "{MESSAGE}" if user_format is None or user_format == "" else user_format
+        assistant_format = "{MESSAGE}" if assistant_format is None or assistant_format == "" else assistant_format
+
         role_message_format = {
             UserAssistantPromptTemplate.Role.User: user_format,
             UserAssistantPromptTemplate.Role.Assistant: assistant_format,
@@ -480,7 +495,7 @@ class UserAssistantPromptTemplate(PromptTemplate):
             role_message_format,
             bos_token=bos_token,
             eos_token=eos_token,
-            response_extract_pattern=response_extract_pattern,
+            response_extract_pattern=response_extract_pattern
         )
 
         self.system_default_message = system_default_message
