@@ -323,7 +323,7 @@ class PromptTemplate:
         role_message_format: Dict[str, str],
         bos_token: Optional[str] = None,
         eos_token: Optional[str] = None,
-        response_extract_pattern: Optional[str] = None
+        response_extract_pattern: Optional[str] = None,
     ):
         """
         @param role_message_format: dict of (key:role-name, value:role-message-format).
@@ -495,7 +495,7 @@ class UserAssistantPromptTemplate(PromptTemplate):
             role_message_format,
             bos_token=bos_token,
             eos_token=eos_token,
-            response_extract_pattern=response_extract_pattern
+            response_extract_pattern=response_extract_pattern,
         )
 
         self.system_default_message = system_default_message

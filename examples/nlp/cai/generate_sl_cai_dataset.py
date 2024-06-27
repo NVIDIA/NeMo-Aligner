@@ -17,7 +17,7 @@ import json
 import os
 import os.path
 import random
-from typing import Union, List
+from typing import List, Union
 
 import numpy as np
 import tqdm
@@ -59,7 +59,7 @@ def generate_cai_batch_sample(
     revision_list,
     inference_config: dict,
     prompt_template_config: dict,
-    apply_chat_template: bool
+    apply_chat_template: bool,
 ):
     assert isinstance(prompt_list, list)
     if not isinstance(critique_list, list):
@@ -85,7 +85,7 @@ def generate_cai_batch_sample(
 
     chat_batch = model_remote_inference(
         [prompt_template.format_messages(p) if apply_chat_template else p for p in initial_prompt_batch],
-        inference_config=inference_config
+        inference_config=inference_config,
     )
 
     assert len(chat_batch) == num_prompts
@@ -103,7 +103,7 @@ def generate_cai_batch_sample(
 
     chat_batch = model_remote_inference(
         [prompt_template.format_messages(p) if apply_chat_template else p for p in critique_request_batch],
-        inference_config=inference_config
+        inference_config=inference_config,
     )
     assert len(chat_batch) == num_prompts
     critique_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
@@ -120,7 +120,7 @@ def generate_cai_batch_sample(
 
     chat_batch = model_remote_inference(
         [prompt_template.format_messages(p) if apply_chat_template else p for p in revision_request_prompt_batch],
-        inference_config=inference_config
+        inference_config=inference_config,
     )
     assert len(chat_batch) == num_prompts
     revision_response_batch = [prompt_template.extract_response(chat) for chat in chat_batch]
@@ -189,7 +189,7 @@ def generate_cai_dataset(
     save_file_path: str,
     inference_config: dict,
     prompt_template_config: dict,
-    apply_chat_template: bool
+    apply_chat_template: bool,
 ):
     """
     @param batch_size: inference batch size
@@ -252,7 +252,7 @@ def generate_cai_dataset(
             revision_list=revision_list,
             inference_config=inference_config,
             prompt_template_config=prompt_template_config,
-            apply_chat_template=apply_chat_template
+            apply_chat_template=apply_chat_template,
         )
         assert len(cai_batch_sample) == len(red_teaming_prompts_list)
 
@@ -551,7 +551,7 @@ def main():
         save_file_path=args.output_filepath,
         inference_config=inference_config,
         prompt_template_config=prompt_template_config,
-        apply_chat_template=args.apply_chat_template
+        apply_chat_template=args.apply_chat_template,
     )
 
     print("Blending CAI samples with the helpfulness dataset...")
