@@ -30,7 +30,7 @@ The toolkit is currently in it's early stages, and we are committed to improving
 ## Learn More
 * [Documentation](https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/README.md)
 * [Examples](https://github.com/NVIDIA/NeMo-Aligner/tree/main/examples/nlp/gpt)
-* [Tutorials](https://docs.nvidia.com/nemo-framework/user-guide/latest/ModelAlignment/index.html)
+* [Tutorials](https://docs.nvidia.com/nemo-framework/user-guide/latest/modelalignment/index.html)
 * [Paper](https://arxiv.org/abs/2405.01481)
 
 ## Latest Release
