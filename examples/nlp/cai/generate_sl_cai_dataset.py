@@ -442,6 +442,10 @@ def prepare_args():
     group_prompt_template.add_argument("--response_extract_pattern", type=str, default="[/INST]")
 
     """
+    prompt template configuration is going to be applied to chat conversation messages when invoking remote
+    inference with megatron_gpt_eval.py service.
+    
+    
     prompt template configuration example: <extra_id_*> template
         --apply_chat_template True
         --user_format "<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n"

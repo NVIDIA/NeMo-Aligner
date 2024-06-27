@@ -202,6 +202,14 @@ def prepare_args():
     group_prompt_template.add_argument("--response_extract_pattern", type=str, default="<extra_id_1>Assistant\n")
 
     """
+        The prompt template configuration will be utilized in two scenarios:
+         1. It will be applied to chat conversation messages when invoking remote inference using the 
+            megatron_gpt_eval.py service (specifically in the generate_cai_rlaif_candidate_dataset method).
+         2. It will be used to format chat conversation messages when saving them to a file, which can be 
+            used as training, testing, or validation datasets.
+            
+            
+            
         prompt template configuration example: <extra_id_*> template
             --user_format "<extra_id_1>User\n{MESSAGE}\n<extra_id_1>Assistant\n"
             --assistant_format "{MESSAGE}\n"
