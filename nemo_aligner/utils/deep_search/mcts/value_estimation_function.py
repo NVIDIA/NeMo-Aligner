@@ -51,20 +51,32 @@ class ValueApproximationFunction(TRTLLMInference):
                 remove_stop_phrases=False,
             )
 
-            for i in range(len(out)):
-                # text = out[i]['generation']
-                generation_ids = out[i]["output_ids"]
-                full_ids = input_ids[i] + generation_ids
-                text = self.tokenizer.decode(full_ids)
-                value, terminate, end_properly, has_answer = self.stop_criteria.get_value_and_terminated(
-                    text, data_ids[i], i, full_ids
-                )
-                value = torch.tensor(value)
-                self.value_cache[tuple(input_ids[i])] = value
-                # cache all subsequent values
-                for j in range(len(generation_ids)):
-                    self.value_cache[tuple(input_ids[i] + generation_ids[:j])] = value
-                infer_results.append(value)
+            try:
+                for i in range(len(out)):
+                    # text = out[i]['generation']
+                    generation_ids = out[i]["output_ids"]
+                    full_ids = input_ids[i] + generation_ids
+                    text = self.tokenizer.decode(full_ids)
+                    value, terminate, end_properly, has_answer = self.stop_criteria.get_value_and_terminated(
+                        text, data_ids[i], i, full_ids
+                    )
+                    value = torch.tensor(value)
+                    self.value_cache[tuple(input_ids[i])] = value
+                    # cache all subsequent values
+                    for j in range(len(generation_ids)):
+                        self.value_cache[tuple(input_ids[i] + generation_ids[:j])] = value
+                    infer_results.append(value)
+            except Exception as e:
+                print(f"Error in value estimation: {e}")
+                print(out)
+                print(len(out))
+                print(out[0])
+                print(type(out))
+                print(type(out[0]))
+                import traceback
+
+                traceback.print_exc()
+                raise e
         # replace None with the results
         for i in range(len(results)):
             if results[i] is None:

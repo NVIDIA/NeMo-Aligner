@@ -463,12 +463,11 @@ class DeepSearch:
         self.timer.daemon = True
         self.timer.start()
         self.reset_exit_search_timer()
-    
+
     def reset_exit_search_timer(self):
         self.exit = False
         self.exit_search_timer = threading.Timer(self.wall_time_seconds, self.exit_search)
         self.exit_search_timer.daemon = True
-
 
     def save_data(self):
         print("### TIMER TRIGGER")
