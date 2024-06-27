@@ -333,7 +333,7 @@ class DeepSearchTrainer:
                 self.step,
                 table["response"],
                 table["reward"],
-                table["ground_truth_answer"],
+                str(table["ground_truth_answer"]),
             ]
 
         self.logger.log_table("table/val", dataframe=self.val_df, step=self.step)
@@ -356,7 +356,7 @@ class DeepSearchTrainer:
                 self.step,
                 table["response"],
                 table["reward"],
-                table["ground_truth_answer"],
+                str(table["ground_truth_answer"]),
             ]
 
         self.logger.log_table("table/train_eval", dataframe=self.train_df, step=self.step)
