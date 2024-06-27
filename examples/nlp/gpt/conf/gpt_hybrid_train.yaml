@@ -65,7 +65,8 @@ model:
     max_wall_time: 1200 # maxium wall time for each search, 20 minutes
     cache_dir: null  # cache dir for the search results
 
-    top_k: 50
+    top_k: 50  # action space for the search
+    top_p: 1.0  # top-p sampling for random sampling, not used for MCTS
     end_strings: ["<extra_id_1>", "\x11"]  # generation will stop when one of these tokens is generated
     add_bos_token: False # add the bos token at the beginning of the prompt
 
