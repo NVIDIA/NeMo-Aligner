@@ -24,8 +24,6 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import Tensor
 
-from nemo_aligner.utils import parallel_state
-
 """Megatron Core based Reward Model"""
 
 

@@ -16,7 +16,6 @@ inference:
     - ${model.forward_micro_batch_size}
 
 rm_model_file: null
-dataset_path: null
 
 model:
   forward_micro_batch_size: 2

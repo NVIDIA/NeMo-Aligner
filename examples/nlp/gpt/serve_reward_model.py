@@ -26,6 +26,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 """PyTriton Based Inference Server for the Reward Model"""
 
 ENDPOINT_BIND_ADDRESS = "0.0.0.0"
+MAX_BATCH = 999999
 
 
 @hydra_runner(config_path="conf", config_name="inference_rm")

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import threading
-import time
 from typing import Dict
 
 import numpy as np
@@ -61,8 +60,7 @@ class CriticServerTrainer:
         self.optimizer = optimizer
         self.scheduler = scheduler
         self.ckpt_callback = ckpt_callback
-        self.gbs = cfg.gbs
-        self.forward_mbs = cfg.forward_mbs
+        self.gbs = gbs
         self.step = 0
 
         self.pad_sequence_length_to_multiple = cfg.get("pad_sequence_length_to_multiple", None)
@@ -249,7 +247,7 @@ class CriticServerTrainer:
                 raise RuntimeError(f"Invalid operation: {op}")
 
     @torch.no_grad()
-    def run_inference(self, inputs=None, extra=None):
+    def run_inference(self, inputs=None):
         """only rank 0 has valid data
         """
         self.model.prepare_for_inference()
