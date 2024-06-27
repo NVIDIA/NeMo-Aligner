@@ -134,34 +134,7 @@ def get_cached_outputs(cache_dir, global_set):
         for p in to_delete:
             p.unlink()
 
-    torch.distributed.barrier()
-
     return local_batches_to_load, global_batch_ids
-
-
-def get_global_set(local_data_ids):
-    output = [None for _ in range(parallel_state.get_data_parallel_world_size())]
-    torch.distributed.all_gather_object(output, local_data_ids, group=parallel_state.get_data_parallel_group())
-    global_set = set().union(*output)
-
-    return global_set
-
-
-def get_local_iterator(global_set, num_to_load, extra_filters=None):
-    indices = [i for i in range(num_to_load) if i not in global_set]
-
-    if extra_filters is not None:
-        indices = list(filter(lambda x: x not in extra_filters, indices))
-
-    rng = random.Random(len(indices))
-    rng.shuffle(indices)
-
-    # rollout_micro_batch_size
-    indices = torch.as_tensor(indices).tensor_split(parallel_state.get_data_parallel_world_size())[
-        parallel_state.get_data_parallel_rank()
-    ]
-
-    return indices
 
 
 class SynGen:
@@ -171,6 +144,7 @@ class SynGen:
         self.pad_id = pad_id
         self.wall_time_seconds = wall_time_seconds
         self.mcts_cfg = mcts_cfg
+        self.reset_exit_search_timer()
 
     def reset_exit_search_timer(self):
         self.exit = False
@@ -203,6 +177,8 @@ class SynGen:
         )
         output = []
         while True:
+            # clear the cache
+            gen_fun.value_cache = {}
             if len(inputs) == 0:
                 break
             if self.exit:
@@ -229,6 +205,11 @@ class SynGen:
             outputs = gen_fun(inputs=inputs, data_ids=data_ids)
             new_inputs = []
             new_data_ids = []
+            for data_id in data_ids:
+                if data_id in stop_criteria.max_value:
+                    # print out the maximum value
+                    max_value = stop_criteria.max_value[data_id]
+                    print(f"### MAX VALUE FOR DATA ID {data_id} IS {max_value}")
             for input, data_id, output in zip(inputs, data_ids, outputs):
                 if data_id in stop_criteria.terminate and stop_criteria.terminate[data_id]:
                     for text in stop_criteria.evaluation_cache[data_id]:
@@ -339,9 +320,7 @@ class MCTSSearchOneBatch:
 
         self.timer = NamedTimer(reduction="mean", sync_cuda=True, buffer_size=1)
 
-        tp_rank = parallel_state.get_tensor_model_parallel_rank()
-        pp_rank = parallel_state.get_pipeline_model_parallel_rank()
-        self.filename_format = "{num}" + f"_tp_{tp_rank}_pp_{pp_rank}.pt"
+        self.filename_format = "{num}" + f"_.pt"
         # search for the files here
         self.step = 0
 
@@ -386,21 +365,13 @@ class MCTSSearchOneBatch:
         self.data_ids.update(ids)
         print("###### DONE", batch_idx)
 
-        print("### Finish Job", torch.distributed.get_rank(), "batch_idx", batch_idx, "at step", self.step)
+        print("### Finish Job", "batch_idx", batch_idx, "at step", self.step)
         save_path = os.path.join(self.save_path, f"{batch_file_name}_.pt")
         self.save(save_path)
 
     def save(self, save_path):
-        group = parallel_state.get_model_parallel_group()
-        rank = torch.distributed.get_rank(group=group)
-
-        assert rank >= 0
-
-        if rank + 1 == torch.distributed.get_world_size(group):
-            print("### RANK SAVING", torch.distributed.get_rank())
-            preemptable_save(self.state_dict(), save_path)
-
-        torch.distributed.barrier(group=group)
+        print("### RANK SAVING")
+        preemptable_save(self.state_dict(), save_path)
 
     def state_dict(self):
         return {"data_ids": self.data_ids, "mcts_outputs": self.outputs}
@@ -459,7 +430,6 @@ def get_dataset(cfg):
 def main(cfg) -> None:
     ds, score_fn = get_dataset(cfg)
 
-    mcts_cfg = cfg.model.mcts
     library = "sentencepiece"
     model_name = "solar"
     tokenizer_model = cfg.trtllm.vocab_file
@@ -467,7 +437,6 @@ def main(cfg) -> None:
         library=library, model_name=model_name, tokenizer_model=tokenizer_model, use_fast=True
     )
     tokenizer = tokenizer
-    eos_id = tokenizer.eos_id
     pad_id = tokenizer.pad_id
 
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
@@ -479,64 +448,23 @@ def main(cfg) -> None:
 
 
 def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url):
-    if torch.distributed.get_rank() == 0:
-        app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
+    app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
 
-        app.conf.task_acks_late = True
-        app.conf.worker_deduplicate_successful_tasks = True
-        app.conf.worker_prefetch_multiplier = 1
+    app.conf.task_acks_late = True
+    app.conf.worker_deduplicate_successful_tasks = True
+    app.conf.worker_prefetch_multiplier = 1
 
-        # 5 hrs timeout
-        app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
+    # 5 hrs timeout
+    app.conf.update(broker_transport_options={"visibility_timeout": 18000},)
 
-        @app.task(
-            bind=True,
-            autoretry_for=(Exception,),
-            retry_backoff=True,
-            retry_jitter=True,
-            retry_kwargs={"max_retries": 10},
-        )
-        def search_for_batch(self, job):
-            try:
-                beg_time = time.time()
-                # job exmaple [(0, 0), (0, 1), (1, 0), (1, 1)], list of (batch_idx, replica_idx)
-                job = torch.tensor(job)
-                job = broadcast_2d_tensor(job, 0, None, dtype=torch.int64)
-                batch_idx = job[:, 0].tolist()
-                replicat_idx = job[:, 1].tolist()
-                searcher = MCTSSearchOneBatch(
-                    search_func=search_func,
-                    collate_func=collate_func,
-                    save_path=save_path,
-                    dataset=ds,
-                    cache_dir=cfg.model.mcts.cache_dir,
-                )
-                searcher.search(batch_idx, replicat_idx)
-                end_time = time.time()
-            except Exception as e:
-                print("ERROR", e)
-                # print the stack trace
-                import traceback
-
-                traceback.print_exc()
-                raise self.retry(exc=e)
-            return {"batch_ids": batch_idx, "time": end_time - beg_time}
-
-        RAND_ID = os.environ.get("local_rank", random.randint(0, 10000))
-        app.worker_main(
-            [
-                "worker",
-                "--loglevel=INFO",
-                "--concurrency=1",
-                "--pool=threads",
-                "--without-gossip",
-                "-Ofair",
-                f"--hostname=worker-{RAND_ID}@%%h",
-            ]
-        )
-    else:
-        while True:
-            job = broadcast_2d_tensor(job, 0, None, dtype=torch.int64)
+    @app.task(
+        bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, retry_kwargs={"max_retries": 10},
+    )
+    def search_for_batch(self, job):
+        try:
+            beg_time = time.time()
+            # job exmaple [(0, 0), (0, 1), (1, 0), (1, 1)], list of (batch_idx, replica_idx)
+            job = torch.tensor(job)
             batch_idx = job[:, 0].tolist()
             replicat_idx = job[:, 1].tolist()
             searcher = MCTSSearchOneBatch(
@@ -547,6 +475,28 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
                 cache_dir=cfg.model.mcts.cache_dir,
             )
             searcher.search(batch_idx, replicat_idx)
+            end_time = time.time()
+        except Exception as e:
+            print("ERROR", e)
+            # print the stack trace
+            import traceback
+
+            traceback.print_exc()
+            raise self.retry(exc=e)
+        return {"batch_ids": batch_idx, "time": end_time - beg_time}
+
+    RAND_ID = os.environ.get("local_rank", random.randint(0, 10000))
+    app.worker_main(
+        [
+            "worker",
+            "--loglevel=INFO",
+            "--concurrency=1",
+            "--pool=threads",
+            "--without-gossip",
+            "-Ofair",
+            f"--hostname=worker-{RAND_ID}@%%h",
+        ]
+    )
 
 
 if __name__ == "__main__":
