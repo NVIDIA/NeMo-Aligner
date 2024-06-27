@@ -8,8 +8,6 @@ trainer:
   precision: bf16
 
   ppo:
-    # mbs for inference
-    inference_micro_batch_size: 2
     port: 5556
 
     # run rm and critic together
@@ -19,11 +17,13 @@ trainer:
     max_steps: 10000
     gradient_clip_val: 1.0
 
-    gbs: ${model.global_batch_size}
-    forward_mbs: ${model.forward_mbs}
+    # if specified, we will try to strip out all unnecessary
+    # padding of inference request and pad to a multiple
     pad_sequence_length_to_multiple: null
-
     max_queue_delay_microseconds: 2000
+
+    inference_micro_batch_size:
+      - ${model.forward_micro_batch_size}
 
   # do not change these trainer args
   logger: False # logger provided by exp_manager
@@ -68,7 +68,7 @@ model:
 
   # if the inference microbatch size is big, it's possible
   # to split it using forward mbs and run inference iteratively
-  forward_mbs: ${trainer.ppo.inference_micro_batch_size}
+  forward_micro_batch_size: ${.micro_batch_size}
 
   # RM args
   use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model

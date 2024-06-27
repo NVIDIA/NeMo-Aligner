@@ -381,3 +381,30 @@ class Timer:
         # only respect rank 0 timing
         torch.distributed.broadcast(is_finished_tensor, 0)
         return is_finished_tensor.item()
+
+
+def run_distributed_inference(inputs=None, infer_fn=None, combine_rm_and_critic_server=False):
+    tokens, lengths = None, None
+    dp_rank = parallel_state.get_data_parallel_rank()
+    dp_size = parallel_state.get_data_parallel_world_size()
+    is_rank_0 = torch.distributed.get_rank() == 0
+
+    if is_rank_0:
+        tokens = torch.as_tensor(inputs["inputs"], dtype=torch.long, device=torch.cuda.current_device())
+        lengths = torch.as_tensor(inputs["sequence_length"], dtype=torch.long, device=torch.cuda.current_device())
+
+    tokens = broadcast_2d_tensor(tokens, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank]
+    lengths = broadcast_2d_tensor(lengths, 0, dtype=torch.long, group=None).chunk(dp_size)[dp_rank].squeeze(-1)
+
+    outputs = infer_fn(inputs=(tokens, lengths))
+
+    if combine_rm_and_critic_server:
+        rewards, values = outputs
+        rewards = rebalance_nd_tensor(rewards, group=parallel_state.get_data_parallel_group()).squeeze(1).cpu().numpy()
+
+    else:
+        values = outputs
+        rewards = None
+
+    values = rebalance_nd_tensor(values, group=parallel_state.get_data_parallel_group()).cpu().numpy()
+    return rewards, values

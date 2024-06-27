@@ -17,8 +17,7 @@ import warnings
 from typing import List, Union
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
@@ -31,12 +30,12 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
     get_ltor_masks_and_position_ids,
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
-from nemo.utils import AppState, logging
+from nemo.utils import logging
 from nemo.utils.dtype import str_to_dtype
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import broadcast_2d_tensor, broadcast_2d_tensor_within_pp, gather_tensor
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
@@ -72,7 +71,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             self.rew_mean = cfg.reward_standardization.mean
             self.rew_std = cfg.reward_standardization.std
 
-        self.forward_mbs = self.cfg.forward_mbs
+        self.forward_micro_batch_size = self.cfg.get("forward_micro_batch_size", self.cfg.micro_batch_size)
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
@@ -354,18 +353,29 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         finish_validation_step(self)
 
     def infer(
-        self, inputs: Union[List[str], torch.Tensor, List[dict]],
+        self,
+        inputs: Union[List[str], torch.Tensor, List[dict]],
+        add_BOS=False,
+        add_EOS=False,
+        pad_sequence_length_to_multiple=None,
     ):
         if isinstance(inputs, tuple):
             context_tokens_tensor, context_length_tensor = inputs
         else:
-            raise NotImplementedError("string inputs not yet supported")
+            context_tokens_tensor, context_length_tensor = tokenize_batch(
+                inputs,
+                self.tokenizer,
+                self.cfg.encoder_seq_length,
+                add_BOS=add_BOS,
+                add_EOS=add_EOS,
+                pad_sequence_length_to_multiple=pad_sequence_length_to_multiple,
+            )
 
-        print("#### shape", context_tokens_tensor.size(), torch.distributed.get_rank())
         context_tokens_tensor = context_tokens_tensor.cuda()
         context_length_tensor = context_length_tensor.cuda()
 
         inference_batch_size, sequence_length = context_tokens_tensor.size()
+        forward_micro_batch_size = self.forward_micro_batch_size
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
             context_tokens_tensor,
             self.tokenizer.eos_id,
@@ -376,17 +386,15 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         attention_mask = attention_mask.expand(inference_batch_size, -1, -1, -1)
         inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask]
 
-        forward_mbs = self.forward_mbs
+        # if it's not divisible by forward micro batch size,
+        # then try our best to find a smaller one that is divisible
+        while inference_batch_size % forward_micro_batch_size != 0:
+            forward_micro_batch_size -= 1
 
-        if inference_batch_size % forward_mbs != 0:
-            for i in range(1, forward_mbs + 1):
-                if inference_batch_size % i == 0:
-                    forward_mbs = i
-
-        num_microbatches = divide(inference_batch_size, forward_mbs)
+        num_microbatches = divide(inference_batch_size, forward_micro_batch_size)
         data_iter = get_iterator_k_split(inputs, num_microbatches)
 
-        rewards = self.forward_step(data_iter, forward_mbs, sequence_length, num_microbatches)
+        rewards = self.forward_step(data_iter, forward_micro_batch_size, sequence_length, num_microbatches)
 
         if parallel_state.is_pipeline_last_stage():
             rewards = torch.cat(rewards)
@@ -410,6 +418,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             forward_only=True,
             seq_length=sequence_length,
             micro_batch_size=micro_batch_size,
+            collect_non_loss_data=True,
         )
         return output_tensor
 
@@ -424,8 +433,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             if not parallel_state.is_pipeline_last_stage():
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
-            def id_func(output_tensor):
-                return output_tensor, output_tensor
+            def id_func(output_tensor, non_loss_data=True):
+                return output_tensor
 
             return output_tensor, id_func
 

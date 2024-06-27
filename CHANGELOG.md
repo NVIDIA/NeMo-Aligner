@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [Next Version]
 
 ### New features and optimizations
+- Critic and Reward Model server refactored. Now the reward model will have a flag called `model.forward_micro_batch_size` which determines the micro batch size that it runs inferences with. This can be higher than the training micro batch size since during inference we have less memory pressure.
+- In the critic and reward model server it is now possible to specify `inference_micro_batch_size` as a list, this allows us to give more information to PyTrition on the preferred batch sizes we want to run inference with.
+- It is no longer a requirement to specify `inference_micro_batch_size * dp size == num_rollout_samples` in PPO.
 
 ### Breaking changes
 
