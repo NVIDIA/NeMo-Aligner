@@ -119,9 +119,6 @@ def load_checkpoint_model_config(restore_path):
         assert os.path.exists(cfg_path), f"tried to load cfg at {cfg_path=} but it does not exist"
         return OmegaConf.load(cfg_path)
 
-    if os.path.isdir(restore_path):
-        return OmegaConf.load(os.path.join(restore_path, config_name_in_ckpt))
-
     with tempfile.TemporaryDirectory() as tmpdir:
         NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, extract_config_only=True)
         cfg = OmegaConf.load(os.path.join(tmpdir, config_name_in_ckpt))
@@ -335,7 +332,6 @@ def clear_memory():
 
 
 def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
-    # TODO(geshen): add something like this for the actor too
     """get a copy of the model states in CPU
     """
     cpu_dict = {}
@@ -486,18 +482,3 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
         tuple(model_param.shape) == reference_param.local_shape
     ), f"Model shape ({tuple(model_param.shape)} does not match reference shape ({reference_param.local_shape})"
     return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param, dtype=model_param.dtype)
-
-
-@torch.no_grad()
-def copy_model_weights_to_cpu(model, cpu_dict=None):
-    if cpu_dict is None:
-        cpu_dict = {}
-
-    for name, item in model.state_dict().items():
-        if isinstance(item, torch.Tensor):
-            if not (name in cpu_dict):
-                cpu_dict[name] = torch.empty(
-                    item.size(), dtype=item.dtype, layout=item.layout, device="cpu", pin_memory=True
-                )
-            cpu_dict[name].copy_(item, non_blocking=False)
-    return cpu_dict

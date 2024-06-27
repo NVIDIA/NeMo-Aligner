@@ -22,7 +22,6 @@ from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf
 
-from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -35,7 +34,6 @@ from nemo_aligner.data.nlp.builders import (
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMCriticClient
 from nemo_aligner.utils.distributed import Timer
-from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
