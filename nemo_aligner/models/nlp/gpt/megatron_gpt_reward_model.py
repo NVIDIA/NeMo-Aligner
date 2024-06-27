@@ -181,12 +181,17 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
             def loss_func(output_tensor):
                 # Loss per micro batch (ub).
-                loss_for_ub, acc_chosen = self.loss_func(output_tensor)
+                loss_for_ub = self.loss_func(output_tensor)
 
-                num_valid_pairs = (batch["loss_mask"].sum(dim=1) > 0).sum()
+                # Compute accuracy
+                out_chosen, out_rejected = self.split_output_tensor(output_tensor)
+                comp = out_chosen > out_rejected
+                mask_valid_pairs = batch["loss_mask"].sum(dim=1) > 0
+                num_valid_pairs = mask_valid_pairs.sum()
+                num_ok = comp[mask_valid_pairs].sum()
+                acc_chosen = num_ok / num_valid_pairs
 
                 if validation_step and not self.cfg.data.get("validation_drop_last", True):
-                    num_pairs = batch["loss_mask"].size(0)
                     num_valid_tokens_in_ub = batch["loss_mask"].sum()
 
                     if loss_for_ub.isnan():
@@ -195,9 +200,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                     else:
                         loss_sum_for_ub = num_valid_tokens_in_ub * loss_for_ub
 
-                    num_ok = acc_chosen * num_pairs
-
-                    tensor_to_reduce = torch.stack([loss_sum_for_ub, num_valid_tokens_in_ub, num_valid_pairs, num_ok,])
+                    tensor_to_reduce = torch.stack([loss_sum_for_ub, num_valid_tokens_in_ub, num_valid_pairs, num_ok])
                     torch.distributed.all_reduce(tensor_to_reduce, group=parallel_state.get_data_parallel_group())
                     loss_sum_for_ub, num_valid_tokens_in_ub, num_valid_pairs, num_ok = tensor_to_reduce
 
@@ -235,10 +238,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
     def loss_func(self, output_tensor):
         out_chosen, out_rejected = self.split_output_tensor(output_tensor)
-        comp = out_chosen > out_rejected
-        acc_chosen = torch.sum(comp) / comp.shape[0]
         loss = -torch.nn.functional.logsigmoid(out_chosen - out_rejected).mean()
-        return loss, acc_chosen
+        return loss
 
     def get_loss_and_metrics(self, batch, forward_only):
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
