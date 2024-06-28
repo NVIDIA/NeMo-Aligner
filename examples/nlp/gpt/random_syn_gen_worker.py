@@ -148,7 +148,8 @@ class SynGen:
     def reset_exit_search_timer(self):
         self.exit = False
         self.exit_search_timer = threading.Timer(self.wall_time_seconds, self.exit_search)
-        self.exit_search_timer.daemon = True
+        self.exit_search_timer.start()
+        # self.exit_search_timer.daemon = True
 
     def exit_search(self):
         print("### TIMER TRIGGER")
@@ -156,7 +157,7 @@ class SynGen:
 
     def gen(self, batch):
         self.reset_exit_search_timer()
-        self.exit_search_timer.start()
+        # self.exit_search_timer.start()
         inputs = batch["question"]
         data_ids = batch["data_id"]
         mcts_cfg = self.mcts_cfg
