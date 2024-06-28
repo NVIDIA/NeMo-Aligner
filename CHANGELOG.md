@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - It is no longer a requirement to specify `inference_micro_batch_size * dp size` to be a multiple of `num_rollout_samples` in PPO.
 
 ### Breaking changes
+- `inference.micro_batch_size` is now renamed to `inference.inference_micro_batch_size` when running reward model inference in `inferece_rm.yaml` this is to stay consistent with the naming scheme of the PPO critic.
 
 ### Bug Fixes
 - Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.
