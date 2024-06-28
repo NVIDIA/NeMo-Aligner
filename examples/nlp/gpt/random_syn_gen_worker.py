@@ -179,7 +179,6 @@ class SynGen:
         samples = []
         while True:
             # clear the cache
-            gen_fun.value_cache = {}
             if len(inputs) == 0:
                 break
             if self.exit:
@@ -187,6 +186,7 @@ class SynGen:
                 for data_id in data_ids:
                     best = 0
                     best_text = ""
+                    print(f"### data_id: {data_id} ### total samples {len(stop_criteria.evaluation_cache[data_id])}")
                     for text in stop_criteria.evaluation_cache[data_id]:
                         results, tokens = stop_criteria.evaluation_cache[data_id][text]
                         samples.append(
@@ -212,6 +212,7 @@ class SynGen:
                     print(f"### MAX VALUE FOR DATA ID {data_id} IS {max_value}")
             for input, data_id, output in zip(inputs, data_ids, outputs):
                 if data_id in stop_criteria.terminate and stop_criteria.terminate[data_id]:
+                    print(f"### data_id: {data_id} ### total samples {len(stop_criteria.evaluation_cache[data_id])}")
                     for text in stop_criteria.evaluation_cache[data_id]:
                         results, tokens = stop_criteria.evaluation_cache[data_id][text]
                         samples.append(
@@ -241,7 +242,6 @@ class GenFunction(TRTLLMInference):
         self.pad_id = pad_id
         self.tokenizer = tokenizer
         self.max_depth_to_explore = 1024
-        self.value_cache = {}
 
     def __call__(
         self, inputs=None, data_ids=None,  # add bos token at the beginning of the input text
@@ -252,11 +252,8 @@ class GenFunction(TRTLLMInference):
         results = []
         input_ids = []
         for context in context_tokens:
-            if tuple(context) in self.value_cache:
-                results.append(self.value_cache[tuple(context)])
-            else:
-                results.append(None)
-                input_ids.append(context)
+            results.append(None)
+            input_ids.append(context)
 
         infer_results = []
         if len(input_ids) != 0:
@@ -284,10 +281,6 @@ class GenFunction(TRTLLMInference):
                         text, data_ids[i], i, full_ids
                     )
                     value = torch.tensor(value)
-                    self.value_cache[tuple(input_ids[i])] = value
-                    # cache all subsequent values
-                    for j in range(len(generation_ids)):
-                        self.value_cache[tuple(input_ids[i] + generation_ids[:j])] = value
                     infer_results.append(value)
             except Exception as e:
                 print(f"Error in value estimation: {e}")
