@@ -175,7 +175,7 @@ class SynGen:
             mcts_cfg.top_p,
             mcts_cfg.add_bos_token,
         )
-        output = []
+        samples = []
         while True:
             # clear the cache
             gen_fun.value_cache = {}
@@ -188,7 +188,7 @@ class SynGen:
                     best_text = ""
                     for text in stop_criteria.evaluation_cache[data_id]:
                         results, tokens = stop_criteria.evaluation_cache[data_id][text]
-                        output.append(
+                        samples.append(
                             {"value": results[0], "text": text, "tokens": tokens, "data_id": data_id,}
                         )
                         if results[0] > best:
@@ -214,7 +214,7 @@ class SynGen:
                 if data_id in stop_criteria.terminate and stop_criteria.terminate[data_id]:
                     for text in stop_criteria.evaluation_cache[data_id]:
                         results, tokens = stop_criteria.evaluation_cache[data_id][text]
-                        output.append(
+                        samples.append(
                             {"value": results[0], "text": text, "tokens": tokens, "data_id": data_id,}
                         )
                         if results[0] >= stop_criteria.threshold:
@@ -225,7 +225,7 @@ class SynGen:
                     new_data_ids.append(data_id)
             inputs = new_inputs
             data_ids = new_data_ids
-        return output
+        return samples
 
 
 class GenFunction(TRTLLMInference):
