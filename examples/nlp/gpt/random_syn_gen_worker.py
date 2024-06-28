@@ -440,6 +440,7 @@ def main(cfg) -> None:
     pad_id = tokenizer.pad_id
 
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
+    os.makedirs(save_dir, exist_ok=True)
 
     syn_gen = SynGen(score_fn, tokenizer, pad_id, cfg.model.mcts.max_wall_time, cfg.model.mcts)
 
