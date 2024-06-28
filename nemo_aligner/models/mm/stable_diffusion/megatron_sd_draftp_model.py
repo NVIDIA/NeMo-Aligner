@@ -44,12 +44,10 @@ BatchType = Mapping[str, torch.tensor]
 
 
 def calculate_gaussian_kl_penalty_shared_var(curr_eps, init_eps):
-
     diff = curr_eps - init_eps
     kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()
     dimensionality = torch.numel(curr_eps[0])
     kl /= dimensionality
-
     return kl
 
 
@@ -57,7 +55,6 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def __init__(self, cfg, trainer):
 
         super().__init__(cfg, trainer=trainer)
-
         self.init_model = LatentDiffusion(cfg, None).to(torch.cuda.current_device()).eval()
         self.cfg = cfg
         self.with_distributed_adam = self.with_distributed_adam
