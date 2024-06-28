@@ -144,7 +144,6 @@ class SynGen:
         self.pad_id = pad_id
         self.wall_time_seconds = wall_time_seconds
         self.mcts_cfg = mcts_cfg
-        self.reset_exit_search_timer()
 
     def reset_exit_search_timer(self):
         self.exit = False
@@ -156,6 +155,7 @@ class SynGen:
         self.exit = True
 
     def gen(self, batch):
+        self.reset_exit_search_timer()
         self.exit_search_timer.start()
         inputs = batch["question"]
         data_ids = batch["data_id"]
@@ -200,7 +200,6 @@ class SynGen:
                     else:
                         print(f"### data_id: {data_id} THE BEST SAMPLE SO FAR {best} ###")
                         print(f"{best_text}")
-                self.reset_exit_search_timer()
                 break
             outputs = gen_fun(inputs=inputs, data_ids=data_ids)
             new_inputs = []
