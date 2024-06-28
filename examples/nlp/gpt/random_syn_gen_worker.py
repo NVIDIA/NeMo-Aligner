@@ -177,7 +177,9 @@ class SynGen:
             mcts_cfg.add_bos_token,
         )
         samples = []
+        number_of_tries = 0
         while True:
+            number_of_tries += 1
             # clear the cache
             if len(inputs) == 0:
                 break
@@ -202,7 +204,12 @@ class SynGen:
                         print(f"### data_id: {data_id} THE BEST SAMPLE SO FAR {best} ###")
                         print(f"{best_text}")
                 break
-            outputs = gen_fun(inputs=inputs, data_ids=data_ids)
+            # compute seed number based data_ids and timestamp and number of tries
+            timestamp = time.time()
+            # mode a large prime number
+            large_prime = 2147462143
+            seed = hash(str(data_ids) + str(timestamp) + str(number_of_tries)) % large_prime
+            outputs = gen_fun(inputs=inputs, data_ids=data_ids, seed=seed)
             new_inputs = []
             new_data_ids = []
             for data_id in data_ids:
@@ -244,7 +251,7 @@ class GenFunction(TRTLLMInference):
         self.max_depth_to_explore = 1024
 
     def __call__(
-        self, inputs=None, data_ids=None,  # add bos token at the beginning of the input text
+        self, inputs=None, data_ids=None, seed=0,  # add bos token at the beginning of the input text
     ):
         context_tokens = self.tokenize_batch(inputs, self.add_bos_token)
         context_tokens = [c.tolist() for c in context_tokens]
@@ -266,7 +273,7 @@ class GenFunction(TRTLLMInference):
                 top_p=self.top_p,
                 top_k=self.top_k,
                 repetition_penalty=1.0,
-                random_seed=0,
+                random_seed=seed,
                 stop_phrases=["<extra_id_1>"],
                 remove_stop_phrases=False,
             )
