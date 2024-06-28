@@ -148,8 +148,8 @@ class SynGen:
     def reset_exit_search_timer(self):
         self.exit = False
         self.exit_search_timer = threading.Timer(self.wall_time_seconds, self.exit_search)
+        self.exit_search_timer.daemon = True
         self.exit_search_timer.start()
-        # self.exit_search_timer.daemon = True
 
     def exit_search(self):
         print("### TIMER TRIGGER")
@@ -309,9 +309,9 @@ class GenFunction(TRTLLMInference):
 
 class MCTSSearchOneBatch:
     def __init__(
-        self, search_func, collate_func, save_path, dataset, cache_dir,
+        self, search_func_args, collate_func, save_path, dataset, cache_dir,
     ):
-        self.search_func = search_func
+        self.search_func_args = search_func_args
         self.collate_func = collate_func
 
         self.dataset = dataset
@@ -348,7 +348,8 @@ class MCTSSearchOneBatch:
         metrics = {}
         self.timer.start("mcts_search_time")
 
-        output = self.search_func.gen(batch=batch)
+        syn_gen = SynGen(*self.search_func_args)
+        output = syn_gen.gen(batch=batch)
 
         # TODO(geshen): compute metrics
         self.timer.stop("mcts_search_time")
@@ -442,13 +443,13 @@ def main(cfg) -> None:
     save_dir = os.path.join(cfg.exp_manager.explicit_log_dir, "mcts_cache")
     os.makedirs(save_dir, exist_ok=True)
 
-    syn_gen = SynGen(score_fn, tokenizer, pad_id, cfg.model.mcts.max_wall_time, cfg.model.mcts)
+    # syn_gen = SynGen(score_fn, tokenizer, pad_id, cfg.model.mcts.max_wall_time, cfg.model.mcts)
 
     # start the worker on the rank
-    start_worker(syn_gen, collate_func, save_dir, ds, cfg, cfg.server_url, cfg.backend_url)
+    start_worker((score_fn, tokenizer, pad_id, cfg.model.mcts.max_wall_time, cfg.model.mcts), collate_func, save_dir, ds, cfg, cfg.server_url, cfg.backend_url)
 
 
-def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url):
+def start_worker(search_func_args, collate_func, save_path, ds, cfg, url, backend_url):
     app = Celery("tasks", backend=f"{backend_url}", broker=f"{url}")
 
     app.conf.task_acks_late = True
@@ -469,7 +470,7 @@ def start_worker(search_func, collate_func, save_path, ds, cfg, url, backend_url
             batch_idx = job[:, 0].tolist()
             replicat_idx = job[:, 1].tolist()
             searcher = MCTSSearchOneBatch(
-                search_func=search_func,
+                search_func_args=search_func_args,
                 collate_func=collate_func,
                 save_path=save_path,
                 dataset=ds,
