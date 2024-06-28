@@ -82,7 +82,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self.ratio_eps = self.cfg.ppo.ratio_eps
         self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
 
-        self.use_trtllm_generation = self.cfg.ppo.trt_llm.enable
+        self.use_trtllm_generation = "trt_llm" in self.cfg.ppo and self.cfg.ppo.trt_llm.enable
         if self.use_trtllm_generation:
             assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM was not able to be imported"
             self.trtllm_generate = GPTGenerateTRTLLM(
