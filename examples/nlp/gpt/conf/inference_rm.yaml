@@ -19,7 +19,7 @@ inference:
 rm_model_file: null
 
 model:
-  forward_micro_batch_size: 2
+  forward_micro_batch_size: 4
   sequence_parallel: False
   activations_checkpoint_granularity: null
   activations_checkpoint_method: null
