@@ -24,7 +24,7 @@ def process_inference_request(inputs, pad_to_multiple, tokenize_func=None, strip
     if sentences is not None:
         sentences = decode_bytes_ndarray(sentences)
         tokens, sequence_lengths = tokenize_func(sentences)
-        sequence_lengths = sequence_lengths[:, None]
+        sequence_lengths = sequence_lengths.unsqueeze(-1)
     else:
         tokens = torch.as_tensor(inputs["tokens"], dtype=torch.long, device=torch.cuda.current_device())
         sequence_lengths = torch.as_tensor(
