@@ -350,7 +350,7 @@ def copy_model_states_to_cpu(model, cpu_dict=None, megatron_amp_O2=True, sync=Tr
                 cpu_dict[name] = torch.empty(
                     item.size(), dtype=item.dtype, layout=item.layout, device="cpu", pin_memory=True
                 )
-            cpu_dict[name].copy_(item, non_blocking=False)
+            cpu_dict[name].copy_(item, non_blocking=sync)
         elif alias_non_tensor:
             cpu_dict[name] = item
         else:
