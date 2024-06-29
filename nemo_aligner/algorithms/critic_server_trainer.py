@@ -71,7 +71,7 @@ class CriticServerTrainer:
         self.strip_sequence_length_to_multiple = cfg.get("strip_sequence_length_to_multiple", None)
 
         inference_micro_batch_size = cfg.inference_micro_batch_size
-        if isinstance(inference_micro_batch_size, int):  # for backwards compatability
+        if isinstance(inference_micro_batch_size, int):  # for backward compatibility
             inference_micro_batch_size = [inference_micro_batch_size]
         self.preferred_batch_sizes = [
             item * parallel_state.get_data_parallel_world_size() for item in inference_micro_batch_size
