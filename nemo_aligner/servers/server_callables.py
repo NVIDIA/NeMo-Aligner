@@ -20,7 +20,7 @@ from nemo_aligner.utils.server_utils import decode_bytes_ndarray
 
 
 def process_inference_request(inputs, pad_to_multiple, tokenize_func=None, strip_sequence_length_to_multiple=None):
-    sentences = inputs.pop("sentences", None)
+    sentences = inputs.get("sentences", None)
     if sentences is not None:
         sentences = decode_bytes_ndarray(sentences)
         tokens, sequence_lengths = tokenize_func(sentences)
