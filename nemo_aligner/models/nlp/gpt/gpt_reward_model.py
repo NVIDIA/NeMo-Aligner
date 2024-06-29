@@ -12,19 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractclassmethod
 from copy import deepcopy
 from typing import Callable, List, Literal, Optional, Union
 from unittest.mock import patch
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.model_parallel_config import ModelParallelConfig
 from megatron.core.models.gpt import GPTModel
 from megatron.core.tensor_parallel.layers import RowParallelLinear
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.utils import make_sharded_tensor_for_checkpoint, make_tp_sharded_tensor_for_checkpoint
 from torch import Tensor
 
 """Megatron Core based Reward Model"""
@@ -225,7 +222,6 @@ class GPTRewardModel(GPTModel):
 
         if self.post_process:
             return self.rm_head(hidden_states, lengths)
-
         return hidden_states
 
     def sharded_state_dict(self, prefix=""):

@@ -11,96 +11,47 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import math
 
-import threading
-from typing import Dict
-
-import numpy as np
 import torch
-from megatron.core import parallel_state
-from pytriton.decorators import batch
-from pytriton.exceptions import PyTritonUnrecoverableError
-from pytriton.model_config import Tensor
+import torch.nn.functional as F
 
-from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.utils.server_utils import decode_bytes_ndarray, lock_method, pad_input
+from nemo_aligner.utils.server_utils import decode_bytes_ndarray
 
 
-def run_rm_or_critic_inference(infer_fn, inputs):
-    """run the infer function for either the critic or the rm
-    """
-    sentences = inputs.pop("sentences", None)
+def process_inference_request(inputs, pad_to_multiple, tokenize_func=None, strip_sequence_length_to_multiple=None):
+    sentences = inputs.get("sentences", None)
     if sentences is not None:
         sentences = decode_bytes_ndarray(sentences)
-    tokens = inputs.pop("tokens", None)
-
-    sequence_lengths = inputs.pop("sequence_lengths", None)
-    add_EOS = inputs.pop("add_EOS", None)
-
-    assert sentences is not None or tokens is not None, "Both sentences and tokens cannot be None."
-
-    dp_size = parallel_state.get_data_parallel_world_size()
-
-    # Ensure that the batch size is a multiple of the data parallel size. Otherwise, pad it.
-    sentences, extra_sentences = pad_input(sentences, dp_size)
-    tokens, extra_tokens = pad_input(tokens, dp_size)
-    sequence_lengths, extra_sequence_lengths = pad_input(sequence_lengths, dp_size)
-
-    if add_EOS is not None:
-        add_EOS = add_EOS[0]
-
-    inputs = sentences if sentences is not None else tokens
-    extra = extra_sentences if sentences is not None else extra_tokens
-    if sequence_lengths is not None:
-        assert len(inputs) == len(sequence_lengths)
-        assert extra_sequence_lengths == extra
-
-    try:
-        *list_outputs, exceeded = infer_fn(inputs=inputs, sequence_length=sequence_lengths, add_EOS=add_EOS)
-
-        processed_outputs = []
-
-        for output in list_outputs:
-            output = torch.cat(output, dim=0)
-            # unpad
-            output = output[: output.size(0) - extra]
-
-            processed_outputs.append(output.cpu().numpy())
-
-        exceeded = exceeded[: len(exceeded) - extra]
-
-    except RuntimeError as e:
-        raise PyTritonUnrecoverableError(f"Fatal error occurred - no further inferences possible. {e}") from e
-
-    return (*processed_outputs, np.array(exceeded, dtype=np.int32).reshape(-1, 1))
-
-
-class RewardModelCallable:
-    def __init__(self, *, model_name: str, infer_fn: callable, lock: threading.Lock):
-        self.model_name = model_name
-        self.lock = lock
-        self.infer_fn = infer_fn
-        self.inputs = (
-            Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
-            Tensor(name="tokens", shape=(-1,), dtype=np.int64, optional=True),
-            Tensor(name="sequence_lengths", shape=(-1,), dtype=np.int64, optional=True),
-            Tensor(name="add_EOS", shape=(1,), dtype=np.bool_, optional=True),
-        )
-        self.outputs = (
-            Tensor(name="rewards", shape=(1,), dtype=np.float32),
-            Tensor(name="exceeded", shape=(1,), dtype=np.int32),
+        tokens, sequence_lengths = tokenize_func(sentences)
+        sequence_lengths = sequence_lengths.unsqueeze(-1)
+    else:
+        tokens = torch.as_tensor(inputs["tokens"], dtype=torch.long, device=torch.cuda.current_device())
+        sequence_lengths = torch.as_tensor(
+            inputs["sequence_lengths"], dtype=torch.long, device=torch.cuda.current_device()
         )
 
-    @batch
-    @lock_method("self.lock")
-    def infer(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
-        choice = ServerSignal.FORWARD.cuda()
-        torch.distributed.broadcast(choice, 0)
+    # strip along sequence dim
+    prestrip_sequence_length = tokens.shape[1]
+    if strip_sequence_length_to_multiple is not None:
+        stripped_sequence_length = (
+            math.ceil(sequence_lengths.max().item() / strip_sequence_length_to_multiple)
+            * strip_sequence_length_to_multiple
+        )
+        if stripped_sequence_length < prestrip_sequence_length:
+            tokens = tokens[:, :stripped_sequence_length]
 
-        rewards, exceeded = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
+    # padding on the batch dim
+    _, amount_to_pad = divmod(tokens.size(0), pad_to_multiple)
+    if amount_to_pad > 0:
+        amount_to_pad = pad_to_multiple - amount_to_pad
 
-        output_dict = {
-            "rewards": rewards,
-            "exceeded": exceeded,
-        }
-        return output_dict
+    tokens = F.pad(tokens, (0, 0, 0, amount_to_pad), mode="constant", value=0)
+    sequence_lengths = F.pad(sequence_lengths, (0, 0, 0, amount_to_pad), mode="constant", value=0)
+
+    assert len(tokens) == len(
+        sequence_lengths
+    ), "length of tokens and sequence lengths must be the same, but got {} and {}".format(
+        len(tokens), len(sequence_lengths)
+    )
+    return {"inputs": tokens, "sequence_length": sequence_lengths}, amount_to_pad, prestrip_sequence_length

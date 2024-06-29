@@ -17,7 +17,6 @@ from typing import Dict
 
 import numpy as np
 import torch
-from megatron.core import parallel_state
 from megatron.core.utils import divide
 from pytriton.decorators import batch, sample
 from pytriton.model_config import ModelConfig, Tensor
@@ -28,13 +27,18 @@ from tqdm import tqdm
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
 from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.servers.server_callables import run_rm_or_critic_inference
-from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor
+from nemo_aligner.servers.server_callables import process_inference_request
+from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, run_distributed_inference
 from nemo_aligner.utils.server_utils import lock_method, pad_input
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import apply_func_to_dict
 
 ENDPOINT_BIND_ADDRESS = "0.0.0.0"
+
+# once we merge the critic and actor configs
+# we should set this to num_rollout_samples in the actor
+MAX_BATCH = 9999999
 
 
 class CriticServerTrainer:
@@ -48,7 +52,7 @@ class CriticServerTrainer:
         ranks what to do
     """
 
-    def __init__(self, cfg, model, optimizer, scheduler, logger, ckpt_callback, gbs):
+    def __init__(self, cfg, model, optimizer, scheduler, logger, ckpt_callback, tokenize_func, gbs):
         self.lock = threading.Lock()
         self.logger = logger
         self.cfg = cfg
@@ -59,22 +63,32 @@ class CriticServerTrainer:
         self.gbs = gbs
         self.step = 0
 
+        self.tokenize_func = tokenize_func
+
         # server parameters
         self.combine_rm_and_critic_server = cfg.combine_rm_and_critic_server
+        self.max_queue_delay_microseconds = cfg.get("max_queue_delay_microseconds", 2000)
+        self.strip_sequence_length_to_multiple = cfg.get("strip_sequence_length_to_multiple", None)
+
+        inference_micro_batch_size = cfg.inference_micro_batch_size
+        if isinstance(inference_micro_batch_size, int):  # for backward compatibility
+            inference_micro_batch_size = [inference_micro_batch_size]
+        self.preferred_batch_sizes = [
+            item * parallel_state.get_data_parallel_world_size() for item in inference_micro_batch_size
+        ]
+        self.pad_batch_to_multiple = min(self.preferred_batch_sizes)
+
         self.infer_fn = model.infer_rm_critic if self.combine_rm_and_critic_server else model.infer
         self.port = cfg.port
-        self.max_inference_batch_size = cfg.inference_micro_batch_size * parallel_state.get_data_parallel_world_size()
 
         # PyTriton args
         self.infer_inputs = (
             Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
             Tensor(name="tokens", shape=(-1,), dtype=np.int64, optional=True),
             Tensor(name="sequence_lengths", shape=(-1,), dtype=np.int64, optional=True),
-            Tensor(name="add_EOS", shape=(1,), dtype=np.bool_, optional=True),
         )
         self.infer_outputs = [
             Tensor(name="values", shape=(-1,), dtype=np.float32),
-            Tensor(name="exceeded", shape=(1,), dtype=np.int32),
         ]
         if self.combine_rm_and_critic_server:
             self.infer_outputs.append(Tensor(name="rewards", shape=(-1,), dtype=np.float32))
@@ -101,18 +115,34 @@ class CriticServerTrainer:
         choice = ServerSignal.FORWARD.cuda()
         torch.distributed.broadcast(choice, 0)
 
-        rewards, values, exceeded = self.run_inference(inputs=inputs)
+        inputs, extra, prepad_sequence_length = process_inference_request(
+            inputs,
+            pad_to_multiple=self.pad_batch_to_multiple,
+            tokenize_func=self.tokenize_func,
+            strip_sequence_length_to_multiple=self.strip_sequence_length_to_multiple,
+        )
+        rewards, values = self.run_inference(inputs=inputs)
+
+        # if the inference request has extra padding that it doesn't need
+        # then we will pad it back up to the expected padding when returning the values
+        if prepad_sequence_length > values.shape[1]:
+            values = np.pad(
+                values, ((0, 0), (0, prepad_sequence_length - values.shape[1])), mode="constant", constant_values=0
+            )
+        else:
+            values = values[:, :prepad_sequence_length]
+
         output = {
             "values": values,
-            "exceeded": exceeded,
         }
         if self.combine_rm_and_critic_server:
-            output["rewards"] = rewards
-        return output
+            output["rewards"] = rewards[:, None]
+
+        return {k: v[: v.shape[0] - extra] for k, v in output.items()}
 
     @sample
     @lock_method("self.lock")
-    def server_save(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
+    def server_save(self, **_: np.ndarray) -> Dict[str, np.ndarray]:
         # tell other ranks to start inference
         choice = ServerSignal.SAVE.cuda()
         torch.distributed.broadcast(choice, 0)
@@ -162,10 +192,14 @@ class CriticServerTrainer:
                 http_address=ENDPOINT_BIND_ADDRESS,
                 http_port=self.port,
             )
-            dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
-            infer_model_config = ModelConfig(
-                batching=True, max_batch_size=self.max_inference_batch_size, batcher=dynamic_batcher
+
+            dynamic_batcher = DynamicBatcher(
+                max_queue_delay_microseconds=self.max_queue_delay_microseconds,
+                preferred_batch_size=self.preferred_batch_sizes,
             )
+
+            # we cut the batch into pieces so we don't need to have a max batch size
+            infer_model_config = ModelConfig(batching=True, max_batch_size=MAX_BATCH, batcher=dynamic_batcher)
             # the model will split the train batch by itself
             train_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
             save_model_config = ModelConfig(batching=False, max_batch_size=0, batcher=None)
@@ -217,23 +251,11 @@ class CriticServerTrainer:
         """only rank 0 has valid data
         """
         self.model.prepare_for_inference()
-
-        if torch.distributed.get_rank() == 0:
-            outputs = run_rm_or_critic_inference(self.infer_fn, inputs=inputs)
-
-            if self.combine_rm_and_critic_server:
-                rewards, values, exceeded = outputs
-            else:
-                values, exceeded = outputs
-                rewards = None
-        else:
-            self.infer_fn()
-            rewards, values, exceeded = None, None, None
-
+        rewards, values = run_distributed_inference(inputs, self.infer_fn, self.combine_rm_and_critic_server)
         self.model.finish_inference()
-        torch.distributed.barrier()
 
-        return rewards, values, exceeded
+        torch.distributed.barrier()
+        return rewards, values
 
     def run_training(self, tokens=None, returns=None, prev_values=None, mask=None):
         """assume that the batch is already padded
@@ -245,6 +267,7 @@ class CriticServerTrainer:
             "prev_values": prev_values,
             "mask": mask,
         }
+
         batch["tokens"] = broadcast_2d_tensor(batch["tokens"], src=0, group=None, dtype=torch.int64)
         batch["returns"] = broadcast_2d_tensor(batch["returns"], src=0, group=None, dtype=torch.float32)
         batch["prev_values"] = broadcast_2d_tensor(batch["prev_values"], src=0, group=None, dtype=torch.float32)
@@ -297,7 +320,6 @@ class CriticServerTrainer:
             self.step += 1
 
         self.model.finish_training()
-
         torch.cuda.synchronize()
         torch.distributed.barrier()
         return loss_mean
