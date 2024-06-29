@@ -43,6 +43,9 @@ def process_inference_request(inputs, pad_to_multiple, tokenize_func=None, strip
 
     # padding on the batch dim
     _, amount_to_pad = divmod(tokens.size(0), pad_to_multiple)
+    if amount_to_pad > 0:
+        amount_to_pad = pad_to_multiple - amount_to_pad
+
     tokens = F.pad(tokens, (0, 0, 0, amount_to_pad), mode="constant", value=0)
     sequence_lengths = F.pad(sequence_lengths, (0, 0, 0, amount_to_pad), mode="constant", value=0)
 
