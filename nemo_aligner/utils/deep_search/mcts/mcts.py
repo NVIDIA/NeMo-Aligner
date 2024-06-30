@@ -193,6 +193,7 @@ class MCTSParallel:
         self.has_value = has_value
         self.pad_id = pad_id
         self.value_estimation_function = value_estimation_function
+        self.exit = False
 
     def decode_text(self, state):
         decoded_text = self.tokenizer.decode(state)
@@ -318,6 +319,8 @@ class MCTSParallel:
         # use tqdm to show the progresso of the self play
         # for search in tqdm.tqdm(range(self.args["num_searches"]), desc=f"MCTS rank: {dp_rank}", leave=False):
         for search in range(self.args["num_searches"]):
+            if self.exit:
+                break
             for spg in ps:
                 # spg.node is to save the node that needs to be expanded
                 spg.node = None
@@ -466,6 +469,7 @@ class DeepSearch:
 
     def reset_exit_search_timer(self):
         self.exit = False
+        self.mcts.exit = False
         self.exit_search_timer = threading.Timer(self.wall_time_seconds, self.exit_search)
         self.exit_search_timer.daemon = True
 
@@ -476,6 +480,7 @@ class DeepSearch:
     def exit_search(self):
         print("### TIMER TRIGGER")
         self.exit = True
+        self.mcts.exit = True
 
     def clear_search_db_cache(self, backup_root_node):
         if self.strategy is not None and self.strategy.use_kv_cache:
