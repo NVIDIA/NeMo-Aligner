@@ -20,11 +20,11 @@ from nemo_aligner.utils.server_utils import decode_bytes_ndarray
 
 
 def process_inference_request(inputs, pad_to_multiple, tokenize_func=None, strip_sequence_length_to_multiple=None):
-    sentences = inputs.pop("sentences", None)
+    sentences = inputs.get("sentences", None)
     if sentences is not None:
         sentences = decode_bytes_ndarray(sentences)
         tokens, sequence_lengths = tokenize_func(sentences)
-        sequence_lengths = sequence_lengths[:, None]
+        sequence_lengths = sequence_lengths.unsqueeze(-1)
     else:
         tokens = torch.as_tensor(inputs["tokens"], dtype=torch.long, device=torch.cuda.current_device())
         sequence_lengths = torch.as_tensor(
@@ -43,6 +43,9 @@ def process_inference_request(inputs, pad_to_multiple, tokenize_func=None, strip
 
     # padding on the batch dim
     _, amount_to_pad = divmod(tokens.size(0), pad_to_multiple)
+    if amount_to_pad > 0:
+        amount_to_pad = pad_to_multiple - amount_to_pad
+
     tokens = F.pad(tokens, (0, 0, 0, amount_to_pad), mode="constant", value=0)
     sequence_lengths = F.pad(sequence_lengths, (0, 0, 0, amount_to_pad), mode="constant", value=0)
 

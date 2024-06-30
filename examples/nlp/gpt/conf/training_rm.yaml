@@ -70,8 +70,11 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
 
-  # if the inference microbatch size is big, it's possible
-  # to split it using forward mbs and run inference iteratively
+  # if there is ever a need to run inference
+  # then this flag will control the batch size
+  # we run inference on. The model will take a potentially
+  # large inference batch, cut it into micro batches
+  # of size forward_micro_batch_size and then run inference
   forward_micro_batch_size: ${.micro_batch_size}
 
   encoder_seq_length: 4096

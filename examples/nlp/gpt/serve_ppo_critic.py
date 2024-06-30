@@ -105,7 +105,7 @@ def main(cfg) -> None:
         logger=logger,
         ckpt_callback=ckpt_callback,
         tokenize_func=tokenize_func,
-        gbs=ptl_model.cfg.global_batch_size,
+        gbs=cfg.model.global_batch_size,
     )
 
     if custom_trainer_state_dict is not None:
