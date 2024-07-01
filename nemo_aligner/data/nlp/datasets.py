@@ -267,6 +267,10 @@ class DPOModelDataset(Dataset):
         self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
         self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
         self.eos_id = tokenizer.eos_id
+        self.default_chosen_reward = cfg.data.get("default_chosen_reward", 1.0)
+        self.default_rejected_reward = cfg.data.get("default_rejected_reward", 0.0)
+
+        self.nograd_length = 32
 
         # Checks
         assert np.min(documents) >= 0
@@ -308,9 +312,11 @@ class DPOModelDataset(Dataset):
         assert reject[0:prompt_len] == prompt, "the tokenizer for DPO has merged tokens between prompt and response"
 
         max_curr_seq_len = max(chosen_len, reject_len)
-        assert (
-            max_curr_seq_len <= self.seq_length
-        ), "tokenized text exceeds max seq len! truncate your data in preprocessing prior to DPO training"
+        if max_curr_seq_len > self.seq_length:
+            logging.warning(
+                f"WARNING: Tokenized text exceeds max seq length ({max_curr_seq_len} vs {self.seq_length})."
+                + f"The example will be ignored."
+            )
 
         chosen_tokens = torch.nn.functional.pad(
             torch.LongTensor(chosen), (0, max_curr_seq_len - chosen_len), mode="constant", value=self.eos_id
@@ -325,6 +331,15 @@ class DPOModelDataset(Dataset):
             torch.LongTensor(reject_labels), (0, max_curr_seq_len - len(reject_labels)), mode="constant", value=-100
         )
 
+        # ignore the example whose tokenized text exceeds max seq length.
+        if max_curr_seq_len > self.seq_length:
+            chosen_tokens = chosen_tokens[: self.nograd_length]
+            rejected_tokens = rejected_tokens[: self.nograd_length]
+            labels_chosen_tokens = torch.ones_like(chosen_tokens) * (-100)
+            labels_reject_tokens = torch.ones_like(rejected_tokens) * (-100)
+            chosen_len = self.nograd_length
+            reject_len = self.nograd_length
+
         output = {
             "chosen": chosen_tokens,
             "rejected": rejected_tokens,
@@ -332,6 +347,8 @@ class DPOModelDataset(Dataset):
             "rejected_length": reject_len,
             "chosen_labels": labels_chosen_tokens,
             "rejected_labels": labels_reject_tokens,
+            "chosen_reward": payload.get("chosen_reward", self.default_chosen_reward),
+            "rejected_reward": payload.get("rejected_reward", self.default_rejected_reward),
         }
         return output
 
