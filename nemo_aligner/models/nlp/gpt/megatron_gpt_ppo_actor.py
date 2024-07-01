@@ -92,7 +92,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 max_input_tokens=self.cfg.ppo.trt_llm.get("max_input_tokens", 4096),
                 generation_batch_size=self.cfg.ppo.get("rollout_micro_batch_size", 4),
                 unload_engine_train=self.cfg.ppo.trt_llm.get("unload_engine_train", False),
-                trt_model_type=self.cfg.ppo.trt_llm.get("model_type", "GPTForCausalLM"),
+                trt_model_type=self.cfg.ppo.trt_llm.get("model_type", "llama"),
                 end_strings=self.cfg.ppo.sampling_params["end_strings"],
                 reshard_model=True,
                 sample_temperature=self.cfg.ppo.sampling_params["temperature"],

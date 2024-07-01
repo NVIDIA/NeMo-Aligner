@@ -156,7 +156,7 @@ class SPINTrainer:
                 max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", 4096),
                 generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
                 unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
-                trt_model_type=self.cfg.trt_llm.get("model_type", "GPTForCausalLM"),
+                trt_model_type=self.cfg.trt_llm.get("model_type", "llama"),
                 end_strings=self.sampling_params["end_strings"],
                 reshard_model=False,
                 sample_temperature=self.sampling_params["temperature"],
