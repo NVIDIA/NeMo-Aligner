@@ -13,6 +13,7 @@ trainer:
     max_steps: -1
     val_check_interval: 0.1
     save_interval: 100
+    limit_train_batches: 1.0
 
     # how many GBS we loop over
     limit_val_batches: 1.0
