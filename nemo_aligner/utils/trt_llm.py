@@ -2,8 +2,8 @@ import tensorrt_llm
 import torch
 
 from nemo.export import TensorRTLLM
-from nemo.export.trt_llm.nemo.nemo_ckpt_convert import build_tokenizer
-from nemo.export.trt_llm.nemo_utils import to_word_list_format
+from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
+from nemo.export.trt_llm.tensorrt_llm_run import tensorrt_llm_worker_context, to_word_list_format
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
@@ -40,7 +40,6 @@ class GPTGenerateTRTLLM:
         self.trt_llm_exporter = TensorRTLLM(trt_model_dir, load_model=False)
         self._trtllm_model_compiled = False
 
-        # TODO: Move this logic to nemo.export after TRTLLM0.9 support
         end_strings = list(end_strings)
         end_strings = [[",".join(end_strings)] for _ in range(self.generation_batch_size)]
         stop_list = to_word_list_format(end_strings, build_tokenizer(self.tokenizer), ref_str="green tea icecream")
@@ -60,22 +59,25 @@ class GPTGenerateTRTLLM:
 
     def refit(self, model):
         if not self._trtllm_model_compiled:
+            global_devices = [None for _ in range(torch.distributed.get_world_size())]
+            torch.distributed.all_gather_object(global_devices, torch.cuda.current_device())
+            gpus_per_node = max(global_devices) + 1
+
             self.trt_llm_exporter.build(
-                nemo_model=model,
-                nemo_model_config=self.model_cfg,
-                trt_model_type=self.trt_model_type,
+                model=model,
+                model_config=self.model_cfg,
+                model_type=self.trt_model_type,
                 tokenizer=self.tokenizer,
+                gpus_per_node=gpus_per_node,
                 max_input_len=self.max_input_len,
-                max_input_tokens=self.max_input_tokens,
                 max_output_len=self.max_generation_length,
                 max_batch_size=self.generation_batch_size,
+                use_refit=True,
                 reshard_model=self.reshard_model,
             )
             self._trtllm_model_compiled = True
         else:
-            self.trt_llm_exporter.refit(
-                nemo_model=model, nemo_model_config=self.model_cfg,
-            )
+            self.trt_llm_exporter.refit(model, self.model_cfg)
 
     def generate(self, inputs):
         prompt_tokens, prompt_lengths = inputs
@@ -84,7 +86,7 @@ class GPTGenerateTRTLLM:
         for idx in range(prompt_tokens.shape[0]):
             batch_input_ids.append(prompt_tokens[idx][0 : prompt_lengths[idx]].cpu())
 
-        output_dict = self.trt_llm_exporter.model_runner.generate(
+        output_dict = tensorrt_llm_worker_context.decoder.generate(
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
         )
 
