@@ -225,7 +225,6 @@ def main(cfg) -> None:
     # syntax. This guarantees all dangling threads are no longer blocking.
     # `atexit` does not suffice since the registered cleanup function can be
     # queued behind another blocking atexit registered function.
-    #
     # TODO: utilize context managers to avoid manual cleanup
     close_all_communicators()
 
