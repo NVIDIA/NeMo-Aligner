@@ -1,7 +1,7 @@
 import tensorrt_llm
 import torch
 
-from nemo.export import TensorRTLLM
+from nemo.export.tensorrt_llm import TensorRTLLM
 from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
 from nemo.export.trt_llm.tensorrt_llm_run import tensorrt_llm_worker_context, to_word_list_format
 from nemo.utils import logging

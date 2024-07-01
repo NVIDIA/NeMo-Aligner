@@ -30,6 +30,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo.utils import logging
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
@@ -60,7 +61,8 @@ try:
 
     GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
     HAVE_TRTLLM = True
-except (ImportError, ModuleNotFoundError):
+except (ImportError, ModuleNotFoundError) as e:
+    logging.info(f"got error message {e} when importing trt-llm dependencies, disabling")
     HAVE_TRTLLM = False
 
 
