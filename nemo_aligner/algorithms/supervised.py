@@ -185,7 +185,6 @@ class SupervisedTrainer:
 
         if self.run_init_validation:
             logging.info("Running validation in the very beginning.")
-            # run an initial validation
             val_loss, val_metrics = self.run_validation()
             # validation is done on the UPDATED weights
             # so we use the incremented self.step

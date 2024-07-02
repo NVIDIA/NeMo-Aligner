@@ -1,5 +1,4 @@
 # log and data files
-hub
 *.model
 *.pkl
 *.pt
@@ -156,16 +155,3 @@ wandb
 # Checkpoints, config files and temporary files created in tutorials.
 .hydra/
 *.jsonl
-slurm*.out
-checkpoints/
-datasets/
-slurm*.out
-dump/
-draft_p_saved_ckpts/
-draftp_xl_saved_ckpts/
-
-run_lr_*
-*ckpt
-unet_hf.txt
-unet_nemo.txt
-sdxl_draft_run*

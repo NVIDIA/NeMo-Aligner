@@ -102,7 +102,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
     def finish_validation_step(self):
-        """things to call to prepare for validation
+        """things to call after validation step ends
         """
         finish_validation_step(self)
         # restore the batch sizes for training

@@ -148,23 +148,11 @@ def resolve_and_create_trainer(cfg, pop_trainer_key):
         return MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
 
 
-def wandb_login():
-    import os
-
-    import wandb
-
-    # get environment variable
-    env = os.environ.get("WANDB")
-    if env is not None:
-        wandb.login(key=env)
-
-
 @hydra_runner(config_path="conf", config_name="draftp_sdxl")
 def main(cfg) -> None:
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
-    wandb_login()
 
     # set cuda device for each process
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
@@ -279,9 +267,4 @@ def main(cfg) -> None:
 
 
 if __name__ == "__main__":
-    print("Running main")
-    logging.setLevel(logging.DEBUG)
-    import logging as _logging
-
-    _logging.getLogger().setLevel(_logging.DEBUG)
     main()

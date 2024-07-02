@@ -75,9 +75,6 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
     def __init__(self, cfg, trainer):
 
         super().__init__(cfg, trainer=trainer)
-        # init_cfg = deepcopy(cfg)
-        # init_cfg.peft.peft_scheme = "none"
-        ## initialize the base model
         self.peft_scheme = cfg.peft.peft_scheme
         self.init_model = None
         if cfg.peft.peft_scheme == "none":
@@ -99,13 +96,9 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         self.width = self.cfg.sampling.base.get("width", 512)
         self.downsampling_factor = 2 ** (
             len(self.cfg.first_stage_config.ddconfig.get("ch_mult", [0])) - 1
-        )  # one less than the
+        )  # one less than the number of layers
         self.downsampling_factor = int(self.downsampling_factor)
 
-        ## unconditional guidance scale, inference steps, eta are all given in sampler config, no need to rewrite here
-        # self.unconditional_guidance_scale = self.cfg.sampling.base.scale
-        # self.inference_steps = self.cfg.infer.get("inference_steps", 50)
-        # self.eta = self.cfg.infer.get("eta", 0)
         self.autocast_dtype = _get_autocast_dtype(self.cfg.precision)
         # Required by nemo_aligner/utils/train_utils
         self.initialize_ub = False
@@ -181,7 +174,6 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             # FSDP requires uniform status of require_grads
             # Diffusion models like SD has frozen parts and needs to be added to 'ignored_states' from sharding for FSDP to work
             self.model = self.trainer.strategy._setup_model(self.model)
-            # self.model.diffusion_model.first_stage = FullyShardedDataParallel
             # Move the CPU-initialized model (with `use_cpu_initialization=True`) to GPU, which is to avoid
             # out-of-memory carash before sharding. In case of GPU-initialized model, this is no-op.
             self.model = self.model.cuda(torch.cuda.current_device())
@@ -212,7 +204,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
     def finish_validation_step(self):
-        """things to call to prepare for validation
+        """things to call after validation step ends
         """
         finish_validation_step(self)
         # restore the batch sizes for training
@@ -243,9 +235,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         with torch.cuda.amp.autocast(
             enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
         ):
-            # get sampler (contains discretizer, scaler, guider)
-            # params = self.cfg.sampling.base
-            # sampler = get_sampler_config(params)
+            # get sampler (contains discretizer, scaler, and guider)
             sampler = self.sampler
 
             batch_c = self.append_sdxl_size_keys(batch)
@@ -313,15 +303,11 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
         with torch.cuda.amp.autocast(
             enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
         ):
-            # batch_size = len(batch)
-            # device = torch.cuda.current_device()
             batch_c = self.append_sdxl_size_keys(batch)
 
             truncation_steps = self.cfg.truncation_steps
             force_uc_zero_embeddings = ["txt", "captions"]
-            ## initialize sampler
-            # params = self.cfg.sampling.base
-            # sampler = get_sampler_config(params)    # the sampler is agnostic to model, so we can share it
+            
             sampler = self.sampler
 
             cond, uc = self.model.conditioner.get_unconditional_conditioning(
@@ -340,10 +326,6 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             denoiser_base = lambda input, sigma, c: base_model.denoiser(
                 base_model.model, input, sigma, c, **additional_model_inputs
             )
-            # def denoiser_init(input, sigma, c):
-            #     with adapter_control(self.model.model):
-            #         denoised = self.model.denoiser(self.model.model, input, sigma, c, **additional_model_inputs)
-            #     return denoised
 
             # prep initial sampler config
             x = x_T + 0
@@ -355,7 +337,6 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             iterator = tqdm(range(num_sigmas - 1), desc=f"{sampler.__class__.__name__} Sampler", total=total_steps)
             for i in iterator:
                 gamma = sampler.get_gamma(sigmas, num_sigmas, i)
-                # with context(set_draft_grad_flag):
                 if i < total_steps - truncation_steps:
                     # just run the sampling without storing any grad
                     with torch.no_grad():
@@ -376,7 +357,6 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                         s_in * sigmas[i], s_in * sigmas[i + 1], denoiser_draft, x, cond, uc, gamma, return_noise=True
                     )
                     list_eps_draft.append(eps_draft)
-                    ##### TODO: uncomment this for base model
                     with torch.no_grad():
                         base_model = self.init_model or self.model
                         with adapter_control(base_model):
@@ -391,7 +371,6 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                                 return_noise=True,
                             )
                         list_eps_init.append(eps_init)
-                    # list_eps_init.append(eps_draft.detach())
                     # set next \bar{x}
                     x = x_next_draft
 

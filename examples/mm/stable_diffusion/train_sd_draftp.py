@@ -141,5 +141,4 @@ def main(cfg) -> None:
 
 
 if __name__ == "__main__":
-    print("Running main")
     main()

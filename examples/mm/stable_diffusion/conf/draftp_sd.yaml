@@ -7,6 +7,7 @@ trainer:
   precision: bf16
   
   draftp_sd:
+
     val_check_interval: 1
     limit_val_batches: 1
     save_interval: 500
