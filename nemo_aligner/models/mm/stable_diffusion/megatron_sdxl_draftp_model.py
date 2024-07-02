@@ -307,7 +307,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
 
             truncation_steps = self.cfg.truncation_steps
             force_uc_zero_embeddings = ["txt", "captions"]
-            
+
             sampler = self.sampler
 
             cond, uc = self.model.conditioner.get_unconditional_conditioning(
