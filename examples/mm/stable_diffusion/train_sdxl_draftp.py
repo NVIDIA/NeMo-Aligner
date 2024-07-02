@@ -22,8 +22,8 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
-from torch import nn
 from packaging.version import Version
+from torch import nn
 
 # checkpointing
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
