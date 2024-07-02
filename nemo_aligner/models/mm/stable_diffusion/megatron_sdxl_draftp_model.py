@@ -67,7 +67,6 @@ def calculate_gaussian_kl_penalty_shared_var(curr_eps, init_eps):
     kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()
     dimensionality = torch.numel(curr_eps[0])
     kl /= dimensionality
-
     return kl
 
 
@@ -169,7 +168,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             # extended to support lower precision main parameters.
             frozen_submodule_names, frozen_submodules = find_frozen_submodules(self.model)
             for submodule in frozen_submodule_names:
-                logging.debug(f"Ignoring state {submodule} in FSDP.")
+                logging.warning(f"Ignoring state {submodule} in FSDP.")
             self.trainer.strategy.kwargs["ignored_states"] = frozen_submodules
             # FSDP requires uniform status of require_grads
             # Diffusion models like SD has frozen parts and needs to be added to 'ignored_states' from sharding for FSDP to work

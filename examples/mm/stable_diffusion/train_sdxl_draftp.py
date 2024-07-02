@@ -23,6 +23,7 @@ from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 from torch import nn
+from packaging.version import Version
 
 # checkpointing
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
@@ -157,8 +158,8 @@ def main(cfg) -> None:
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
 
-    # TODO: has to be set true for PyTorch 1.12 and later.
-    torch.backends.cuda.matmul.allow_tf32 = True
+    if Version(torch.__version__) >= Version("1.12"):
+        torch.backends.cuda.matmul.allow_tf32 = True
     cfg.model.data.train.dataset_path = [
         cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices * cfg.trainer.num_nodes)
     ]
@@ -236,8 +237,6 @@ def main(cfg) -> None:
 
     if local_rank == 0:
         print(ptl_model)
-        # import time
-        # time.sleep(10)
     torch.distributed.barrier()
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)

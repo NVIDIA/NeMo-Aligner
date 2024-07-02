@@ -17,6 +17,7 @@ import torch.multiprocessing as mp
 from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
+from packaging.version import Version
 
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -58,8 +59,9 @@ def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
-    # TODO: has to be set true for PyTorch 1.12 and later.
-    torch.backends.cuda.matmul.allow_tf32 = True
+    
+    if Version(torch.__version__) >= Version("1.12"):
+        torch.backends.cuda.matmul.allow_tf32 = True
     cfg.model.data.train.dataset_path = [cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)]
     cfg.model.data.validation.dataset_path = [
         cfg.model.data.webdataset.local_root_path for _ in range(cfg.trainer.devices)
