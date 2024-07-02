@@ -280,12 +280,12 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             ).to(torch.cuda.current_device())
 
         image_draft_p, reward_draft_p, vae_decoder_output_draft_p = self.generate_log_images(
-            latents + 0, prompts, self.model
+            latents.clone(), prompts, self.model
         )
         # run visualization with base model too
         base_model = self.init_model or self.model
         with adapter_control(base_model):
-            image_init, reward_init, _ = self.generate_log_images(latents + 0, prompts, base_model)
+            image_init, reward_init, _ = self.generate_log_images(latents.clone(), prompts, base_model)
 
         images = []
         captions = []
@@ -328,7 +328,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
             )
 
             # prep initial sampler config
-            x = x_T + 0
+            x = x_T.clone()
             num_steps = sampler.num_steps
             x, s_in, sigmas, num_sigmas, cond, uc = sampler.prepare_sampling_loop(x, cond, uc, num_steps)
             # last step doesnt count since there is no additional sigma
@@ -371,7 +371,7 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                                 return_noise=True,
                             )
                         list_eps_init.append(eps_init)
-                    # set next \bar{x}
+                    # set next \bar{x} (after euler update)
                     x = x_next_draft
 
             # compile list of eps

@@ -127,7 +127,6 @@ class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
                     FrozenCLIPEmbedder,
                     ParallelLinearAdapter,
                 },
-                # extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,ResnetBlock,AttnBlock,SpatialTransformer,ResBlock,\
                 use_orig_params=False,  # self.cfg.model.inductor,
                 set_buffer_dtype=self.cfg.get("fsdp_set_buffer_dtype", None),
             )
