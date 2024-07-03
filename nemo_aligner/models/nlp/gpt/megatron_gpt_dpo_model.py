@@ -128,10 +128,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             if batch["chosen_labels"] is not None and batch["rejected_labels"] is not None:
                 labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
 
-            if ("ref_policy_log_probs_chosen" in batch 
+            if (
+                "ref_policy_log_probs_chosen" in batch
                 and "ref_policy_log_probs_rejected" in batch
-                and batch["ref_policy_log_probs_chosen"] is not None 
-                and batch["ref_policy_log_probs_rejected"] is not None):
+                and batch["ref_policy_log_probs_chosen"] is not None
+                and batch["ref_policy_log_probs_rejected"] is not None
+            ):
                 ref_logprobs = torch.cat(
                     (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
                 )
@@ -172,7 +174,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 logprobs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=output_tensor, target=labels, inference_only=True, higher_stability=True,
                 )
-                
+
                 return {"logprobs": logprobs}
 
             def loss_func(output_tensor):
@@ -426,8 +428,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 chosen_logprobs_list.append(chosen_logprobs)
                 rejected_logprobs_list.append(rejected_logprobs)
 
-            logprobs = torch.cat([torch.cat(chosen_logprobs_list), 
-                                  torch.cat(rejected_logprobs_list)], dim=0)
+            logprobs = torch.cat([torch.cat(chosen_logprobs_list), torch.cat(rejected_logprobs_list)], dim=0)
         else:
             logprobs = None
 
@@ -442,7 +443,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return logprobs
 
     def get_ref_policy_logprobs(self, batch):
-        
+
         if self.use_peft and self.ref_policy_state_dict is None:
             # when using adapters instead of full-tuning, the actor is reference model + adapters
             with adapter_control(self):
