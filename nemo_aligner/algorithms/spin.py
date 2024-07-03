@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os, json
 from collections import defaultdict
 from statistics import mean
 import pandas as pd
@@ -27,7 +28,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
-from nemo_aligner.utils.distributed import SyncTimer
+from nemo_aligner.utils.distributed import SyncTimer, gather_tensor
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
 from nemo_aligner.utils.train_utils import clip_gradients
@@ -91,6 +92,7 @@ class SPINTrainer:
         logger,
         ckpt_callback,
         run_timer,
+        exp_manager,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -138,6 +140,12 @@ class SPINTrainer:
 
         # for wandb table
         self.train_df = pd.DataFrame(columns=["step", "prompt", "response"])
+        
+        # storage for generated responses which we want to save
+        if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+            self.generations_fh = open(os.path.join(exp_manager.explicit_log_dir, "generations.jsonl"), "a", encoding="utf_8", newline="\n")
+        else:
+            self.generations_fh = None
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -300,6 +308,8 @@ class SPINTrainer:
 
             # call this in case the model is using a KL scheduler based on iteration number
             self.model.set_KL_penalty_by_iteration(self.iteration)
+            
+            #self.generated_responses.clear()
 
             for _ in epoch_iter:
                 num_steps_in_epoch = min(
@@ -393,6 +403,15 @@ class SPINTrainer:
 
                     metrics.clear()
                     self.model.finish_training()
+                    
+                    generations = global_batch["generated"]
+                    generations_list = gather_tensor(
+                        generations, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()
+                    )
+                    if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and generations_list is not None:
+                        for t in generations_list:
+                            payload = {"response": self.model.tokenizer.ids_to_text(t[0].tolist())}
+                            self.generations_fh.write(json.dumps(payload, ensure_ascii=False) + '\n')
 
             # update the reference policy weights
             self.model.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
@@ -400,6 +419,9 @@ class SPINTrainer:
             )
 
         self.logger.finalize()
+        
+        if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+            self.generations_fh.close()
 
     def save(self, extra_candidates=None, is_train_end=False):
         # load back in the adam states if needed
