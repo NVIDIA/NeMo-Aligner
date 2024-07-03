@@ -140,7 +140,7 @@ Please wait for the server to be ready before proceeding.
       --output-filepath /path/to/cai_revisions_aligner_chat_template.jsonl \
       --port 5999 \
       --host <hostname or IP address of the inference service> \
-      --add_bos True \
+      --add_bos False \
       --top_k 1 \
       --top_p 0.9 \
       --all_probs False \
