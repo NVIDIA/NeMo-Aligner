@@ -404,7 +404,7 @@ class SPINTrainer:
                     metrics.clear()
                     self.model.finish_training()
                     
-                    generations = global_batch["generated"]
+                    generations = batch_pad_to_fixed_len(global_batch["generated"], self.model.cfg.encoder_seq_length, pad_token=self.model.tokenizer.eos_id)
                     generations_list = gather_tensor(
                         generations, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()
                     )
@@ -412,6 +412,7 @@ class SPINTrainer:
                         for t in generations_list:
                             payload = {"response": self.model.tokenizer.ids_to_text(t[0].tolist())}
                             self.generations_fh.write(json.dumps(payload, ensure_ascii=False) + '\n')
+
 
             # update the reference policy weights
             self.model.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
