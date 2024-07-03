@@ -50,11 +50,9 @@ trainer:
       # Reloading the engine incurs a constant time overhead
       unload_engine_train: False
 
-    flask_server:
-      # flask server that acts as a worker pool to balance out generation time
-      enable: False
+    batch_iterator:
+      use_flask: False
       port: 12345
-      host: null # if not provided, it will be automatically set
 
     # pick up from the model
     # *do not change this*

@@ -13,20 +13,12 @@
 # limitations under the License.
 
 import itertools
-import json
-import os
-import threading
 import time
-from collections import UserDict, defaultdict
-from collections.abc import Iterator, Mapping
+from collections import UserDict
 from contextlib import nullcontext
 from dataclasses import dataclass
-from functools import partial
-from typing import Callable
 
-import jsonlines
 import pandas as pd
-import requests
 import torch
 from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
@@ -34,19 +26,14 @@ from tqdm import tqdm
 
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingRandomSampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
-from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo.utils import logging
-from nemo_aligner.data.nlp.builders import collate_with_pad_to_max_batch
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     SyncTimer,
     all_reduce_dict,
-    broadcast_2d_tensor,
-    broadcast_2d_tensor_within_mp,
     masked_global_mean_var,
     normalize_tensor,
     rebalance_nd_tensor,
-    run_if_model_parallel_src,
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.utils.ppo_utils import (
@@ -59,73 +46,6 @@ from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
-
-
-@dataclass
-class SharedSet:
-    lock: threading.Lock
-
-    def __post_init__(self):
-        self.data = set()
-
-    def clear(self):
-        with self.lock:
-            self.data.clear()
-
-    def set_idx(self, ids):
-        with self.lock:
-            self.data.update(ids)
-
-    def get_idx(self, batch_size):
-        with self.lock:
-            to_ret = [self.data.pop() for _ in range(batch_size) if len(self.data) > 0]
-
-        return to_ret
-
-
-@dataclass
-class DefaultBatchIterator:
-    sampler_iter: Iterator[int]
-    num_microbatches: int
-    dataset: Mapping
-    collate_fn: Callable
-
-    def __iter__(self):
-        for _, ids in zip(range(self.num_microbatches), self.sampler_iter):
-            batch = self.collate_fn([self.dataset[index] for index in ids])
-            yield batch
-
-
-@dataclass
-class HTTPBatchIterator:
-    shared_set: SharedSet
-    host: str
-    port: int
-    sampler_iter: Iterator[int]
-    num_microbatches: int
-    dataset: Mapping
-    collate_fn: Callable
-
-    def __post_init__(self):
-        local_ids = [ids for _, ids in zip(range(self.num_microbatches), self.sampler_iter)]
-        self.desired_batch_size = len(local_ids[0]) if len(local_ids) > 0 else 1
-
-        local_ids = set(itertools.chain.from_iterable(local_ids))
-        global_ids = get_global_set(local_ids)
-
-        if torch.distributed.get_rank() == 0:
-            self.shared_set.clear()
-            self.shared_set.set_idx(global_ids)
-
-        torch.distributed.barrier()
-
-    def __iter__(self):
-        ids = send_request(host=self.host, port=self.port, batch_size=self.desired_batch_size)
-
-        while len(ids) > 0:
-            batch = self.collate_fn([self.dataset[idx] for idx in ids])
-            yield batch
-            ids = send_request(host=self.host, port=self.port, batch_size=self.desired_batch_size)
 
 
 class PPORolloutBatch(UserDict):
@@ -194,30 +114,6 @@ class PPORolloutBatch(UserDict):
             chunked_rollout_batch[k] = self.data[k][indices].clone()
 
         return chunked_rollout_batch
-
-
-def send_request(host, port, endpoint="/get_idx", batch_size=1):
-    output = run_if_model_parallel_src(
-        requests.put,
-        url=f"http://{host}:{port}/{endpoint}",
-        data=json.dumps({"batch_size": batch_size}),
-        headers={"Content-Type": "application/json"},
-    )
-
-    if output is not None:
-        output = output.json()
-        output = torch.as_tensor(output).view(1, -1)
-
-    output = broadcast_2d_tensor_within_mp(output, dtype=torch.long)
-    return output.flatten().tolist()
-
-
-def get_global_set(local_data_ids):
-    output = [None for _ in range(torch.distributed.get_world_size())]
-    torch.distributed.all_gather_object(output, local_data_ids)
-    global_set = set().union(*output)
-
-    return global_set
 
 
 def compute_num_rollout_microbatches(dataloader):
@@ -609,9 +505,7 @@ class PPOTrainer:
 
                     # send critic train
                     clear_memory()
-                    start_time = time.time()
                     self.rm_critic.train(ppo_rollout_data)
-                    end_time = time.time()
 
                     timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
                     timing_metrics.update(timer_metrics)

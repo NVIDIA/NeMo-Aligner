@@ -193,6 +193,14 @@ def set_autocast_gpu_dtype(precision):
         torch.set_autocast_gpu_dtype(torch.bfloat16)
 
 
+def get_global_set(local_data_ids):
+    output = [None for _ in range(torch.distributed.get_world_size())]
+    torch.distributed.all_gather_object(output, local_data_ids)
+    global_set = set().union(*output)
+
+    return global_set
+
+
 def calculate_response_lengths(tokens, eos_id):
     """calculates the response length of the tokens after padding"""
     return (tokens != eos_id).sum(-1)

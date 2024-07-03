@@ -40,7 +40,6 @@ class HTTPCommunicator:
         url = f"http://{ip}:{port}"
         client = FuturesModelClient(url, server_name, init_timeout_s=self.init_timeout_s, inference_timeout_s=600000)
         self.connections[server_name] = (ip, port, client)
-        _global_communicators[server_name] = (ip, port, client)
 
     def print_server_dict(self):
         logging.info("====== Server connections: ======")
