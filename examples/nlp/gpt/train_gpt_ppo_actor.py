@@ -224,9 +224,7 @@ def main(cfg) -> None:
     # `atexit` does not suffice since the registered cleanup function can be
     # queued behind another blocking atexit registered function.
     # TODO: utilize context managers to avoid manual cleanup
-    close_all_communicators()
-
-    print("Finished")
+    rm_critic.communicator.close()
 
 
 if __name__ == "__main__":
