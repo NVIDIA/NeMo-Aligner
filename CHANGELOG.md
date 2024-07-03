@@ -5,7 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Next Version]
 - Implement reward-aware preference optimization.
-  
+- Fix log probs mismatch issue between policy and reference policy in DPO & variants.
+   
 ### New features and optimizations
 
 ### Breaking changes
