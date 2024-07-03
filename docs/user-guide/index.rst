@@ -13,7 +13,7 @@
    dpo.rst
    spin.rst
    draftp.rst
-   CAI.rst
+   cai.rst
 
 :ref:`Prerequisite Obtaining a Pre-Trained Model <prerequisite>`
    This section provides instructions on how to download pre-trained LLMs in .nemo format. The following section will use These base LLMs for further fine-tuning and alignment. 
