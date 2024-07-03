@@ -15,6 +15,7 @@
 from contextlib import nullcontext
 
 import torch
+import torch.distributed
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
@@ -303,15 +304,23 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
 
+        strategy = TrackLengthGPTModelTextGenerationStrategy(
+            model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
+        )
+
         if self.use_trtllm_generation:
             actor_output = self.trtllm_generate.generate(inputs)
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
-        else:
-            strategy = TrackLengthGPTModelTextGenerationStrategy(
-                model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
-            )
 
+            # double check with nemo logic to make sure it ended
+            is_end = strategy.end_of_generation_condition(
+                response_tokens, response_tokens[:, -1], self.tokenizer.eos_id, self._sampling_params["end_strings"]
+            )
+            assert torch.all(
+                is_end
+            ), f"rank {torch.distributed.get_rank()} did NOT stop properly accoridng to nemo! {response_tokens=}"
+        else:
             actor_output = self.generate(
                 inputs=inputs,
                 length_params=self._length_params,
