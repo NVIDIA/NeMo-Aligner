@@ -17,7 +17,7 @@ import sys
 
 sys.path.append(os.path.abspath("../examples/nlp/cai"))
 
-from cai_utils import PromptTemplate, UserAssistantPromptTemplate
+from cai_utils import PromptTemplate, UserAssistantPromptTemplate, ChatTemplateHelper
 
 
 def test_extra_id_format_single_user_prompt():
@@ -235,3 +235,83 @@ def test_mistral_user_assistant_format_single_user_prompt_create_user():
     )
     m42_expected = "<s>[INST] Calculate the sum of 2 and 3. [/INST]"
     assert m42 == m42_expected, "mistral user assistant format single user prompt create user failed"
+
+
+def test_collated_single_chat_single_message():
+    single_chat_single_message = [
+        {"role": "User", "content": "Calculate the sum of 2 and 3."}
+    ]
+
+    expected_collated_chat_messages = [
+            {"role": ["User"], "content": ["Calculate the sum of 2 and 3."]}
+        ]
+
+    collated_chat_messages = ChatTemplateHelper.collate_chat_messages(single_chat_single_message)
+    assert collated_chat_messages == expected_collated_chat_messages, "collating single chat messages failed"
+
+    collated_chat_messages = ChatTemplateHelper.collate_chat_messages([single_chat_single_message])
+    assert collated_chat_messages == expected_collated_chat_messages, "collating single chat with single message failed"
+
+
+def test_collated_single_chat():
+    single_chat_messages = [
+        {"role": "User", "content": "Calculate the sum of 2 and 3."},
+        {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+        {"role": "User", "content": "Thank you! Could you also calculate the sum of 5 and 7?"},
+    ]
+
+    expected_collated_chat_messages = [
+            {"role": ["User"], "content": ["Calculate the sum of 2 and 3."]},
+            {"role": ["Assistant"], "content": ["The sum of 2 and 3 is 5."]},
+            {"role": ["User"], "content": ["Thank you! Could you also calculate the sum of 5 and 7?"]},
+        ]
+
+    collated_chat_messages = ChatTemplateHelper.collate_chat_messages(single_chat_messages)
+    assert collated_chat_messages == expected_collated_chat_messages, "collating single chat messages failed"
+
+    collated_chat_messages = ChatTemplateHelper.collate_chat_messages([single_chat_messages])
+    assert collated_chat_messages == expected_collated_chat_messages, "collating single chat messages failed"
+
+
+def test_collated_multi_chat_messages():
+    chat_1 = [
+        {"role": "User", "content": "Calculate the sum of 2 and 3."},
+        {"role": "Assistant", "content": "The sum of 2 and 3 is 5."},
+        {"role": "User", "content": "Thank you! Could you also calculate the sum of 5 and 7?"},
+    ]
+
+    chat_2 = [
+        {"role": "User", "content": "Calculate the sum of 56 and 21."},
+        {"role": "Assistant", "content": "The sum of 56 and 21 is 77."},
+        {"role": "User", "content": "Thank you! Could you also calculate the sum of 15 and 17?"},
+    ]
+
+    chat_list = [chat_1, chat_2]
+
+    collated_chat_messages = ChatTemplateHelper.collate_chat_messages(chat_list)
+
+    expected_collated_chat_messages = [
+            {"role": ["User", "User"], "content": ["Calculate the sum of 2 and 3.", "Calculate the sum of 56 and 21."]},
+            {"role": ["Assistant", "Assistant"], "content": ["The sum of 2 and 3 is 5.", "The sum of 56 and 21 is 77."]},
+            {"role": ["User", "User"], "content": ["Thank you! Could you also calculate the sum of 5 and 7?", "Thank you! Could you also calculate the sum of 15 and 17?"]},
+        ]
+
+    assert collated_chat_messages == expected_collated_chat_messages, "collating multi chat messages failed"
+
+
+def test_collated_multi_chat_each_with_single_message():
+    chat_1 = [
+        {"role": "User", "content": "Calculate the sum of 2 and 3."}
+    ]
+
+    chat_2 = [
+        {"role": "User", "content": "Calculate the sum of 56 and 21."}
+    ]
+
+    expected_collated_chat_messages = [
+        {"role": ["User", "User"], "content": ["Calculate the sum of 2 and 3.", "Calculate the sum of 56 and 21."]},
+    ]
+
+    collated_chat_messages = ChatTemplateHelper.collate_chat_messages([chat_1, chat_2])
+
+    assert collated_chat_messages == expected_collated_chat_messages, "collating multi chat with single message failed"

@@ -217,7 +217,6 @@ def prepare_args():
             --system_default_message ""
             --eos_token "<extra_id_1>"
             --response_extract_pattern "<extra_id_1>Assistant\n"
-            --add_bos False
     """
 
     args = parser.parse_args()

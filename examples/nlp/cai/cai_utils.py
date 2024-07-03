@@ -108,8 +108,93 @@ def remove_long_dialogs(
     )
 
 
+class ChatTemplateHelper:
+    @staticmethod
+    def check_and_process_chat_message(message: Union[List[dict], List[List[dict]]]):
+        """
+            The `message` parameter can be one of the following formats:
+
+            1. Single message chat: A chat containing a single user message (user prompt):
+            [{ "content": "some user message", "role": "User" }]
+
+            2. Conversation: A chat containing multiple messages between a user and an assistant;
+            [{ "content": "some user message", "role": "User" },
+                { "content": "some Assistant message", "role": "Assistant" },
+                { "content": "some user message", "role": "User" }]
+
+            3. Batch of chats: A batch containing multiple separate chats:
+                [ [{ "content": "user message #1", "role": "User" }, ...],
+                 [{ "content": "assistant response", "role": "Assistant" }, ...],
+                 [{ "content": "user message #2", "role": "User" }, ...]
+               ]
+        """
+        assert isinstance(message, list)
+        if isinstance(message[0], dict):  # single conversation
+            if all(isinstance(m, dict) for m in message):
+                message = [message]
+                return True, message
+        elif isinstance(message[0], list):  # batch of conversations
+            if all(isinstance(m, list) and all(isinstance(turn, dict) for turn in m) for m in message):
+                return True, message
+
+        return False, message
+
+    @staticmethod
+    def collate_chat_messages(messages: Union[List[dict], List[List[dict]]]):
+        """
+            collated messages can have multiple chat messages in each dict.
+            in the example bellow, a batch of 2 conversations are converted to collated batch.
+
+             messages = [
+                [{ "content": "user message #1", "role": "User" }, { "content": "assistant message #1", "role": "Assistant" }],
+                [{ "content": "user message #2", "role": "User" }, { "content": "assistant message #2", "role": "Assistant" }],
+            ]
+
+
+            the collated version (conversations are extracted vertically):
+
+            collated_messages = [
+                {'role': ['User', 'User'], 'content': ['user message 1', 'user message 2']},
+                {'role': ['Assistant', 'Assistant'], 'content': ["assistant message #1", "assistant message #2"]},
+            ]
+        """
+
+        assert isinstance(messages, list), \
+            "Expected list of dict (each dict is a single conversation/chat) or list of conversations (e.g., a batch)"
+
+        if isinstance(messages[0], dict):
+            assert all(isinstance(item, dict) for item in messages), "Not all items are dictionaries"
+            messages = [messages]  # convert to a batch
+        elif isinstance(messages[0], list):
+            assert all(isinstance(m, list) and all(isinstance(turn, dict) for turn in m) for m in messages), \
+                "Expected list of conversations (e.g., a batch)"
+
+        # some validation
+        for i, conversation_i in enumerate(messages):
+            assert all(
+                'role' in message and 'content' in message for message in conversation_i
+            ), "Expected messages each dict to contain 'role' and 'content' fields"
+
+            if i > 0:
+                assert len(messages[0]) == len(conversation_i), \
+                    "Expected all batch messages (conversations) to contain equal number messages"
+
+                assert all(
+                    messages[0][k]['role'] == conversation_i[k]['role'] for k in range(len(conversation_i))
+                ), "Expected all batch messages (conversations) to contain same role type in each turn."
+
+        # perform collation
+        collated_messages = [{'role': [], 'content': []} for _ in range(len(messages[0]))]
+        for turn_i in range(len(messages[0])):
+            for conversation in messages:
+                collated_messages[turn_i]['role'].append(conversation[turn_i]['role'])
+                collated_messages[turn_i]['content'].append(conversation[turn_i]['content'])
+
+        return collated_messages
+
+
 def remote_inference(
-    prompt: Union[str, dict, List[str], List[dict], List[List[dict]]],
+    prompt: Union[str, List[str], List[dict], List[List[dict]]],
     port: int,
     host: str,
     temperature: Optional[float] = None,
@@ -121,10 +206,10 @@ def remote_inference(
     top_p: Optional[float] = None,
     all_probs: Optional[bool] = None,
     repetition_penalty: Optional[float] = None,
-    end_strings: Optional[Union[List[str], str]] = None,
+    end_strings: Optional[Union[List[str], str]] = None
 ):
     """
-    @param prompt: list of strings or list of dict (e.g., [{"content": "some user message", "role": "User"}, ...])
+    @param prompt: string or list of strings, or list of dict
     @param port: The port number on which the inference service is running.
     @param host: The hostname or IP address of the inference service.
     @param temperature:
@@ -142,46 +227,23 @@ def remote_inference(
     import json
     import requests
 
-    def _is_chat_message(message: Union[dict, List[dict], List[List[dict]]]):
-        """
-        chat message can be one of the following (examples):
-        1. { "content": "some user message", "role": "User" }
-        2. [{ "content": "some user message", "role": "User" }]
-        3. [ [{ "content": "user message #1", "role": "User" }],
-             [{ "content": "assistant response", "role": "Assistant" }],
-             [{ "content": "user message #2", "role": "User" }]
-           ]
-        """
-        if isinstance(message, dict):
-            message = [[message]]
-            return True, message
-        elif isinstance(message, list):
-            if isinstance(message[0], dict):
-                if all(isinstance(m, dict) for m in message):
-                    message = [message]
-                    return True, message
-            elif isinstance(message[0], list):
-                if all(isinstance(m, list) and all(isinstance(turn, dict) for turn in m) for m in message):
-                    return True, message
-
-        return False, message
-
     assert port >= 0
-    assert isinstance(prompt, (str, dict, list))
+    assert isinstance(prompt, (str, list))
     if not isinstance(prompt, list):
-        if isinstance(prompt, dict):
-            prompt = [[prompt]]
-        elif isinstance(prompt, str):
+        if isinstance(prompt, str):
             prompt = [prompt]
         else:
-            raise "invalid prompt format"
+            raise "invalid prompt format. valid formats are: str, List[str], List[dict], List[List[dict]] "
 
     if isinstance(prompt[0], str):
         assert all(isinstance(p, str) for p in prompt), "Not all items are strings"
     else:
-        is_chat_message, prompt = _is_chat_message(prompt)
+        is_chat_message, prompt = ChatTemplateHelper.check_and_process_chat_message(prompt)
         if not is_chat_message:
             raise "invalid prompt format"
+
+        # when using chat message with megatron_gpt_eval.py, we must collate messages.
+        prompt = ChatTemplateHelper.collate_chat_messages(prompt)
 
     if end_strings is not None:
         if not isinstance(end_strings, list):

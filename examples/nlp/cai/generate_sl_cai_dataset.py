@@ -413,7 +413,7 @@ def prepare_args():
     parser.add_argument("--helpfulness-dataset-path", type=str, required=True, default=None)
 
     group_inference = parser.add_argument_group("inference", "inference (service) arguments")
-    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="True")
+    group_inference.add_argument("--add_bos", type=str, choices=["True", "False"], default="False")
     group_inference.add_argument("--top_k", type=int, default=1)
     group_inference.add_argument("--top_p", type=float, default=0.9)
     group_inference.add_argument("--all_probs", type=str, choices=["True", "False"], default="False")
@@ -454,13 +454,11 @@ def prepare_args():
         --system_default_message ""
         --eos_token "<extra_id_1>"
         --response_extract_pattern "<extra_id_1>Assistant\n"
-        --add_bos False
         
     
     prompt template configuration example: mistral-instruct-7B
         --apply_chat_template False
         --response_extract_pattern "[/INST]"
-        --add_bos True
         
     NOTE: setting 'apply_chat_template' to False as chat template is going to be applied when 
     invoking remote inference with megatron_gpt_eval.py service.
@@ -475,7 +473,6 @@ def prepare_args():
         --bos_token "<s>"
         --eos_token "</s>"
         --response_extract_pattern "[/INST]"
-        --add_bos False
     """
 
     args = parser.parse_args()
