@@ -63,8 +63,6 @@ model:
     ref_policy_kl_penalty: 0.2
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
-    default_chosen_reward: 1. # the default reward for the chosen response in RPO
-    default_rejected_reward: 0. # the default reward for the rejected response in RPO
     gt_reward_scale: 1. # the scale of the rewards in RPO
     preference_loss: dpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
     preference_loss_weight: 1 # the coefficient of the preference loss
@@ -122,7 +120,9 @@ model:
     eod_mask_loss: False # Mask loss for the end of document tokens
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: null
-
+    default_chosen_reward: 1. # the default reward for the chosen response in RPO
+    default_rejected_reward: 0. # the default reward for the rejected response in RPO
+    
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
     data:
