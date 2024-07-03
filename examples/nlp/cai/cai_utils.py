@@ -159,36 +159,39 @@ class ChatTemplateHelper:
             ]
         """
 
-        assert isinstance(messages, list), \
-            "Expected list of dict (each dict is a single conversation/chat) or list of conversations (e.g., a batch)"
+        assert isinstance(
+            messages, list
+        ), "Expected list of dict (each dict is a single conversation/chat) or list of conversations (e.g., a batch)"
 
         if isinstance(messages[0], dict):
             assert all(isinstance(item, dict) for item in messages), "Not all items are dictionaries"
             messages = [messages]  # convert to a batch
         elif isinstance(messages[0], list):
-            assert all(isinstance(m, list) and all(isinstance(turn, dict) for turn in m) for m in messages), \
-                "Expected list of conversations (e.g., a batch)"
+            assert all(
+                isinstance(m, list) and all(isinstance(turn, dict) for turn in m) for m in messages
+            ), "Expected list of conversations (e.g., a batch)"
 
         # some validation
         for i, conversation_i in enumerate(messages):
             assert all(
-                'role' in message and 'content' in message for message in conversation_i
+                "role" in message and "content" in message for message in conversation_i
             ), "Expected messages each dict to contain 'role' and 'content' fields"
 
             if i > 0:
-                assert len(messages[0]) == len(conversation_i), \
-                    "Expected all batch messages (conversations) to contain equal number messages"
+                assert len(messages[0]) == len(
+                    conversation_i
+                ), "Expected all batch messages (conversations) to contain equal number messages"
 
                 assert all(
-                    messages[0][k]['role'] == conversation_i[k]['role'] for k in range(len(conversation_i))
+                    messages[0][k]["role"] == conversation_i[k]["role"] for k in range(len(conversation_i))
                 ), "Expected all batch messages (conversations) to contain same role type in each turn."
 
         # perform collation
-        collated_messages = [{'role': [], 'content': []} for _ in range(len(messages[0]))]
+        collated_messages = [{"role": [], "content": []} for _ in range(len(messages[0]))]
         for turn_i in range(len(messages[0])):
             for conversation in messages:
-                collated_messages[turn_i]['role'].append(conversation[turn_i]['role'])
-                collated_messages[turn_i]['content'].append(conversation[turn_i]['content'])
+                collated_messages[turn_i]["role"].append(conversation[turn_i]["role"])
+                collated_messages[turn_i]["content"].append(conversation[turn_i]["content"])
 
         return collated_messages
 
@@ -206,7 +209,7 @@ def remote_inference(
     top_p: Optional[float] = None,
     all_probs: Optional[bool] = None,
     repetition_penalty: Optional[float] = None,
-    end_strings: Optional[Union[List[str], str]] = None
+    end_strings: Optional[Union[List[str], str]] = None,
 ):
     """
     @param prompt: string or list of strings, or list of dict

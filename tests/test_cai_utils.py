@@ -17,7 +17,7 @@ import sys
 
 sys.path.append(os.path.abspath("../examples/nlp/cai"))
 
-from cai_utils import PromptTemplate, UserAssistantPromptTemplate, ChatTemplateHelper
+from cai_utils import ChatTemplateHelper, PromptTemplate, UserAssistantPromptTemplate
 
 
 def test_extra_id_format_single_user_prompt():
@@ -238,19 +238,17 @@ def test_mistral_user_assistant_format_single_user_prompt_create_user():
 
 
 def test_collated_single_chat_single_message():
-    single_chat_single_message = [
-        {"role": "User", "content": "Calculate the sum of 2 and 3."}
-    ]
+    single_chat_single_message = [{"role": "User", "content": "Calculate the sum of 2 and 3."}]
 
-    expected_collated_chat_messages = [
-            {"role": ["User"], "content": ["Calculate the sum of 2 and 3."]}
-        ]
+    expected_collated_chat_messages = [{"role": ["User"], "content": ["Calculate the sum of 2 and 3."]}]
 
     collated_chat_messages = ChatTemplateHelper.collate_chat_messages(single_chat_single_message)
     assert collated_chat_messages == expected_collated_chat_messages, "collating single chat messages failed"
 
     collated_chat_messages = ChatTemplateHelper.collate_chat_messages([single_chat_single_message])
-    assert collated_chat_messages == expected_collated_chat_messages, "collating single chat with single message failed"
+    assert (
+        collated_chat_messages == expected_collated_chat_messages
+    ), "collating single chat with single message failed"
 
 
 def test_collated_single_chat():
@@ -261,10 +259,10 @@ def test_collated_single_chat():
     ]
 
     expected_collated_chat_messages = [
-            {"role": ["User"], "content": ["Calculate the sum of 2 and 3."]},
-            {"role": ["Assistant"], "content": ["The sum of 2 and 3 is 5."]},
-            {"role": ["User"], "content": ["Thank you! Could you also calculate the sum of 5 and 7?"]},
-        ]
+        {"role": ["User"], "content": ["Calculate the sum of 2 and 3."]},
+        {"role": ["Assistant"], "content": ["The sum of 2 and 3 is 5."]},
+        {"role": ["User"], "content": ["Thank you! Could you also calculate the sum of 5 and 7?"]},
+    ]
 
     collated_chat_messages = ChatTemplateHelper.collate_chat_messages(single_chat_messages)
     assert collated_chat_messages == expected_collated_chat_messages, "collating single chat messages failed"
@@ -291,22 +289,24 @@ def test_collated_multi_chat_messages():
     collated_chat_messages = ChatTemplateHelper.collate_chat_messages(chat_list)
 
     expected_collated_chat_messages = [
-            {"role": ["User", "User"], "content": ["Calculate the sum of 2 and 3.", "Calculate the sum of 56 and 21."]},
-            {"role": ["Assistant", "Assistant"], "content": ["The sum of 2 and 3 is 5.", "The sum of 56 and 21 is 77."]},
-            {"role": ["User", "User"], "content": ["Thank you! Could you also calculate the sum of 5 and 7?", "Thank you! Could you also calculate the sum of 15 and 17?"]},
-        ]
+        {"role": ["User", "User"], "content": ["Calculate the sum of 2 and 3.", "Calculate the sum of 56 and 21."]},
+        {"role": ["Assistant", "Assistant"], "content": ["The sum of 2 and 3 is 5.", "The sum of 56 and 21 is 77."]},
+        {
+            "role": ["User", "User"],
+            "content": [
+                "Thank you! Could you also calculate the sum of 5 and 7?",
+                "Thank you! Could you also calculate the sum of 15 and 17?",
+            ],
+        },
+    ]
 
     assert collated_chat_messages == expected_collated_chat_messages, "collating multi chat messages failed"
 
 
 def test_collated_multi_chat_each_with_single_message():
-    chat_1 = [
-        {"role": "User", "content": "Calculate the sum of 2 and 3."}
-    ]
+    chat_1 = [{"role": "User", "content": "Calculate the sum of 2 and 3."}]
 
-    chat_2 = [
-        {"role": "User", "content": "Calculate the sum of 56 and 21."}
-    ]
+    chat_2 = [{"role": "User", "content": "Calculate the sum of 56 and 21."}]
 
     expected_collated_chat_messages = [
         {"role": ["User", "User"], "content": ["Calculate the sum of 2 and 3.", "Calculate the sum of 56 and 21."]},
