@@ -145,18 +145,8 @@ class SynGen:
         self.wall_time_seconds = wall_time_seconds
         self.mcts_cfg = mcts_cfg
 
-    def reset_exit_search_timer(self):
-        self.exit = False
-        self.exit_search_timer = threading.Timer(self.wall_time_seconds, self.exit_search)
-        self.exit_search_timer.daemon = True
-        self.exit_search_timer.start()
-
-    def exit_search(self):
-        print("### TIMER TRIGGER")
-        self.exit = True
-
     def gen(self, batch):
-        self.reset_exit_search_timer()
+        start_time = time.time()
         # self.exit_search_timer.start()
         inputs = batch["question"]
         data_ids = batch["data_id"]
@@ -183,7 +173,7 @@ class SynGen:
             # clear the cache
             if len(inputs) == 0:
                 break
-            if self.exit:
+            if time.time() - start_time > self.wall_time_seconds:
                 # save the best output
                 for data_id in data_ids:
                     best = 0
