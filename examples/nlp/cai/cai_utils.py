@@ -391,11 +391,27 @@ class PromptTemplate:
         response_extract_pattern: Optional[str] = None,
     ):
         """
-        @param role_message_format: dict of (key:role-name, value:role-message-format).
-        example (for mistraL): dict(User="[INST] {MESSAGE} [/INST]", Assistant="{MESSAGE}</s> ")
-        @param bos_token: begin-of-sequence token (optional)
-        @param eos_token: end-of-sequence token (optional)
-        @param response_extract_pattern: (optional)
+        @param role_message_format: dict - A dictionary mapping role names to their corresponding message formats.
+            Keys represent role names (e.g., 'User', 'Assistant'), and values are the format strings for each role's messages.
+            Example for Mistral:
+            {
+                'User': '[INST] {MESSAGE} [/INST]',
+                'Assistant': '{MESSAGE}</s> '
+            }
+            Note: '{MESSAGE}' must appear in the format text.
+
+        @param bos_token: str, optional - The begin-of-sequence token.
+            Set this when you want to add a custom BOS token as part of the prompt.
+            Note: When using this bos_token and also setting 'addBOS = True' in the sampling parameters
+            during inference, and if the model's tokenizer.bos_id is not empty, the behavior is unpredictable.
+
+        @param eos_token: str, optional - The end-of-sequence token.
+            Used to trim unrelated text from the end of the response message.
+
+        @param response_extract_pattern: str, optional - A text pattern used to extract specific parts of the response.
+            This can be useful for parsing or filtering the generated text.
+            Must be set to a non-None value if calling the function 'extract_response'.
+
 
         example: Mistral
 
@@ -513,9 +529,16 @@ class UserAssistantPromptTemplate(PromptTemplate):
         @param assistant_format: assistant message format.
         @param system_format: system message format.
         @param system_default_message: system default message
-        @param bos_token: begin-of-sequence token (optional)
-        @param eos_token: end-of-sequence token (optional)
-        @param response_extract_pattern: (optional)
+        @param bos_token: str, optional - The begin-of-sequence token.
+            Set this when you want to add a custom BOS token as part of the prompt.
+            Note: When using this bos_token and also setting 'addBOS = True' in the sampling parameter
+            during inference, and if the model's tokenizer.bos_id is not empty, the behavior is unpredictable.
+        @param eos_token: str, optional - The end-of-sequence token.
+            Used to trim unrelated text from the end of the response message.
+        @param response_extract_pattern: str, optional - A text pattern used to extract specific parts of the response.
+            This can be useful for parsing or filtering the generated text.
+            Must be set to a non-None value if calling the function 'extract_response'.
+
 
         example: <extra_id_*> chat template
         user_assistant_format = UserAssistantPromptTemplate(
