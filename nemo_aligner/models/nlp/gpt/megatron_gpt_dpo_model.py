@@ -170,7 +170,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 logprobs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=output_tensor, target=labels, inference_only=True, higher_stability=True,
                 )
-                
                 return {"logprobs": logprobs}
 
             def loss_func(output_tensor):
@@ -423,8 +422,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 chosen_logprobs_list.append(chosen_logprobs)
                 rejected_logprobs_list.append(rejected_logprobs)
 
-            logprobs = torch.cat([torch.cat(chosen_logprobs_list), 
-                                  torch.cat(rejected_logprobs_list)], dim=0)
+            logprobs = torch.cat([torch.cat(chosen_logprobs_list), torch.cat(rejected_logprobs_list)], dim=0)
         else:
             logprobs = None
 
