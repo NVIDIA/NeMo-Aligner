@@ -59,6 +59,7 @@ model:
   megatron_amp_O2: True
 
   dpo:
+    log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, 2}
     ref_policy_kl_penalty: 0.2
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss

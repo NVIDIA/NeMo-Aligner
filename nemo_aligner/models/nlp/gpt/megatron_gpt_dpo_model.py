@@ -128,10 +128,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             if batch["chosen_labels"] is not None and batch["rejected_labels"] is not None:
                 labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
 
-            if ("ref_policy_log_probs_chosen" in batch 
-                and "ref_policy_log_probs_rejected" in batch
-                and batch["ref_policy_log_probs_chosen"] is not None 
-                and batch["ref_policy_log_probs_rejected"] is not None):
+            if (batch.get("ref_policy_log_probs_chosen") is not None 
+                and batch.get("ref_policy_log_probs_rejected") is not None):
                 ref_logprobs = torch.cat(
                     (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
                 )
@@ -180,7 +178,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     raise NotImplementedError("DPO does not support validation when cfg.data.drop_last=False")
 
                 per_token_logps = from_parallel_logits_to_logprobs(
-                    vocab_parallel_logits=output_tensor, target=labels, higher_stability=True
+                    vocab_parallel_logits=output_tensor, target=labels, inference_only=validation_step, higher_stability=True
                 )
 
                 preference_loss, acc_chosen = self.loss_func(
@@ -249,7 +247,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         )
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
         rewards_delta = chosen_rewards - reject_rewards
-
+        
         if self.preference_loss == "dpo":
             loss = -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)
         elif self.preference_loss == "rpo_bwd_kl":
@@ -413,8 +411,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             num_microbatches=get_num_microbatches(),
             forward_only=True,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.micro_batch_size
-            * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
+            micro_batch_size=self.cfg.dpo.log_prob_forward_micro_batch_size,
             collect_non_loss_data=True,
         )
 
