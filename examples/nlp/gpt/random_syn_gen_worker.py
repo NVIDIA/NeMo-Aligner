@@ -227,7 +227,7 @@ class SynGen:
 
 
 class GenFunction(TRTLLMInference):
-    def __init__(self, tokenizer, stop_criteria, pad_id, top_k, temperature=1.0, top_p=0.75, add_bos_token=False):
+    def __init__(self, tokenizer, stop_criteria, pad_id, top_k, top_p=0.75, temperature=1.0, add_bos_token=False):
 
         host = os.getenv("TRTLLM_GEN_HOST", "localhost")
         port = os.getenv("TRTLLM_GEN_PORT", "5000")
