@@ -523,9 +523,12 @@ class TensorRTLLMModelClient(TensorRTLLMModel):
 
         generation_ids = []
 
+        large_prime = 2147462143
         if prompts is not None:
-            for prompt in prompts:
+            for i, prompt in enumerate(prompts):
                 request["prompt"] = prompt
+                modified_random = hash(str(random_seed) + str(i)) % large_prime
+                request['random_seed'] = modified_random
                 generation_ids.append(
                     self.requests_lib.put(
                         url="http://{}:{}/start_generation".format(self.server_host, self.server_port),
@@ -534,9 +537,11 @@ class TensorRTLLMModelClient(TensorRTLLMModel):
                     ).json()
                 )
         else:
-            for input_ids, lengths in zip(batch_input_ids, input_lengths):
+            for i, (input_ids, lengths) in enumerate(zip(batch_input_ids, input_lengths)):
                 request["input_ids"] = input_ids
                 request["input_length"] = lengths
+                modified_random = hash(str(random_seed) + str(i)) % large_prime
+                request['random_seed'] = modified_random
                 generation_ids.append(
                     self.requests_lib.put(
                         url="http://{}:{}/start_generation".format(self.server_host, self.server_port),

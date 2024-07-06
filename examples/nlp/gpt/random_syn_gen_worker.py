@@ -164,6 +164,7 @@ class SynGen:
             self.pad_id,
             mcts_cfg.top_k,
             mcts_cfg.top_p,
+            mcts_cfg.temperature,
             mcts_cfg.add_bos_token,
         )
         samples = []
@@ -197,8 +198,7 @@ class SynGen:
             # compute seed number based data_ids and timestamp and number of tries
             timestamp = time.time()
             # mode a large prime number
-            large_prime = 2147462143
-            seed = hash(str(data_ids) + str(timestamp) + str(number_of_tries)) % large_prime
+            seed = hash(str(data_ids) + str(timestamp) + str(number_of_tries))
             outputs = gen_fun(inputs=inputs, data_ids=data_ids, seed=seed)
             new_inputs = []
             new_data_ids = []
@@ -227,7 +227,7 @@ class SynGen:
 
 
 class GenFunction(TRTLLMInference):
-    def __init__(self, tokenizer, stop_criteria, pad_id, top_k, top_p=0.75, add_bos_token=False):
+    def __init__(self, tokenizer, stop_criteria, pad_id, top_k, temperature=1.0, top_p=0.75, add_bos_token=False):
 
         host = os.getenv("TRTLLM_GEN_HOST", "localhost")
         port = os.getenv("TRTLLM_GEN_PORT", "5000")
@@ -236,6 +236,7 @@ class GenFunction(TRTLLMInference):
         self.add_bos_token = add_bos_token
         self.top_k = top_k
         self.top_p = top_p
+        self.temperature = temperature
         self.pad_id = pad_id
         self.tokenizer = tokenizer
         self.max_depth_to_explore = 1024
@@ -259,7 +260,7 @@ class GenFunction(TRTLLMInference):
                 batch_input_ids=input_ids,
                 input_lengths=context_lengths,
                 tokens_to_generate=self.max_depth_to_explore,
-                temperature=1.0,
+                temperature=self.temperature,
                 top_p=self.top_p,
                 top_k=self.top_k,
                 repetition_penalty=1.0,
@@ -275,7 +276,7 @@ class GenFunction(TRTLLMInference):
                     full_ids = input_ids[i] + generation_ids
                     text = self.tokenizer.decode(full_ids)
                     value, terminate, end_properly, has_answer = self.stop_criteria.get_value_and_terminated(
-                        text, data_ids[i], i, full_ids
+                        text, data_ids[i], 0, full_ids
                     )
                     value = torch.tensor(value)
                     infer_results.append(value)
