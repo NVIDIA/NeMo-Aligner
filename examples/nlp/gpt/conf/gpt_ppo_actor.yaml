@@ -125,6 +125,13 @@ model:
       # will be used in NeMo version > 1.20.0
       # keeping it for now
       end_strings: ["<|endoftext|>", "<extra_id_1>"]
+      # whether the sampling params above are used when computing log probs
+      # (if False then log probs computations assume default temperature / top_k / top_p)
+      apply_to_logprobs:
+        loss: False 
+        kl_penalty_actor: False
+        kl_penalty_ref: ${.kl_penalty_actor}
+
 
     # length argument for autoregressive sampling
     # max length means max amount of tokens to generate
