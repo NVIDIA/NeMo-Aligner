@@ -33,6 +33,7 @@ from nemo.collections.nlp.modules.common.transformer.text_generation import Leng
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
+from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -164,12 +165,21 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
                 inputs=inputs, length_params=length_params, sampling_params=sampling_params, strategy=strategy
             )
 
-        if isinstance(inputs, (list, tuple)) and isinstance(inputs[0], str):
-            raise NotImplementedError(
-                "`GPTSFTModel.generate()` does not currently support string inputs, please tokenize prompts first"
-            )
+        if not isinstance(inputs, (list, tuple)):
+            raise NotImplementedError(f"Expected type(inputs)=(list or tuple) but got {type(inputs)=}")
 
-        prompt_tokens, prompt_lengths = inputs
+        if isinstance(inputs[0], str):
+            # add_EOS=False since it is absent from nemo.collections.nlp.modules.common.text_generation_utils.megatron_gpt_generate
+            prompt_tokens, prompt_lengths, _ = tokenize_batch(
+                sentences=inputs,
+                tokenizer=self.tokenizer,
+                max_len=self.cfg.encoder_seq_length,
+                add_BOS=sampling_params["add_BOS"],
+                add_EOS=False,
+            )
+        else:
+            prompt_tokens, prompt_lengths = inputs
+
         max_prompt_length = prompt_lengths.max().item()
         max_response_length = length_params["max_length"]
         max_length = max_prompt_length + max_response_length
