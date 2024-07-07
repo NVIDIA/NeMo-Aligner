@@ -297,7 +297,6 @@ def _distributed_apply_sampling_params(logits, context_lengths, sampling_params,
     return logits
 
 
-
 class DistributedLogprob(torch.autograd.Function):
     """Function to get logprobs out and differentiate through it
     """
