@@ -205,7 +205,7 @@ def _compute_distributed_top_k_p(logits, k, p, rank, world_size):
     local_topk_values, local_topk_indices = torch.topk(logits, k=k, dim=-1)  # [B,S,k]
     local_topk_indices += vocab_start_index
     # Prepare containers for the gathered top-k values and indices from all GPUs
-    if rank==src_rank:
+    if rank == src_rank:
         gathered_values = [torch.zeros_like(local_topk_values) for _ in range(world_size)]
         gathered_indices = [torch.zeros_like(local_topk_indices) for _ in range(world_size)]
     else:
@@ -214,9 +214,9 @@ def _compute_distributed_top_k_p(logits, k, p, rank, world_size):
 
     # Gather top-k values and indices from all GPUs
     torch.distributed.gather(local_topk_values, gathered_values, dst=src_rank)
-    torch.distributed.gather(local_topk_indices, gathered_indices, dst = src_rank)
-    
-    if rank==src_rank:     # only rank 0 will do the computation and scatter the outcome    
+    torch.distributed.gather(local_topk_indices, gathered_indices, dst=src_rank)
+
+    if rank == src_rank:  # only rank 0 will do the computation and scatter the outcome
         # Concatenate the gathered values and indices along a new dimension
         all_values = torch.cat(gathered_values, dim=-1)  # [B,S,world_size*k]
         all_indices = torch.cat(gathered_indices, dim=-1)
@@ -226,19 +226,21 @@ def _compute_distributed_top_k_p(logits, k, p, rank, world_size):
         global_topk_indices = torch.gather(all_indices, -1, topk_indices)
 
         # perform top_p
-        if 0.0<p<1.0:
-            #perform top_p and save in global_top_k_p_indices and spread to all ranks
-            sorted_logits,sorted_indices = torch.sort(global_topk_values,descending=True,dim=-1)    # [B,S,k] for each
-            cumulative_probs = torch.cumsum(F.softmax(sorted_logits,dim=-1),dim=-1)                 # [B,S,k]
-            global_top_k_p_indices = torch.gather(global_topk_indices,-1,sorted_indices)
+        if 0.0 < p < 1.0:
+            # perform top_p and save in global_top_k_p_indices and spread to all ranks
+            sorted_logits, sorted_indices = torch.sort(global_topk_values, descending=True, dim=-1)  # [B,S,k] for each
+            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)  # [B,S,k]
+            global_top_k_p_indices = torch.gather(global_topk_indices, -1, sorted_indices)
             sorted_indices_to_remove = cumulative_probs > p
             sorted_indices_to_remove = sorted_indices_to_remove.roll(shifts=1, dims=-1)
-            sorted_indices_to_remove[..., 0] = False            
-            global_top_k_p_indices = torch.where(sorted_indices_to_remove,torch.tensor(-1,dtype=torch.long),global_top_k_p_indices)     # the top_p are kept, the rest are set to -1 (so will be filtered in the following lines)
+            sorted_indices_to_remove[..., 0] = False
+            global_top_k_p_indices = torch.where(
+                sorted_indices_to_remove, torch.tensor(-1, dtype=torch.long), global_top_k_p_indices
+            )  # the top_p are kept, the rest are set to -1 (so will be filtered in the following lines)
     else:
         global_top_k_p_indices = torch.empty_like(local_topk_indices)  # [B,S,k]
 
-    torch.distributed.broadcast(global_top_k_p_indices,src=src_rank)
+    torch.distributed.broadcast(global_top_k_p_indices, src=src_rank)
 
     # generate a mask according to the rank
     # filter indices within the current rank's segment
@@ -247,44 +249,53 @@ def _compute_distributed_top_k_p(logits, k, p, rank, world_size):
     )  # [B,S,k] where only indices that are within the scope of current rank are True
 
     # adjust indices to local index space
-    local_top_k_p_indices = global_top_k_p_indices 
+    local_top_k_p_indices = global_top_k_p_indices
     local_top_k_p_indices -= vocab_start_index
-    local_top_k_p_indices = torch.where(mask_top_k_p_indices,local_top_k_p_indices,torch.tensor(-1,dtype=torch.long))  #[B,S,k] - the global top_k_p indices are localized to the rank, or -1 if they are not in this rank's segment 
+    local_top_k_p_indices = torch.where(
+        mask_top_k_p_indices, local_top_k_p_indices, torch.tensor(-1, dtype=torch.long)
+    )  # [B,S,k] - the global top_k_p indices are localized to the rank, or -1 if they are not in this rank's segment
 
     valid_logits = torch.zeros_like(logits, dtype=torch.bool)
-    batch_indices,sequence_indices = torch.where(mask_top_k_p_indices.any(dim=-1))      # collect all b,s indices where there is a valid index in [b,s,:]
-    local_vocab_indices = local_top_k_p_indices[batch_indices,sequence_indices]         # collect the v indices per each [b,s]. should be up to k valid indices (not valid is -1)
+    batch_indices, sequence_indices = torch.where(
+        mask_top_k_p_indices.any(dim=-1)
+    )  # collect all b,s indices where there is a valid index in [b,s,:]
+    local_vocab_indices = local_top_k_p_indices[
+        batch_indices, sequence_indices
+    ]  # collect the v indices per each [b,s]. should be up to k valid indices (not valid is -1)
     valid_local_indx_mask = local_vocab_indices != -1
     valid_local_batch_idx = batch_indices.unsqueeze(1).expand_as(valid_local_indx_mask)[valid_local_indx_mask]
     valid_local_sequence_idx = sequence_indices.unsqueeze(1).expand_as(valid_local_indx_mask)[valid_local_indx_mask]
     valid_local_vocab_idx = local_vocab_indices[valid_local_indx_mask]
-    valid_logits[valid_local_batch_idx,valid_local_sequence_idx,valid_local_vocab_idx] = True
-    logits[~valid_logits]=-torch.inf
+    valid_logits[valid_local_batch_idx, valid_local_sequence_idx, valid_local_vocab_idx] = True
+    logits[~valid_logits] = -torch.inf
     # return updated_logits
     return logits
 
-def _distributed_apply_sampling_params(logits,context_lengths,sampling_params,rank,world_size):
-    # apply the sampling params to the logits - focusing only on the generated tokens.
-    if sampling_params.get('use_greedy',False):
-        return logits
-    if sampling_params.get('repetition_penalty',1.0)!=1.0:
-        raise NotImplementedError("not supporting repetition penalty when applying sampling params to logprobs")
-    
-    context_length = context_lengths.min().item()
-    resp_logits = logits[:,context_length-1:]
-    # divide by temp
-    if sampling_params['temperature']!=1.0:
-        resp_logits/=sampling_params['temperature']
-    top_k = sampling_params['top_k']
-    top_p = sampling_params['top_p']
-    if top_k>0:        
-        # Note : currently assuming that top_p is applied only if top_k>0.  
-        resp_logits = _compute_distributed_top_k_p(resp_logits,top_k,top_p,rank, world_size)
-    elif 0.0 < top_p < 1.0:
-        raise NotImplementedError('Currently not supporting 0 < top_p < 1 with top_k=0 when applying sampling params to log probs')
 
-        
+def _distributed_apply_sampling_params(logits, context_lengths, sampling_params, rank, world_size):
+    # apply the sampling params to the logits - focusing only on the generated tokens.
+    if sampling_params.get("use_greedy", False):
+        return logits
+    if sampling_params.get("repetition_penalty", 1.0) != 1.0:
+        raise NotImplementedError("not supporting repetition penalty when applying sampling params to logprobs")
+
+    context_length = context_lengths.min().item()
+    resp_logits = logits[:, context_length - 1 :]
+    # divide by temp
+    if sampling_params["temperature"] != 1.0:
+        resp_logits /= sampling_params["temperature"]
+    top_k = sampling_params["top_k"]
+    top_p = sampling_params["top_p"]
+    if top_k > 0:
+        # Note : currently assuming that top_p is applied only if top_k>0.
+        resp_logits = _compute_distributed_top_k_p(resp_logits, top_k, top_p, rank, world_size)
+    elif 0.0 < top_p < 1.0:
+        raise NotImplementedError(
+            "Currently not supporting 0 < top_p < 1 with top_k=0 when applying sampling params to log probs"
+        )
+
     return logits
+
 
 def _distributed_apply_sampling_params(logits, context_lengths, sampling_params, rank, world_size):
     # apply the sampling params to the logits - focusing only on the generated tokens.
@@ -334,7 +345,9 @@ class DistributedLogprob(torch.autograd.Function):
         if sampling_params is not None:
             if prompt_lengths is None:
                 raise ValueError("prompt_lengths must be provided to apply sampling params to log ptobs")
-            vocab_parallel_logits = _distributed_apply_sampling_params(vocab_parallel_logits,prompt_lengths,sampling_params,rank, world_size)
+            vocab_parallel_logits = _distributed_apply_sampling_params(
+                vocab_parallel_logits, prompt_lengths, sampling_params, rank, world_size
+            )
 
         # higher stability uses a more numerically stable distributed log_softmax instead of softmax
         # however, it uses more VRAM because there is an unavoidable exp() OP on the entire logits tensor
@@ -401,8 +414,9 @@ def from_parallel_logits_to_logprobs(
     Returns a B x S-1 tensor
     """
     target = target.roll(shifts=-1, dims=-1)
-    return DistributedLogprob.apply(vocab_parallel_logits, target, inference_only, higher_stability,
-                                    sampling_params,prompt_lengths)[:, :-1].contiguous()
+    return DistributedLogprob.apply(
+        vocab_parallel_logits, target, inference_only, higher_stability, sampling_params, prompt_lengths
+    )[:, :-1].contiguous()
 
 
 def pad_tensors_to_max_global_seq_len(list_of_tensors, pad_value, group, sequence_length_to_pad_to=None):
