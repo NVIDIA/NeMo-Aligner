@@ -297,24 +297,6 @@ def _distributed_apply_sampling_params(logits, context_lengths, sampling_params,
     return logits
 
 
-def _distributed_apply_sampling_params(logits, context_lengths, sampling_params, rank, world_size):
-    # apply the sampling params to the logits - focusing only on the generated tokens.
-    if sampling_params.get("use_greedy", False):
-        return logits
-
-    context_length = context_lengths.min().item()
-    resp_logits = logits[:, context_length - 1 :]
-    # divide by temp
-    if sampling_params["temperature"] != 1.0:
-        resp_logits /= sampling_params["temperature"]
-    top_k = sampling_params["top_k"]
-    top_p = sampling_params["top_p"]
-    if top_k > 0:
-        # Note : currently assuming that top_p is applied only if top_k>0.
-        resp_logits = _compute_distributed_top_k_p(resp_logits, top_k, top_p, rank, world_size)
-
-    return logits
-
 
 class DistributedLogprob(torch.autograd.Function):
     """Function to get logprobs out and differentiate through it
