@@ -221,7 +221,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         def log_prob_output_only_func(dataloader_iter, model):
             batch = next(dataloader_iter)
-
+            # The last element of `batch` contains prompt lengths which are not needed here.
             output_tensor, _ = fwd_output_only_func(iter([batch[:-1],]), model)
             sampling_params = self._sampling_params if apply_sampling_params else None
 
