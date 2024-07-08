@@ -372,7 +372,7 @@ class SPINTrainer:
 
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
-                        if torch.distributed.get_rank() == 0 and parallel_state.get_data_parallel_rank() == 0:
+                        if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
                             self.train_df.loc[len(self.train_df)] = [
                                 self.step - 1,
                                 self.model.tokenizer.ids_to_text(global_batch["prompts_only"][0].tolist()),
@@ -410,8 +410,9 @@ class SPINTrainer:
                     )
                     if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and generations_list is not None:
                         for t in generations_list:
-                            payload = {"response": self.model.tokenizer.ids_to_text(t[0].tolist())}
-                            self.generations_fh.write(json.dumps(payload, ensure_ascii=False) + '\n')
+                            for p in t:
+                                payload = {"iteration": self.iteration, "epoch": self.epoch, "step": self.step - 1, "response": self.model.tokenizer.ids_to_text(p.long().tolist())}
+                                self.generations_fh.write(json.dumps(payload, ensure_ascii=False) + '\n')
 
 
             # update the reference policy weights
