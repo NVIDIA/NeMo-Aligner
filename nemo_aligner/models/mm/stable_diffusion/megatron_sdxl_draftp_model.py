@@ -70,6 +70,7 @@ def calculate_gaussian_kl_penalty_shared_var(curr_eps, init_eps):
     return kl
 
 
+# TODO(@rohitrango): Remove after SD/SDXL APIs merged in NeMo so only one class is needed in Aligner
 class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
     def __init__(self, cfg, trainer):
 

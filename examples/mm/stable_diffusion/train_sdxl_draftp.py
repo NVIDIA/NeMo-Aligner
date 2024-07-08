@@ -147,7 +147,7 @@ def resolve_and_create_trainer(cfg, pop_trainer_key):
     with temp_pop_from_config(cfg.trainer, pop_trainer_key):
         return MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
 
-
+# TODO(@rohitrango): Merge script with SD train script after models/APIs in Nemo are merged
 @hydra_runner(config_path="conf", config_name="draftp_sdxl")
 def main(cfg) -> None:
 
