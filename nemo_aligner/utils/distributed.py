@@ -23,8 +23,10 @@ from typing import Dict, Optional, Union
 
 import torch
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
+from nemo.collections.nlp.parts import utils_funcs
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 
@@ -42,31 +44,30 @@ def gather_tensor(tensor, dst, group, dtype=torch.float32):
     return gather_list
 
 
-def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
+def broadcast_tensor(tensor, src, group, dtype=torch.float32, ndim=2):
     """Broadcast any 2d tensor from the src rank to every other rank in the given group.
     All the ranks that send or receive data must call this function."""
     if torch.distributed.get_rank() == src:
-        assert tensor.ndim == 2, f"tensor dims is not 2 but is {tensor.ndim} with shape {tensor.shape}"
+        assert tensor.ndim == ndim, f"tensor dims is not {ndim} but is {tensor.ndim} with shape {tensor.shape}"
         tensor = tensor.cuda().to(dtype)
 
-        input_info = [
-            tensor.size(0),
-            tensor.size(1),
-        ]
+        input_info = [tensor.size(i) for i in range(ndim)]
         input_info_tensor = torch.cuda.FloatTensor(input_info)
 
         torch.distributed.broadcast(input_info_tensor, src, group)
         torch.distributed.broadcast(tensor, src, group)
     else:
-        input_info_tensor = torch.empty(2, dtype=torch.float32, device=torch.cuda.current_device())
+        input_info_tensor = torch.empty(ndim, dtype=torch.float32, device=torch.cuda.current_device())
         torch.distributed.broadcast(input_info_tensor, src, group)
 
-        dim1 = int(input_info_tensor[0].item())
-        dim2 = int(input_info_tensor[1].item())
-
-        tensor = torch.empty(dim1, dim2, dtype=dtype, device=torch.cuda.current_device())
+        dims = [int(input_info_tensor[i].item()) for i in range(ndim)]
+        tensor = torch.empty(*dims, dtype=dtype, device=torch.cuda.current_device())
         torch.distributed.broadcast(tensor, src, group)
     return tensor
+
+
+def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
+    return broadcast_tensor(tensor, src, group, dtype=dtype, ndim=2)
 
 
 def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
@@ -292,6 +293,71 @@ def pad_tensors_to_max_global_seq_len(list_of_tensors, pad_value, group, sequenc
         max_seq_length = max(sequence_length_to_pad_to, max_seq_length)
 
     return torch.nn.functional.pad(tensors_padded, (0, max_seq_length - tensors_padded.size(-1)), value=pad_value)
+
+
+def compute_topk_logits_in_batched_sequence(
+    model: MCoreGPTModel, tokens: torch.Tensor, position_ids: torch.Tensor, 
+    attention_mask: torch.Tensor, top_k: int, precision: str):
+    """
+    Compute the topk predictive logits of the model at each token in a batch of sequences.
+    
+    model: GPTModel in megatron_core.
+    tokens: torch.Tensor.
+    position_ids: torch.Tensor.
+    attention_mask: torch.Tensor.
+    top_k: Int. 
+    precision: The precision of the model.
+    """
+    output_tensor = model(input_ids=tokens, 
+                          position_ids=position_ids, 
+                          attention_mask=attention_mask)
+
+    # in this nemo version the model and autocast dtypes are not synced
+    # so we need to explicitly cast it
+    if not parallel_state.is_pipeline_last_stage():
+        output_tensor = output_tensor.to(dtype=utils_funcs.torch_dtype_from_precision(precision))
+
+    if parallel_state.is_pipeline_last_stage():
+        # gather the output_tensor across tensor parallel ranks. 
+        # The resulting tensor is [batch_size, sequence_length, n_vocab_size]
+        output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
+        
+        # subtract the logits with its maximum, to ensure stability when computing log probs.
+        logits_max = torch.amax(output_tensor, dim=-1, keepdim=True)
+        output_tensor = output_tensor - logits_max
+
+        # compute the log sum exp logits
+        log_sum_exp_logits = output_tensor.exp().sum(-1, keepdim=False).log().float()
+        
+        # compute the top_k logits and topk token_ids
+        topk_logits, topk_token_ids = torch.topk(output_tensor, top_k)
+    else:
+        topk_logits = None
+        topk_token_ids = None
+        log_sum_exp_logits = None
+
+    # broadcast it from last PP stage to everything else
+    if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        topk_logits = broadcast_tensor(
+            topk_logits,
+            parallel_state.get_pipeline_model_parallel_last_rank(),
+            parallel_state.get_pipeline_model_parallel_group(),
+            ndim=3
+        )
+        topk_token_ids = broadcast_tensor(
+            topk_token_ids,
+            parallel_state.get_pipeline_model_parallel_last_rank(),
+            parallel_state.get_pipeline_model_parallel_group(),
+            ndim=3
+        )
+        log_sum_exp_logits = broadcast_tensor(
+            log_sum_exp_logits,
+            parallel_state.get_pipeline_model_parallel_last_rank(),
+            parallel_state.get_pipeline_model_parallel_group(),
+            ndim=2
+        )
+
+    return topk_logits, topk_token_ids, log_sum_exp_logits
 
 
 class SyncTimer(NamedTimer):
