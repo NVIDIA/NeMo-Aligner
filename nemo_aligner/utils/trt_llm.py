@@ -47,7 +47,7 @@ class GPTGenerateTRTLLM:
 
         self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
             end_id=tokenizer.eos_id,
-            pad_id=tokenizer.eos_id,  # TODO
+            pad_id=tokenizer.eos_id,
             temperature=sample_temperature,
             top_k=sample_top_k,
             top_p=sample_top_p,
@@ -108,26 +108,12 @@ class GPTGenerateTRTLLM:
         max_len = (prompt_lengths + resp_lens).max().item()
         output_ids = output_ids[..., :max_len]
         output_ids = output_ids.contiguous()
+        output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
 
-        # broadcast output to all PP ranks
-        if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-            output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
-
-        max_id = torch.max(output_ids).item()
-        if max_id > self.tokenizer.vocab_size:
-            logging.warning(
-                f"Generated token id greater than vocab size! \
-                Generated token: {max_id}"
-            )
-            output_ids = torch.clamp(output_ids, max=self.tokenizer.vocab_size - 1)
-
-        min_id = torch.min(output_ids).item()
-        if min_id < 0:
-            logging.warning(
-                f"Generated token id less than vocab size! \
-                Generated token: {min_id}"
-            )
-            output_ids = torch.clamp(output_ids, max=self.tokenizer.vocab_size - 1)
+        assert (0 <= output_ids).all(), "TRT-LLM generated tokens that are less than 0"
+        assert (
+            self.tokenizer.vocab_size > output_ids
+        ).all(), "TRT-LLM generated tokens that are greater than the vocab size"
 
         sentences = [self.tokenizer.ids_to_text(output) for output in output_ids.tolist()]
         output = {
