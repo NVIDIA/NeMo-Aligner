@@ -410,3 +410,26 @@ def run_distributed_inference(inputs=None, infer_fn=None):
         return rewards, values
 
     return rebalance_nd_tensor(outputs, group=parallel_state.get_data_parallel_group()).cpu().numpy()
+
+
+def pad_tensors_to_max_global_seq_len(list_of_tensors, pad_value, group, sequence_length_to_pad_to=None):
+    """pad a list of tensors to the global sequence length across the specified group
+    """
+    # compute the local padding
+    tensors_padded = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
+
+    # find global max seq length
+    max_seq_length = torch.tensor([tensors_padded.size(-1)], dtype=torch.float32, device=torch.cuda.current_device())
+    torch.distributed.all_reduce(max_seq_length, op=torch.distributed.ReduceOp.MAX, group=group)
+    max_seq_length = int(max_seq_length)
+
+    if sequence_length_to_pad_to is not None:
+        if max_seq_length > sequence_length_to_pad_to:
+            warnings.warn(
+                f"{max_seq_length=} is bigger than the provided {sequence_length_to_pad_to=}, overwriting the padding"
+                f" to {max_seq_length}"
+            )
+        # pad to sequence length or max seq length, whichever is bigger
+        max_seq_length = max(sequence_length_to_pad_to, max_seq_length)
+
+    return torch.nn.functional.pad(tensors_padded, (0, max_seq_length - tensors_padded.size(-1)), value=pad_value)
