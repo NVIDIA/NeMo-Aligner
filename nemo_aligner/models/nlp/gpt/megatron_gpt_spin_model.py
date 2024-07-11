@@ -179,7 +179,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                     )
 
                 per_token_logps = from_parallel_logits_to_logprobs(
-                    vocab_parallel_logits=output_tensor, target=tokens, higher_stability=True
+                    vocab_parallel_logits=output_tensor, target=tokens, higher_stability=True, inference_only=validation_step,
                 )
 
                 loss, acc_chosen = self.loss_func(per_token_logps, ref_logprobs, masks[:, 1:])
