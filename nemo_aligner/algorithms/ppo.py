@@ -157,7 +157,6 @@ class PPOTrainer:
         # this timer checks if we should stop training
         self.run_timer = run_timer
 
-        # TODO: need to knob it so we can actually disable it on nemo export side
         self.trtllm_reshard = cfg.trt_llm.enable and cfg.trt_llm.reshard
 
         self.consumed_samples = 0
@@ -210,7 +209,6 @@ class PPOTrainer:
         )
         mask = create_mask(values=values, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
-        # TODO(geshen): we may not need this mask
         advantages, returns = calculate_advantages_and_returns(
             values=values,
             rewards=rewards_with_kl,
