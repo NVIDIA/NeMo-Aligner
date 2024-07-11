@@ -20,7 +20,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Dict, Optional, Union
+from typing import Optional
 
 import torch
 from megatron.core import tensor_parallel
@@ -32,7 +32,10 @@ from nemo_aligner.utils.ppo_utils import calculate_entropy
 
 
 def rebalance_nd_tensor(tensor, group):
-    """takes tensors with variable leading sizes(at dim=0) and then stack them into a single tensor. NOTE: assumes dim != 0 to have all the same shape
+    """
+    Takes tensors with variable leading sizes (at dim=0) and then stack them into a single tensor.
+    
+    NOTE: assumes all other (i.e., non-zero) dimensions are equal.
     """
     num_samples = torch.as_tensor(tensor.size(0), dtype=torch.int64, device=torch.cuda.current_device())
     batch_num_per_rank = torch.zeros(
@@ -47,16 +50,9 @@ def rebalance_nd_tensor(tensor, group):
     output_tensor = torch.zeros(B, *other_dims, dtype=tensor.dtype, device=torch.cuda.current_device())
 
     # tensor_split is a view we can copy into
-    output_tensor.tensor_split(indices.cpu())[torch.distributed.get_rank(group=group)].copy_(tensor)
+    output_tensor.tensor_split(indices[0:-1].cpu())[torch.distributed.get_rank(group=group)].copy_(tensor)
     torch.distributed.all_reduce(output_tensor, group=group)
     return output_tensor
-
-
-def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distributed.ReduceOp.SUM):
-    keys = sorted(dictionary)
-    tensor = torch.as_tensor([dictionary[k] for k in keys], dtype=dtype, device=torch.cuda.current_device())
-    torch.distributed.all_reduce(tensor, op=op, group=group)
-    return dict(zip(keys, tensor.tolist()))
 
 
 def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
@@ -107,6 +103,19 @@ def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32):
         )
 
     return tensor
+
+
+def gather_tensor(tensor, dst, group, dtype=None):
+    """Gather any tensor to the dst rank from every other rank in the given group.
+    All the ranks that send or receive data must call this function."""
+    tensor = tensor.to(device=torch.cuda.current_device(), dtype=dtype)
+    if torch.distributed.get_rank() == dst:
+        gather_list = [torch.empty_like(tensor) for _ in range(torch.distributed.get_world_size(group))]
+    else:
+        gather_list = None
+
+    torch.distributed.gather(tensor, gather_list=gather_list, dst=dst, group=group)
+    return gather_list
 
 
 def run_if_model_parallel_src(fn, *fn_args, **fn_kwargs):
@@ -288,17 +297,11 @@ def from_parallel_logits_to_logprobs(vocab_parallel_logits, target, inference_on
     ].contiguous()
 
 
-def gather_tensor(tensor, dst, group, dtype=torch.float32):
-    """Gather any 2d tensor to the dst rank from every other rank in the given group.
-    All the ranks that send or receive data must call this function."""
-    tensor = tensor.to(device=torch.cuda.current_device(), dtype=dtype)
-    if torch.distributed.get_rank() == dst:
-        gather_list = [torch.empty_like(tensor) for _ in range(torch.distributed.get_world_size(group))]
-    else:
-        gather_list = None
-
-    torch.distributed.gather(tensor, gather_list=gather_list, dst=dst, group=group)
-    return gather_list
+def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distributed.ReduceOp.SUM):
+    keys = sorted(dictionary)
+    tensor = torch.as_tensor([dictionary[k] for k in keys], dtype=dtype, device=torch.cuda.current_device())
+    torch.distributed.all_reduce(tensor, op=op, group=group)
+    return dict(zip(keys, tensor.tolist()))
 
 
 class SyncTimer(NamedTimer):
@@ -383,7 +386,7 @@ class Timer:
         return is_finished_tensor.item()
 
 
-def run_distributed_inference(inputs=None, infer_fn=None, combine_rm_and_critic_server=False):
+def run_distributed_inference(inputs=None, infer_fn=None):
     tokens, lengths = None, None
     dp_rank = parallel_state.get_data_parallel_rank()
     dp_size = parallel_state.get_data_parallel_world_size()
@@ -398,13 +401,12 @@ def run_distributed_inference(inputs=None, infer_fn=None, combine_rm_and_critic_
 
     outputs = infer_fn(inputs=(tokens, lengths))
 
-    if combine_rm_and_critic_server:
+    if isinstance(outputs, tuple):
+        # rm and critic are combined in this case
         rewards, values = outputs
         rewards = rebalance_nd_tensor(rewards, group=parallel_state.get_data_parallel_group()).squeeze(1).cpu().numpy()
+        values = rebalance_nd_tensor(values, group=parallel_state.get_data_parallel_group()).cpu().numpy()
 
-    else:
-        values = outputs
-        rewards = None
+        return rewards, values
 
-    values = rebalance_nd_tensor(values, group=parallel_state.get_data_parallel_group()).cpu().numpy()
-    return rewards, values
+    return rebalance_nd_tensor(outputs, group=parallel_state.get_data_parallel_group()).cpu().numpy()

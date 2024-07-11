@@ -14,7 +14,7 @@
 
 
 import warnings
-from typing import List, Union
+from typing import List, Tuple, Union
 
 import torch
 from apex.transformer.pipeline_parallel.utils import get_num_microbatches
@@ -353,20 +353,25 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         finish_validation_step(self)
 
     def infer(
-        self, inputs: Union[List[str], torch.Tensor, List[dict]], add_BOS=False, add_EOS=False,
+        self,
+        inputs: Union[List[str], Tuple[torch.Tensor, torch.Tensor]],
+        add_BOS: bool = False,
+        add_EOS: bool = False,
     ):
         if isinstance(inputs, tuple):
             context_tokens_tensor, context_length_tensor = inputs
-        else:
+        elif isinstance(inputs, list):
+            assert all(isinstance(item, str) for item in inputs), "list must contain all strings in infer function"
             context_tokens_tensor, context_length_tensor = tokenize_batch(
                 inputs, self.tokenizer, self.cfg.encoder_seq_length, add_BOS=add_BOS, add_EOS=add_EOS,
             )
+        else:
+            raise NotImplementedError(f"{type(inputs)=} is not supported in infer function")
 
         context_tokens_tensor = context_tokens_tensor.cuda()
         context_length_tensor = context_length_tensor.cuda()
 
         inference_batch_size, sequence_length = context_tokens_tensor.size()
-        forward_micro_batch_size = self.forward_micro_batch_size
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
             context_tokens_tensor,
             self.tokenizer.eos_id,
@@ -377,10 +382,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         attention_mask = attention_mask.expand(inference_batch_size, -1, -1, -1)
         inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask]
 
-        # if it's not divisible by forward micro batch size,
-        # then try our best to find a smaller one that is divisible
-        while inference_batch_size % forward_micro_batch_size != 0:
-            forward_micro_batch_size -= 1
+        # if inference batch size is smaller than forward mbs run it at the lower batch size
+        forward_micro_batch_size = min(inference_batch_size, self.forward_micro_batch_size)
 
         num_microbatches = divide(inference_batch_size, forward_micro_batch_size)
         data_iter = get_iterator_k_split(inputs, num_microbatches)
@@ -409,6 +412,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             forward_only=True,
             seq_length=sequence_length,
             micro_batch_size=micro_batch_size,
+            # Prevent automatic scaling by the number of micro-batches, as we are not in training mode.
             collect_non_loss_data=True,
         )
         return output_tensor

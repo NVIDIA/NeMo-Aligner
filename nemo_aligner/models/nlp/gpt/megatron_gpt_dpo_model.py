@@ -59,16 +59,27 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         self.ref_policy_state_dict = None
 
         self.ref_policy_kl_penalty = self.cfg.dpo.get("ref_policy_kl_penalty", 0.0)
-        self.avg_log_probs = self.cfg.dpo.get("average_log_probs", False)
+        self.preference_avg_log_probs = self.cfg.dpo.get("preference_average_log_probs", False)
+        self.sft_avg_log_probs = self.cfg.dpo.get("sft_average_log_probs", self.preference_avg_log_probs)
+
+        self.preference_loss_weight = self.cfg.dpo.get("preference_loss_weight", 1)
+        self.sft_loss_weight = self.cfg.dpo.get("sft_loss_weight", 0)
+        assert (
+            self.preference_loss_weight != 0 or self.sft_loss_weight != 0
+        ), "sft loss weight and dpo loss weight cannot both be 0"
+
+        # variants of preference losses, by default DPO.
+        self.preference_loss = self.cfg.dpo.get("preference_loss", "dpo")
+        self.gt_reward_scale = self.cfg.dpo.get("gt_reward_scale", 1.0)
 
     @torch.no_grad()
-    def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels):
+    def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
         pi_logprobs = pi_logprobs.detach()
 
         dp_group = parallel_state.get_data_parallel_group()
 
         batch_logs = self.get_reduced_masked_logps(
-            pi_logprobs - ref_logprobs, labels[:, 1:], average_log_probs=self.avg_log_probs
+            pi_logprobs - ref_logprobs, labels[:, 1:], average_log_probs=average_log_probs
         )
 
         output_list = [torch.zeros_like(batch_logs) for _ in range(dp_group.size())]
@@ -103,12 +114,14 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                             "ref_policy_log_probs_rejected",
                             "chosen_labels",
                             "rejected_labels",
+                            "chosen_rewards",
+                            "rejected_rewards",
                         )
                     )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            tokens, labels, ref_logprobs = None, None, None
+            tokens, labels, ref_logprobs, gt_rewards = None, None, None, None
             if batch["chosen"] is not None and batch["rejected"] is not None:
                 tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
 
@@ -119,6 +132,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 ref_logprobs = torch.cat(
                     (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
                 )
+
+            if batch["chosen_rewards"] is not None and batch["rejected_rewards"] is not None:
+                gt_rewards = torch.cat((batch["chosen_rewards"], batch["rejected_rewards"]), dim=0)
 
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
             # these two lines ensure your position_ids and attn_mask are always B=1
@@ -157,18 +173,42 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     vocab_parallel_logits=output_tensor, target=labels, higher_stability=True
                 )
 
-                loss, acc_chosen = self.loss_func(
-                    per_token_logps, ref_logprobs, labels[:, 1:], average_log_probs=self.avg_log_probs
+                preference_loss, acc_chosen = self.loss_func(
+                    per_token_logps,
+                    ref_logprobs,
+                    labels[:, 1:],
+                    gt_rewards,
+                    average_log_probs=self.preference_avg_log_probs,
                 )
 
-                reduced_loss = average_losses_across_data_parallel_group([loss])
-                reduced_acc = average_losses_across_data_parallel_group([acc_chosen])
+                sft_loss = torch.zeros_like(preference_loss)
+                if self.sft_loss_weight != 0:
+                    sft_loss = self.sft_loss_func(
+                        per_token_logps, labels[:, 1:], average_log_probs=self.sft_avg_log_probs
+                    )
+                loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
-                out_chosen, out_rejected = self.gather_and_split_rewards(per_token_logps, ref_logprobs, labels)
+                (
+                    reduced_loss,
+                    reduced_preference_loss,
+                    reduced_sft_loss,
+                    reduced_acc,
+                ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss, acc_chosen])
+
+                out_chosen, out_rejected = self.gather_and_split_rewards(
+                    per_token_logps, ref_logprobs, labels, average_log_probs=self.preference_avg_log_probs
+                )
 
                 return (
                     loss,
-                    {"avg": reduced_loss, "acc": reduced_acc, "out_chosen": out_chosen, "out_rejected": out_rejected,},
+                    {
+                        "avg": reduced_loss,
+                        "avg_sft_loss": reduced_sft_loss,
+                        "avg_preference_loss": reduced_preference_loss,
+                        "acc": reduced_acc,
+                        "out_chosen": out_chosen,
+                        "out_rejected": out_rejected,
+                    },
                 )
 
             return output_tensor, loss_func
@@ -190,19 +230,61 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         else:
             return (logps * loss_mask).sum(-1)
 
-    def loss_func(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
+    def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, average_log_probs=False):
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
-        chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards)
+        chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
+        rewards_delta = chosen_rewards - reject_rewards
 
-        loss = -torch.nn.functional.logsigmoid(chosen_rewards - reject_rewards).mean(0)
+        if self.preference_loss == "dpo":
+            loss = -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)
+        elif self.preference_loss == "rpo_bwd_kl":
+            logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
+            logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
+
+            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
+            logalpha_hat_chosen = torch.nn.functional.logsigmoid(gt_rewards_delta)
+            logalpha_hat_rejected = torch.nn.functional.logsigmoid(-gt_rewards_delta)
+
+            loss = (
+                torch.exp(logalpha_hat_chosen) * (logalpha_hat_chosen - logbeta_hat_chosen)
+                + torch.exp(logalpha_hat_rejected) * (logalpha_hat_rejected - logbeta_hat_rejected)
+            ).mean(0)
+        elif self.preference_loss == "rpo_fwd_kl":
+            logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
+            logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
+
+            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
+            logalpha_hat_chosen = torch.nn.functional.logsigmoid(gt_rewards_delta)
+            logalpha_hat_rejected = torch.nn.functional.logsigmoid(-gt_rewards_delta)
+
+            loss = (
+                torch.exp(logbeta_hat_chosen) * (logbeta_hat_chosen - logalpha_hat_chosen)
+                + torch.exp(logbeta_hat_rejected) * (logbeta_hat_rejected - logalpha_hat_rejected)
+            ).mean(0)
+        elif self.preference_loss == "ipo":
+            loss = torch.mean((chosen_rewards - reject_rewards - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2, 0)
+        elif self.preference_loss == "rpo_sq":
+            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
+
+            loss = torch.mean((self.ref_policy_kl_penalty * rewards_delta - gt_rewards_delta) ** 2, 0)
+        else:
+            raise NotImplementedError(f"preference_loss {self.preference_loss} is not implemented")
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
             acc_chosen = comp.float().mean()
 
         return loss, acc_chosen
+
+    def sft_loss_func(self, pi_logprobs, labels, average_log_probs=False):
+        logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
+        chosen_logprobs, _ = self.split_output_tensor(logprobs)
+        return -chosen_logprobs.mean(0)
 
     def get_loss_and_metrics(self, batch, forward_only):
         seq_length = batch["chosen"].shape[1]
@@ -235,20 +317,26 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             rewards_all_mean = rewards_all.mean()
             rewards_all_std = rewards_all.std()
 
-            # average loss across micro batches
-            loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
-            loss_tensor = torch.concat(loss_tensors_list)
-            loss_mean = loss_tensor.mean()
-            acc_tensors_list = [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch]
-
-            if len(acc_tensors_list) == 1:
-                acc_tensor = acc_tensors_list[0]
-            elif len(acc_tensors_list) > 1:
-                acc_tensor = torch.concat(acc_tensors_list)
-            acc_mean = acc_tensor.mean()
+            loss_mean = torch.as_tensor(
+                [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch],
+                device=torch.cuda.current_device(),
+            ).mean()
+            sft_loss_mean = torch.as_tensor(
+                [loss_reduced["avg_sft_loss"] for loss_reduced in losses_reduced_per_micro_batch],
+                device=torch.cuda.current_device(),
+            ).mean()
+            preference_loss_mean = torch.as_tensor(
+                [loss_reduced["avg_preference_loss"] for loss_reduced in losses_reduced_per_micro_batch],
+                device=torch.cuda.current_device(),
+            ).mean()
+            acc_mean = torch.as_tensor(
+                [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch],
+                device=torch.cuda.current_device(),
+            ).mean()
         else:
-
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            sft_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            preference_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             acc_mean = torch.tensor(0.0, device=torch.cuda.current_device())
 
             rewards_chosen_mean = torch.tensor(0.0, device=torch.cuda.current_device())
@@ -258,6 +346,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
+        torch.distributed.broadcast(sft_loss_mean, get_last_rank())
+        torch.distributed.broadcast(preference_loss_mean, get_last_rank())
         torch.distributed.broadcast(acc_mean, get_last_rank())
 
         torch.distributed.broadcast(rewards_chosen_mean, get_last_rank())
@@ -267,6 +357,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         metrics = {
             "loss": loss_mean,
+            "sft_loss": sft_loss_mean,
+            "preference_loss": preference_loss_mean,
             "acc": acc_mean,
             "rewards_chosen_mean": rewards_chosen_mean,
             "rewards_rejected_mean": rewards_rejected_mean,

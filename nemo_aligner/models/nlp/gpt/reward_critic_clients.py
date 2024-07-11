@@ -148,9 +148,9 @@ class RemoteGPTRMCriticClient:
         )
 
         send_data["tokens"] = func(ppo_rollout_data["response_tokens"], dtype=torch.int64)
-        send_data["returns"] = func(ppo_rollout_data["returns"])
-        send_data["prev_values"] = func(ppo_rollout_data["values"])
-        send_data["mask"] = func(ppo_rollout_data["mask"])
+        send_data["returns"] = func(ppo_rollout_data["returns"], dtype=torch.float32)
+        send_data["prev_values"] = func(ppo_rollout_data["values"], dtype=torch.float32)
+        send_data["mask"] = func(ppo_rollout_data["mask"], dtype=torch.float32)
 
         future = None
         if torch.distributed.get_rank() == 0:

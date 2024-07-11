@@ -67,6 +67,7 @@ def main(cfg) -> None:
         model_name=inference_cfg.get("model_name", "reward_model"),
         port=inference_cfg.get("port", 5555),
         inference_micro_batch_size=inference_cfg.get("inference_micro_batch_size", 2),
+        model_forward_micro_batch_size=cfg.model.get("forward_micro_batch_size", cfg.model.micro_batch_size),
         strip_sequence_length_to_multiple=inference_cfg.get("strip_sequence_length_to_multiple", None),
         max_queue_delay_microseconds=inference_cfg.get("max_queue_delay_microseconds", 2000),
     )

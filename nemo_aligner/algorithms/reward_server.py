@@ -24,10 +24,14 @@ from pytriton.model_config.common import DynamicBatcher
 from pytriton.triton import Triton, TritonConfig
 
 from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.servers.server_callables import process_inference_request
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import run_distributed_inference
-from nemo_aligner.utils.server_utils import lock_method
+from nemo_aligner.utils.server_utils import (
+    calculate_inference_batch_padding_multiple,
+    lock_method,
+    pad_batch_and_strip_sequence,
+    process_inputs,
+)
 
 ENDPOINT_BIND_ADDRESS = "0.0.0.0"
 MAX_BATCH = 9999999
@@ -42,6 +46,7 @@ class RewardModelServer:
     model_name: str
     port: int
     inference_micro_batch_size: Union[int, List]
+    model_forward_micro_batch_size: int
     strip_sequence_length_to_multiple: Optional[int]
     max_queue_delay_microseconds: float = 2000
 
@@ -59,7 +64,6 @@ class RewardModelServer:
         self.preferred_batch_size = [
             item * parallel_state.get_data_parallel_world_size() for item in self.inference_micro_batch_size
         ]
-        self.pad_batch_to_multiple = min(self.preferred_batch_size)
 
     @batch
     @lock_method("self.lock")
@@ -67,16 +71,18 @@ class RewardModelServer:
         choice = ServerSignal.FORWARD.cuda()
         torch.distributed.broadcast(choice, 0)
 
-        inputs, extra, _ = process_inference_request(
-            inputs,
-            pad_to_multiple=self.pad_batch_to_multiple,
-            tokenize_func=self.tokenize_func,
+        tokens, sequence_lengths = process_inputs(inputs, self.tokenize_func)
+        pad_batch_to_multiple = calculate_inference_batch_padding_multiple(
+            tokens.shape[0], self.model_forward_micro_batch_size
+        )
+        inputs, extra, _ = pad_batch_and_strip_sequence(
+            tokens,
+            sequence_lengths,
+            pad_to_multiple=pad_batch_to_multiple,
             strip_sequence_length_to_multiple=self.strip_sequence_length_to_multiple,
         )
+        rewards = run_distributed_inference(inputs=inputs, infer_fn=self.infer_fn)
 
-        _, rewards = run_distributed_inference(
-            inputs=inputs, infer_fn=self.infer_fn, combine_rm_and_critic_server=False
-        )
         rewards = rewards[: rewards.shape[0] - extra]
 
         output_dict = {
@@ -95,7 +101,10 @@ class RewardModelServer:
                 http_port=self.port,
             )
 
-            dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=1,)
+            dynamic_batcher = DynamicBatcher(
+                max_queue_delay_microseconds=self.max_queue_delay_microseconds,
+                preferred_batch_size=self.preferred_batch_size,
+            )
 
             # we cut the batch into pieces so we don't need to have a max batch size
             infer_model_config = ModelConfig(batching=True, max_batch_size=MAX_BATCH, batcher=dynamic_batcher)
@@ -120,6 +129,6 @@ class RewardModelServer:
             op = command.item()
 
             if op == ServerSignal.FORWARD:
-                run_distributed_inference(infer_fn=self.infer_fn, combine_rm_and_critic_server=False)
+                run_distributed_inference(infer_fn=self.infer_fn)
             else:
                 raise RuntimeError(f"Invalid operation: {op}")

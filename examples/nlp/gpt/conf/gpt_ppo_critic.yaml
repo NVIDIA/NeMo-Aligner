@@ -35,7 +35,7 @@ trainer:
     # the model.forward_micro_batch_size to optimize for cases where Pipeline Parallelism
     # is enabled. Because in that case we will want PyTriton to give us
     # a very large batch, but then in the model we will cut it into smaller
-    # batches(determined by model.forward_micro_batch_size) to fill the pipe better.
+    # batches (determined by model.forward_micro_batch_size) to fill the pipe better.
     # NOTE: this parameter can be a list as well, in that case we will give a list of preferred batch
     # sizes to PyTriton
     inference_micro_batch_size: ${model.forward_micro_batch_size}

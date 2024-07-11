@@ -27,10 +27,15 @@ from tqdm import tqdm
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
 from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.servers.server_callables import process_inference_request
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor, run_distributed_inference
-from nemo_aligner.utils.server_utils import lock_method, pad_input
+from nemo_aligner.utils.server_utils import (
+    calculate_inference_batch_padding_multiple,
+    lock_method,
+    pad_batch_and_strip_sequence,
+    pad_input,
+    process_inputs,
+)
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.utils import apply_func_to_dict
 
@@ -52,7 +57,18 @@ class CriticServerTrainer:
         ranks what to do
     """
 
-    def __init__(self, cfg, model, optimizer, scheduler, logger, ckpt_callback, tokenize_func, gbs):
+    def __init__(
+        self,
+        cfg,
+        model,
+        optimizer,
+        scheduler,
+        logger,
+        ckpt_callback,
+        tokenize_func,
+        gbs,
+        model_forward_micro_batch_size,
+    ):
         self.lock = threading.Lock()
         self.logger = logger
         self.cfg = cfg
@@ -61,6 +77,7 @@ class CriticServerTrainer:
         self.scheduler = scheduler
         self.ckpt_callback = ckpt_callback
         self.gbs = gbs
+        self.model_forward_micro_batch_size = model_forward_micro_batch_size
         self.step = 0
 
         self.tokenize_func = tokenize_func
@@ -76,7 +93,6 @@ class CriticServerTrainer:
         self.preferred_batch_sizes = [
             item * parallel_state.get_data_parallel_world_size() for item in inference_micro_batch_size
         ]
-        self.pad_batch_to_multiple = min(self.preferred_batch_sizes)
 
         self.infer_fn = model.infer_rm_critic if self.combine_rm_and_critic_server else model.infer
         self.port = cfg.port
@@ -115,10 +131,14 @@ class CriticServerTrainer:
         choice = ServerSignal.FORWARD.cuda()
         torch.distributed.broadcast(choice, 0)
 
-        inputs, extra, prepad_sequence_length = process_inference_request(
-            inputs,
-            pad_to_multiple=self.pad_batch_to_multiple,
-            tokenize_func=self.tokenize_func,
+        tokens, sequence_lengths = process_inputs(inputs, self.tokenize_func)
+        pad_batch_to_multiple = calculate_inference_batch_padding_multiple(
+            tokens.shape[0], self.model_forward_micro_batch_size
+        )
+        inputs, extra, prepad_sequence_length = pad_batch_and_strip_sequence(
+            tokens,
+            sequence_lengths,
+            pad_to_multiple=pad_batch_to_multiple,
             strip_sequence_length_to_multiple=self.strip_sequence_length_to_multiple,
         )
         rewards, values = self.run_inference(inputs=inputs)
@@ -129,14 +149,12 @@ class CriticServerTrainer:
             values = np.pad(
                 values, ((0, 0), (0, prepad_sequence_length - values.shape[1])), mode="constant", constant_values=0
             )
-        else:
-            values = values[:, :prepad_sequence_length]
 
         output = {
             "values": values,
         }
         if self.combine_rm_and_critic_server:
-            output["rewards"] = rewards[:, None]
+            output["rewards"] = rewards.reshape((-1, 1))
 
         return {k: v[: v.shape[0] - extra] for k, v in output.items()}
 
@@ -248,10 +266,10 @@ class CriticServerTrainer:
 
     @torch.no_grad()
     def run_inference(self, inputs=None):
-        """only rank 0 has valid data
+        """only rank 0 needs valid input data, but all other ranks should call `run_inference()`
         """
         self.model.prepare_for_inference()
-        rewards, values = run_distributed_inference(inputs, self.infer_fn, self.combine_rm_and_critic_server)
+        rewards, values = run_distributed_inference(inputs, self.infer_fn)
         self.model.finish_inference()
 
         torch.distributed.barrier()

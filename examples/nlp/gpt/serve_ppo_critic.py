@@ -106,6 +106,7 @@ def main(cfg) -> None:
         ckpt_callback=ckpt_callback,
         tokenize_func=tokenize_func,
         gbs=cfg.model.global_batch_size,
+        model_forward_micro_batch_size=cfg.model.get("forward_micro_batch_size", cfg.model.micro_batch_size),
     )
 
     if custom_trainer_state_dict is not None:

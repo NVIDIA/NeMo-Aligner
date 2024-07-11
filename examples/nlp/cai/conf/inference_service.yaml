@@ -1,0 +1,29 @@
+trainer:
+  devices: 1
+  num_nodes: 1
+  accelerator: gpu
+  logger: False # logger provided by exp_manager
+  precision: 16 # 16, 32, or bf16
+  use_distributed_sampler: False
+
+tensor_model_parallel_size: -1
+pipeline_model_parallel_size: -1
+pipeline_model_parallel_split_rank: -1 # used for encoder and decoder model (0 for others)
+megatron_amp_O2: False  # Enable O2-level automatic mixed precision to save memory
+gpt_model_file: null  # GPT nemo file path
+port: 5555 # the port number for the inference server
+
+
+# tokenizer configuration: overrides pretrained mode settings (optional).
+# The 'tokenizer' section is optional. You can include any combination of the following
+# keys, as long as the combination is valid for your use case. If no keys are provided,
+# the default tokenizer settings (from the pretrained model) will be used.
+#tokenizer:
+#  library:
+#  type:
+#  model:
+#  vocab_file:
+#  merge_file:
+#  delimiter:
+#  sentencepiece_legacy:
+#  tokenizer_model:

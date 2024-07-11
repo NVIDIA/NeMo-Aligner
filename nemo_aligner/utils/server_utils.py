@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from abc import ABC, abstractmethod
 from typing import Optional
 
 import numpy as np
+import torch
+import torch.nn.functional as F
+
+from nemo_aligner.utils import parallel_state
 
 
 def decode_bytes_ndarray(str_ndarray: np.ndarray) -> np.ndarray:
@@ -71,6 +76,59 @@ def pad_input(value: Optional[np.ndarray], size: int, pad_value: int = 0):
             value = np.pad(value, pad_width=pad_width, mode="constant", constant_values=pad_value)
         value = value.tolist()
     return value, extra
+
+
+def calculate_inference_batch_padding_multiple(current_size, model_forward_micro_batch_size):
+    """calculates the multiple to pad an inference batch up to. If the batch is smaller
+        than the total inference size, then we pad up to a multiple of DP. Otherwise
+        we pad to a multiple of model_forward_mbs * DP
+    """
+    total_inference_size = model_forward_micro_batch_size * parallel_state.get_data_parallel_world_size()
+
+    if current_size <= total_inference_size:
+        return parallel_state.get_data_parallel_world_size()
+
+    return total_inference_size
+
+
+def process_inputs(inputs, tokenize_func):
+    sentences = inputs.get("sentences", None)
+    if sentences is not None:
+        sentences = decode_bytes_ndarray(sentences)
+        tokens, sequence_lengths = tokenize_func(sentences)
+        sequence_lengths = sequence_lengths.unsqueeze(-1)
+    else:
+        tokens = torch.as_tensor(inputs["tokens"], dtype=torch.long, device=torch.cuda.current_device())
+        sequence_lengths = torch.as_tensor(
+            inputs["sequence_lengths"], dtype=torch.long, device=torch.cuda.current_device()
+        )
+
+    return tokens, sequence_lengths
+
+
+def pad_batch_and_strip_sequence(tokens, sequence_lengths, pad_to_multiple, strip_sequence_length_to_multiple=None):
+    prestrip_sequence_length = tokens.shape[1]
+    if strip_sequence_length_to_multiple is not None:
+        stripped_sequence_length = (
+            math.ceil(sequence_lengths.max().item() / strip_sequence_length_to_multiple)
+            * strip_sequence_length_to_multiple
+        )
+        if stripped_sequence_length < prestrip_sequence_length:
+            tokens = tokens[:, :stripped_sequence_length]
+
+    # padding on the batch dim
+    num_extra = tokens.size(0) % pad_to_multiple
+    amount_to_pad = 0 if num_extra == 0 else pad_to_multiple - num_extra
+
+    tokens = F.pad(tokens, (0, 0, 0, amount_to_pad), mode="constant", value=0)
+    sequence_lengths = F.pad(sequence_lengths, (0, 0, 0, amount_to_pad), mode="constant", value=0)
+
+    assert len(tokens) == len(
+        sequence_lengths
+    ), "length of tokens and sequence lengths must be the same, but got {} and {}".format(
+        len(tokens), len(sequence_lengths)
+    )
+    return {"inputs": tokens, "sequence_length": sequence_lengths}, amount_to_pad, prestrip_sequence_length
 
 
 class FutureResult(ABC):

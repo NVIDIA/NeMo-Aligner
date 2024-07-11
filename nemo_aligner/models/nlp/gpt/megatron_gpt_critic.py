@@ -64,7 +64,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def on_load_checkpoint(self, *args, **kwargs):
         super().on_load_checkpoint(*args, **kwargs)
         self.critic_state_dict_cpu = copy_model_states_to_cpu(
-            self, cpu_dict=None, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
+            self, cpu_dict=self.critic_state_dict_cpu, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
         )
 
     def prepare_for_inference(self):
@@ -222,7 +222,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             # reverse the output back
             outputs = reversed(outputs)
 
-        return outputs
+        return tuple(outputs)
 
     def set_output_sequence_flag(self, value_to_set):
         if isinstance(self.model, Float16Module):
