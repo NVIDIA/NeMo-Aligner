@@ -192,7 +192,7 @@ class RewardModelDataset(Dataset):
                 chosen, _ = self.encode(chosen["text"])
                 rejected, _ = self.encode(rejected["text"])
             if len(chosen) > self.seq_length or len(rejected) > self.seq_length:
-                idx += multiple
+                idx = (idx + 1) % len(self)
                 continue
             found = True
 
