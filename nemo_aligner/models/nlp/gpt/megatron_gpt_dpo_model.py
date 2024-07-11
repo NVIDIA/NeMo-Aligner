@@ -167,6 +167,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
             def logprobs_func(output_tensor, non_loss_data=True):
+                # This function is expected to be used only when `collect_non_loss_data=True` in the fwd_bwd_function of Megatron-LM.
+                # See https://github.com/NVIDIA/Megatron-LM/blob/0bc3547702464501feefeb5523b7a17e591b21fa/megatron/core/pipeline_parallel/schedules.py#L228
+                assert non_loss_data
                 logprobs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=output_tensor, target=labels, inference_only=True, higher_stability=True,
                 )
