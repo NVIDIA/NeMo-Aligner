@@ -6,12 +6,36 @@ trainer:
   precision: bf16 # 16, 32, or bf16
 
 inference:
-  micro_batch_size: 4
   port: 5555 # the port number for the inference server
+  model_name: "reward_model"
+
+  # a PyTriton parameter to specify
+  # the max time a request will be delayed in the scheduling queue
+  # to wait for additional requests for batching
+  # for more info see: https://github.com/triton-inference-server/pytriton/blob/9e789db73880ecc667845455bbd2c19601e6279b/pytriton/model_config/common.py#L76
+  max_queue_delay_microseconds: 2000
+
+  # this parameter tells PyTriton what our preferred batch sizes are
+  # for request batching. This parameter is distinct from
+  # the model.forward_micro_batch_size to optimize for cases where Pipeline Parallelism
+  # is enabled. Because in that case we will want PyTriton to give us
+  # a very large batch, but then in the model we will cut it into smaller
+  # batches (determined by model.forward_micro_batch_size) to fill the pipe better.
+  # NOTE: this parameter can be a list as well, in that case we will give a list of preferred batch
+  # sizes to PyTriton
+  inference_micro_batch_size: ${model.forward_micro_batch_size}
+
+  # strips the padded sequence length from requests that come in
+  # when requests are sent with token, sequence length format
+  # we will look at the sequence length and see if we can strip
+  # the request to a lower sequence length that is a multiple of
+  # the specified below
+  strip_sequence_length_to_multiple: null
 
 rm_model_file: null
 
 model:
+  forward_micro_batch_size: 4
   sequence_parallel: False
   activations_checkpoint_granularity: null
   activations_checkpoint_method: null

@@ -279,7 +279,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         response_lengths = strategy.get_lengths()
         max_response_length = response_lengths.max().item()
 
-        response_tokens = torch.cuda.LongTensor(actor_output["token_ids"])
+        response_tokens = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
+        response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
 
         # Sanity check to validate response length.
         if max_response_length != response_tokens.size(1):
