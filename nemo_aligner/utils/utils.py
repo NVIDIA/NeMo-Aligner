@@ -193,7 +193,7 @@ def set_autocast_gpu_dtype(precision):
         torch.set_autocast_gpu_dtype(torch.bfloat16)
 
 
-def get_global_set(local_data_ids):
+def get_global_set(local_data_ids: set):
     output = [None for _ in range(torch.distributed.get_world_size())]
     torch.distributed.all_gather_object(output, local_data_ids)
     global_set = set().union(*output)

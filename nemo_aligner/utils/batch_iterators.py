@@ -100,7 +100,6 @@ class HTTPBatchIterator:
 
         local_ids = set(itertools.chain.from_iterable(local_ids))
         global_ids = get_global_set(local_ids)
-        print(global_ids)
 
         if torch.distributed.get_rank() == 0:
             self.shared_set.clear()
@@ -112,7 +111,6 @@ class HTTPBatchIterator:
         ids = _send_request(host=self.host, port=self.port, batch_size=self.desired_batch_size)
 
         while len(ids) > 0:
-            print(ids)
             batch = self.collate_fn([self.dataset[idx] for idx in ids])
             yield batch
             ids = _send_request(host=self.host, port=self.port, batch_size=self.desired_batch_size)
