@@ -190,6 +190,8 @@ class PPOTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
+        self.export_rollouts_jsonl = self.cfg.export_rollouts_jsonl
+
     def generate_ppo_data(self, rollout_batch):
         """generate ppo specific data for training
         """
@@ -529,6 +531,10 @@ class PPOTrainer:
                     self.logger.log_table(
                         key="table/train_rollouts", dataframe=self.train_df, step=self.step,
                     )
+
+                if torch.distributed.get_rank() == 0 and self.export_rollouts_jsonl:
+                    with open(self.export_rollouts_jsonl, 'a') as f:
+                        f.write(self.train_df.iloc[-1].to_json() + '\n')
 
                 rollout_size = ppo_rollout_data["response_tokens"].size(0)
                 rollout_dataloader_iter = get_iterator_k_split(
