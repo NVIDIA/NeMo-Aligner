@@ -432,8 +432,8 @@ class SelfRewardingTrainer:
             rewards = [self.parse_reward_fn(resp_str) for resp_str in batch_responses_str]
             #print("*** rewards_after_parse: ", rewards)
             for idx, r in enumerate(rewards):
-                if r is None:
-                    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
+                #if r is None:
+                #    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
                 reward_scores[idx].append(r)
         #print("*** reward_scores_get_rewards: ", reward_scores)
         assert all([len(b) == self.num_evals_to_average for b in reward_scores]), "did not get generate the correct number of reward scores"
