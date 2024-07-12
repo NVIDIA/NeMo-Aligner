@@ -28,13 +28,10 @@ class GPTGenerateTRTLLM:
         tokenizer=None,
         trt_model_dir="/tmp/trt_llm_model",
     ):
-        if use_greedy and sample_top_k != 1 and sample_temperature != 0.0:
+        if use_greedy and sample_top_k != 1:
             if sample_top_k != 1:
                 logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
-            if sample_temperature != 0.0:
-                logging.warning(f"'use_greedy=True' overrides {sample_temperature=} to 0.0")
             sample_top_k = 1
-            sample_temperature = 0.0
 
         self.model_cfg = model_cfg
         self.tokenizer = tokenizer
@@ -114,8 +111,8 @@ class GPTGenerateTRTLLM:
                 _output_ids[idx, : prompt_response.size(0)] = prompt_response
             output_ids = _output_ids
 
-        max_len = (prompt_lengths + response_lengths).max().item()
-        output_ids = output_ids[..., :max_len].contiguous()
+        output_ids = output_ids[..., : response_lengths.max().item()].contiguous()
+
         output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
 
         assert (0 <= output_ids).all(), "TRT-LLM generated tokens that are less than 0"

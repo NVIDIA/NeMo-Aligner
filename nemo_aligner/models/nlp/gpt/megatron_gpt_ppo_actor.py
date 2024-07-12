@@ -97,7 +97,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 unload_engine_train=self.cfg.ppo.trt_llm.get("unload_engine_train", False),
                 trt_model_type=self.cfg.ppo.trt_llm.get("model_type", "llama"),
                 end_strings=self.cfg.ppo.sampling_params["end_strings"],
-                reshard_model=True,
+                reshard_model=self.cfg.ppo.trt_llm.get("reshard", False),
                 sample_temperature=self.cfg.ppo.sampling_params["temperature"],
                 sample_top_k=self.cfg.ppo.sampling_params["top_k"],
                 sample_top_p=self.cfg.ppo.sampling_params["top_p"],
