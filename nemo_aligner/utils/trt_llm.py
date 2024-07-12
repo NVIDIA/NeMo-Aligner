@@ -29,8 +29,10 @@ class GPTGenerateTRTLLM:
         trt_model_dir="/tmp/trt_llm_model",
     ):
         if use_greedy and sample_top_k != 1 and sample_temperature != 0.0:
-            raise ValueError("If use_greedy=True, you must set sample_top_k=1 and sample_temperature=0.0. "
-                             f"Instead found {sample_top_k=} and {sample_temperature=}")
+            raise ValueError(
+                "If use_greedy=True, you must set sample_top_k=1 and sample_temperature=0.0. "
+                f"Instead found {sample_top_k=} and {sample_temperature=}"
+            )
 
         self.model_cfg = model_cfg
         self.tokenizer = tokenizer
