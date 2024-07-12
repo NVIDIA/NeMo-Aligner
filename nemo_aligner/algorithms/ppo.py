@@ -162,7 +162,8 @@ class PPOTrainer:
         # this timer checks if we should stop training
         self.run_timer = run_timer
 
-        self.trtllm_reshard = cfg.trt_llm.enable and cfg.trt_llm.reshard
+        self.trtllm_reshard = "trt_llm" in cfg and cfg.trt_llm.enable and cfg.trt_llm.reshard
+        self.critic_warmup_steps = cfg.get("critic_warmup_steps", 1)
 
         self.consumed_samples = 0
         # the step here is PPO step
@@ -497,7 +498,7 @@ class PPOTrainer:
                 step_metrics = {}
                 timing_metrics = {}
 
-                critic_train_loop_amount = self.cfg.critic_warmup_steps if self.step == 0 else 1
+                critic_train_loop_amount = self.critic_warmup_steps if self.step == 0 else 1
 
                 for _ in range(critic_train_loop_amount):
                     self.timer.start("rollout_time")
