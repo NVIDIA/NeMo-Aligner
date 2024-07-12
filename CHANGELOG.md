@@ -5,6 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Next Version]
 - Implement reward-aware preference optimization.
+- Added TRT-LLM support in PPO. This can be enabled by doing `trainer.ppo.trt_llm.enable=True`. There is also a reshard option to reshard out pipeline parallelism during inference for further speedup via `trainer.ppo.trt_llm.reshard=True`.
+- Added critic warmup in PPO with the flag `trainer.ppo.critic_warmup_steps`.
   
 ### New features and optimizations
 - Critic and Reward Model server refactored. Now the reward model will have a flag called `model.forward_micro_batch_size` which determines the micro batch size that it runs inferences with. This can be higher than the training micro batch size since during inference we have less memory pressure.
