@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os, json
+from functools import partial
 import numpy as np
 from collections import defaultdict
 from statistics import mean
@@ -25,6 +26,7 @@ from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingRandomBatchSampler,
 )
@@ -51,40 +53,6 @@ context_ids: torch.LongTensor - the entire preamble + prompt
 answer_ids: torch.LongTensor - the entire response only
 metadata: dict - with keys "system" for the preamble, and "mask" which is "User" or "Assistant"
 """
-
-import re
-import jinja2
-jinja2_env = jinja2.Environment()
-
-def exists(v):
-    return v is not None
-
-def default(v, d):
-    return v if exists(v) else d
-
-def find_variables_from_jinja_template(template: str):
-    from jinja2 import meta
-    ast = jinja2_env.parse(template)
-    return meta.find_undeclared_variables(ast)
-
-def create_parse_reward_fn(reward_regex_template):
-    assert find_variables_from_jinja_template(reward_regex_template) == {'reward'}, 'reward template must include "score" variable'
-    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward = "([0-9\.]+)")
-
-    # @always(lambda: randrange(0, 10))
-    def parse_reward_fn(llm_response: str) -> float:
-        result = re.search(rf"{reward_regex_str}", llm_response)
-
-        if not exists(result) or result.groups == 0:
-            return None
-
-        if not result.groups(1)[0].isnumeric():
-            return None
-
-        return float(result.groups(1)[0])
-
-    return parse_reward_fn
-
 def self_rewarding_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
     input_ids = [item["input_ids"] for item in batch]
     masks = [item["mask"] for item in batch]
@@ -108,6 +76,46 @@ def self_rewarding_custom_collate(batch, eos_id, reset_position_ids=False, reset
     }
 
     return output
+
+
+import re
+import jinja2
+jinja2_env = jinja2.Environment()
+
+def eye(x):
+    return x
+
+def exists(v):
+    return v is not None
+
+def default(v, d):
+    return v if exists(v) else d
+
+def find_variables_from_jinja_template(template: str):
+    from jinja2 import meta
+    ast = jinja2_env.parse(template)
+    return meta.find_undeclared_variables(ast)
+
+def create_parse_reward_fn(reward_regex_template):
+    assert find_variables_from_jinja_template(reward_regex_template) == {'reward'}, 'reward template must include "score" variable'
+    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward = "([0-9\.]+)")
+
+    def parse_reward_fn(llm_response: str) -> float:
+        result = re.search(rf"{reward_regex_str}", llm_response)
+
+        if not exists(result) or result.groups == 0:
+            return None
+
+        group_one = result.groups(1)[0] if isinstance(result.groups(1), tuple) else result.groups(1)
+        
+        try:
+            ret = float(group_one)
+        except:
+            ret = None
+        
+        return ret
+
+    return parse_reward_fn
 
 def divide_chunks(l, n):
     for i in range(0, len(l), n):  
@@ -141,11 +149,10 @@ After examining the user's instruction and the response:
 Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
 necessary. To evaluate the response in alignment with this additive scoring model, we'll
 systematically attribute points based on the outlined criteria.
+<extra_id_1>Assistant
 """
 
-DEFAULT_REWARD_REGEX_TEMPLATE = """
-Score: {{ reward }}
-"""
+DEFAULT_REWARD_REGEX_TEMPLATE = "(?i)[\bScore\b|\bPoints\b]: {{ reward }}"
 
 
 class SelfRewardingTrainer:
@@ -187,6 +194,17 @@ class SelfRewardingTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
+        '''
+        self.train_dataloader.collate_fn = partial(
+            self_rewarding_custom_collate,
+            eos_id=self.model.tokenizer.eos_id,
+            reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
+            reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
+            eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
+            iteration=self.iteration,
+            sft_collate=self.train_dataloader.dataset.collate_fn,
+        )
+        '''
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
@@ -402,16 +420,22 @@ class SelfRewardingTrainer:
         return response_tokens, prompt_lengths.cpu(), response_lengths
     
     def get_rewards(self, list_of_batches):
-        reward_scores = [[]] * sum([len(b["prompt_lengths"]) for b in list_of_batches])
+        reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
         for _ in range(self.num_evals_to_average):
             reward_responses, prompt_lengths, resp_lengths = self.get_generations(list_of_batches)
             batch_responses_str = []
             for t,s,e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
                 response = self.model.tokenizer.ids_to_text(t[s:e].tolist())
                 batch_responses_str.append(response)
+            #print("*** batch_responses_str_len: ", len(batch_responses_str))
+            #print("*** sample_reward_response: ", batch_responses_str[0])
             rewards = [self.parse_reward_fn(resp_str) for resp_str in batch_responses_str]
+            #print("*** rewards_after_parse: ", rewards)
             for idx, r in enumerate(rewards):
+                if r is None:
+                    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
                 reward_scores[idx].append(r)
+        #print("*** reward_scores_get_rewards: ", reward_scores)
         assert all([len(b) == self.num_evals_to_average for b in reward_scores]), "did not get generate the correct number of reward scores"
         reward_scores = [[*filter(exists, b)] for b in reward_scores]
         
@@ -470,7 +494,7 @@ class SelfRewardingTrainer:
                     self.model.prepare_for_training()
 
                     self.timer.start("train_step_time")
-                    if self.iteration == 0:
+                    if self.iteration == -1:
                         loss, metrics = self.train_single_step_sft(global_batch)
                     else:
                         loss, metrics = self.train_single_step_dpo(global_batch)
@@ -625,13 +649,22 @@ class SelfRewardingTrainer:
         done = False
         while not done:
             try:
-                batch = next(iter_dataloader)
+                batches = next(iter_dataloader)
+                if self.iteration == -1:
+                    batch = self.train_dataloader.dataset.collate_fn(batches)
+                else:
+                    batch = self_rewarding_custom_collate(batches,
+                                                          eos_id=self.model.tokenizer.eos_id,
+                                                          reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
+                                                          reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
+                                                          eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
+                                                          )
             except StopIteration:
                 done = True
             else:
                 buffer.append(batch)
             
-            if self.iteration == 0:
+            if self.iteration == -1:
                 for batch in buffer:
                     yield batch
                 buffer.clear()
@@ -642,7 +675,7 @@ class SelfRewardingTrainer:
                 with cpu_weight_swap(
                     self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
                 ):
-                    candidate_responses_with_rewards = [[]] * sum([len(b["prompt_lengths"]) for b in buffer])
+                    candidate_responses_with_rewards = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))]
                     for _ in range(self.num_responses_to_gen):
                         # Generation happens on GPU but returned tensors are on CPU so as not to blow up VRAM due to self.num_responses_to_gen
                         gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf = self.get_generations(buffer)
@@ -652,12 +685,17 @@ class SelfRewardingTrainer:
                         for t,s,e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
                             prompt = self.model.tokenizer.ids_to_text(t[:s].tolist())
                             response = self.model.tokenizer.ids_to_text(t[s:e].tolist())
-                            reward_prompt_str = self.template_fn(prompt=prompt.replace("<extra_id_0>System\n\n<extra_id_1>User\n", ""), response=response.replace("\n<extra_id_1>", ""))
+                            reward_prompt_str = self.template_fn(prompt=prompt.replace("<extra_id_0>System\n\n", ""), response=response.replace("\n<extra_id_1>", ""))
                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                            if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
+                                prompt_and_response = self.model.tokenizer.ids_to_text(t.tolist())
+                                reward_prompt_str = self.template_fn(prompt=re.findall(r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0], response=re.findall(r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0])
+                                reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                             reward_buffer.append({"prompt_lengths": torch.LongTensor([len(reward_prompt)]), "prompts_only": torch.LongTensor(reward_prompt).unsqueeze(0)})
                         
                         # list of floats, same length as gen_tokens_buf
                         reward_scores = self.get_rewards(reward_buffer)
+                        #print("*** reward_scores: ", reward_scores)
                         for idx, (t, s, e, r) in enumerate(zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist(), reward_scores)):
                             candidate_responses_with_rewards[idx].append((r,t,s,e))
                     
@@ -665,18 +703,22 @@ class SelfRewardingTrainer:
                     # now we need to pick the chosen/rejected
                     for cand_list in candidate_responses_with_rewards:
                         scores = [b[0] for b in cand_list]
+                        filtered_scores = [*filter(exists, scores)]
                         
+                        # TODO: sample more from the underlying Dataset instead
                         # if all scores are identical (even all None) we just randomly choose
-                        if all([scores[0] == s for s in scores]):
+                        if len(filtered_scores) == 0 or all([scores[0] == s for s in scores]):
                             idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
                         # if we have just one non-None value, take it as the chosen, and randomly choose from the others for reject
-                        elif len([*filter(exists, scores)]) == 1:
-                            filtered_score = [*filter(exists, scores)][0]
-                            idx_chosen = np.where(np.array(scores) == filtered_score)[0].item()
+                        elif len(filtered_scores) == 1:
+                            idx_chosen = np.where(np.array(scores) == filtered_scores[0])[0].item()
                             idx_reject = np.random.choice(list(set(range(len(scores))) - set([idx_chosen])), 1, replace=False).item()
+                        elif len(filtered_scores) > 1:
+                            idx_chosen = np.argmax([(-99999 if s is None else s) for s in scores])
+                            idx_reject = np.argmin([(99999 if s is None else s) for s in scores])
                         else:
-                            idx_chosen = np.argmax(scores)
-                            idx_reject = np.argmin(scores)
+                            print(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
+                            raise RuntimeError("hit strange score selection state, please investigate")
                         
                         # 1 x max_len tensor
                         chosen_tokens = cand_list[idx_chosen][1]
@@ -709,7 +751,7 @@ class SelfRewardingTrainer:
                     reject_gen_lens = torch.LongTensor([b["reject_gen_len"] for b in batch])
                     reject_scores = torch.FloatTensor([(-1 if b["reject_score"] is None else b["reject_score"]) for b in batch])
 
-                    max_batch_len = max(chosen_gen_lens.max().item(), reject_gen_lens.max().item())
+                    max_batch_len = max([len(b["chosen_tokens"]) for b in batch] + [len(b["reject_tokens"]) for b in batch])
                     
                     '''
                     chosen_tokens_pad = torch.cat(

@@ -22,7 +22,7 @@ from omegaconf.omegaconf import OmegaConf, open_dict
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.self_rewarding import SelfRewardingTrainer, self_rewarding_custom_collate
+from nemo_aligner.algorithms.self_rewarding import SelfRewardingTrainer, eye
 from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset, collate_with_pad_to_max_batch
 from nemo_aligner.models.nlp.gpt.megatron_gpt_spin_model import MegatronGPTSPINModel
 from nemo_aligner.utils.distributed import Timer
@@ -73,8 +73,6 @@ def main(cfg) -> None:
             ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
         ptl_model.ref_policy_state_dict = ref_policy_state_dict
-        # param_mean_ref = sum([v.mean().item() for k,v in ptl_model.ref_policy_state_dict.items() if isinstance(v, torch.Tensor)])
-        # print(f"*** ORIG_REF_POLICY [ {param_mean_ref} ]", flush=True)
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
@@ -122,16 +120,16 @@ def main(cfg) -> None:
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
 
-    eos_id = ptl_model.tokenizer.eos_id
+    #eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    collate_fn = partial(
-        self_rewarding_custom_collate,
-        eos_id=eos_id,
-        reset_position_ids=cfg.model.data.get("reset_position_ids", False),
-        reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
-        eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-    )
+    #collate_fn = partial(
+    #    self_rewarding_custom_collate,
+    #    eos_id=eos_id,
+    #    reset_position_ids=cfg.model.data.get("reset_position_ids", False),
+    #    reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
+    #    eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+    #)
 
     train_dataloader = build_dataloader(
         cfg=cfg,
@@ -139,7 +137,7 @@ def main(cfg) -> None:
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
-        collate_fn=collate_fn,
+        collate_fn=eye,
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=False,
         load_gbs=True,
