@@ -533,8 +533,8 @@ class PPOTrainer:
                     )
 
                 if torch.distributed.get_rank() == 0 and self.export_rollouts_jsonl:
-                    with open(self.export_rollouts_jsonl, 'a') as f:
-                        f.write(self.train_df.iloc[-1].to_json() + '\n')
+                    with open(self.export_rollouts_jsonl, "a") as f:
+                        f.write(self.train_df.iloc[-1].to_json() + "\n")
 
                 rollout_size = ppo_rollout_data["response_tokens"].size(0)
                 rollout_dataloader_iter = get_iterator_k_split(
