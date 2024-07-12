@@ -330,23 +330,22 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             response_tokens = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
             response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
+            max_response_length = response_lengths.max().item()
 
-        max_response_length = response_lengths.max().item()
-
-        # Sanity check to validate response length.
-        if max_response_length != response_tokens.size(1):
-            # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
-            # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
-            # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
-            # and remove the `if` below.
-            if (
-                max_response_length >= response_tokens.size(1)
-                or response_tokens.size(1) != prompt_lengths.max().item() + self._length_params["max_length"]
-            ):
-                raise AssertionError(
-                    f"max response length ({max_response_length}) does not match the size of "
-                    f"`response_tokens` ({response_tokens.size(1)})"
-                )
+            # Sanity check to validate response length.
+            if max_response_length != response_tokens.size(1):
+                # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
+                # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
+                # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
+                # and remove the `if` below.
+                if (
+                    max_response_length >= response_tokens.size(1)
+                    or response_tokens.size(1) != prompt_lengths.max().item() + self._length_params["max_length"]
+                ):
+                    raise AssertionError(
+                        f"max response length ({max_response_length}) does not match the size of "
+                        f"`response_tokens` ({response_tokens.size(1)})"
+                    )
 
         rollout_batch = {
             "response_tokens": response_tokens,
