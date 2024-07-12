@@ -115,7 +115,8 @@ class HTTPBatchIterator:
             yield batch
             ids = _send_request(host=self.host, port=self.port, batch_size=self.desired_batch_size)
 
-        self.shared_set.clear()
+        if torch.distributed.get_rank() == 0:
+            self.shared_set.clear()
 
 
 def get_batch_iterator_cls(batch_iterator_cfg):
