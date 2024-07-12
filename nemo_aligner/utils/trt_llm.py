@@ -24,9 +24,18 @@ class GPTGenerateTRTLLM:
         sample_temperature=None,
         sample_top_k=None,
         sample_top_p=None,
+        use_greedy=False,
         tokenizer=None,
         trt_model_dir="/tmp/trt_llm_model",
     ):
+        if use_greedy and sample_top_k != 1 and sample_temperature != 0.0:
+            if sample_top_k != 1:
+                logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
+            if sample_temperature != 0.0:
+                logging.warning(f"'use_greedy=True' overrides {sample_temperature=} to 0.0")
+            sample_top_k = 1
+            sample_temperature = 0.0
+
         self.model_cfg = model_cfg
         self.tokenizer = tokenizer
         self.max_generation_length = max_generation_length
