@@ -19,7 +19,7 @@ import threading
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from functools import partial
-from typing import Callable
+from typing import Callable, Union
 
 import requests
 import torch
@@ -86,7 +86,7 @@ class DefaultBatchIterator:
 
 @dataclass
 class HTTPBatchIterator:
-    shared_set: SharedSet
+    shared_set: Union[SharedSet, None]
     host: str
     port: int
     sampler_iter: Iterator[int]
