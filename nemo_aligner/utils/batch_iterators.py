@@ -136,7 +136,6 @@ def get_batch_iterator_cls(batch_iterator_cfg):
             shared_set = SharedSet(lock)
             app = Flask(__name__)
 
-            # TODO: add batch size
             @app.route("/get_idx", methods=["PUT"])
             def get_http_idx():
                 batch_size = request.get_json()["batch_size"]
