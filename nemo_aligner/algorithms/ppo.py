@@ -445,8 +445,11 @@ class PPOTrainer:
 
             if grad_norm is not None:
                 metrics["grad_norm"] = grad_norm
+            if lr is not None:
+                # Some optimizers like adafactor do not require a LR in their initializer
+                metrics["lr"] = lr
 
-            metrics.update({"lr": lr, "loss": loss_mean, "optim_step": self.ppo_optimization_step})
+            metrics.update({"loss": loss_mean, "optim_step": self.ppo_optimization_step})
             metrics["train_step_time"] = self.timer.stop_and_get_time("train_step_time")
 
             self.logger.log_metrics(
