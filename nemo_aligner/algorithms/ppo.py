@@ -13,10 +13,9 @@
 # limitations under the License.
 
 import itertools
-import time
 from collections import UserDict
 from contextlib import nullcontext
-from dataclasses import dataclass
+from typing import Dict, List, Union
 
 import pandas as pd
 import torch
@@ -50,7 +49,11 @@ from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 
 class PPORolloutBatch(UserDict):
     @classmethod
-    def from_rollout_batches(cls, rollout_batches, eos_id, rollout_batch_seq_length):
+    def from_rollout_batches(
+        cls, rollout_batches: List[Dict], eos_id: int, rollout_batch_seq_length: Union[int, None]
+    ):
+        """Given a list of rollout batches, stack the tensors within and put them in a single dictionary
+        """
         stacked_dict = cls()
 
         if len(rollout_batches) == 0:
@@ -72,7 +75,7 @@ class PPORolloutBatch(UserDict):
                 )
                 tensor = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
 
-                # find the max sequence length
+                # find the max sequence length globally
                 max_seqlen = torch.tensor([tensor.size(-1)], dtype=torch.long, device=torch.cuda.current_device())
                 torch.distributed.all_reduce(max_seqlen, op=torch.distributed.ReduceOp.MAX)
 
@@ -91,6 +94,8 @@ class PPORolloutBatch(UserDict):
         global_rollout_batch = type(self)()
 
         for k, tensor in self.data.items():
+            # with reshard enabled, PP groups turn into DP groups. So need to balance them first and then
+            # balance by all the original DP groups
             if is_trt_llm_reshard():
                 tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_pipeline_model_parallel_group())
 
@@ -103,7 +108,7 @@ class PPORolloutBatch(UserDict):
         chunked_rollout_batch = type(self)()
 
         batch_set = set(tensor.size(0) for tensor in self.data.values())
-        assert len(batch_set) == 1, "batch sizes are not the same across rollout batch"
+        assert len(batch_set) == 1, "batch sizes are not the same across the rollout batch"
         B = batch_set.pop()
 
         g_cpu = torch.Generator()
@@ -338,6 +343,8 @@ class PPOTrainer:
             global_rm_value_batch = unbalanced_rm_value_batch.gather_and_balance_globally()
 
         # chunking needs to be outside of reshard region
+        # NOTE: the seed here must be the same as the chunk before since we need to shuffle
+        # these values the same way as the other values
         balanced_rm_value_batch = global_rm_value_batch.chunk(
             parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
         )
