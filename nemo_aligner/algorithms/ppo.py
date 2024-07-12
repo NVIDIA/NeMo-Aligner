@@ -437,9 +437,7 @@ class PPOTrainer:
                 metrics["grad_norm"] = grad_norm
 
             metrics.update({"lr": lr, "loss": loss_mean, "optim_step": self.ppo_optimization_step})
-
-            self.timer.stop("train_step_time")
-            metrics["train_step_time"] = self.timer.get("train_step_time")
+            metrics["train_step_time"] = self.timer.stop_and_get_time("train_step_time")
 
             self.logger.log_metrics(
                 metrics, step=self.step, prefix="train_optim/",
@@ -497,9 +495,7 @@ class PPOTrainer:
                 for _ in range(critic_train_loop_amount):
                     self.timer.start("rollout_time")
                     ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
-
-                    self.timer.stop("rollout_time")
-                    timing_metrics["rollout_time"] = self.timer.get("rollout_time")
+                    timing_metrics["rollout_time"] = self.timer.stop_and_get_time("rollout_time")
 
                     # send critic train
                     clear_memory()
@@ -532,8 +528,7 @@ class PPOTrainer:
                 clear_memory()
                 self.timer.start("train_time")
                 self.run_training(rollout_dataloader_iter)
-                self.timer.stop("train_time")
-                timing_metrics["train_time"] = self.timer.get("train_time")
+                timing_metrics["train_time"] = self.timer.stop_and_get_time("train_time")
 
                 self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
 
@@ -552,8 +547,7 @@ class PPOTrainer:
                 if run_val:
                     self.timer.start("validation_time")
                     val_metrics = self.run_validation()
-                    self.timer.stop("validation_time")
-                    timing_metrics["validation_time"] = self.timer.get("validation_time")
+                    timing_metrics["validation_time"] = self.timer.stop_and_get_time("validation_time")
 
                     val_table_metrics = val_metrics.pop("table")
 
