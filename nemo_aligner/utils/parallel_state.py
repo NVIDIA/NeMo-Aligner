@@ -11,3 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""Wrapper around mcore parallel state to handle cases of resharding"""
+
+from megatron.core import parallel_state as mcore_parallel_state
+
+from nemo.collections.nlp.modules.common.text_generation_utils import (
+    get_model_parallel_src_rank as nemo_get_model_parallel_src_rank,
+)
+
+
+def get_model_parallel_src_rank():
+    src_rank = nemo_get_model_parallel_src_rank()
+
+    return src_rank
+
+
+def __getattr__(name):
+    return getattr(mcore_parallel_state, name)

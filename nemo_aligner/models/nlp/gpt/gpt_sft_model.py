@@ -170,7 +170,7 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
 
         if isinstance(inputs[0], str):
             # add_EOS=False since it is absent from nemo.collections.nlp.modules.common.text_generation_utils.megatron_gpt_generate
-            prompt_tokens, prompt_lengths, _ = tokenize_batch(
+            prompt_tokens, prompt_lengths = tokenize_batch(
                 sentences=inputs,
                 tokenizer=self.tokenizer,
                 max_len=self.cfg.encoder_seq_length,

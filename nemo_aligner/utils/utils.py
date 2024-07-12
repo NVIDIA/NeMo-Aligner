@@ -19,6 +19,7 @@ import os
 import re
 import tempfile
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import replace
 from functools import partial
 from typing import Iterator, List
@@ -336,6 +337,35 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
 
 
 @torch.no_grad()
+def copy_model_states_to_cpu(model, cpu_dict=None, megatron_amp_O2=True, sync=True, alias_non_tensor=False):
+    """This function mutates the cpu_dict object to throw the model states into preallocated tensors(if they exist)
+        for non tensors it will do a deepcopy, unless alias_non_tensor is True
+    """
+    if cpu_dict is None:
+        cpu_dict = {}
+
+    for name, item in model.state_dict().items():
+        if isinstance(item, torch.Tensor):
+            if name not in cpu_dict:
+                cpu_dict[name] = torch.empty(
+                    item.size(), dtype=item.dtype, layout=item.layout, device="cpu", pin_memory=True
+                )
+            cpu_dict[name].copy_(item, non_blocking=sync)
+        elif alias_non_tensor:
+            cpu_dict[name] = item
+        else:
+            cpu_dict[name] = deepcopy(item)
+
+    if megatron_amp_O2:
+        cpu_dict = convert_to_amp_o2_format(cpu_dict)
+
+    if sync:
+        torch.cuda.synchronize()
+
+    return cpu_dict
+
+
+@torch.no_grad()
 def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O2=True):
     """swap the state dict with a specified state dict, and offload the current state dict onto CPU
         if needed
@@ -384,10 +414,10 @@ def convert_to_amp_o2_format(state_dict):
     """
     new_state_dict = {}
 
-    for key in state_dict.keys():
+    for key, item in state_dict.items():
         if "model.module." not in key:
-            new_key = key.replace("model.", "model.module.", 1)
-            new_state_dict[new_key] = state_dict[key]
+            key = key.replace("model.", "model.module.", 1)
+        new_state_dict[key] = item
 
     return new_state_dict
 
