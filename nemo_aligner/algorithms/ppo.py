@@ -96,6 +96,8 @@ class PPORolloutBatch(UserDict):
         for k, tensor in self.data.items():
             # with reshard enabled, PP groups turn into DP groups. So need to balance them first and then
             # balance by all the original DP groups
+            # NOTE: this logic needs to use the pure parallel state, that is one without sharding but needs
+            # to ping the is_trt_llm_reshard variable
             if is_trt_llm_reshard():
                 tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_pipeline_model_parallel_group())
 
