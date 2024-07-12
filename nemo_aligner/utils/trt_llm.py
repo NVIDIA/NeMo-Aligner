@@ -92,22 +92,21 @@ class GPTGenerateTRTLLM:
 
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
         output_ids = torch.squeeze(output_dict["output_ids"], dim=1).long()
-        resp_lens = torch.squeeze(output_dict["sequence_lengths"], dim=1).long()
+        response_lengths = torch.squeeze(output_dict["sequence_lengths"], dim=1).long()
 
         # TRTLLM with PP erroneously inserts padding so have to remove it here
         if parallel_state.get_pipeline_model_parallel_world_size() > 1:
             max_prompt_len = prompt_lengths.max().item()
             _output_ids = torch.full_like(input=output_ids, fill_value=self.tokenizer.eos_id)
             for idx in range(prompt_tokens.shape[0]):
-                gen_len = (resp_lens[idx] - prompt_lengths[idx]).item()
+                gen_len = (response_lengths[idx] - prompt_lengths[idx]).item()
                 response = output_ids[idx, max_prompt_len : max_prompt_len + gen_len]
                 prompt_response = torch.cat((prompt_tokens[idx][: prompt_lengths[idx]], response))
                 _output_ids[idx, : prompt_response.size(0)] = prompt_response
             output_ids = _output_ids
 
-        max_len = (prompt_lengths + resp_lens).max().item()
-        output_ids = output_ids[..., :max_len]
-        output_ids = output_ids.contiguous()
+        max_len = (prompt_lengths + response_lengths).max().item()
+        output_ids = output_ids[..., :max_len].contiguous()
         output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
 
         assert (0 <= output_ids).all(), "TRT-LLM generated tokens that are less than 0"
@@ -118,7 +117,7 @@ class GPTGenerateTRTLLM:
         sentences = [self.tokenizer.ids_to_text(output) for output in output_ids.tolist()]
         output = {
             "response_tokens": output_ids,
-            "response_lengths": resp_lens,
+            "response_lengths": response_lengths,
             "sentences": sentences,
         }
 
