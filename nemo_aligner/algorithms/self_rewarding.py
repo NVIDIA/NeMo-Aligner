@@ -278,7 +278,7 @@ class SelfRewardingTrainer:
                 sample_temperature=self.sampling_params["temperature"],
                 sample_top_k=self.sampling_params["top_k"],
                 sample_top_p=self.sampling_params["top_p"],
-                use_greedy=self.sampling_params.get("use_greedy", False),
+                #use_greedy=self.sampling_params.get("use_greedy", False),
                 tokenizer=self.model.tokenizer,
             )
 
@@ -418,12 +418,12 @@ class SelfRewardingTrainer:
 
         if self.use_trtllm_generation:
             actor_output = self.trtllm_generate.generate(inputs)
-            response_tokens = actor_output["response_tokens"].cpu()
-            response_lengths = actor_output["response_lengths"].cpu()
+            response_tokens = actor_output["response_tokens"]
+            response_lengths = actor_output["response_lengths"]
             
             # double check with nemo logic to make sure it ended
             is_end = strategy.end_of_generation_condition(
-                response_tokens, response_tokens[:, -1], self.tokenizer.eos_id, self._sampling_params["end_strings"]
+                response_tokens, response_tokens[:, -1], self.model.tokenizer.eos_id, self.sampling_params["end_strings"]
             )
             assert torch.all(
                 is_end
@@ -469,7 +469,7 @@ class SelfRewardingTrainer:
             responses_by_prompt.append(res)
         '''
 
-        return response_tokens, prompt_lengths.cpu(), response_lengths
+        return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu()
     
     def get_rewards(self, list_of_batches):
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
