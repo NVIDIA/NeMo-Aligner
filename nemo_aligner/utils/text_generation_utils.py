@@ -73,7 +73,7 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
 
         lengths = broadcast_2d_tensor_within_pp(lengths, dtype=torch.int64)
         if return_is_end:
-            is_end = broadcast_2d_tensor_within_pp(is_end, dtype=torch.bool)
+            is_end = broadcast_2d_tensor_within_pp(is_end.view(-1, 1), dtype=torch.bool).view(-1)
             return lengths, is_end
 
         return lengths.flatten()
