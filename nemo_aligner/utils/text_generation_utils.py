@@ -14,7 +14,6 @@
 
 """Utilities for generating text."""
 
-import math
 from typing import Any, List
 
 import torch
@@ -57,7 +56,7 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
         self._end_idx = torch.where(started & is_end & (self._end_idx < 0), context_length, self._end_idx)
         return is_end
 
-    def get_lengths(self) -> torch.Tensor:
+    def get_lengths(self, return_is_end=False) -> torch.Tensor:
         """
         Return the total lengths of the generated sequences, in # of tokens.
 
@@ -66,11 +65,17 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
             * the token(s) that ended generation, if any (e.g. the `EOS` token or the token(s) corresponding to
               an element of `sampling_params.end_strings`)
         """
-        lengths = None
+        lengths, is_end = None, None
         if parallel_state.is_pipeline_last_stage():  # only the last stage actually has access to lengths
-            lengths = torch.where(self._end_idx >= 0, self._end_idx + 1, self._context_lengths + self._max_length)
+            is_end = self._end_idx >= 0
+            lengths = torch.where(is_end, self._end_idx + 1, self._context_lengths + self._max_length)
             lengths = lengths.to(torch.int64).view((-1, 1))
+
         lengths = broadcast_2d_tensor_within_pp(lengths, dtype=torch.int64)
+        if return_is_end:
+            is_end = broadcast_2d_tensor_within_pp(is_end, dtype=torch.bool)
+            return lengths, is_end
+
         return lengths.flatten()
 
 
