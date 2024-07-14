@@ -119,7 +119,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     required_keys.update(("response_tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("response_tokens", "advantages", "mask", "prev_logprobs"))
+                    required_keys.update(("response_tokens", "advantages", "mask", "prev_logprobs", "is_end"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
@@ -132,6 +132,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 advantages = batch["advantages"]
                 prev_log_probs = batch["prev_logprobs"]
                 tokens = batch["response_tokens"]
+                is_end = batch["is_end"]
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
@@ -139,7 +140,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
                 scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
                 if self.entropy_bonus > 0:
-                    scaled_entropy = calculate_distributed_entropy(parallel_logits, mask) * self.entropy_bonus
+                    scaled_entropy = (
+                        calculate_distributed_entropy(parallel_logits, mask * is_end.view(-1, 1)) * self.entropy_bonus
+                    )
 
                 # Calculate clipped PPO surrogate loss function.
                 ratios = (curr_log_probs - prev_log_probs).exp()
@@ -147,8 +150,14 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
                 loss1 = -advantages * ratios
                 loss2 = -advantages * ratios_clamped
-                actor_loss = masked_mean(torch.max(loss1, loss2), mask)
+
+                actor_loss = (torch.max(loss1, loss2) * mask).sum(-1) / mask.sum(-1)
+                actor_loss = (actor_loss * is_end).sum() / is_end.sum()
+
                 loss = actor_loss - scaled_entropy
+                # in cases where there are no valid is_end, we will get nans(division by 0)
+                # in that case, need to set it to 0 to not cause a bad update
+                loss = torch.nan_to_num(loss)
 
                 with torch.no_grad():
                     ppo_ratio = masked_mean(ratios.detach(), mask)
@@ -314,14 +323,14 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
 
+            prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
             # double check with nemo logic to make sure it ended
             is_end = strategy.end_of_generation_condition(
-                response_tokens, response_tokens[:, -1], self.tokenizer.eos_id, self._sampling_params["end_strings"]
+                response_tokens, prev, self.tokenizer.eos_id, self._sampling_params["end_strings"]
             )
-            assert torch.all(
-                is_end
-            ), f"rank {torch.distributed.get_rank()} did NOT stop properly accoridng to nemo! {response_tokens=}"
+
         else:
+            # TODO: maybe add is_end logic here as well
             actor_output = self.generate(
                 inputs=inputs,
                 length_params=self._length_params,
@@ -352,6 +361,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             "response_tokens": response_tokens,
             "response_lengths": response_lengths,
             "prompt_lengths": prompt_lengths,
+            "is_end": is_end,
         }
 
         # return in GPU, trainer needs to move to cpu
