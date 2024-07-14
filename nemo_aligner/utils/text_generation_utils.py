@@ -69,11 +69,13 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
         if parallel_state.is_pipeline_last_stage():  # only the last stage actually has access to lengths
             is_end = self._end_idx >= 0
             lengths = torch.where(is_end, self._end_idx + 1, self._context_lengths + self._max_length)
+
             lengths = lengths.to(torch.int64).view((-1, 1))
+            is_end = is_end.view(-1, 1)
 
         lengths = broadcast_2d_tensor_within_pp(lengths, dtype=torch.int64)
         if return_is_end:
-            is_end = broadcast_2d_tensor_within_pp(is_end.view(-1, 1), dtype=torch.bool).view(-1)
+            is_end = broadcast_2d_tensor_within_pp(is_end, dtype=torch.bool).view(-1)
             return lengths, is_end
 
         return lengths.flatten()
