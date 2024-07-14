@@ -111,17 +111,25 @@ class GPTGenerateTRTLLM:
             and parallel_state.get_model_parallel_src_rank() == torch.distributed.get_rank()
         ):
             valid_tokens = output_ids != self.pad_id
+            # we can't just natively use the response length here
+            # because there are cases where the model generates
+            # stop strings after it has stopped. so we need to
+            # be slightly inefficient and then remove the excess later on
+            valid_token_lengths = valid_tokens.sum(-1, keepdims=True)
+            max_unpadded_length = valid_token_lengths.max()
+
             _output_ids = torch.full(
-                (response_lengths.size(0), max_length),
+                (response_lengths.size(0), max_unpadded_length),
                 fill_value=self.pad_id,
                 dtype=output_ids.dtype,
                 device=output_ids.device,
             )
 
             # only fill up to the amount of valid tokens
-            src_index_mask = torch.arange(max_length, device=response_lengths.device).view(
-                1, -1
-            ) < response_lengths.view(-1, 1)
+            src_index_mask = (
+                torch.arange(max_unpadded_length, device=response_lengths.device).view(1, -1) < valid_token_lengths
+            )
+
             _output_ids[src_index_mask] = output_ids[valid_tokens]
             output_ids = _output_ids
 
