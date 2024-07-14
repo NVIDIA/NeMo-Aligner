@@ -134,15 +134,15 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 tokens = batch["response_tokens"]
                 is_end = batch["is_end"]
 
+                is_end_mask = mask * is_end.view(-1, 1)
+
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
                 )
 
                 scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
                 if self.entropy_bonus > 0:
-                    scaled_entropy = (
-                        calculate_distributed_entropy(parallel_logits, mask * is_end.view(-1, 1)) * self.entropy_bonus
-                    )
+                    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask) * self.entropy_bonus
 
                 # Calculate clipped PPO surrogate loss function.
                 ratios = (curr_log_probs - prev_log_probs).exp()
@@ -151,13 +151,12 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 loss1 = -advantages * ratios
                 loss2 = -advantages * ratios_clamped
 
-                actor_loss = (torch.max(loss1, loss2) * mask).sum(-1) / mask.sum(-1)
-                actor_loss = (actor_loss * is_end).sum() / is_end.sum()
-
-                loss = actor_loss - scaled_entropy
-                # in cases where there are no valid is_end, we will get nans(division by 0)
-                # in that case, need to set it to 0 to not cause a bad update
-                loss = torch.nan_to_num(loss)
+                if is_end_mask.sum() > 0:
+                    actor_loss = masked_mean(torch.max(loss1, loss2), is_end_mask)
+                    loss = actor_loss - scaled_entropy
+                else:
+                    # hack to disable this update since there are no valid tokens
+                    loss = loss1.view(-1)[0] * 0
 
                 with torch.no_grad():
                     ppo_ratio = masked_mean(ratios.detach(), mask)
