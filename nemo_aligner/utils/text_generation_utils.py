@@ -73,12 +73,12 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
             lengths = lengths.to(torch.int64).view((-1, 1))
             is_end = is_end.view(-1, 1)
 
-        lengths = broadcast_2d_tensor_within_pp(lengths, dtype=torch.int64)
+        lengths = broadcast_2d_tensor_within_pp(lengths, dtype=torch.int64).flatten()
         if return_is_end:
-            is_end = broadcast_2d_tensor_within_pp(is_end, dtype=torch.bool).view(-1)
+            is_end = broadcast_2d_tensor_within_pp(is_end, dtype=torch.bool).flatten()
             return lengths, is_end
 
-        return lengths.flatten()
+        return lengths
 
 
 def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False):
