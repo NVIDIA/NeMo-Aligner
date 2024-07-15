@@ -1,0 +1,126 @@
+diff --git a/cpp/include/tensorrt_llm/runtime/gptSession.h b/cpp/include/tensorrt_llm/runtime/gptSession.h
+index c94eeb2a4..8fefe33af 100644
+--- a/cpp/include/tensorrt_llm/runtime/gptSession.h
++++ b/cpp/include/tensorrt_llm/runtime/gptSession.h
+@@ -32,6 +32,7 @@
+ 
+ #include <cstdint>
+ #include <functional>
++#include <map>
+ #include <memory>
+ #include <string>
+ #include <vector>
+@@ -220,6 +221,8 @@ public:
+     void generate(GenerationOutput& outputs, GenerationInput const& inputs, SamplingConfig const& samplingConfig,
+         std::shared_ptr<GenerationProfiler> const generationProfiler = nullptr);
+ 
++    void refitEngine(std::vector<std::pair<std::string, nvinfer1::Weights>> refit_params);
++
+ private:
+     [[nodiscard]] bool useCudaGraphs()
+     {
+diff --git a/cpp/tensorrt_llm/pybind/bindings.cpp b/cpp/tensorrt_llm/pybind/bindings.cpp
+index 3e6d704af..efa03e83f 100644
+--- a/cpp/tensorrt_llm/pybind/bindings.cpp
++++ b/cpp/tensorrt_llm/pybind/bindings.cpp
+@@ -15,6 +15,7 @@
+  * limitations under the License.
+  */
+ 
++#include <map>
+ #include <pybind11/cast.h>
+ #include <pybind11/functional.h>
+ #include <pybind11/operators.h>
+@@ -44,6 +45,9 @@
+ #include "tensorrt_llm/runtime/memoryCounters.h"
+ #include "tensorrt_llm/runtime/samplingConfig.h"
+ 
++#include <ATen/ATen.h>
++#include <torch/torch.h>
++
+ namespace py = pybind11;
+ namespace tb = tensorrt_llm::batch_manager;
+ namespace tbb = tensorrt_llm::batch_manager::batch_scheduler;
+@@ -329,7 +333,23 @@ PYBIND11_MODULE(TRTLLM_PYBIND_MODULE, m)
+             [](tr::GptSession& self, tpr::GenerationOutput& outputs, tpr::GenerationInput const& inputs,
+                 tr::SamplingConfig const& samplingConfig)
+             { self.generate(*outputs.toTrtLlm(), *inputs.toTrtLlm(), samplingConfig); },
+-            py::arg("outputs"), py::arg("inputs"), py::arg("sampling_config"));
++            py::arg("outputs"), py::arg("inputs"), py::arg("sampling_config"))
++        .def(
++            "refit_engine",
++            [](tr::GptSession& self, std::map<std::string, at::Tensor> refit_params, nvinfer1::DataType dtype)
++            {
++                std::vector<std::pair<std::string, nvinfer1::Weights>> param_map;
++                for (auto param : refit_params)
++                {
++                    nvinfer1::Weights trt_weight;
++                    trt_weight.type = dtype;
++                    trt_weight.count = param.second.numel();
++                    trt_weight.values = param.second.data_ptr();
++                    param_map.push_back({param.first, trt_weight});
++                }
++                self.refitEngine(param_map);
++            },
++            py::arg("refit_params"), py::arg("type"));
+ 
+     py::enum_<tb::LlmRequestState_t>(m, "LlmRequestState")
+         .value("REQUEST_STATE_UNKNOWN", tb::LlmRequestState_t::REQUEST_STATE_UNKNOWN)
+diff --git a/cpp/tensorrt_llm/runtime/gptSession.cpp b/cpp/tensorrt_llm/runtime/gptSession.cpp
+index 6e232f85d..81a5ef6ab 100644
+--- a/cpp/tensorrt_llm/runtime/gptSession.cpp
++++ b/cpp/tensorrt_llm/runtime/gptSession.cpp
+@@ -1184,6 +1184,11 @@ void GptSession::finalize(SizeType microBatchId)
+     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
+ }
+ 
++void GptSession::refitEngine(std::vector<std::pair<std::string, nvinfer1::Weights>> refit_params)
++{
++    mRuntime->refitEngine(*mLogger, refit_params);
++}
++
+ void GptSession::CudaGraphExecutor::create(cudaGraph_t const& graph)
+ {
+     TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
+diff --git a/cpp/tensorrt_llm/runtime/tllmRuntime.cpp b/cpp/tensorrt_llm/runtime/tllmRuntime.cpp
+index 09261697c..87fe0a303 100644
+--- a/cpp/tensorrt_llm/runtime/tllmRuntime.cpp
++++ b/cpp/tensorrt_llm/runtime/tllmRuntime.cpp
+@@ -217,6 +217,24 @@ void TllmRuntime::setOutputTensors(SizeType contextIndex, TensorMap& tensorMap)
+     }
+ }
+ 
++void TllmRuntime::refitEngine(
++    nvinfer1::ILogger& logger, std::vector<std::pair<std::string, nvinfer1::Weights>> refit_params)
++{
++    nvinfer1::ICudaEngine& engine = *(mEngine.get());
++    TLLM_CHECK_WITH_INFO(engine.isRefittable(), "Tried refitting engine without refit enabled");
++
++    nvinfer1::IRefitter* refitter = nvinfer1::createInferRefitter(engine, logger);
++    for (auto param : refit_params)
++    {
++        TLLM_CHECK_WITH_INFO(
++            refitter->setNamedWeights(param.first.c_str(), param.second, nvinfer1::TensorLocation::kHOST),
++            "Failed to refit %s", param.first.c_str());
++    }
++    TLLM_CHECK_WITH_INFO(refitter->refitCudaEngine(), "Refit failed!");
++
++    delete refitter;
++}
++
+ CudaStream const& TllmRuntime::getStream() const
+ {
+     return *mStream;
+diff --git a/cpp/tensorrt_llm/runtime/tllmRuntime.h b/cpp/tensorrt_llm/runtime/tllmRuntime.h
+index 51428f6f4..b32a754ca 100644
+--- a/cpp/tensorrt_llm/runtime/tllmRuntime.h
++++ b/cpp/tensorrt_llm/runtime/tllmRuntime.h
+@@ -70,6 +70,8 @@ public:
+ 
+     bool executeContext(SizeType contextIndex) const;
+ 
++    void refitEngine(nvinfer1::ILogger& logger, std::vector<std::pair<std::string, nvinfer1::Weights>> refit_params);
++
+     CudaStream const& getStream() const;
+ 
+     BufferManager::CudaStreamPtr getStreamPtr()

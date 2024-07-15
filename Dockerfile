@@ -1,11 +1,17 @@
 # CUDA 12.3
 FROM nvcr.io/nvidia/pytorch:24.02-py3
+FROM nvcr.io/nvidia/pytorch:24.02-py3
 
 ### config tags
 ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
 ARG TE_TAG=a51ff542dcb1f605aa54f9b0e1aaadb132acd53d
 ARG MLM_TAG=core_r0.7.0
 ARG NEMO_TAG=r2.0.0rc0
+ARG PYTRITON_VERSION=0.5.5
+ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
+ARG TE_TAG=bfe21c3d68b0a9951e5716fb520045db53419c5e
+ARG MLM_TAG=fbb375d4b5e88ce52f5f7125053068caff47f93f
+ARG NEMO_TAG=1ff3a061da9751e4d645c8de66c0dfd27bd5d119
 ARG PYTRITON_VERSION=0.5.5
 ARG PROTOBUF_VERSION=4.24.4
 ARG ALIGNER_COMMIT=main
@@ -37,7 +43,7 @@ RUN pip uninstall -y apex && \
         git fetch origin $APEX_TAG && \
         git checkout FETCH_HEAD; \
     fi && \
-    pip install install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
+    pip install -e . -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam --group_norm"
 
 # place any util pkgs here
 RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==$PYTRITON_VERSION
@@ -77,4 +83,19 @@ RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
     fi && \
     pip install --no-deps -e .
 
-WORKDIR /workspace
+# Git LFS
+RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
+    apt-get install git-lfs && \
+    git lfs install
+
+# TRTLLM-0.10
+RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
+    cd TensorRT-LLM && \
+    git checkout v0.10.0 && \
+    patch -p1 < ../NeMo-Aligner/trtllm.patch && \
+    . docker/common/install_tensorrt.sh && \
+    python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
+
+RUN cd TensorRT-LLM && \
+    pip install ./build/tensorrt_llm*.whl
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.3/compat/lib.real/

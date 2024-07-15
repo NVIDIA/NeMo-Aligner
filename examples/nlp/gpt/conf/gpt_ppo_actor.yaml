@@ -9,6 +9,8 @@ trainer:
   precision: bf16
 
   ppo:
+    critic_warmup_steps: 1
+
     max_epochs: 1
     max_steps: -1  # max PPO steps (-1 to go through the whole train set)
     val_check_interval: 10
@@ -22,16 +24,40 @@ trainer:
     gae_lambda: 0.95
     normalize_advantages: True
 
+
+    # the sequence length to pad the rollout batch for training to
+    # reduce fragmentation at the cost of using more
+    # memory, set to null if we don't want to pad it
+    # to a constant size
+    # if actual seq length is higher than this a warning will be raised
+    # but will not crash and training will still proceed on the larger
+    # sequence length
+    rollout_batch_seq_length: null
+
+    # Accelerate training times by accelerating inference stage using TRTLLM
+    trt_llm:
+      enable: False
+      reshard: False # if True then reshard the model into TP only for inference
+
+      # TRTLLM preallocates activation memory according to the number of input tokens
+      # By default, assume the max input length is half of the model sequence length
+      max_input_len: ${int_div:${model.encoder_seq_length}, 2}
+      max_input_tokens: ${multiply:${trainer.ppo.trt_llm.max_input_len}, ${model.ppo.rollout_micro_batch_size}}
+
+      model_type: llama
+
+      # Unload and reload the TRTLLM engine before and after the training stage 
+      # Reloading the engine incurs a constant time overhead
+      unload_engine_train: False
+
+    batch_iterator:
+      use_flask: False
+      port: 12345
+
     # pick up from the model
     # *do not change this*
     model_gbs: ${model.global_batch_size}
     model_mbs: ${model.micro_batch_size}
-
-    # the sequence length to pad the rollout batch to
-    # this reduces fragmentation at the cost of using more
-    # memory, set to null if we don't want to pad it
-    # to a constant size
-    rollout_batch_seq_length: null
 
   # no need to change these
   logger: False # logger provided by exp_manager
@@ -78,12 +104,12 @@ exp_manager:
   resume_ignore_no_checkpoint: True
   create_checkpoint_callback: True
   checkpoint_callback_params:
-    monitor: val_global_rewards
+    monitor: val_rewards
     save_top_k: 1
     mode: max
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt-{step}-{consumed_samples}-{ppo_optimization_step}-{epoch}-{val_global_rewards:.3f}'
+    filename: 'megatron_gpt-{step}-{consumed_samples}-{ppo_optimization_step}-{epoch}-{val_rewards:.3f}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
 
 pretrained_checkpoint:
@@ -92,6 +118,8 @@ pretrained_checkpoint:
 model:
 
   ppo:
+    trt_llm: ${trainer.ppo.trt_llm}
+
     # training generation mbs
     rollout_micro_batch_size: 8
     num_rollout_samples: 512

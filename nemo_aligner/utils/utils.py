@@ -60,6 +60,7 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
 def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train_end=False, save_top_only=False):
     """work around used so we can save models manually"""
     super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
+
     if save_top_only:
         return
 
@@ -192,6 +193,14 @@ def set_autocast_gpu_dtype(precision):
         torch.set_autocast_gpu_dtype(torch.bfloat16)
 
 
+def get_global_set(local_data_ids: set):
+    output = [None for _ in range(torch.distributed.get_world_size())]
+    torch.distributed.all_gather_object(output, local_data_ids)
+    global_set = set().union(*output)
+
+    return global_set
+
+
 def calculate_response_lengths(tokens, eos_id):
     """calculates the response length of the tokens after padding"""
     return (tokens != eos_id).sum(-1)
@@ -273,7 +282,13 @@ def batch_pad_to_fixed_len(batch, max_batch_len, pad_token):
 
 
 def collate_with_batch_max_sequence_length(
-    data_batch, response_token_length, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
+    data_batch,
+    response_token_length,
+    eos_id,
+    reset_position_ids,
+    reset_attention_mask,
+    eod_mask_loss,
+    generate_masks_and_position_ids,
 ):
     """collate function that batches by max sequence length
     """
@@ -284,19 +299,25 @@ def collate_with_batch_max_sequence_length(
 
     texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
-    # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
-    attention_masks, loss_masks, position_ids = get_ltor_masks_and_position_ids(
-        texts, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
-    )
-
-    return {
+    output = {
         "text": texts,
         "length": lengths,
-        "attention_mask": attention_masks,
-        # to preserve the loss mask from the dataset
-        "loss_mask": loss_masks * loss_multipliers,
-        "position_ids": position_ids,
     }
+
+    other = {}
+    if generate_masks_and_position_ids:
+        # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
+        attention_masks, loss_masks, position_ids = get_ltor_masks_and_position_ids(
+            texts, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
+        )
+        other = {
+            "attention_mask": attention_masks,
+            # to preserve the loss mask from the dataset
+            "loss_mask": loss_masks * loss_multipliers,
+            "position_ids": position_ids,
+        }
+
+    return output | other
 
 
 def apply_func_to_dict(func, dictionary):
