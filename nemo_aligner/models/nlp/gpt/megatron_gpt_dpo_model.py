@@ -92,7 +92,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         return out_chosen.flatten(), out_rejected.flatten()
 
-    def get_forward_output_and_loss_func(self, validation_step=False):
+    def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
             batch = next(dataloader_iter)
 
@@ -128,7 +128,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             if batch["chosen_labels"] is not None and batch["rejected_labels"] is not None:
                 labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
 
-            if batch["ref_policy_log_probs_chosen"] is not None and batch["ref_policy_log_probs_rejected"] is not None:
+            if (
+                batch.get("ref_policy_log_probs_chosen") is not None
+                and batch.get("ref_policy_log_probs_rejected") is not None
+            ):
                 ref_logprobs = torch.cat(
                     (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
                 )
@@ -165,12 +168,24 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             if not parallel_state.is_pipeline_last_stage():
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
+            def logprobs_func(output_tensor, non_loss_data=True):
+                # This function is expected to be used only when `collect_non_loss_data=True` in the fwd_bwd_function of Megatron-LM.
+                # See https://github.com/NVIDIA/Megatron-LM/blob/0bc3547702464501feefeb5523b7a17e591b21fa/megatron/core/pipeline_parallel/schedules.py#L228
+                assert non_loss_data
+                logprobs = from_parallel_logits_to_logprobs(
+                    vocab_parallel_logits=output_tensor, target=labels, inference_only=True, higher_stability=True,
+                )
+                return {"logprobs": logprobs}
+
             def loss_func(output_tensor):
                 if validation_step and not self.cfg.data.get("validation_drop_last", True):
                     raise NotImplementedError("DPO does not support validation when cfg.data.drop_last=False")
 
                 per_token_logps = from_parallel_logits_to_logprobs(
-                    vocab_parallel_logits=output_tensor, target=labels, higher_stability=True
+                    vocab_parallel_logits=output_tensor,
+                    target=labels,
+                    inference_only=validation_step,
+                    higher_stability=True,
                 )
 
                 preference_loss, acc_chosen = self.loss_func(
@@ -211,7 +226,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     },
                 )
 
-            return output_tensor, loss_func
+            if logprobs_only:
+                return output_tensor, logprobs_func
+            else:
+                return output_tensor, loss_func
 
         return fwd_output_and_loss_func
 
@@ -295,7 +313,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         fwd_bwd_function = get_forward_backward_func()
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
-            forward_step_func=self.get_forward_output_and_loss_func(forward_only),
+            forward_step_func=self.get_forward_output_and_loss_func(forward_only, logprobs_only=False),
             data_iterator=data_iter,
             model=self.model,
             num_microbatches=get_num_microbatches(),
@@ -384,57 +402,35 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
     def finish_validation_step(self):
         finish_validation_step(self)
 
-    def get_logprob_output_only_func(self, inference_only=True):
-        fwd_output_only_func = self.get_forward_output_only_func()
-
-        def log_prob_output_only_func(dataloader_iter, model):
-            batch = next(dataloader_iter)
-            logits, _ = fwd_output_only_func(iter([batch[0:3],]), model)
-
-            def id_func(logits, non_loss_data=True):
-                logprobs = from_parallel_logits_to_logprobs(
-                    vocab_parallel_logits=logits,
-                    target=batch[-1].cuda() if len(batch) == 4 else batch[0].cuda(),
-                    inference_only=inference_only,
-                    higher_stability=True,
-                )
-                return {"logprobs": logprobs}
-
-            return logits, id_func
-
-        return log_prob_output_only_func
-
     @torch.no_grad()
-    def get_logprob_batch(self, global_batch):
+    def get_logprob_batch(self, batch):
+        seq_length = batch["chosen"].shape[1]
+
+        data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only=True)
 
-        # assumes we pad to seq length before going into the model
-        # response_tokens = sequences.cuda()
-        # labels = labels.cuda() if labels is not None else None
-
-        dp_size = parallel_state.get_data_parallel_world_size()
-        local_batch_size, seq_len = global_batch[0].shape
-        global_batch_size = local_batch_size * dp_size
-
-        forward_mbs = self.cfg.dpo.log_prob_forward_micro_batch_size
-        forward_mbs_times_dp = forward_mbs * dp_size
-
-        data_iter = get_iterator_k_split(global_batch, global_batch_size // forward_mbs_times_dp)
-
         fwd_bwd_function = get_forward_backward_func()
+
         logprobs_list = fwd_bwd_function(
-            forward_step_func=self.get_logprob_output_only_func(inference_only=True),
+            forward_step_func=self.get_forward_output_and_loss_func(logprobs_only=True),
             data_iterator=data_iter,
             model=self.model,
-            num_microbatches=global_batch_size // forward_mbs_times_dp,
+            num_microbatches=get_num_microbatches(),
             forward_only=True,
-            seq_length=seq_len,
-            micro_batch_size=forward_mbs,
+            seq_length=seq_length,
+            micro_batch_size=self.cfg.dpo.log_prob_forward_micro_batch_size,
             collect_non_loss_data=True,
         )
 
         if len(logprobs_list) > 0:
-            logprobs = torch.cat([item["logprobs"] for item in logprobs_list])
+            chosen_logprobs_list = []
+            rejected_logprobs_list = []
+            for item in logprobs_list:
+                chosen_logprobs, rejected_logprobs = self.split_output_tensor(item["logprobs"])
+                chosen_logprobs_list.append(chosen_logprobs)
+                rejected_logprobs_list.append(rejected_logprobs)
+
+            logprobs = torch.cat([torch.cat(chosen_logprobs_list), torch.cat(rejected_logprobs_list)], dim=0)
         else:
             logprobs = None
 
@@ -449,20 +445,15 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return logprobs
 
     def get_ref_policy_logprobs(self, batch):
-        tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
-        masks = torch.cat((batch["attention_mask"], batch["attention_mask"]), dim=0)
-        pos_ids = torch.cat((batch["position_ids"], batch["position_ids"]), dim=0)
-        labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
-        global_batch = [tokens, masks, pos_ids, labels]
 
         if self.use_peft and self.ref_policy_state_dict is None:
             # when using adapters instead of full-tuning, the actor is reference model + adapters
             with adapter_control(self):
                 # With adapters disabled (meaning using the reference model), calculate ref_log_probs
-                ref_log_probs = self.get_logprob_batch(global_batch)
+                ref_log_probs = self.get_logprob_batch(batch)
         else:
             with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
-                ref_log_probs = self.get_logprob_batch(global_batch)
+                ref_log_probs = self.get_logprob_batch(batch)
 
         # return in GPU, trainer needs to move to cpu
         return ref_log_probs
