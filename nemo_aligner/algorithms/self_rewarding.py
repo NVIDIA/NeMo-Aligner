@@ -17,7 +17,7 @@ from functools import partial
 import numpy as np
 from collections import defaultdict
 from statistics import mean
-#import pandas as pd
+import pandas as pd
 from textwrap import dedent
 
 import torch
@@ -206,17 +206,6 @@ class SelfRewardingTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
-        '''
-        self.train_dataloader.collate_fn = partial(
-            self_rewarding_custom_collate,
-            eos_id=self.model.tokenizer.eos_id,
-            reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
-            reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
-            eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
-            iteration=self.iteration,
-            sft_collate=self.train_dataloader.dataset.collate_fn,
-        )
-        '''
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
@@ -232,6 +221,7 @@ class SelfRewardingTrainer:
 
         self.num_responses_to_gen = self.model.cfg.spin.num_responses_to_gen
         self.num_evals_to_average = self.model.cfg.spin.num_evals_to_average
+        self.first_iteration_sft = self.model.cfg.spin.get("first_iteration_sft", False)
         self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
         self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
@@ -243,7 +233,7 @@ class SelfRewardingTrainer:
         assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
 
         # for wandb table
-        #self.train_df = pd.DataFrame(columns=["step", "prompt", "response"])
+        self.train_df = pd.DataFrame(columns=["step", "prompt", "chosen_response", "rejected_response"])
         
         # llm-as-judge prompt and reward
         #self.prompt_template = dedent(DEFAULT_LLM_AS_JUDGE_PROMPT)
@@ -370,19 +360,28 @@ class SelfRewardingTrainer:
             trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
 
-        '''
+        
         num_samples = 0
-        gen_lengths = 0
+        gen_lengths_chosen = 0
+        gen_lengths_reject = 0
+        num_bad_samples = 0
+        num_bad_ends = 0
         num_samples += global_batch["actual"].shape[0]
-        gen_lengths += global_batch["generated_lengths"].sum()
+        num_bad_samples += global_batch["bad_samples"].sum()
+        num_bad_ends += global_batch["bad_ends"].sum()
+        gen_lengths_chosen += (global_batch["chosen_gen_lens"] - global_batch["chosen_prompt_lens"]).sum()
+        gen_lengths_reject += (global_batch["reject_gen_lens"] - global_batch["reject_prompt_lens"]).sum()
         tensor_to_accumulate = torch.tensor(
-            [gen_lengths, num_samples], dtype=torch.float32, device=torch.cuda.current_device(),
+            [gen_lengths_chosen, gen_lengths_reject, num_bad_samples, num_bad_ends, num_samples], dtype=torch.float32, device=torch.cuda.current_device(),
         )
         torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())
 
-        (global_response_lengths, global_num_samples,) = tensor_to_accumulate.tolist()
-        metrics["avg_generated_lengths"] = global_response_lengths / global_num_samples
-        '''
+        (global_chosen_response_lengths, global_reject_response_lengths, GBS_sum_bad_samples, GBS_sum_bad_ends, GBS_num_samples,) = tensor_to_accumulate.tolist()
+        metrics["avg_chosen_lengths"] = global_chosen_response_lengths / GBS_num_samples
+        metrics["avg_reject_lengths"] = global_reject_response_lengths / GBS_num_samples
+        metrics["avg_bad_samples_per_GBS"] = GBS_sum_bad_samples / GBS_num_samples
+        metrics["avg_bad_ends_per_GBS"] = GBS_sum_bad_ends / (GBS_num_samples * self.num_responses_to_gen)
+        
 
         return loss_mean, {**metrics, **trainer_metrics}
     
@@ -421,13 +420,11 @@ class SelfRewardingTrainer:
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
             
+            prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
             # double check with nemo logic to make sure it ended
             is_end = strategy.end_of_generation_condition(
-                response_tokens, response_tokens[:, -1], self.model.tokenizer.eos_id, self.sampling_params["end_strings"]
+                response_tokens, prev, self.model.tokenizer.eos_id, self.sampling_params["end_strings"]
             )
-            assert torch.all(
-                is_end
-            ), f"rank {torch.distributed.get_rank()} did NOT stop properly accoridng to nemo! {response_tokens=}"
         else:
             generations = self.model.generate(
                 inputs=(prompt_tokens, prompt_lengths),
@@ -437,9 +434,9 @@ class SelfRewardingTrainer:
             )
     
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
-            response_lengths = strategy.get_lengths().cpu()
+            response_lengths, is_end = strategy.get_lengths(return_is_end=True)
             max_response_length = response_lengths.max().item()
-            response_tokens = torch.LongTensor(generations["token_ids"]).cpu()
+            response_tokens = torch.LongTensor(generations["token_ids"])
     
             # Sanity check to validate response length.
             if max_response_length != response_tokens.size(1):
@@ -459,22 +456,13 @@ class SelfRewardingTrainer:
         self.model.finish_inference()
         if self.use_trtllm_generation:
             self.trtllm_generate.free()
-        
-        '''
-        responses_by_prompt = []
-        for r_ids, r_start, r_end in zip(zip(*divide_chunks(generations["token_ids"], N)), zip(*divide_chunks(prompt_lengths.tolist(), N)), zip(*divide_chunks(response_lengths.tolist(), N))):
-            res = {'prompt': self.model.tokenizer.ids_to_text(r_ids[0][:r_start[0]]),
-                   'responses': [self.model.tokenizer.ids_to_text(t[s:e]) for t,s,e in zip(r_ids,r_start,r_end)],
-                   }
-            responses_by_prompt.append(res)
-        '''
 
-        return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu()
+        return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu(), is_end.cpu()
     
     def get_rewards(self, list_of_batches):
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
         for _ in range(self.num_evals_to_average):
-            reward_responses, prompt_lengths, resp_lengths = self.get_generations(list_of_batches)
+            reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
             batch_responses_str = []
             for t,s,e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
                 response = self.model.tokenizer.ids_to_text(t[s:e].tolist())
@@ -483,9 +471,12 @@ class SelfRewardingTrainer:
             #print("*** sample_reward_response: ", batch_responses_str[0])
             rewards = [self.parse_reward_fn(resp_str) for resp_str in batch_responses_str]
             #print("*** rewards_after_parse: ", rewards)
-            for idx, r in enumerate(rewards):
-                #if r is None:
+            for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
+                #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and r is None:
                 #    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
+                # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
+                # a valid score, it's all good, we don't need correctness beyond that
+                #reward_scores[idx].append(r if end else None)
                 reward_scores[idx].append(r)
         #print("*** reward_scores_get_rewards: ", reward_scores)
         assert all([len(b) == self.num_evals_to_average for b in reward_scores]), "did not get generate the correct number of reward scores"
@@ -546,7 +537,7 @@ class SelfRewardingTrainer:
                     self.model.prepare_for_training()
 
                     self.timer.start("train_step_time")
-                    if self.iteration == -1:
+                    if self.first_iteration_sft and self.iteration == 0:
                         loss, metrics = self.train_single_step_sft(global_batch)
                     else:
                         loss, metrics = self.train_single_step_dpo(global_batch)
@@ -589,25 +580,25 @@ class SelfRewardingTrainer:
 
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
-                        '''
+                        
                         if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
-                            self.train_df.loc[len(self.train_df)] = [
-                                self.step - 1,
-                                self.model.tokenizer.ids_to_text(global_batch["prompts_only"][0].tolist()),
-                                self.model.tokenizer.ids_to_text(
-                                    global_batch["generated"][0][
-                                        len(global_batch["prompts_only"][0]) : (
-                                            len(global_batch["prompts_only"][0])
-                                            + global_batch["generated_lengths"][0].item()
-                                        )
-                                    ].tolist()
-                                ),
-                            ]
-                            self.logger.log_table(
-                                key="table/train_generations", dataframe=self.train_df, step=self.step - 1,
-                            )
-                        torch.distributed.barrier()
-                        '''
+                            for idx in range(len(global_batch["bad_samples"])):
+                                if not global_batch["bad_samples"][idx]:
+                                    self.train_df.loc[len(self.train_df)] = [
+                                        self.step,
+                                        self.model.tokenizer.ids_to_text(global_batch["actual"][idx][:global_batch["chosen_prompt_lens"][idx].item()].tolist()),
+                                        self.model.tokenizer.ids_to_text(
+                                            global_batch["actual"][idx][global_batch["chosen_prompt_lens"][idx].item():global_batch["chosen_gen_lens"][idx].item()].tolist()
+                                        ),
+                                        self.model.tokenizer.ids_to_text(
+                                            global_batch["generated"][idx][global_batch["reject_prompt_lens"][idx].item():global_batch["reject_gen_lens"][idx].item()].tolist()
+                                        ),
+                                    ]
+                                    self.logger.log_table(
+                                        key="table/train_generations", dataframe=self.train_df, step=self.step - 1,
+                                    )
+                                    break
+                        
 
                     global_pbar.set_postfix(metrics)
 
@@ -702,7 +693,7 @@ class SelfRewardingTrainer:
         while not done:
             try:
                 batches = next(iter_dataloader)
-                if self.iteration == -1:
+                if self.first_iteration_sft and self.iteration == 0:
                     batch = self.train_dataloader.dataset.collate_fn(batches)
                 else:
                     batch = self_rewarding_custom_collate(batches,
@@ -716,7 +707,7 @@ class SelfRewardingTrainer:
             else:
                 buffer.append(batch)
             
-            if self.iteration == -1:
+            if self.first_iteration_sft and self.iteration == 0:
                 for batch in buffer:
                     yield batch
                 buffer.clear()
@@ -730,7 +721,7 @@ class SelfRewardingTrainer:
                     candidate_responses_with_rewards = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))]
                     for _ in range(self.num_responses_to_gen):
                         # Generation happens on GPU but returned tensors are on CPU so as not to blow up VRAM due to self.num_responses_to_gen
-                        gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf = self.get_generations(buffer)
+                        gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end = self.get_generations(buffer)
                         
                         # Transform into batch of LLM-as-judge template samples for reward scoring
                         reward_buffer = []
@@ -748,29 +739,45 @@ class SelfRewardingTrainer:
                         # list of floats, same length as gen_tokens_buf
                         reward_scores = self.get_rewards(reward_buffer)
                         #print("*** reward_scores: ", reward_scores)
-                        for idx, (t, s, e, r) in enumerate(zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist(), reward_scores)):
-                            candidate_responses_with_rewards[idx].append((r,t,s,e))
+                        for idx, (t, s, e, r, end) in enumerate(zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist(), reward_scores, is_end.tolist())):
+                            candidate_responses_with_rewards[idx].append((r,t,s,e,end))
                     
                     final_buffer = []
                     # now we need to pick the chosen/rejected
                     for cand_list in candidate_responses_with_rewards:
                         scores = [b[0] for b in cand_list]
-                        filtered_scores = [*filter(exists, scores)]
+                        ends = [b[-1] for b in cand_list]
+                        #filtered_scores = [*filter(exists, scores)]
+                        filtered_scores = [(s,idx) for idx, (s,e) in enumerate(zip(scores, ends)) if (s is not None) and e]
+                        bad_sample = False
                         
                         # TODO: sample more from the underlying Dataset instead
-                        # if all scores are identical (even all None) we just randomly choose
-                        if len(filtered_scores) == 0 or all([scores[0] == s for s in scores]):
-                            idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
+
                         # if we have just one non-None value, take it as the chosen, and randomly choose from the others for reject
-                        elif len(filtered_scores) == 1:
-                            idx_chosen = np.where(np.array(scores) == filtered_scores[0])[0].item()
+                        if len(filtered_scores) == 1:
+                            #idx_chosen = np.where(np.array(scores) == filtered_scores[0])[0][0]
+                            idx_chosen = filtered_scores[0][-1]
                             idx_reject = np.random.choice(list(set(range(len(scores))) - set([idx_chosen])), 1, replace=False).item()
+                            #bad_sample = True
+                        # if all scores are identical (even all None) we just randomly choose
+                        elif len(filtered_scores) == 0 or all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
+                            idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
+                            bad_sample = True
                         elif len(filtered_scores) > 1:
-                            idx_chosen = np.argmax([(-99999 if s is None else s) for s in scores])
-                            idx_reject = np.argmin([(99999 if s is None else s) for s in scores])
+                            #print("*** GOOD_ONE ***")
+                            #idx_chosen = np.argmax([(-99999 if s is None else s) for s in scores])
+                            #idx_reject = np.argmin([(99999 if s is None else s) for s in scores])
+                            idx_chosen = filtered_scores[np.argmax([s[0] for s in filtered_scores])][-1]
+                            idx_reject = filtered_scores[np.argmin([s[0] for s in filtered_scores])][-1]
                         else:
                             print(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
                             raise RuntimeError("hit strange score selection state, please investigate")
+                        
+                        if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and bad_sample:
+                            print(f"*** Scores [ {scores} ]  Ends [ {ends} ]  filtered_scores [ {filtered_scores} ] ***")
+                            #for idx in range(len(cand_list)):
+                            #    gen_text = self.model.tokenizer.ids_to_text(cand_list[idx][1][cand_list[idx][2]:cand_list[idx][3]].tolist())
+                            #    print(f"*** cand_idx [ {idx} ]  cand_text: {gen_text}")
                         
                         # 1 x max_len tensor
                         chosen_tokens = cand_list[idx_chosen][1]
@@ -791,6 +798,8 @@ class SelfRewardingTrainer:
                             "reject_prompt_len": reject_prompt_len,
                             "reject_gen_len": reject_gen_len,
                             "reject_score": reject_score,
+                            "bad_sample": bad_sample,
+                            "bad_ends": sum(~np.array(ends)),
                             }
                         )
 
@@ -802,6 +811,7 @@ class SelfRewardingTrainer:
                     reject_prompt_lens = torch.LongTensor([b["reject_prompt_len"] for b in batch])
                     reject_gen_lens = torch.LongTensor([b["reject_gen_len"] for b in batch])
                     reject_scores = torch.FloatTensor([(-1 if b["reject_score"] is None else b["reject_score"]) for b in batch])
+                    bad_samples = torch.BoolTensor([b["bad_sample"] for b in batch])
 
                     max_batch_len = max([len(b["chosen_tokens"]) for b in batch] + [len(b["reject_tokens"]) for b in batch])
                     
@@ -821,13 +831,14 @@ class SelfRewardingTrainer:
                         dim=0,
                     )
                     '''
+                    # only works without the outer wrapping because it's a 1D tensor instead of 2D
                     chosen_tokens_pad = batch_pad_to_fixed_len([b["chosen_tokens"] for b in batch], max_batch_len, pad_token=self.model.tokenizer.eos_id)
                     reject_tokens_pad = batch_pad_to_fixed_len([b["reject_tokens"] for b in batch], max_batch_len, pad_token=self.model.tokenizer.eos_id)
                     #chosen_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["chosen_prompt_len"]) + b["chosen_tokens"].tolist()[b["chosen_prompt_len"]:]) for b in batch], max_batch_len, pad_token=-100)
                     #reject_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["reject_prompt_len"]) + b["reject_tokens"].tolist()[b["reject_prompt_len"]:]) for b in batch], max_batch_len, pad_token=-100)
 
-                    chosen_mask = create_mask(chosen_tokens_pad, chosen_prompt_lens, chosen_gen_lens)
-                    reject_mask = create_mask(reject_tokens_pad, reject_prompt_lens, reject_gen_lens)
+                    chosen_mask = create_mask(chosen_tokens_pad, chosen_prompt_lens, chosen_gen_lens) * ~bad_samples.unsqueeze(-1)
+                    reject_mask = create_mask(reject_tokens_pad, reject_prompt_lens, reject_gen_lens) * ~bad_samples.unsqueeze(-1)
 
                     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
                         chosen_tokens_pad,
@@ -857,10 +868,6 @@ class SelfRewardingTrainer:
                         "chosen_rewards": chosen_scores,
                         "rejected_rewards": reject_scores,
                     }
-                    
-                    #new_batch["prompts_only"] = batch["prompts_only"]
-                    #new_batch["generated_lengths"] = gen_lengths - batch["prompt_lengths"]
-                    #assert (gen_lengths - batch["prompt_lengths"] >= 0).all(), "negative generated length encountered"
 
                     logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
                     chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
@@ -876,11 +883,20 @@ class SelfRewardingTrainer:
                         "position_ids": position_ids,
                         "actual_mask": chosen_mask,
                         "generated_mask": reject_mask,
+                        "chosen_prompt_lens": chosen_prompt_lens,
+                        "reject_prompt_lens": reject_prompt_lens,
+                        "chosen_gen_lens": chosen_gen_lens,
+                        "reject_gen_lens": reject_gen_lens,
+                        "bad_samples": bad_samples,
+                        "bad_ends": torch.IntTensor([b["bad_ends"] for b in batch]),
                     }
                     
-                    #new_batch["prompts_only"] = batch["prompts_only"]
-                    #new_batch["generated_lengths"] = gen_lengths - batch["prompt_lengths"]
-                    #assert (gen_lengths - batch["prompt_lengths"] >= 0).all(), "negative generated length encountered"
+                    #new_batch["chosen_prompt_lens"] = chosen_prompt_lens
+                    #new_batch["reject_prompt_lens"] = reject_prompt_lens
+                    #new_batch["chosen_gen_lens"] = chosen_gen_lens
+                    #new_batch["reject_gen_lens"] = reject_gen_lens
+                    assert (chosen_gen_lens - chosen_prompt_lens >= 0).all(), "negative generated length encountered in chosen"
+                    assert (reject_gen_lens - reject_prompt_lens >= 0).all(), "negative generated length encountered in rejected"
 
                     logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
                     act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)

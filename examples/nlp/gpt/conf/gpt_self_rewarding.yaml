@@ -82,6 +82,7 @@ model:
     offload_adam_states: True
     num_responses_to_gen: 4
     num_evals_to_average: 3
+    first_iteration_sft: False
 
     # params for generation
     sampling_params:
