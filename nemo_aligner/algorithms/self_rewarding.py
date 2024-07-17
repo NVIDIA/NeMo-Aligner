@@ -268,6 +268,7 @@ class SelfRewardingTrainer:
                 sample_temperature=self.sampling_params["temperature"],
                 sample_top_k=self.sampling_params["top_k"],
                 sample_top_p=self.sampling_params["top_p"],
+                repetition_penalty=self.sampling_params["repetition_penalty"],
                 #use_greedy=self.sampling_params.get("use_greedy", False),
                 tokenizer=self.model.tokenizer,
             )

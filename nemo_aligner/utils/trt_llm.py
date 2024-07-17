@@ -24,6 +24,7 @@ class GPTGenerateTRTLLM:
         sample_temperature=None,
         sample_top_k=None,
         sample_top_p=None,
+        repetition_penalty=None,
         use_greedy=False,
         tokenizer=None,
         trt_model_dir="/tmp/trt_llm_model",
@@ -57,6 +58,7 @@ class GPTGenerateTRTLLM:
             temperature=sample_temperature,
             top_k=sample_top_k,
             top_p=sample_top_p,
+            repetition_penalty=repetition_penalty,
             max_new_tokens=self.max_generation_length,
             stop_words_list=stop_list,
             return_dict=True,
@@ -92,6 +94,7 @@ class GPTGenerateTRTLLM:
         for idx in range(prompt_tokens.shape[0]):
             batch_input_ids.append(prompt_tokens[idx][0 : prompt_lengths[idx]].cpu())
 
+        self.sampling_config.update(random_seed=torch.randint(0, 500000, size=(prompt_tokens.shape[0],)).long())
         output_dict = tensorrt_llm_worker_context.decoder.generate(
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
         )
