@@ -16,7 +16,7 @@ import warnings
 from contextlib import nullcontext
 
 import torch
-from apex.transformer.pipeline_parallel.utils import get_num_microbatches
+from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf import OmegaConf
