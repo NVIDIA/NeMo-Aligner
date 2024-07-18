@@ -39,7 +39,10 @@ from nemo_aligner.utils.distributed import (
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
 )
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
+from nemo_aligner.utils.text_generation_utils import (
+    TrackLengthGPTModelTextGenerationStrategy,
+    verify_is_valid_and_clamp_range_,
+)
 from nemo_aligner.utils.train_utils import (
     grad_reductions,
     prepare_for_training_step,
@@ -322,13 +325,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             actor_output = self.trtllm_generate.generate(inputs)
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
-
-            prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
-            # double check with nemo logic to make sure it ended
-            is_end = strategy.end_of_generation_condition(
-                response_tokens, prev, self.tokenizer.eos_id, self._sampling_params["end_strings"]
-            )
-
         else:
             actor_output = self.generate(
                 inputs=inputs,
@@ -338,7 +334,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             )
             response_tokens = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
             response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
-            response_lengths, is_end = strategy.get_lengths(return_is_end=True)
+            response_lengths = strategy.get_lengths()
 
             max_response_length = response_lengths.max().item()
 
@@ -357,11 +353,17 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         f"`response_tokens` ({response_tokens.size(1)})"
                     )
 
+        # sometimes backends like TRT-LLM will generate invalid tokens
+        # so we need to also inplace mutate the response_tokens to be within the tokenizer range
+        is_valid = verify_is_valid_and_clamp_range_(
+            response_tokens, response_lengths, strategy, self.tokenizer, self.cfg.ppo.sampling_params["end_strings"]
+        )
+
         rollout_batch = {
             "response_tokens": response_tokens,
             "response_lengths": response_lengths,
             "prompt_lengths": prompt_lengths,
-            "is_end": is_end,
+            "is_end": is_valid,
         }
 
         # return in GPU, trainer needs to move to cpu
