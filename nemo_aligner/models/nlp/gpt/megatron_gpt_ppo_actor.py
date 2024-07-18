@@ -101,6 +101,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 sample_temperature=self.cfg.ppo.sampling_params["temperature"],
                 sample_top_k=self.cfg.ppo.sampling_params["top_k"],
                 sample_top_p=self.cfg.ppo.sampling_params["top_p"],
+                repetition_penalty=self.cfg.ppo.sampling_params["repetition_penalty"],
                 use_greedy=self.cfg.ppo.sampling_params.get("use_greedy", False),
                 tokenizer=self.tokenizer,
             )
