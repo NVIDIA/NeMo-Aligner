@@ -26,7 +26,7 @@ from typing import Iterator, List
 from unittest.mock import patch
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
+from megatron.core.num_microbatches_calculator import _reconfigure_microbatch_calculator
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
 from omegaconf import DictConfig, OmegaConf
 

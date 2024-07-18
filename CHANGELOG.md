@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Breaking changes
 - `inference.micro_batch_size` is now renamed to `inference.inference_micro_batch_size` when running reward model inference in `inference_rm.yaml` this is to stay consistent with the naming scheme of the PPO critic.
 - It is no longer possible to specify `add_EOS` when running reward model or critic inference.
+- Aligner now requires Megatron-LM>=0.8.0 for the APIs to calculate the microbatch sizes
 
 ### Bug Fixes
 - Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.
