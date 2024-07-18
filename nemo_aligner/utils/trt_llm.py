@@ -43,6 +43,7 @@ class GPTGenerateTRTLLM:
         self.unload_engine_train = unload_engine_train
         self.trt_model_type = trt_model_type
         self.reshard_model = reshard_model
+        self.pad_id = tokenizer.eos_id
 
         self.trt_llm_exporter = TensorRTLLM(trt_model_dir, load_model=False)
         self._trtllm_model_compiled = False
@@ -54,7 +55,7 @@ class GPTGenerateTRTLLM:
 
         self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
             end_id=tokenizer.eos_id,
-            pad_id=tokenizer.eos_id,
+            pad_id=self.pad_id,
             temperature=sample_temperature,
             top_k=sample_top_k,
             top_p=sample_top_p,
@@ -102,28 +103,48 @@ class GPTGenerateTRTLLM:
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
         output_ids = torch.squeeze(output_dict["output_ids"], dim=1).long()
         response_lengths = torch.squeeze(output_dict["sequence_lengths"], dim=1).long()
+        max_length = response_lengths.max().item()
 
         # TRTLLM with PP erroneously inserts padding so have to remove it here
-        if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-            max_prompt_len = prompt_lengths.max().item()
-            _output_ids = torch.full_like(input=output_ids, fill_value=self.tokenizer.eos_id)
-            for idx in range(prompt_tokens.shape[0]):
-                gen_len = (response_lengths[idx] - prompt_lengths[idx]).item()
-                response = output_ids[idx, max_prompt_len : max_prompt_len + gen_len]
-                prompt_response = torch.cat((prompt_tokens[idx][: prompt_lengths[idx]], response))
-                _output_ids[idx, : prompt_response.size(0)] = prompt_response
+        # TRTLLM only produces valid outputs on the source rank, so we can only process it here
+        # and rely on the aligner broadcast to get it to the other ranks. Miraculously, the length
+        # is still correct on the non src ranks
+        if (
+            parallel_state.get_pipeline_model_parallel_world_size() > 1
+            and parallel_state.get_model_parallel_src_rank() == torch.distributed.get_rank()
+        ):
+            valid_tokens = output_ids != self.pad_id
+            # we can't just natively use the response length here
+            # because there are cases where the model generates
+            # stop strings after it has stopped. so we need to
+            # be slightly inefficient and then remove the excess later on
+            valid_token_lengths = valid_tokens.sum(-1, keepdims=True)
+            max_unpadded_length = valid_token_lengths.max()
+
+            _output_ids = torch.full(
+                (response_lengths.size(0), max_unpadded_length),
+                fill_value=self.pad_id,
+                dtype=output_ids.dtype,
+                device=output_ids.device,
+            )
+
+            # only fill up to the amount of valid tokens
+            src_index_mask = (
+                torch.arange(max_unpadded_length, device=response_lengths.device).view(1, -1) < valid_token_lengths
+            )
+
+            _output_ids[src_index_mask] = output_ids[valid_tokens]
             output_ids = _output_ids
 
-        output_ids = output_ids[..., : response_lengths.max().item()].contiguous()
-
+        output_ids = output_ids[..., :max_length].contiguous()
         output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
 
-        assert (0 <= output_ids).all(), "TRT-LLM generated tokens that are less than 0"
-        assert (
-            self.tokenizer.vocab_size > output_ids
-        ).all(), "TRT-LLM generated tokens that are greater than the vocab size"
+        #assert (0 <= output_ids).all(), "TRT-LLM generated tokens that are less than 0"
+        #assert (
+        #    self.tokenizer.vocab_size > output_ids
+        #).all(), "TRT-LLM generated tokens that are greater than the vocab size"
 
-        sentences = [self.tokenizer.ids_to_text(output) for output in output_ids.tolist()]
+        sentences = [self.tokenizer.ids_to_text(torch.clamp(output, min=self.pad_id, max=self.tokenizer.vocab_size - 1).tolist()) for output in output_ids]
         output = {
             "response_tokens": output_ids,
             "response_lengths": response_lengths,

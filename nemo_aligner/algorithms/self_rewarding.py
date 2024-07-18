@@ -269,7 +269,7 @@ class SelfRewardingTrainer:
                 sample_top_k=self.sampling_params["top_k"],
                 sample_top_p=self.sampling_params["top_p"],
                 repetition_penalty=self.sampling_params["repetition_penalty"],
-                #use_greedy=self.sampling_params.get("use_greedy", False),
+                use_greedy=self.sampling_params.get("use_greedy", False),
                 tokenizer=self.model.tokenizer,
             )
 
@@ -363,25 +363,28 @@ class SelfRewardingTrainer:
 
         
         num_samples = 0
-        gen_lengths_chosen = 0
-        gen_lengths_reject = 0
-        num_bad_samples = 0
-        num_bad_ends = 0
+        gen_lengths_chosen = gen_lengths_reject = 0
+        num_bad_samples = num_bad_ends = 0
+        sum_chosen_rewards = sum_reject_rewards = 0
         num_samples += global_batch["actual"].shape[0]
         num_bad_samples += global_batch["bad_samples"].sum()
         num_bad_ends += global_batch["bad_ends"].sum()
         gen_lengths_chosen += (global_batch["chosen_gen_lens"] - global_batch["chosen_prompt_lens"]).sum()
         gen_lengths_reject += (global_batch["reject_gen_lens"] - global_batch["reject_prompt_lens"]).sum()
+        sum_chosen_rewards += global_batch["chosen_rewards"][global_batch["chosen_rewards"] != -1].sum()
+        sum_reject_rewards += global_batch["reject_rewards"][global_batch["reject_rewards"] != -1].sum()
         tensor_to_accumulate = torch.tensor(
-            [gen_lengths_chosen, gen_lengths_reject, num_bad_samples, num_bad_ends, num_samples], dtype=torch.float32, device=torch.cuda.current_device(),
+            [gen_lengths_chosen, gen_lengths_reject, num_bad_samples, num_bad_ends, num_samples, sum_chosen_rewards, sum_reject_rewards], dtype=torch.float32, device=torch.cuda.current_device(),
         )
         torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())
 
-        (global_chosen_response_lengths, global_reject_response_lengths, GBS_sum_bad_samples, GBS_sum_bad_ends, GBS_num_samples,) = tensor_to_accumulate.tolist()
+        (global_chosen_response_lengths, global_reject_response_lengths, GBS_sum_bad_samples, GBS_sum_bad_ends, GBS_num_samples, global_chosen_rewards, global_reject_rewards,) = tensor_to_accumulate.tolist()
         metrics["avg_chosen_lengths"] = global_chosen_response_lengths / GBS_num_samples
         metrics["avg_reject_lengths"] = global_reject_response_lengths / GBS_num_samples
         metrics["avg_bad_samples_per_GBS"] = GBS_sum_bad_samples / GBS_num_samples
         metrics["avg_bad_ends_per_GBS"] = GBS_sum_bad_ends / (GBS_num_samples * self.num_responses_to_gen)
+        metrics["avg_chosen_generated_rewards"] = global_chosen_rewards / GBS_num_samples
+        metrics["avg_rejected_generated_rewards"] = global_reject_rewards / GBS_num_samples
         
 
         return loss_mean, {**metrics, **trainer_metrics}
@@ -426,6 +429,11 @@ class SelfRewardingTrainer:
             is_end = strategy.end_of_generation_condition(
                 response_tokens, prev, self.model.tokenizer.eos_id, self.sampling_params["end_strings"]
             )
+            
+            for idx in range(len(response_tokens)):
+                if torch.min(response_tokens[idx]).item() < 0 or torch.max(response_tokens[idx]).item() >= self.model.tokenizer.vocab_size:
+                    is_end[idx] = False
+                    response_tokens[idx] = torch.clamp(response_tokens[idx], min=self.model.tokenizer.eos_id, max=self.model.tokenizer.vocab_size - 1)
         else:
             generations = self.model.generate(
                 inputs=(prompt_tokens, prompt_lengths),
@@ -748,7 +756,6 @@ class SelfRewardingTrainer:
                     for cand_list in candidate_responses_with_rewards:
                         scores = [b[0] for b in cand_list]
                         ends = [b[-1] for b in cand_list]
-                        #filtered_scores = [*filter(exists, scores)]
                         filtered_scores = [(s,idx) for idx, (s,e) in enumerate(zip(scores, ends)) if (s is not None) and e]
                         bad_sample = False
                         
@@ -765,9 +772,6 @@ class SelfRewardingTrainer:
                             idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
                             bad_sample = True
                         elif len(filtered_scores) > 1:
-                            #print("*** GOOD_ONE ***")
-                            #idx_chosen = np.argmax([(-99999 if s is None else s) for s in scores])
-                            #idx_reject = np.argmin([(99999 if s is None else s) for s in scores])
                             idx_chosen = filtered_scores[np.argmax([s[0] for s in filtered_scores])][-1]
                             idx_reject = filtered_scores[np.argmin([s[0] for s in filtered_scores])][-1]
                         else:
@@ -884,6 +888,8 @@ class SelfRewardingTrainer:
                         "position_ids": position_ids,
                         "actual_mask": chosen_mask,
                         "generated_mask": reject_mask,
+                        "chosen_rewards": chosen_scores,
+                        "reject_rewards": reject_scores,
                         "chosen_prompt_lens": chosen_prompt_lens,
                         "reject_prompt_lens": reject_prompt_lens,
                         "chosen_gen_lens": chosen_gen_lens,
@@ -891,11 +897,7 @@ class SelfRewardingTrainer:
                         "bad_samples": bad_samples,
                         "bad_ends": torch.IntTensor([b["bad_ends"] for b in batch]),
                     }
-                    
-                    #new_batch["chosen_prompt_lens"] = chosen_prompt_lens
-                    #new_batch["reject_prompt_lens"] = reject_prompt_lens
-                    #new_batch["chosen_gen_lens"] = chosen_gen_lens
-                    #new_batch["reject_gen_lens"] = reject_gen_lens
+
                     assert (chosen_gen_lens - chosen_prompt_lens >= 0).all(), "negative generated length encountered in chosen"
                     assert (reject_gen_lens - reject_prompt_lens >= 0).all(), "negative generated length encountered in rejected"
 

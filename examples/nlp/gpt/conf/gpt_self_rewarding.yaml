@@ -30,7 +30,7 @@ trainer:
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
       max_input_tokens: ${multiply:${trainer.spin.trt_llm.max_input_len}, ${model.spin.rollout_micro_batch_size}}
 
-      model_type: GPTForCausalLM
+      model_type: gptnext
 
       # Unload and reload the TRTLLM engine before and after the training stage 
       # Reloading the engine incurs a constant time overhead
@@ -87,9 +87,9 @@ model:
     # params for generation
     sampling_params:
       use_greedy: False
-      temperature: 0.7
+      temperature: 1.0
       top_k: 0
-      top_p: 0.9
+      top_p: 1.0
       repetition_penalty: 1.0
       add_BOS: False
       all_probs: False
