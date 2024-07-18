@@ -166,6 +166,7 @@ class SPINTrainer:
                 repetition_penalty=self.sampling_params["repetition_penalty"],
                 use_greedy=self.sampling_params.get("use_greedy", False),
                 tokenizer=self.model.tokenizer,
+                seed=self.cfg.trt_llm.get("seed", self.model.cfg.seed),
             )
 
         # for wandb table
