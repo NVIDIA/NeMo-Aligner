@@ -26,8 +26,8 @@ from typing import Iterator, List
 from unittest.mock import patch
 
 import torch
-from megatron.core.num_microbatches_calculator import _reconfigure_microbatch_calculator
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
+from megatron.core.num_microbatches_calculator import _reconfigure_microbatch_calculator
 from omegaconf import DictConfig, OmegaConf
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
