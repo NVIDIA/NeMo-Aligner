@@ -164,7 +164,7 @@ systematically attribute points based on the outlined criteria.
 <extra_id_1>Assistant
 """
 
-DEFAULT_REWARD_REGEX_TEMPLATE = "(?i)[\bScore\b|\bPoints\b]: {{ reward }}"
+DEFAULT_REWARD_REGEX_TEMPLATE = "(?i)(?:Score|Points): {{ reward }}"
 
 
 class SelfRewardingTrainer:
@@ -295,7 +295,7 @@ class SelfRewardingTrainer:
         )
 
         for _, batch in val_pbar:
-            # self.model.prepare_for_validation()
+            #self.model.prepare_for_validation()
 
             self.timer.start("validation_step_time")
             loss_mean, metrics = self.validation_step(batch)
@@ -310,7 +310,7 @@ class SelfRewardingTrainer:
             log_val_metrics = {f"val_{k}": v for k, v in metrics.items()}
             val_pbar.set_postfix(log_val_metrics)
 
-            # self.model.finish_validation()
+            #self.model.finish_validation()
 
         val_metrics = {k: mean(v) for k, v in val_metrics.items()}
         return mean(loss_means), val_metrics
@@ -361,11 +361,14 @@ class SelfRewardingTrainer:
             trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
 
-        
+
         num_samples = 0
-        gen_lengths_chosen = gen_lengths_reject = 0
-        num_bad_samples = num_bad_ends = 0
-        sum_chosen_rewards = sum_reject_rewards = 0
+        gen_lengths_chosen = 0
+        gen_lengths_reject = 0
+        num_bad_samples = 0
+        num_bad_ends = 0
+        sum_chosen_rewards = 0
+        sum_reject_rewards = 0
         num_samples += global_batch["actual"].shape[0]
         num_bad_samples += global_batch["bad_samples"].sum()
         num_bad_ends += global_batch["bad_ends"].sum()
@@ -385,7 +388,7 @@ class SelfRewardingTrainer:
         metrics["avg_bad_ends_per_GBS"] = GBS_sum_bad_ends / (GBS_num_samples * self.num_responses_to_gen)
         metrics["avg_chosen_generated_rewards"] = global_chosen_rewards / GBS_num_samples
         metrics["avg_rejected_generated_rewards"] = global_reject_rewards / GBS_num_samples
-        
+
 
         return loss_mean, {**metrics, **trainer_metrics}
     
@@ -483,6 +486,8 @@ class SelfRewardingTrainer:
             for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
                 #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and r is None:
                 #    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
+                if r is not None and r > 10000:
+                    print("*** high_score_response: ", batch_responses_str[idx])
                 # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
                 # a valid score, it's all good, we don't need correctness beyond that
                 #reward_scores[idx].append(r if end else None)
@@ -589,7 +594,7 @@ class SelfRewardingTrainer:
 
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
-                        
+
                         if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
                             for idx in range(len(global_batch["bad_samples"])):
                                 if not global_batch["bad_samples"][idx]:
@@ -607,7 +612,7 @@ class SelfRewardingTrainer:
                                         key="table/train_generations", dataframe=self.train_df, step=self.step - 1,
                                     )
                                     break
-                        
+
 
                     global_pbar.set_postfix(metrics)
 
@@ -760,13 +765,12 @@ class SelfRewardingTrainer:
                         bad_sample = False
                         
                         # TODO: sample more from the underlying Dataset instead
-
                         # if we have just one non-None value, take it as the chosen, and randomly choose from the others for reject
                         if len(filtered_scores) == 1:
                             #idx_chosen = np.where(np.array(scores) == filtered_scores[0])[0][0]
                             idx_chosen = filtered_scores[0][-1]
                             idx_reject = np.random.choice(list(set(range(len(scores))) - set([idx_chosen])), 1, replace=False).item()
-                            #bad_sample = True
+                            bad_sample = True
                         # if all scores are identical (even all None) we just randomly choose
                         elif len(filtered_scores) == 0 or all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
                             idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
@@ -778,8 +782,8 @@ class SelfRewardingTrainer:
                             print(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
                             raise RuntimeError("hit strange score selection state, please investigate")
                         
-                        if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and bad_sample:
-                            print(f"*** Scores [ {scores} ]  Ends [ {ends} ]  filtered_scores [ {filtered_scores} ] ***")
+                        #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and bad_sample:
+                        #    print(f"*** Scores [ {scores} ]  Ends [ {ends} ]  filtered_scores [ {filtered_scores} ] ***")
                             #for idx in range(len(cand_list)):
                             #    gen_text = self.model.tokenizer.ids_to_text(cand_list[idx][1][cand_list[idx][2]:cand_list[idx][3]].tolist())
                             #    print(f"*** cand_idx [ {idx} ]  cand_text: {gen_text}")

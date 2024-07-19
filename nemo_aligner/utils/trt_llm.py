@@ -137,7 +137,7 @@ class GPTGenerateTRTLLM:
             output_ids = _output_ids
 
         output_ids = output_ids[..., :max_length].contiguous()
-        output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
+        #output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
 
         #assert (0 <= output_ids).all(), "TRT-LLM generated tokens that are less than 0"
         #assert (

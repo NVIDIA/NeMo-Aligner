@@ -46,6 +46,7 @@ from nemo_aligner.data.nlp.datasets import (
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
+    TruncatedGPTSFTChatDataset,
 )
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
@@ -266,6 +267,8 @@ build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_d
 
 def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
     dataset_cls = GPTSFTChatDataset if is_chat else GPTSFTDataset
+    if is_chat and data_cfg.get("hf_dataset", False) and data_cfg.max_seq_length is not None and data_cfg.max_seq_length > 1 and num_samples is None:
+        dataset_cls = TruncatedGPTSFTChatDataset
     dataset = dataset_cls(
         file_path=data_cfg.file_path,
         tokenizer=tokenizer,

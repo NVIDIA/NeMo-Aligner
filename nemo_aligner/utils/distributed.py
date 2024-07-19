@@ -85,12 +85,11 @@ def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
 def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     """helper function to broadcast within the model parallel group
     """
-    group = get_model_parallel_group()
-
-    if torch.distributed.get_world_size(group) > 1:
-        return broadcast_2d_tensor(tensor, get_model_parallel_src_rank(), group, dtype=dtype)
-
-    return tensor
+    group = parallel_state.get_tensor_model_parallel_group()
+    #print("*** CRASH_BEFORE_BARRIER")
+    torch.distributed.barrier(group)
+    #print("*** CRASH_BEFORE_BROADCAST")
+    return broadcast_2d_tensor(tensor, parallel_state.get_tensor_model_parallel_src_rank(), group, dtype=dtype)
 
 
 def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32):
