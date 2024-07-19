@@ -1,3 +1,5 @@
+import secrets
+
 import tensorrt_llm
 import torch
 
@@ -24,9 +26,11 @@ class GPTGenerateTRTLLM:
         sample_temperature=None,
         sample_top_k=None,
         sample_top_p=None,
+        repetition_penalty=1.0,
         use_greedy=False,
         tokenizer=None,
         trt_model_dir="/tmp/trt_llm_model",
+        seed=None,
     ):
         if use_greedy and sample_top_k != 1:
             if sample_top_k != 1:
@@ -47,6 +51,14 @@ class GPTGenerateTRTLLM:
         self.trt_llm_exporter = TensorRTLLM(trt_model_dir, load_model=False)
         self._trtllm_model_compiled = False
 
+        rng_generator = torch.Generator(device="cpu")
+        seed = secrets.randbits(32) if seed is None else seed
+
+        if seed is not None:
+            rng_generator.manual_seed(seed)
+
+        self.rng_generator = rng_generator
+
         end_strings = list(end_strings)
         end_strings = [[",".join(end_strings)] for _ in range(self.generation_batch_size)]
         stop_list = to_word_list_format(end_strings, build_tokenizer(self.tokenizer), ref_str="green tea icecream")
@@ -58,6 +70,7 @@ class GPTGenerateTRTLLM:
             temperature=sample_temperature,
             top_k=sample_top_k,
             top_p=sample_top_p,
+            repetition_penalty=repetition_penalty,
             max_new_tokens=self.max_generation_length,
             stop_words_list=stop_list,
             return_dict=True,
@@ -92,6 +105,11 @@ class GPTGenerateTRTLLM:
         batch_input_ids = []
         for idx in range(prompt_tokens.shape[0]):
             batch_input_ids.append(prompt_tokens[idx][0 : prompt_lengths[idx]].cpu())
+
+        random_seeds = torch.randint(
+            0, 2 ** 32, size=(prompt_tokens.shape[0],), dtype=torch.long, generator=self.rng_generator
+        )
+        self.sampling_config.update(random_seed=random_seeds)
 
         output_dict = tensorrt_llm_worker_context.decoder.generate(
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
@@ -141,11 +159,9 @@ class GPTGenerateTRTLLM:
             self.tokenizer.vocab_size > output_ids
         ).all(), "TRT-LLM generated tokens that are greater than the vocab size"
 
-        sentences = [self.tokenizer.ids_to_text(output) for output in output_ids.tolist()]
         output = {
             "response_tokens": output_ids,
             "response_lengths": response_lengths,
-            "sentences": sentences,
         }
 
         return output

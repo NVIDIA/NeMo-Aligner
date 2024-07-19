@@ -30,6 +30,8 @@ trainer:
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
       max_input_tokens: ${multiply:${trainer.spin.trt_llm.max_input_len}, ${model.spin.rollout_micro_batch_size}}
 
+      # the seed to use for trt-llm generation
+      seed: ${model.seed}
       model_type: llama
 
       # Unload and reload the TRTLLM engine before and after the training stage 
