@@ -9,6 +9,7 @@ from nemo.export.trt_llm.tensorrt_llm_run import tensorrt_llm_worker_context, to
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
+from nemo_aligner.utils.utils import log_memory
 
 
 class GPTGenerateTRTLLM:
@@ -83,6 +84,8 @@ class GPTGenerateTRTLLM:
             torch.distributed.all_gather_object(global_devices, torch.cuda.current_device())
             gpus_per_node = max(global_devices) + 1
 
+            log_memory("before engine build first time")
+
             self.trt_llm_exporter.build(
                 model=model,
                 model_config=self.model_cfg,
@@ -96,8 +99,11 @@ class GPTGenerateTRTLLM:
                 reshard_model=self.reshard_model,
             )
             self._trtllm_model_compiled = True
+            log_memory("before engine build first time")
         else:
+            log_memory("before inner refit")
             self.trt_llm_exporter.refit(model, self.model_cfg)
+            log_memory("after inner refit")
 
     def generate(self, inputs):
         prompt_tokens, prompt_lengths = inputs
