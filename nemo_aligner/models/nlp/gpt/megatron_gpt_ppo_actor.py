@@ -52,6 +52,7 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import (
     adapter_control,
+    clear_memory,
     configure_batch_sizes,
     cpu_weight_swap,
     log_memory,
@@ -314,6 +315,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         set_eval(self)
         log_memory("before adam offload")
         self.offload_adam_states()
+        clear_memory()
         log_memory("after adam offload")
 
         if self.use_trtllm_generation:
