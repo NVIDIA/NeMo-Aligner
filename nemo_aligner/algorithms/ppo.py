@@ -44,7 +44,7 @@ from nemo_aligner.utils.ppo_utils import (
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
-from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
+from nemo_aligner.utils.utils import clear_memory, cpu_dict, log_memory, masked_mean
 
 
 class PPORolloutBatch(UserDict):
@@ -511,12 +511,16 @@ class PPOTrainer:
 
                 for _ in range(critic_train_loop_amount):
                     self.timer.start("rollout_time")
+                    log_memory("before generate rollouts")
                     ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
+                    log_memory("after generate rollouts")
                     timing_metrics["rollout_time"] = self.timer.stop_and_get_time("rollout_time")
 
                     # send critic train
+                    log_memory("before clear memory")
                     clear_memory()
                     self.rm_critic.train(ppo_rollout_data)
+                    log_memory("after clear memory")
 
                     timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
                     timing_metrics.update(timer_metrics)
@@ -544,7 +548,9 @@ class PPOTrainer:
                 # start training
                 clear_memory()
                 self.timer.start("train_time")
+                log_memory("before training")
                 self.run_training(rollout_dataloader_iter)
+                log_memory("after training")
                 timing_metrics["train_time"] = self.timer.stop_and_get_time("train_time")
 
                 self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")

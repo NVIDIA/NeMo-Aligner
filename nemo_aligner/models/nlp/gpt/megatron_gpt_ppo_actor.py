@@ -54,6 +54,7 @@ from nemo_aligner.utils.utils import (
     adapter_control,
     configure_batch_sizes,
     cpu_weight_swap,
+    log_memory,
     masked_mean,
     offload_distributed_adam,
 )
@@ -109,6 +110,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 tokenizer=self.tokenizer,
                 seed=self.cfg.ppo.trt_llm.get("seed", self.cfg.seed),
             )
+            log_memory("after engine instantiation")
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
@@ -194,7 +196,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             gbs=self.cfg.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
+        log_memory("before training prep")
         self.onload_adam_states()
+        log_memory("after training prep")
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
@@ -304,13 +308,19 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
     def prepare_for_inference(self):
         """normally we would configure the micro batch calculator here
             but the nemo generation already does the configuration"""
+        log_memory("before prepare for inference")
         self._reset_activation_checkpointing_args()
         self._reset_sequence_parallelism_args()
         set_eval(self)
+        log_memory("before adam offload")
         self.offload_adam_states()
+        log_memory("after adam offload")
 
         if self.use_trtllm_generation:
+            log_memory("before refit")
             self.trtllm_generate.refit(self.model)
+            log_memory("after refit")
+        log_memory("after prepare for inference")
 
     @torch.no_grad()
     def infer(self, inference_batch):
@@ -323,9 +333,11 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         )
 
         if self.use_trtllm_generation:
+            log_memory("before inference")
             actor_output = self.trtllm_generate.generate(inputs)
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
+            log_memory("after inference")
         else:
             actor_output = self.generate(
                 inputs=inputs,
@@ -392,7 +404,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self._restore_sequence_parallelism_args()
 
         if self.use_trtllm_generation:
+            log_memory("before engine free")
             self.trtllm_generate.free()
+            log_memory("after engine free")
 
         set_train(self)
 
