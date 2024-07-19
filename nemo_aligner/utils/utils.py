@@ -269,7 +269,7 @@ def dist_adam_load_state_bucket_into_device(state_bucket, device):
 
 
 @contextmanager
-def offload_distributed_adam(state_dict):
+def offload_distributed_adam(state_dict, force_clear_memory=False):
     """context manager to offload distributed adam states
     """
     # off load onto cpu
@@ -278,6 +278,9 @@ def offload_distributed_adam(state_dict):
 
     # make sure the offloading is finished before returning
     torch.cuda.synchronize()
+
+    if force_clear_memory:
+        clear_memory()
 
     try:
         yield
