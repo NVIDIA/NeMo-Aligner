@@ -322,6 +322,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             log_memory("before refit")
             self.trtllm_generate.refit(self.model)
             log_memory("after refit")
+            clear_memory()
         log_memory("after prepare for inference")
 
     @torch.no_grad()
