@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import itertools
 import os
 from functools import partial
 
@@ -97,7 +98,8 @@ def main(cfg) -> None:
 
     outputs = [None for _ in range(parallel_state.get_data_parallel_world_size())]
     torch.distributed.all_gather_object(outputs, rewards_all, parallel_state.get_data_parallel_group())
-    output_tensor = torch.as_tensor(outputs).flatten()
+    torch.save(outputs, f"{torch.distributed.get_rank()}_labelled.pt")
+    output_tensor = torch.as_tensor(itertools.chain.from_iterable(outputs))
     print("### OUTPUT TENSOR SHAPE", output_tensor.shape)
     print("### OUTPUT TENSOR MEAN", output_tensor.mean())
     print("### OUTPUT TENSOR STD", output_tensor.std())
