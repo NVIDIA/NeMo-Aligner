@@ -52,6 +52,7 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import (
     adapter_control,
+    clear_memory,
     configure_batch_sizes,
     cpu_weight_swap,
     masked_mean,
@@ -311,6 +312,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         if self.use_trtllm_generation:
             self.trtllm_generate.refit(self.model)
+            clear_memory()
 
     @torch.no_grad()
     def infer(self, inference_batch):

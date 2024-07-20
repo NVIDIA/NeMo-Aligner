@@ -511,6 +511,7 @@ class PPOTrainer:
 
                 for _ in range(critic_train_loop_amount):
                     self.timer.start("rollout_time")
+                    clear_memory()
                     ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
                     timing_metrics["rollout_time"] = self.timer.stop_and_get_time("rollout_time")
 
