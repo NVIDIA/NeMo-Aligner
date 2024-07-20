@@ -99,7 +99,7 @@ def main(cfg) -> None:
     outputs = [None for _ in range(parallel_state.get_data_parallel_world_size())]
     torch.distributed.all_gather_object(outputs, rewards_all, parallel_state.get_data_parallel_group())
     torch.save(outputs, f"{torch.distributed.get_rank()}_labelled.pt")
-    output_tensor = torch.as_tensor(itertools.chain.from_iterable(outputs))
+    output_tensor = torch.as_tensor(list(itertools.chain.from_iterable(outputs)))
     print("### OUTPUT TENSOR SHAPE", output_tensor.shape)
     print("### OUTPUT TENSOR MEAN", output_tensor.mean())
     print("### OUTPUT TENSOR STD", output_tensor.std())
