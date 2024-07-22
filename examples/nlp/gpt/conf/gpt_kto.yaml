@@ -13,6 +13,7 @@ trainer:
     max_steps: -1
     val_check_interval: 0.1
     save_interval: 100
+    limit_train_batches: 1.0
 
     # how many GBS we loop over
     limit_val_batches: 1.0
@@ -45,7 +46,7 @@ exp_manager:
     mode: min
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt--{val_loss:.3f}-{step}-{consumed_samples}-{epoch}'
+    filename: 'megatron_gpt--{${.monitor}:.3f}-{step}-{consumed_samples}-{epoch}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
 
 pretrained_checkpoint:
@@ -58,17 +59,40 @@ model:
   megatron_amp_O2: True
 
   kto:
-    log_prob_forward_micro_batch_size: 1
+    # This default value ensures there are no numeric differences beween trained and reference policies when computing log probs.
+    # A higher value can be used to speed-up log probs computations, but may cause numeric differences.
+    log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, 2}
     ref_policy_kl_penalty: 0.2
     desirable_loss_weight: 1.0
     undesirable_loss_weight: 1.0
-    average_log_probs: False
+    preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
+    sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
+    preference_loss_weight: 1 # the coefficient of the preference loss
+    sft_loss_weight: 0 # the coefficient of the SFT loss
   
   #encoder_seq_length: 4096
   #max_position_embeddings: ${model.encoder_seq_length}
 
   # miscellaneous
   seed: 1234
+
+  #peft 
+  peft:
+    peft_scheme: "none"  # ["lora", "none"]
+    restore_from_path: null
+    restore_from_ckpt:
+      checkpoint_dir: null
+      checkpoint_name: null
+
+    lora_tuning:
+      target_modules: ['attention_qkv'] # this can either be 'attention_qkv','attention_dense','mlp_fc1','mlp_fc2', 'attention' (qkv & dense), 'mlp' (fc1 & fc2), 'all'
+      adapter_dim: 32
+      adapter_dropout: 0.0
+      column_init_method: 'xavier' # IGNORED if linear_adapter is used, options: xavier, zero or normal
+      row_init_method: 'zero' # IGNORED if linear_adapter is used, options: xavier, zero or normal
+      layer_selection:  null  # selects in which layers to add lora adapters. e.g. [1,12] will add lora to layer 1 (lowest) and 12. null will apply adapters to all layers
+      weight_tying: False
+      position_embedding_strategy: null # used only when weight_tying is True
 
   optim:
     name: distributed_fused_adam
@@ -91,14 +115,13 @@ model:
     splits_string: null
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True
-    num_workers: 2
+    num_workers: 0
     dataloader_type: single # cyclic
     reset_position_ids: False # Reset position ids after end-of-document token
     reset_attention_mask: False # Reset attention mask after end-of-document token
     eod_mask_loss: False # Mask loss for the end of document tokens
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: null
-
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
     data:

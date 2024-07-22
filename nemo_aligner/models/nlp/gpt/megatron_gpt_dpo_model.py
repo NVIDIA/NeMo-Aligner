@@ -41,11 +41,6 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
 
-PREFERENCE_LOSS_FUNCTIONS = {
-    "dpo": "dpo_loss_func",
-    "ipo": "ipo_loss_func",
-    "kto": "kto_loss_func",
-}
 
 class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
     """
@@ -71,7 +66,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         self.sft_loss_weight = self.cfg.dpo.get("sft_loss_weight", 0)
         assert (
             self.preference_loss_weight != 0 or self.sft_loss_weight != 0
-        ), "sft loss weight and dpo loss weight cannot both be 0"
+        ), "sft loss weight and preference loss weight cannot both be 0"
 
         # variants of preference losses, by default DPO.
         self.preference_loss = self.cfg.dpo.get("preference_loss", "dpo")
@@ -298,24 +293,25 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         elif self.preference_loss == "kto":
             rewards_kl = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, labels, average_log_probs=True)
             chosen_kl, reject_kl = self.split_output_tensor(rewards_kl)
-            loss = torch.cat(
+            loss = (
                 (
                     1.0
-                    - torch.nn.functional.sigmoid(
-                        self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0))
-                    ),
+                    - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_rewards - reject_kl.clamp(min=0)))
+                ).sum()
+                + (
                     1.0
-                    - torch.nn.functional.sigmoid(
-                        self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards)
-                    ),
-                ),
-                0,
-            ).mean()
+                    - torch.nn.functional.sigmoid(self.ref_policy_kl_penalty * (chosen_kl.clamp(min=0) - reject_rewards))
+                ).sum()
+            ) / (chosen_rewards.numel() + reject_rewards.numel())
 
         else:
             raise NotImplementedError(f"preference_loss {self.preference_loss} is not implemented")
 
-        return loss, chosen_rewards, reject_rewards
+        with torch.no_grad():
+            comp = chosen_rewards > reject_rewards
+            acc_chosen = comp.float().mean()
+
+        return loss, acc_chosen
 
     def sft_loss_func(self, pi_logprobs, labels, average_log_probs=False):
         logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
