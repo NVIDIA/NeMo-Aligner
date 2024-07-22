@@ -633,7 +633,7 @@ class PPOTrainer:
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
-        future.result()
+        # future.result()
 
         self.model.finish_training()
 
