@@ -23,7 +23,7 @@ After running this script you should have the files ``{train,test}_comparisons.j
 Reward Model Training
 #####################
 
-The reward model is used to score how good a response is. It is trained using a pairwise comparison loss and therefore requires a dataset of response pairs, where one response in the pair is ranked higher than the other. A good reward model is cruical for the success of the PPO training.
+The reward model is used to score how good a response is. It is trained using a pairwise comparison loss and therefore requires a dataset of response pairs, where one response in the pair is ranked higher than the other. A good reward model is crucial for the success of the PPO training.
 
 Data Preprocessing
 %%%%%%%%%%%%%%%%%%
@@ -170,6 +170,8 @@ To launch the server:
 .. code-block:: bash 
 
    #!/bin/bash
+   # Example: If using the reward model trained from the above configuration, you can find
+              the trained reward model checkpoint here: "/results/checkpoints/megatron_gpt.nemo"
    CHECKPOINT_NEMO_FILE="/path/to/trained_rm.nemo"
    GPFS="/path/to/nemo-aligner-repo"
 
@@ -368,4 +370,4 @@ Once you've completed RLHF training, you can serve your model using the `megatro
 Scaling the tutorial to bigger models
 #####################################
 
-The above tutorial is a way to get started with RLHF but is not the most optimal performant or convergence configuration. When running RLHF fully, we expect around +0.4 to +0.5 on the MT-bench score. It is cruical to start with a good SFT model and monitor the response length.
+The above tutorial is a way to get started with RLHF but is not the most optimal performant or convergence configuration. When running RLHF fully, we expect around +0.4 to +0.5 on the MT-bench score. It is crucial to start with a good SFT model and monitor the response length.
