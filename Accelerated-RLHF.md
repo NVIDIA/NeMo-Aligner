@@ -14,7 +14,7 @@ At the start of RLHF training, we compile the engine with TRT-LLM. This first co
 
 ## Usage Guide
 
-To begin please follow the usage guide in the [Tutorials](https://docs.nvidia.com/nemo-framework/user-guide/latest/ModelAlignment/index.html) page for RLHF. All the other configurations work just as before, but with TRT-LLM we have now added the [trainer.ppo.trt_llm](examples/nlp/gpt/conf/gpt_ppo_actor.yaml#L39) subconfig in the PPO actor.
+To begin please follow the usage guide in the [Tutorials](https://docs.nvidia.com/nemo-framework/user-guide/latest/modelalignment/index.html) page for RLHF. All the other configurations work just as before, but with TRT-LLM we have now added the [trainer.ppo.trt_llm](examples/nlp/gpt/conf/gpt_ppo_actor.yaml#L39) subconfig in the PPO actor.
 
 ## Performance tuning guide
 There are a few configurations to consider when using TRT-LLM with RLHF.
