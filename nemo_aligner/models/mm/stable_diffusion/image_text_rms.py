@@ -62,7 +62,6 @@ class PickscoreRewardModel(MegatronModule):
         pass
 
     def get_reward(self, images, captions):
-
         text_features = self.text_encoder(captions)
         image_features = self.vision_encoder(images)
 
@@ -72,6 +71,9 @@ class PickscoreRewardModel(MegatronModule):
         )
 
         return rewards
+
+    def forward(self, images, captions):
+        return self.get_reward(images, captions)
 
 
 class MegatronCLIPRewardModel(MegatronCLIPModel):
@@ -97,7 +99,6 @@ class MegatronCLIPRewardModel(MegatronCLIPModel):
         return image * self.rescale_param
 
     def preprocess(self, images, captions):
-
         _, text_transform = get_preprocess_fns(self.cfg, tokenizer=self.tokenizer, is_train=False)
         images = (
             torch.stack([self.differentiable_preprocess(img.permute(2, 0, 1)) for img in images])
@@ -123,6 +124,10 @@ class MegatronCLIPRewardModel(MegatronCLIPModel):
             post_process=post_process,
         )
         return model
+
+    def forward(self, images, captions):
+        rewards = self.get_reward(images, captions)
+        return rewards
 
     def loss_func(self, output_tensor):
         ''' 
