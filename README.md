@@ -7,7 +7,7 @@
 
 ## Introduction
 
-NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state-of-the- art model alignment algorithms such as SteerLM, DPO, and Reinforcement Learning from Human Feedback (RLHF). These algorithms enable users to align language models to be more safe, harmless, and helpful. Users can perform end-to-end model alignment on a wide range of model sizes and take advantage of all the parallelism techniques to ensure their model alignment is done in a performant and resource-efficient manner. For more technical details, please refer to our [paper](https://arxiv.org/abs/2405.01481).
+NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state-of-the-art model alignment algorithms such as SteerLM, DPO, and Reinforcement Learning from Human Feedback (RLHF). These algorithms enable users to align language models to be more safe, harmless, and helpful. Users can perform end-to-end model alignment on a wide range of model sizes and take advantage of all the parallelism techniques to ensure their model alignment is done in a performant and resource-efficient manner. For more technical details, please refer to our [paper](https://arxiv.org/abs/2405.01481).
 
 The NeMo-Aligner toolkit is built using the NeMo Framework, which enables scalable training across thousands of GPUs using tensor, data, and pipeline parallelism for all alignment components. Additionally, our checkpoints are cross-compatible with the NeMo ecosystem, facilitating inference deployment and further customization (https://github.com/NVIDIA/NeMo-Aligner).
 
@@ -15,7 +15,7 @@ The toolkit is currently in it's early stages. We are committed to improving the
 
 ## Key Features
 
-* **SteerLM: Attribute Conditioned SFT as an (User-Steerable) alternative to RLHF** 
+* **SteerLM: Attribute Conditioned SFT as an (User-Steerable) alternative to RLHF.** 
     * [Llama3-70B-SteerLM-Chat](https://huggingface.co/nvidia/Llama3-70B-SteerLM-Chat) aligned with NeMo-Aligner.
     * Corresponding reward model [Llama3-70B-SteerLM-RM](https://huggingface.co/nvidia/Llama3-70B-SteerLM-RM).
     * Learn more at our [SteerLM](https://arxiv.org/abs/2310.05344) and [HelpSteer2](https://arxiv.org/abs/2406.08673) papers.
