@@ -20,15 +20,16 @@ from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerB
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel
+from nemo_aligner.utils.distributed import Timer
 
 # mp.set_start_method("spawn", force=True)
+
 
 @hydra_runner(config_path="conf", config_name="baseline")
 def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
-    logging.info(f'\n{OmegaConf.to_yaml(cfg)}')
+    logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
     cfg.model.global_batch_size = cfg.trainer.devices * cfg.trainer.num_nodes * cfg.model.micro_batch_size
 
@@ -39,5 +40,5 @@ def main(cfg) -> None:
     trainer.fit(model)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
