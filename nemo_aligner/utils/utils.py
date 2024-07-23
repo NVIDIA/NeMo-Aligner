@@ -26,8 +26,8 @@ from typing import Iterator, List
 from unittest.mock import patch
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
+from megatron.core.num_microbatches_calculator import reconfigure_microbatch_calculator
 from omegaconf import DictConfig, OmegaConf
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
@@ -199,7 +199,7 @@ def calculate_response_lengths(tokens, eos_id):
 
 def configure_batch_sizes(mbs, gbs, dp=1):
     app_state = AppState()
-    _reconfigure_microbatch_calculator(
+    reconfigure_microbatch_calculator(
         rank=app_state.global_rank,
         rampup_batch_size=None,
         global_batch_size=gbs,
