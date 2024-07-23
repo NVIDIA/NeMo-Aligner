@@ -6,7 +6,7 @@ restore_from_path: null # used when starting from a .nemo file
 multicrop: False
 
 trainer:
-  devices: 1
+  devices: 8
   num_nodes: 1
   accelerator: gpu
   precision: bf16
@@ -72,15 +72,6 @@ model:
   #  numerical results as the naïve method.
   local_loss: False # calculate loss w/ local features @ global (instead of realizing full global @ global matrix)
   gather_with_grad: True # enable full distributed gradient for feature gather, set this to False may cause convergence issue
-
-  image_patch_attn:
-    sigma: 0.02
-    num_layers: 2
-    num_attention_heads: 8
-  
-  aggregator: gap
-  sample_resolutions: [224]      # changing this to sample from 224x224 can only extract one valid patch (i.e the entire image)
-  test_time_resolution: 224
 
   vision:
     precision: 32
