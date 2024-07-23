@@ -37,7 +37,7 @@ RUN pip uninstall -y apex && \
         git fetch origin $APEX_TAG && \
         git checkout FETCH_HEAD; \
     fi && \
-    pip install install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
+    pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
 
 # place any util pkgs here
 RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==$PYTRITON_VERSION

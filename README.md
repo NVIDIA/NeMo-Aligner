@@ -16,15 +16,15 @@ The toolkit is currently in it's early stages, and we are committed to improving
 ## Key features
 
 * **SteerLM: Attribute Conditioned SFT as an (User-Steerable) Alternative to RLHF.** 
-    * Try [NV-Llama2-70B-SteerLM-Chat model](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/llama2-70b-steerlm) aligned with NeMo Aligner on NVIDIA AI Foundation for free (no registration required).
-    * Corresponding reward model [Llama2-13B-SteerLM-RM](https://huggingface.co/nvidia/Llama2-13B-SteerLM-RM)
-    * Learn more at our [SteerLM](https://arxiv.org/abs/2310.05344) and [HelpSteer](https://arxiv.org/abs/2311.09528) papers. 
+    * [Llama3-70B-SteerLM-Chat](https://huggingface.co/nvidia/Llama3-70B-SteerLM-Chat) aligned with NeMo Aligner.
+    * Corresponding reward model [Llama3-70B-SteerLM-RM](https://huggingface.co/nvidia/Llama3-70B-SteerLM-RM)
+    * Learn more at our [SteerLM](https://arxiv.org/abs/2310.05344) and [HelpSteer2](https://arxiv.org/abs/2406.08673) papers.
 * **Supervised Fine Tuning**
 * **Reward Model Training**
 * **Reinforcement Learning from Human Feedback using the [PPO](https://arxiv.org/pdf/1707.06347.pdf) Algorithm**
-    * Try [NV-Llama2-70B-RLHF model](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-foundation/models/nv-llama2-70b-rlhf) aligned with NeMo Aligner on NVIDIA AI Foundation for free (no registration required).
-    * Corresponding reward model [NV-Llama2-13B-RLHF-RM](https://huggingface.co/nvidia/NV-Llama2-13B-RLHF-RM)
+    * [Llama3-70B-PPO-Chat](https://huggingface.co/nvidia/Llama3-70B-PPO-Chat) aligned with NeMo Aligner.
 * **Direct Preference Optimization** as described in [Direct Preference Optimization: Your Language Model is Secretly a Reward Model](https://arxiv.org/pdf/2305.18290)
+    * [Llama3-70B-DPO-Chat](https://huggingface.co/nvidia/Llama3-70B-DPO-Chat) aligned with NeMo Aligner.
 * **Self-Play Fine-Tuning (SPIN)** as described in [Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models](https://arxiv.org/pdf/2401.01335)
 
 ## Learn More

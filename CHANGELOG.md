@@ -5,7 +5,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Next Version]
 - Implement reward-aware preference optimization.
-  
+- Fix log probs mismatch issue between policy and reference policy in DPO & variants.
+   
 ### New features and optimizations
 - Critic and Reward Model server refactored. Now the reward model will have a flag called `model.forward_micro_batch_size` which determines the micro batch size that it runs inferences with. This can be higher than the training micro batch size since during inference we have less memory pressure.
 - In the critic and reward model server it is now possible to specify `inference_micro_batch_size` as a list, this allows us to give more information to PyTriton on the preferred batch sizes we want to run inference with.
@@ -14,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Breaking changes
 - `inference.micro_batch_size` is now renamed to `inference.inference_micro_batch_size` when running reward model inference in `inference_rm.yaml` this is to stay consistent with the naming scheme of the PPO critic.
 - It is no longer possible to specify `add_EOS` when running reward model or critic inference.
+- Aligner now requires Megatron-LM>=0.8.0 for the APIs to calculate the microbatch sizes
 
 ### Bug Fixes
 - Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.

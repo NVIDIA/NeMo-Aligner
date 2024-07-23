@@ -59,7 +59,9 @@ model:
   megatron_amp_O2: True
 
   dpo:
-    log_prob_forward_micro_batch_size: 1
+    # This default value ensures there are no numeric differences beween trained and reference policies when computing log probs.
+    # A higher value can be used to speed-up log probs computations, but may cause numeric differences.
+    log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, 2}
     ref_policy_kl_penalty: 0.2
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
