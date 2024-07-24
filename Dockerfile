@@ -1,20 +1,26 @@
-# CUDA 12.3
-FROM nvcr.io/nvidia/pytorch:24.02-py3
-FROM nvcr.io/nvidia/pytorch:24.02-py3
+# To use git-refs of library dependencies, add this to `docker build`:
+#   --build-arg BUILD_TYPE=named-version
+ARG BUILD_TYPE=pinned-version
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
-### config tags
-ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
-ARG TE_TAG=a51ff542dcb1f605aa54f9b0e1aaadb132acd53d
-ARG MLM_TAG=core_r0.7.0
-ARG NEMO_TAG=r2.0.0rc0
-ARG PYTRITON_VERSION=0.5.5
-ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
-ARG TE_TAG=bfe21c3d68b0a9951e5716fb520045db53419c5e
-ARG MLM_TAG=fbb375d4b5e88ce52f5f7125053068caff47f93f
-ARG NEMO_TAG=1ff3a061da9751e4d645c8de66c0dfd27bd5d119
-ARG PYTRITON_VERSION=0.5.5
+FROM ${BASE_IMAGE} as pinned-version
+ARG APEX_TAG=23c1f86520e22b505e8fdfcf6298273dff2d93d8
+ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
+ARG MLM_TAG=338af51452a53982d202e8386db6233adad1ce86
+ARG NEMO_TAG=6ff5bce31eecefa42d49b2c81fc57b1e1533fa7f
+ARG ALIGNER_COMMIT=db3a9ccb24e703ddf87fb6a760f3ecf71172d844
+
+FROM ${BASE_IMAGE} as named-version
+ARG APEX_TAG=master
+ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
+ARG MLM_TAG=core_r0.8.0
+ARG NEMO_TAG=r2.0.0rc1
+ARG ALIGNER_COMMIT=r0.4.0rc0
+
+FROM ${BUILD_TYPE} as final
+ARG PYTRITON_VERSION=0.5.8
 ARG PROTOBUF_VERSION=4.24.4
-ARG ALIGNER_COMMIT=main
+ARG TRTLLM_VERSION=v0.10.0
 
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
@@ -88,14 +94,14 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
     apt-get install git-lfs && \
     git lfs install
 
-# TRTLLM-0.9
+# TRTLLM
 RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     cd TensorRT-LLM && \
-    git checkout v0.9.0 && \
+    git checkout ${TRTLLM_VERSION} && \
     git apply ../NeMo-Aligner/trtllm.patch && \
     . docker/common/install_tensorrt.sh && \
     python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
 
 RUN cd TensorRT-LLM && \
     pip install ./build/tensorrt_llm*.whl
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.3/compat/lib.real/
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.4/compat/lib.real/
