@@ -105,12 +105,15 @@ def main(cfg) -> None:
         batch = dataset.collate_fn(batch)
         
         # compute the topk logits
-        topk_logits, topk_token_ids, log_sum_exp_logits = compute_topk_logits_in_batched_sequence(
-            ptl_model.model, batch["tokens"], batch["position_ids"], batch["attention_mask"], 
-            cfg.top_k, cfg.trainer.precision)
+        with torch.no_grad():
+            topk_logits, topk_token_ids, log_sum_exp_logits = compute_topk_logits_in_batched_sequence(
+                ptl_model.model, batch["tokens"], batch["position_ids"], batch["attention_mask"], 
+                cfg.top_k, cfg.trainer.precision)
             
         # write the results
         if (not torch.distributed.is_initialized()) or torch.distributed.get_rank() == 0:
+            batch.pop("position_ids")
+            batch.pop("attention_mask")
             write_generations(cfg.output_path, indices, batch, 
                               topk_logits.cpu(), topk_token_ids.cpu(), log_sum_exp_logits.cpu())
 

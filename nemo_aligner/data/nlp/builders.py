@@ -47,6 +47,7 @@ from nemo_aligner.data.nlp.datasets import (
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
+    KnowledgeDistillationDataset,
 )
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
@@ -262,6 +263,7 @@ build_train_valid_test_rlhf_datasets = partial(build_train_valid_test_datasets, 
 build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, RewardModelDataset)
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
+build_train_valid_test_knowledge_distillation_datasets = partial(build_train_valid_test_datasets, KnowledgeDistillationDataset)
 
 
 def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
