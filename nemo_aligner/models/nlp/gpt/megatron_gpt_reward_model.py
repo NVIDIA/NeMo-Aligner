@@ -111,7 +111,6 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             attribute_weights=self.cfg.get("regression", {}).get("attribute_weights", None),
             merge_attributes=self.cfg.get("regression", {}).get("merge_attributes", False),
         )
-        breakpoint()
         if self.cfg.get("scale_positional_embedding", False):
             if hasattr(model, "rotary_pos_emb"):
                 model.rotary_pos_emb.inv_freq = apply_rope_scaling(model.rotary_pos_emb.inv_freq)
