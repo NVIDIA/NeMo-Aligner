@@ -98,7 +98,7 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
 RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     cd TensorRT-LLM && \
     git checkout ${TRTLLM_VERSION} && \
-    git apply ../NeMo-Aligner/trtllm.patch && \
+    patch -p1 < ../NeMo-Aligner/trtllm.patch && \
     . docker/common/install_tensorrt.sh && \
     python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
 
