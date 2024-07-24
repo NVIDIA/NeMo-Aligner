@@ -117,6 +117,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         gpt_cfg.attention_dropout = cfg.model.get("attention_dropout", 0.0)
         gpt_cfg.ffn_dropout = cfg.model.ffn_dropout
         gpt_cfg.use_flash_attention = cfg.model.get("use_flash_attention", False)
+        gpt_cfg.scale_positional_embedding = cfg.model.get("scale_positional_embedding", False)
         # if TP/PP size is -1, use default TP/PP size as original model
         if cfg.model.get("tensor_model_parallel_size", 1) > 0:
             gpt_cfg.tensor_model_parallel_size = cfg.model.get("tensor_model_parallel_size", 1)
