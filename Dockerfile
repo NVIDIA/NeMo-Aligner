@@ -1,14 +1,25 @@
-# CUDA 12.3
-FROM nvcr.io/nvidia/pytorch:24.02-py3
+# To use git-refs of library dependencies, add this to `docker build`:
+#   --build-arg BUILD_TYPE=named-version
+ARG BUILD_TYPE=pinned-version
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
-### config tags
-ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
-ARG TE_TAG=a51ff542dcb1f605aa54f9b0e1aaadb132acd53d
-ARG MLM_TAG=core_r0.7.0
-ARG NEMO_TAG=r2.0.0rc0
-ARG PYTRITON_VERSION=0.5.5
-ARG PROTOBUF_VERSION=4.24.4
+FROM ${BASE_IMAGE} as pinned-version
+ARG APEX_TAG=23c1f86520e22b505e8fdfcf6298273dff2d93d8
+ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
+ARG MLM_TAG=338af51452a53982d202e8386db6233adad1ce86
+ARG NEMO_TAG=6ff5bce31eecefa42d49b2c81fc57b1e1533fa7f
+ARG ALIGNER_COMMIT=db3a9ccb24e703ddf87fb6a760f3ecf71172d844
+
+FROM ${BASE_IMAGE} as named-version
+ARG APEX_TAG=master
+ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
+ARG MLM_TAG=core_r0.8.0
+ARG NEMO_TAG=r2.0.0rc1
 ARG ALIGNER_COMMIT=main
+
+FROM ${BUILD_TYPE} as final
+ARG PYTRITON_VERSION=0.5.8
+ARG PROTOBUF_VERSION=4.24.4
 
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
