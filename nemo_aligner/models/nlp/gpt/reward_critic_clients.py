@@ -169,4 +169,4 @@ class RemoteGPTRMCriticClient:
                 server_name=self.cfg.critic.name.save, data=send_data, batching=False
             )
 
-        return SaveFuture(save_future)
+        return None
