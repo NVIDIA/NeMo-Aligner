@@ -15,6 +15,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
+from megatron.core import parallel_state
 from PIL import Image
 from torchvision.transforms import CenterCrop, Compose, InterpolationMode, Normalize, Resize
 
@@ -26,6 +27,9 @@ from nemo.collections.multimodal.models.vision_language_foundation.clip.megatron
 )
 from nemo.collections.multimodal.parts.utils import setup_trainer_and_model_for_inference
 from nemo.collections.nlp.modules.common.megatron.module import MegatronModule
+from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
+from nemo.utils import logging
+from nemo_aligner.data.mm.pickscore_dataset import build_train_valid_datasets
 
 BICUBIC = InterpolationMode.BICUBIC
 
@@ -57,7 +61,6 @@ class PickscoreRewardModel(MegatronModule):
         pass
 
     def get_reward(self, images, captions):
-
         text_features = self.text_encoder(captions)
         image_features = self.vision_encoder(images)
 
@@ -67,6 +70,9 @@ class PickscoreRewardModel(MegatronModule):
         )
 
         return rewards
+
+    def forward(self, images, captions):
+        return self.get_reward(images, captions)
 
 
 class MegatronCLIPRewardModel(MegatronCLIPModel):
@@ -79,7 +85,6 @@ class MegatronCLIPRewardModel(MegatronCLIPModel):
         self.differentiable_preprocess = self.diff_preprocess()
 
     def diff_preprocess(self):
-
         return Compose(
             [
                 Resize(self.transform_size, interpolation=BICUBIC, antialias=True),
@@ -93,17 +98,13 @@ class MegatronCLIPRewardModel(MegatronCLIPModel):
         return image * self.rescale_param
 
     def preprocess(self, images, captions):
-
         _, text_transform = get_preprocess_fns(self.cfg, tokenizer=self.tokenizer, is_train=False)
-
         images = (
             torch.stack([self.differentiable_preprocess(img.permute(2, 0, 1)) for img in images])
             .to(torch.cuda.current_device())
             .float()
         )
-
         captions_list = [text_transform(captions[i]) for i in range(images.shape[0])]
-
         captions = torch.stack(captions_list).to(torch.cuda.current_device())
 
         return images, captions
@@ -121,8 +122,146 @@ class MegatronCLIPRewardModel(MegatronCLIPModel):
             pre_process=pre_process,
             post_process=post_process,
         )
-
         return model
+
+    def forward(self, images, captions):
+        rewards = self.get_reward(images, captions)
+        return rewards
+
+    def loss_func(self, output_tensor):
+        """ 
+        rewards_0, rewards_1 - tensor of size [B,] each that computes rewards 
+        labels - Bx2 tensor containing labels
+        """
+        rewards_0, rewards_1, labels = output_tensor
+        logits = torch.stack([rewards_0, rewards_1], 1)  # [B, 2]
+        logsoftmax = F.log_softmax(logits, dim=1)
+        labels_s = labels + 1e-4
+        labels_s = labels_s / labels_s.sum(1, keepdim=True)
+        # to balance out the non-zero term for 0.5 case
+        entropy = (labels_s * torch.log(labels_s)).sum(1).mean().detach()
+        # this is the KL div loss for categorical
+        local_loss = -(labels * logsoftmax).sum(1).mean() + entropy
+        # compute accuracy
+        gt_exists = torch.where(labels.max(1).values > 0.5)[0]
+        logits_masked = torch.argmax(logits, 1)[gt_exists]
+        labels_masked = torch.argmax(labels, 1)[gt_exists]
+        accuracy = torch.mean(1.0 * (logits_masked == labels_masked))
+        # compute reduced metrics over parallel group
+        reduced_accuracy = average_losses_across_data_parallel_group([accuracy])
+        reduced_loss = average_losses_across_data_parallel_group([local_loss])
+        return local_loss, {"loss": reduced_loss, "accuracy": reduced_accuracy}
+
+    # Override forward-backward function to train
+    def get_forward_output_and_loss_func(self):
+        def fwd_output_and_loss_func(dataloader_iter, model):
+            batch, _, _ = next(dataloader_iter)
+            if parallel_state.get_pipeline_model_parallel_world_size() == 1:
+                # load images and caption
+                img_0, img_1 = batch["img_0"], batch["img_1"]
+                img_0, img_1 = (
+                    [x.to(torch.cuda.current_device()) for x in img_0],
+                    [x.to(torch.cuda.current_device()) for x in img_1],
+                )
+                captions = batch["prompt"]
+            else:
+                raise NotImplementedError
+                if parallel_state.is_pipeline_first_stage():
+                    # first pipeline stage, prep images and captions
+                    img_0, img_1 = batch["img_0"], batch["img_1"]
+                    captions = batch["prompt"]
+                else:
+                    # Intermediate / Last pipeline stage doesn't need any inputs
+                    img_0, img_1, captions = None, None, None
+
+            reward_0 = self(img_0, captions)
+            reward_1 = self(img_1, captions)
+            output_tensor = (reward_0, reward_1, batch["label"].to(torch.cuda.current_device()))
+            return output_tensor, self.loss_func
+
+        return fwd_output_and_loss_func
+
+    def build_train_valid_test_datasets(self):
+        logging.info("Building datasets for CLIP...")
+        if self.trainer.limit_val_batches > 1.0 and isinstance(self.trainer.limit_val_batches, float):
+            raise ValueError("limit_val_batches must be an integer or float less than or equal to 1.0.")
+
+        self._train_ds, self._validation_ds = build_train_valid_datasets(
+            self.cfg, consumed_samples=self.compute_consumed_samples(0), tokenizer=self.tokenizer,
+        )
+        self._test_ds = None
+
+        if self._train_ds is not None:
+            logging.info(f"Length of train dataset: {len(self._train_ds)}")
+        if self._validation_ds is not None:
+            logging.info(f"Length of val dataset: {len(self._validation_ds)}")
+        if self._test_ds is not None:
+            logging.info(f"Length of test dataset: {len(self._test_ds)}")
+        logging.info(f"Finished building datasets for CLIP.")
+        return self._train_ds, self._validation_ds, self._test_ds
+
+    def setup_training_data(self, cfg):
+        if hasattr(self, "_train_ds") and self._train_ds is not None:
+            consumed_samples = self.compute_consumed_samples(0)
+            logging.info(
+                f"Setting up train dataloader with len(len(self._train_ds)): {len(self._train_ds)} and consumed samples: {consumed_samples}"
+            )
+            self._train_dl = torch.utils.data.DataLoader(
+                self._train_ds,
+                batch_size=self._micro_batch_size,
+                num_workers=cfg.num_workers,
+                pin_memory=True,
+                collate_fn=self.dl_collate_fn,
+                drop_last=cfg.train.get("drop_last", True),
+                persistent_workers=True if cfg.num_workers > 0 else False,
+            )
+
+    def setup_validation_data(self, cfg):
+        if hasattr(self, "_validation_ds") and self._validation_ds is not None:
+            consumed_samples = 0
+            logging.info(
+                f"Setting up validation dataloader with len(len(self._validation_ds)): {len(self._validation_ds)} and consumed samples: {consumed_samples}"
+            )
+            self._validation_dl = torch.utils.data.DataLoader(
+                self._validation_ds,
+                batch_size=self._micro_batch_size,
+                num_workers=cfg.num_workers,
+                collate_fn=self.dl_collate_fn,
+                pin_memory=True,
+                drop_last=cfg.train.get("drop_last", True),
+                persistent_workers=True if cfg.num_workers > 0 else False,
+            )
+
+    def setup_test_data(self, cfg):
+        if hasattr(self, "_test_ds") and self._test_ds is not None:
+            consumed_samples = 0
+            logging.info(
+                f"Setting up test dataloader with len(len(self._test_ds)): {len(self._test_ds)} and consumed samples: {consumed_samples}"
+            )
+            self._test_dl = torch.utils.data.DataLoader(
+                self._test_ds,
+                batch_size=self._micro_batch_size,
+                num_workers=cfg.num_workers,
+                pin_memory=True,
+                collate_fn=self.dl_collate_fn,
+            )
+
+    def dl_collate_fn(self, batch):
+        """ collate function for multi-crop reward model """
+        new_batch = {}
+        keys = list(batch[0].keys())
+        for k in keys:
+            if k in ["img_0", "img_1"]:
+                new_batch[k] = [datum[k] for datum in batch]
+            elif k == "prompt":
+                # if prompts are strings, simply list them, else, stack them
+                if isinstance(batch[0][k], str):
+                    new_batch[k] = [datum[k] for datum in batch]
+                else:
+                    new_batch[k] = torch.stack([datum[k] for datum in batch], 0)
+            else:
+                new_batch[k] = torch.stack([datum[k] for datum in batch], 0)
+        return new_batch
 
 
 def get_reward_model(cfg, mbs, gbs):
