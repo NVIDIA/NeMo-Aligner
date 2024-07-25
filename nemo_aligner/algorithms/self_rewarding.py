@@ -94,6 +94,10 @@ import re
 import jinja2
 jinja2_env = jinja2.Environment()
 
+def db(msg):
+    if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+        print(f"*** rank[{torch.distributed.get_rank()}]  {msg}", flush=True)
+
 def eye(x):
     return x
 
@@ -206,6 +210,11 @@ class SelfRewardingTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
+        
+        if isinstance(self.cfg.get("limit_train_batches", 1.0), int):
+            self.train_dataloader.batch_sampler.total_samples = min(self.train_dataloader.batch_sampler.total_samples, self.cfg.limit_train_batches * self.train_dataloader.batch_sampler.global_batch_size)
+            if hasattr(self.train_dataloader.batch_sampler, "last_batch_size"):
+                self.train_dataloader.batch_sampler.last_batch_size = 0
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
@@ -398,6 +407,7 @@ class SelfRewardingTrainer:
         if self.use_trtllm_generation:
             # at this point self.model is the reference policy from cpu_weight_swap
             self.trtllm_generate.refit(self.model)
+            clear_memory()
 
         prompt_lengths = torch.cat([b["prompt_lengths"] for b in list_of_batches], dim=0)
         batch_max_length = prompt_lengths.max().item()
@@ -423,7 +433,9 @@ class SelfRewardingTrainer:
             )
 
         if self.use_trtllm_generation:
+            #torch.cuda.synchronize()
             actor_output = self.trtllm_generate.generate(inputs)
+            #torch.cuda.synchronize()
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
             
@@ -633,7 +645,7 @@ class SelfRewardingTrainer:
                     generations_list = gather_tensor(
                         generations, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()
                     )
-                    if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and generations_list is not None:
+                    if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and generations_list is not None:
                         for t in generations_list:
                             for p in t:
                                 payload = {"iteration": self.iteration, "epoch": self.epoch, "step": self.step - 1, "response": self.model.tokenizer.ids_to_text(p.long().tolist())}
@@ -648,7 +660,11 @@ class SelfRewardingTrainer:
 
         self.logger.finalize()
         
-        #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+        if self.use_trtllm_generation and hasattr(self.trtllm_generate.trt_llm_exporter.model_runner, "session"):
+            #self.trtllm_generate.unload_engine_train = True
+            del self.trtllm_generate.trt_llm_exporter.model_runner.session
+        
+        #if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
         #    self.generations_fh.close()
 
     def save(self, extra_candidates=None, is_train_end=False):
@@ -766,13 +782,13 @@ class SelfRewardingTrainer:
                         
                         # TODO: sample more from the underlying Dataset instead
                         # if we have just one non-None value, take it as the chosen, and randomly choose from the others for reject
-                        if len(filtered_scores) == 1:
+                        #if len(filtered_scores) == 1:
                             #idx_chosen = np.where(np.array(scores) == filtered_scores[0])[0][0]
-                            idx_chosen = filtered_scores[0][-1]
-                            idx_reject = np.random.choice(list(set(range(len(scores))) - set([idx_chosen])), 1, replace=False).item()
-                            bad_sample = True
+                            #idx_chosen = filtered_scores[0][-1]
+                            #idx_reject = np.random.choice(list(set(range(len(scores))) - set([idx_chosen])), 1, replace=False).item()
+                            #bad_sample = True
                         # if all scores are identical (even all None) we just randomly choose
-                        elif len(filtered_scores) == 0 or all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
+                        if len(filtered_scores) <= 1 or all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
                             idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
                             bad_sample = True
                         elif len(filtered_scores) > 1:

@@ -408,7 +408,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         if self.distributed_adam_offload_manager is None:
 
             self.distributed_adam_offload_manager = (
-                offload_distributed_adam(self._optimizer.state_dict(state_dict_format=1, gather_on_root=False))
+                offload_distributed_adam(self._optimizer.state_dict(state_dict_format=1, gather_on_root=False), force_clear_memory=True)
                 if self.to_offload_adam_states and self.with_distributed_adam
                 else nullcontext()
             )
