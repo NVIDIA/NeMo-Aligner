@@ -17,8 +17,8 @@ import warnings
 from typing import List, Union
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
 from megatron.core import parallel_state
+from megatron.core.num_microbatches_calculator import get_num_microbatches, reconfigure_microbatch_calculator
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
@@ -396,7 +396,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         sequence_length = context_tokens_tensor.shape[1]
 
         app_state = AppState()
-        _reconfigure_microbatch_calculator(
+        reconfigure_microbatch_calculator(
             rank=app_state.global_rank,
             rampup_batch_size=None,
             global_batch_size=micro_batch_size,

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### New features and optimizations
 
 ### Breaking changes
+- Aligner now requires Megatron-LM>=0.8.0 for the APIs to calculate the microbatch sizes
 
 ### Bug Fixes
 - Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.
