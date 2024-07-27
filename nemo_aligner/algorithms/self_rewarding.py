@@ -433,9 +433,7 @@ class SelfRewardingTrainer:
             )
 
         if self.use_trtllm_generation:
-            #torch.cuda.synchronize()
             actor_output = self.trtllm_generate.generate(inputs)
-            #torch.cuda.synchronize()
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
             
@@ -660,9 +658,8 @@ class SelfRewardingTrainer:
 
         self.logger.finalize()
         
-        if self.use_trtllm_generation and hasattr(self.trtllm_generate.trt_llm_exporter.model_runner, "session"):
-            #self.trtllm_generate.unload_engine_train = True
-            del self.trtllm_generate.trt_llm_exporter.model_runner.session
+        if self.use_trtllm_generation:
+            self.trtllm_generate.free(force_unload=True)
         
         #if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
         #    self.generations_fh.close()
