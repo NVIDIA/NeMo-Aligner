@@ -94,3 +94,8 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
 RUN cd TensorRT-LLM && \
     pip install ./build/tensorrt_llm*.whl
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.4/compat/lib.real/
+
+# WAR(0.4.0): The pin of NeMo requires a higher nvidia-modelopt version than
+#             TRT-LLM allows. This installation must follow TRT-LLM and is
+#             only necessary when NeMo 2.0.0rc1 is installed with TRT-LLM v10.
+RUN pip install --upgrade-strategy only-if-needed nvidia-modelopt==0.13.0
