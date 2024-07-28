@@ -342,7 +342,6 @@ class CriticServerTrainer:
         torch.distributed.barrier()
         return loss_mean
 
-    @lock_method("self.lock")
     def save(self, extra_candidates=None, is_train_end=False, save_top_only=False):
         """PTL based save"""
         # when using adam offloading, need to load back the adam states
