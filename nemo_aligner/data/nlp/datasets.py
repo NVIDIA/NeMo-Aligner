@@ -59,6 +59,10 @@ class KnowledgeDistillationDataset(Dataset):
             assert key in payload, f"{key} not in the data"
             payload[key] = torch.tensor(payload[key], dtype=torch.float32)
         
+        if self.cfg.model.data.top_k is not None:
+            payload["topk_logits"] = payload["topk_logits"][..., :self.cfg.model.data.top_k]
+            payload["topk_token_ids"] = payload["topk_token_ids"][..., :self.cfg.model.data.top_k]
+        
         length = len(payload["tokens"])
         if length > self.seq_length:
             logging.warning(

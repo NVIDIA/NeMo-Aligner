@@ -4,6 +4,7 @@ start_from_idx: null
 end_at_idx: null
 output_path: null 
 batch_size: 1
+forward_micro_batch_size: ${.batch_size}
 top_k: 100
 
 trainer:

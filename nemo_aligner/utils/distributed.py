@@ -24,16 +24,14 @@ from typing import Dict, Optional, Union
 import torch
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.parallel_state import (
-    get_tensor_model_parallel_group,
-    get_tensor_model_parallel_rank,
-    get_tensor_model_parallel_world_size,
-)
-from megatron.core.tensor_parallel.utils import VocabUtility
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
     
 from nemo.collections.nlp.modules.common.text_generation_utils import get_model_parallel_src_rank
 from nemo.collections.nlp.parts import utils_funcs
 from nemo.utils.timers import NamedTimer
+from nemo.collections.nlp.modules.common.megatron.utils import (
+    get_iterator_k_split,
+)
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 
 
@@ -325,9 +323,10 @@ def pad_tensors_to_max_global_seq_len(list_of_tensors, pad_value, group, sequenc
     return torch.nn.functional.pad(tensors_padded, (0, max_seq_length - tensors_padded.size(-1)), value=pad_value)
 
 
+@torch.no_grad()
 def compute_topk_logits_in_batched_sequence(
     model: MCoreGPTModel, tokens: torch.Tensor, position_ids: torch.Tensor, 
-    attention_mask: torch.Tensor, top_k: int, precision: str):
+    attention_mask: torch.Tensor, top_k: int, precision: str, forward_micro_batch_size: int = 1):
     """
     Compute the topk predictive logits of the model at each token in a batch of sequences.
     
@@ -337,30 +336,66 @@ def compute_topk_logits_in_batched_sequence(
     attention_mask: torch.Tensor.
     top_k: Int. 
     precision: The precision of the model.
+    forward_micro_batch_size: Int. The micro batch size in forwarding.
     """
-    output_tensor = model(input_ids=tokens, 
-                          position_ids=position_ids, 
-                          attention_mask=attention_mask)
 
-    # in this nemo version the model and autocast dtypes are not synced
-    # so we need to explicitly cast it
-    if not parallel_state.is_pipeline_last_stage():
-        output_tensor = output_tensor.to(dtype=utils_funcs.torch_dtype_from_precision(precision))
+    def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
+        batch = next(dataloader_iter)
+        
+        tokens = batch["tokens"]
+        # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
+        # these two lines ensure your position_ids and attn_mask are always B=1
+        # position_ids = batch["position_ids"][0:1]
+        attention_mask = batch["attention_mask"][0:1]
+        position_ids = batch["position_ids"]
+
+        output_tensor = model(input_ids=tokens, position_ids=position_ids, attention_mask=attention_mask)
+
+        # in this nemo version the model and autocast dtypes are not synced
+        # so we need to explicitly cast it
+        if not parallel_state.is_pipeline_last_stage():
+            output_tensor = output_tensor.to(dtype=utils_funcs.torch_dtype_from_precision(precision))
+
+        def fake_loss_func(output_tensor, non_loss_data=True):
+            # gather the output_tensor across tensor parallel ranks. 
+            # The resulting tensor is [batch_size, sequence_length, n_vocab_size]
+            output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
+
+            # subtract the logits with its maximum, to ensure stability when computing log probs.
+            logits_max = torch.amax(output_tensor, dim=-1, keepdim=True)
+            output_tensor = output_tensor - logits_max
+                
+            # compute the log sum exp logits
+            log_sum_exp_logits = output_tensor.exp().sum(-1, keepdim=False).log().float()
+            
+            # compute the top_k logits and topk token_ids
+            topk_logits, topk_token_ids = torch.topk(output_tensor, top_k)
+            
+            return {"topk_logits": topk_logits, "topk_token_ids": topk_token_ids, "log_sum_exp_logits": log_sum_exp_logits}
+        return output_tensor, fake_loss_func
+
+    seq_length = tokens.shape[1]
+    assert tokens.shape[0] % forward_micro_batch_size == 0, f"batch size {tokens.shape[0]} / forward_micro_batch_size {forward_micro_batch_size} is not divisible."
+    num_microbatches = int(tokens.shape[0] // forward_micro_batch_size)
+    data_iter = get_iterator_k_split(
+        {"tokens":  tokens, "position_ids": position_ids, "attention_mask": attention_mask},
+        num_microbatches)
+    fwd_bwd_function = get_forward_backward_func()
+    losses_reduced_per_micro_batch = fwd_bwd_function(
+        forward_step_func=fwd_output_and_loss_func,
+        data_iterator=data_iter,
+        model=model,
+        num_microbatches=num_microbatches,
+        forward_only=True,
+        seq_length=seq_length,
+        micro_batch_size=forward_micro_batch_size,
+        collect_non_loss_data=True,
+    )
 
     if parallel_state.is_pipeline_last_stage():
-        # gather the output_tensor across tensor parallel ranks. 
-        # The resulting tensor is [batch_size, sequence_length, n_vocab_size]
-        output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
-        
-        # subtract the logits with its maximum, to ensure stability when computing log probs.
-        logits_max = torch.amax(output_tensor, dim=-1, keepdim=True)
-        output_tensor = output_tensor - logits_max
-
-        # compute the log sum exp logits
-        log_sum_exp_logits = output_tensor.exp().sum(-1, keepdim=False).log().float()
-        
-        # compute the top_k logits and topk token_ids
-        topk_logits, topk_token_ids = torch.topk(output_tensor, top_k)
+        topk_logits = torch.cat([item["topk_logits"] for item in losses_reduced_per_micro_batch], dim=0)
+        topk_token_ids = torch.cat([item["topk_token_ids"] for item in losses_reduced_per_micro_batch], dim=0)
+        log_sum_exp_logits = torch.cat([item["log_sum_exp_logits"] for item in losses_reduced_per_micro_batch], dim=0)
     else:
         topk_logits = None
         topk_token_ids = None
