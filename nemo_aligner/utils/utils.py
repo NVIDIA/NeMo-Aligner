@@ -21,7 +21,7 @@ import tempfile
 from contextlib import contextmanager
 from dataclasses import replace
 from functools import partial
-from typing import Iterator, List
+from typing import Iterator, List, Tuple
 from unittest.mock import patch
 
 import torch
@@ -35,7 +35,8 @@ from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-
+from transformers import CLIPImageProcessor
+from nemo.collections.multimodal.data.clip.augmentations.augmentations import image_transform
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     """A save connector that will ask the Reward model to not try to load
@@ -439,3 +440,18 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
         tuple(model_param.shape) == reference_param.local_shape
     ), f"Model shape ({tuple(model_param.shape)} does not match reference shape ({reference_param.local_shape})"
     return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param, dtype=model_param.dtype)
+
+def load_image_processor(from_pretrained: str, from_hf: bool, crop_size: Tuple[int, int] = (224, 224)):
+    if from_hf:
+        image_processor = CLIPImageProcessor.from_pretrained(
+            from_pretrained, torch_dtype=torch.bfloat16
+        )
+    else:
+        # TODO(yuya): Fix this hard-code for our own CLIP
+        image_processor = image_transform(
+            crop_size,
+            is_train=False,
+            mean=None,
+            std=None,
+        )
+    return image_processor
