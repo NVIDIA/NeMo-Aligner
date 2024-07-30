@@ -23,6 +23,7 @@ trainer:
     discount_factor: 1.0
     gae_lambda: 0.95
     normalize_advantages: True
+    output_dir: ${exp_manager.explicit_log_dir}
 
 
     # the sequence length to pad the rollout batch for training to

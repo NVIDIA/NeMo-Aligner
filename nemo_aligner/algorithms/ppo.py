@@ -13,10 +13,13 @@
 # limitations under the License.
 
 import itertools
+import os
+import time
 from collections import UserDict
 from contextlib import nullcontext
 from typing import Dict, List, Union
 
+import jsonlines
 import pandas as pd
 import torch
 from megatron.core.utils import divide
@@ -297,8 +300,21 @@ class PPOTrainer:
             self.timer.start("generate")
             for batch in batch_iterator:
                 rollout_batch = self.model.infer(batch)
-                rollout_batches.append(rollout_batch)
 
+                to_dump = []
+                for text, _valid in zip(
+                    self.model.tokenizer.ids_to_text(rollout_batch["response_tokens"].tolist()),
+                    rollout_batch["is_end"].tolist(),
+                ):
+                    to_dump.append({"text": text, "valid": _valid})
+                filename = os.path.join(
+                    self.cfg.output_dir,
+                    "rank_{}_time_{}_step_{}.jsonl".format(torch.distributed.get_rank(), time.time(), self.step),
+                )
+                with jsonlines.open(filename, mode="w") as writer:
+                    writer.write_all(to_dump)
+
+                rollout_batches.append(rollout_batch)
                 futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
