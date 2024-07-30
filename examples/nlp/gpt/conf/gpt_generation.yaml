@@ -69,7 +69,6 @@ model:
   megatron_amp_O2: True
 
   spin:
-    rollout_micro_batch_size: 32
     num_responses_to_gen: 4
 
     # params for generation
@@ -155,6 +154,7 @@ model:
       prompt_template: null # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
       truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
+      output_original_text: False
 
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:

@@ -66,109 +66,31 @@ answer_ids: torch.LongTensor - the entire response only
 metadata: dict - with keys "system" for the preamble, and "mask" which is "User" or "Assistant"
 """
 def generate_sft_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
-    input_ids = [item["input_ids"] for item in batch]
-    masks = [item["mask"] for item in batch]
+    #input_ids = [item["input_ids"] for item in batch]
+    #masks = [item["mask"] for item in batch]
     context_ids = [item["context_ids"] for item in batch]
-    answer_ids = [item["answer_ids"] for item in batch]
+    #answer_ids = [item["answer_ids"] for item in batch]
     context_lengths = torch.LongTensor([len(x) for x in context_ids])
-    combined_lengths = torch.LongTensor([len(x) for x in input_ids])
+    #combined_lengths = torch.LongTensor([len(x) for x in input_ids])
 
-    input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=eos_id)
-    masks = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True, padding_value=False)
+    #input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=eos_id)
+    #masks = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True, padding_value=False)
     context_ids = torch.nn.utils.rnn.pad_sequence(context_ids, batch_first=True, padding_value=eos_id)
-    answer_ids = torch.nn.utils.rnn.pad_sequence(answer_ids, batch_first=True, padding_value=eos_id)
+    #answer_ids = torch.nn.utils.rnn.pad_sequence(answer_ids, batch_first=True, padding_value=eos_id)
 
     output = {
-        "prompts_and_answers": input_ids,
-        "masks": masks,
+        #"prompts_and_answers": input_ids,
+        #"masks": masks,
         "prompts_only": context_ids,
-        "answers_only": answer_ids,
+        #"answers_only": answer_ids,
         "prompt_lengths": context_lengths,
-        "combined_lengths": combined_lengths,
+        #"combined_lengths": combined_lengths,
     }
 
     return output
 
-
-import re
-import jinja2
-jinja2_env = jinja2.Environment()
-
-def db(msg):
-    if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
-        print(f"*** rank[{torch.distributed.get_rank()}]  {msg}", flush=True)
-
 def eye(x):
     return x
-
-def exists(v):
-    return v is not None
-
-def default(v, d):
-    return v if exists(v) else d
-
-def find_variables_from_jinja_template(template: str):
-    from jinja2 import meta
-    ast = jinja2_env.parse(template)
-    return meta.find_undeclared_variables(ast)
-
-def create_parse_reward_fn(reward_regex_template):
-    assert find_variables_from_jinja_template(reward_regex_template) == {'reward'}, 'reward template must include "score" variable'
-    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward = "([0-9\.]+)")
-
-    def parse_reward_fn(llm_response: str) -> float:
-        result = re.search(rf"{reward_regex_str}", llm_response)
-
-        if not exists(result) or result.groups == 0:
-            return None
-
-        group_one = result.groups(1)[0] if isinstance(result.groups(1), tuple) else result.groups(1)
-        
-        try:
-            ret = float(group_one)
-        except:
-            ret = None
-        
-        return ret
-
-    return parse_reward_fn
-
-def divide_chunks(l, n):
-    for i in range(0, len(l), n):  
-        yield l[i:i + n]
-
-
-DEFAULT_LLM_AS_JUDGE_PROMPT = """<extra_id_0>System
-
-<extra_id_1>User
-Review the user's question and the corresponding response using the additive 5-point
-scoring system described below. Points are accumulated based on the satisfaction of each
-criterion:
-- Add 1 point if the response is relevant and provides some information related to
-the user's inquiry, even if it is incomplete or contains some irrelevant content.
-- Add another point if the response addresses a substantial portion of the user's question,
-but does not completely resolve the query or provide a direct answer.
-- Award a third point if the response answers the basic elements of the user's question in a
-useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-has elements typically found in blogs or search results.
-- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-addressing the user's question directly and comprehensively, and is well-organized and
-helpful, even if there is slight room for improvement in clarity, conciseness or focus.
-- Bestow a fifth point for a response that is impeccably tailored to the user's question
-by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-demonstrating a high-quality, engaging, and insightful answer.
-User: {{ prompt }}
-<response>{{ response }}</response>
-After examining the user's instruction and the response:
-- Briefly justify your total score, up to 100 words.
-- Conclude with the score using the format: "Score: <total points>"
-Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
-necessary. To evaluate the response in alignment with this additive scoring model, we'll
-systematically attribute points based on the outlined criteria.
-<extra_id_1>Assistant
-"""
-
-DEFAULT_REWARD_REGEX_TEMPLATE = "(?i)(?:Score|Points): {{ reward }}"
 
 
 class GenerationTrainer:
@@ -218,12 +140,12 @@ class GenerationTrainer:
         self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
         self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
-        dp_batch_size = self.model.cfg.global_batch_size // parallel_state.get_data_parallel_world_size()
-        assert (
-            self.model.cfg.spin.rollout_micro_batch_size % dp_batch_size == 0
-        ), f"rollout_micro_batch_size [{self.model.cfg.spin.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
-        self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
-        assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
+        #dp_batch_size = self.model.cfg.global_batch_size // parallel_state.get_data_parallel_world_size()
+        #assert (
+        #    self.model.cfg.spin.rollout_micro_batch_size % dp_batch_size == 0
+        #), f"rollout_micro_batch_size [{self.model.cfg.spin.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
+        #self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
+        #assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
         
         # storage for generated responses which we want to save
         if torch.distributed.get_rank() == 0:
@@ -376,7 +298,6 @@ class GenerationTrainer:
                 
                 dp_group = parallel_state.get_data_parallel_group()
 
-                #generations = batch_pad_to_fixed_len(global_batch["generated"], self.model.cfg.encoder_seq_length, pad_token=self.model.tokenizer.eos_id)
                 gen_tokens = global_batch["prompt_and_response"]
                 prompt_lens = global_batch["prompt_lens"]
                 gen_lens = global_batch["gen_lens"]
@@ -469,8 +390,9 @@ class GenerationTrainer:
         # restore max steps we need to run for
         self.set_max_steps()
 
+    '''
     def augment_dataloader(self, dataloader):
-        """Augment dataloader with generations and ref policy log probs"""
+        """Augment dataloader with generations"""
         iter_dataloader = iter(dataloader)
         buffer = []
         done = False
@@ -524,6 +446,48 @@ class GenerationTrainer:
                 del new_batch, gen_tokens, prompt_lens, gen_lens, valids
 
                 buffer.clear()
+    '''
+
+    def augment_dataloader(self, dataloader):
+        """Augment dataloader with generations"""
+        iter_dataloader = iter(dataloader)
+        while True:
+            try:
+                batches = next(iter_dataloader)
+                batch = generate_sft_custom_collate(batches,
+                                                      eos_id=self.model.tokenizer.eos_id,
+                                                      reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
+                                                      reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
+                                                      eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
+                                                      )
+                #print(f" rank [{torch.distributed.get_rank()}] *** RAW_BATCH_SHAPE: ", batch["prompts_only"].shape)
+                
+                gen_tokens, prompt_lens, gen_lens, valids = [], [], [], []
+                for _ in range(self.num_responses_to_gen):
+                    # Generation happens on GPU but returned tensors are on CPU so as not to blow up VRAM due to self.num_responses_to_gen
+                    gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end = self.get_generations([batch])
+                    #candidate_responses.append((gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end))
+                    gen_tokens.append(gen_tokens_buf)
+                    prompt_lens.append(gen_prompt_lengths_buf)
+                    gen_lens.append(gen_lengths_buf)
+                    valids.append(is_end)
+                
+                # if you want to pad to the global DP batch instead of model.cfg.encoder_seq_length you can uncomment this
+                #max_seq_length = torch.tensor([x.size(-1) for x in gen_tokens], dtype=torch.float32, device=torch.cuda.current_device()).max().unsqueeze(0)
+                #torch.distributed.all_reduce(max_seq_length, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group())
+                #max_seq_length = int(max_seq_length)
+                
+                new_batch = {
+                    "prompt_and_response": torch.stack([batch_pad_to_fixed_len(x, self.model.cfg.encoder_seq_length, pad_token=self.model.tokenizer.eos_id) for x in gen_tokens], dim=0).cuda(non_blocking=True),
+                    "prompt_lens": torch.stack(prompt_lens, dim=0).cuda(non_blocking=True),
+                    "gen_lens": torch.stack(gen_lens, dim=0).cuda(non_blocking=True),
+                    "valids": torch.stack(valids, dim=0).cuda(non_blocking=True),
+                }
+                
+                yield new_batch
+                del new_batch, gen_tokens, prompt_lens, gen_lens, valids
+            except StopIteration:
+                break
 
     @property
     def epoch(self):
