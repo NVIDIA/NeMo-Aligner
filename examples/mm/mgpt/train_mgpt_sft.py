@@ -41,8 +41,8 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_from_nemo
-#from nemo.collections.multimodal.data.neva.neva_dataset import DataCollatorForSupervisedDataset
-from nemo_aligner.data.mm.datasets import DataCollatorForSupervisedDataset
+from nemo.collections.multimodal.data.neva.neva_dataset import DataCollatorForSupervisedDataset
+
 """Script to start SFT training"""
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
