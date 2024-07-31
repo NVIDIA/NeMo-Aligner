@@ -34,6 +34,21 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import set_sync_funcs
 from nemo_aligner.utils.utils import copy_model_states_to_cpu, masked_mean, offload_distributed_adam
 
+SYSTEM_PROMPT = (
+    "A chat between a curious user and an artificial intelligence assistant. "
+    "The assistant gives helpful, detailed, and polite answers to the user's questions."
+)
+
+
+def replace_last_occurrence(input_string, old, new):
+    return new.join(input_string.rsplit(old, 1))
+
+
+def modify_prompt(text):
+    with_system_prompt = text[:19] + SYSTEM_PROMPT + text[19:]
+    text = replace_last_occurrence(with_system_prompt, "<extra_id_1>", "<extra_id_2>")
+    return text
+
 
 class StateDictState(Enum):
     """Enum to determine which model state is loaded
@@ -252,8 +267,9 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         return self.infer(*args, **kwargs)
 
     def _infer_rm(self, *args, **kwargs):
+        string_inputs = list(map(modify_prompt, self.tokenizer.ids_to_text(kwargs["inputs"][0].tolist())))
         self._load_rm()
-        return self.infer(*args, **kwargs)
+        return self.infer(string_inputs)
 
     def finish_training(self):
         self.critic_state_dict_cpu = copy_model_states_to_cpu(
