@@ -52,13 +52,46 @@ from nemo_aligner.data.nlp.datasets import (
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
-def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name):
+class ChunkedJsonl:
+    def __init__(self, path_placeholder, n_chunks):
+        self.CHUNK_ID_STRING = "CHUNK_ID"
+        assert self.CHUNK_ID_STRING in path_placeholder, f"path_placehold ({path_placeholder}) does not have the CHUNK_ID_STRING ({self.CHUNK_ID_STRING})"
+        self.n_chunks = n_chunks
+        self.path_placeholder = path_placeholder
+        
+        print(f"Initializing chunked jsonl...")
+        lengths = []
+        for chunk_id in range(self.n_chunks):
+            lengths.append(len([1 for _ in open(self.path_placeholder.replace(self.CHUNK_ID_STRING, str(chunk_id)))]))
+        print(f"Number of Chunks = {self.n_chunks} | Number of Examples = {sum(lengths)}")
+        self._lengths = np.asarray(lengths)
+        self._length_accumulated = np.cumsum(lengths)
+
+    def __len__(self):
+        return self._lengths.sum()
+    
+    def __getitem__(self, i):
+        if i >= len(self):
+            raise ValueError(f"The item idx {i} is greater than the length of the dataset ({len(self)})")
+        chunk_id = np.searchsorted(self._length_accumulated, i, side='right')
+        idx_in_chunk = i if chunk_id == 0 else i - self._length_accumulated[chunk_id-1]
+        with open(self.path_placeholder.replace(self.CHUNK_ID_STRING, str(chunk_id))) as f:
+            for line_idx, l in enumerate(f):
+                if line_idx == idx_in_chunk:
+                    return json.loads(l)
+        raise ValueError("Reading the item {i} failed. Computed chunk_id={chunk_id}, idx_in_chunk={idx_in_chunk}.")
+
+
+def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name, n_chunks=None):
     def _build_dataset(current_data_prefix, current_num_samples):
         if data_impl == "mmap":
             data_payload = get_indexed_dataset_(current_data_prefix, data_impl, cfg.data.get("skip_warmup", True))
         elif data_impl.startswith("json"):
             with open(current_data_prefix, "r", encoding="utf_8") as fr:
                 data_payload = [json.loads(line.strip()) for line in fr]
+        elif data_impl == "chunked_jsonl":
+            assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
+            data_payload = ChunkedJsonl(current_data_prefix, n_chunks)
         else:
             raise RuntimeError(f"data.data_impl must be either mmap or json or jsonl, but got {data_impl}")
         total_num_of_documents = len(data_payload)
@@ -97,7 +130,7 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
 
 
 def build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer,
+    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, n_chunks=None,
 ):
     if isinstance(data_prefix, DictConfig):
         assert (
@@ -117,6 +150,7 @@ def build_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="train",
+            n_chunks=n_chunks,
         )
         validation_ds = build_dataset_generic(
             cls=cls,
@@ -128,6 +162,7 @@ def build_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="validation",
+            n_chunks=n_chunks,
         )
         test_ds = build_dataset_generic(
             cls=cls,
@@ -139,6 +174,7 @@ def build_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="test",
+            n_chunks=n_chunks,
         )
         return train_ds, validation_ds, test_ds
 
@@ -155,6 +191,7 @@ def build_train_valid_test_datasets(
                 seq_length=seq_length,
                 seed=seed,
                 tokenizer=tokenizer,
+                n_chunks=n_chunks,
             )
 
         # Blending dataset.
@@ -177,6 +214,7 @@ def build_train_valid_test_datasets(
                 seq_length=seq_length,
                 seed=seed,
                 tokenizer=tokenizer,
+                n_chunks=n_chunks,
             )
             if train_ds:
                 train_datasets.append(train_ds)
@@ -202,7 +240,7 @@ def build_train_valid_test_datasets(
 
 
 def _build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer,
+    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, n_chunks=None,
 ):
     """Build train, valid, and test datasets."""
 
@@ -212,6 +250,9 @@ def _build_train_valid_test_datasets(
     elif data_impl.startswith("json"):
         with open(data_prefix, "r", encoding="utf_8") as fr:
             data_payload = [json.loads(line.strip()) for line in fr]
+    elif data_impl == "chunked_jsonl":
+        assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
+        data_payload = ChunkedJsonl(current_data_prefix, n_chunks)
     else:
         raise RuntimeError(f"data.data_impl must be either mmap or json or jsonl, but got {data_impl}")
     total_num_of_documents = len(data_payload)

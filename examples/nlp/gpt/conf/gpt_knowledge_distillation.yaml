@@ -95,7 +95,8 @@ model:
     use_k_add_1_logits: False
     
   data:
-    data_impl: jsonl
+    data_impl: chunked_jsonl
+    n_chunks: 1000
     splits_string: null
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True

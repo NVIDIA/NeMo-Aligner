@@ -141,6 +141,7 @@ def main(cfg) -> None:
         seq_length=cfg.model.data.seq_length,
         seed=cfg.model.seed,
         tokenizer=ptl_model.tokenizer,
+        n_chunks=cfg.model.data.n_chunks,
     )
 
     train_dataloader = build_dataloader(
