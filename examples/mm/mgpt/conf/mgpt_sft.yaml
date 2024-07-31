@@ -109,6 +109,8 @@ model:
     image_token: "<image>"
     video_token: "<video>"
     image_patch_token: "<extra_id_3>"
+    im_start_token: "<extra_id_4>"
+    im_end_token: "<extra_id_5>"    
 
   # can be used to customize behavior of model.generate for inference metrics
   # note that you have to specify all parameters explicitly even if they match defaults

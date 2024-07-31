@@ -137,6 +137,9 @@ def _modify_config(mgpt_cfg, cfg, add_cfg_to_tree=False):
         mgpt_cfg.mm_cfg.pretrain_mm_mlp_adapter = cfg.model.mm_cfg.get("pretrain_mm_mlp_adapter", None)
         mgpt_cfg.mm_cfg.mm_mlp_adapter_type = cfg.model.mm_cfg.get("mm_mlp_adapter_type", "linear")
         mgpt_cfg.mm_cfg.use_im_start_end = cfg.model.mm_cfg.get("use_im_start_end", False)
+        mgpt_cfg.mm_cfg.im_start_token = cfg.model.mm_cfg.get("im_start_token", "<extra_id_4>")
+        mgpt_cfg.mm_cfg.im_end_token = cfg.model.mm_cfg.get("im_end_token", "<extra_id_5>")
+        mgpt_cfg.mm_cfg.image_patch_token = cfg.model.mm_cfg.get("image_patch_token", "<extra_id_3>")
         
         # check if we are pretraining the adapter or finetuning the LLM
         if mgpt_cfg.mm_cfg.llm.freeze and mgpt_cfg.restore_from_path is None: # if pretraining
