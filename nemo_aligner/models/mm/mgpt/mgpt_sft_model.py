@@ -22,13 +22,16 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import MegatronNevaModel
+from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import MegatronNevaModel, MCoreNevaModel
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.modules.common.text_generation_strategy import TextGenerationStrategy
 from nemo.collections.nlp.modules.common.text_generation_utils import (
     get_default_length_params,
     get_default_sampling_params,
 )
+
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import get_specs
+from nemo.utils import logging
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
@@ -224,3 +227,46 @@ class MultimodalGPTSFTModel(MegatronNevaModel, SupervisedInterface):
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
         set_train(self)
+
+    def model_provider_func(self, pre_process, post_process):
+        """Model depends on pipeline paralellism."""
+        media_start_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_start_token", "<extra_id_4>"))
+        media_end_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_end_token", "<extra_id_5>"))
+
+        if self.mcore_gpt:
+            if not parallel_state.is_initialized():
+
+                def dummy():
+                    return
+
+                if self.trainer.strategy.launcher is not None:
+                    self.trainer.strategy.launcher.launch(dummy, trainer=self.trainer)
+                self.trainer.strategy.setup_environment()
+
+            model = MCoreNevaModel(
+                mm_cfg=self.cfg.mm_cfg,
+                media_start_id=media_start_id,
+                media_end_id=media_end_id,
+                mcore_gpt=self.mcore_gpt,
+                config=self.transformer_config,
+                transformer_layer_spec=get_specs(self.spec_name),
+                vocab_size=self.cfg.get('override_vocab_size', self.padded_vocab_size),
+                max_sequence_length=self.cfg.get('encoder_seq_length', 512),
+                pre_process=pre_process,
+                post_process=post_process,
+                parallel_output=True,
+                share_embeddings_and_output_weights=self.cfg.get('share_embeddings_and_output_weights', True),
+                position_embedding_type=self.cfg.get('position_embedding_type', 'learned_absolute'),
+                rotary_percent=self.cfg.get('rotary_percentage', 1.0),
+                seq_len_interpolation_factor=self.cfg.get('seq_len_interpolation_factor', None),
+                rotary_base=self.cfg.get('rotary_base', 10000),
+            )
+        else:
+            raise NotImplementedError("Only MCoreGPT models are supported! Please set mcore_gpt=True.")
+            
+
+        logging.info(
+            f"Neva model initialized with {sum(p.numel() for p in model.parameters() if p.requires_grad)} trainable parameters"
+        )
+
+        return model

@@ -141,6 +141,13 @@ def _modify_config(mgpt_cfg, cfg, add_cfg_to_tree=False):
         # check if we are pretraining the adapter or finetuning the LLM
         if mgpt_cfg.mm_cfg.llm.freeze and mgpt_cfg.restore_from_path is None: # if pretraining
             mgpt_cfg.restore_from_path = mgpt_cfg.mm_cfg.llm.from_pretrained
+
+        # Check if an external tokenizer is given
+        artifacts = ["model", "vocab_file", "merge_file", "additional_special_tokens"]
+        for artifact in artifacts:
+            if mgpt_cfg.tokenizer.get(artifact, None):
+                mgpt_cfg.tokenizer[artifact] = cfg.model.tokenizer[artifact]
+
     return mgpt_cfg
 
 
@@ -169,7 +176,7 @@ def main(cfg) -> None:
     )
 
     init_peft(ptl_model, updated_cfg)
-
+    
     with open_dict(cfg):
         # overwrite the model config with the config from the checkpoint
         cfg.model.encoder_seq_length = ptl_model.cfg.encoder_seq_length

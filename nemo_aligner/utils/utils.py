@@ -95,7 +95,6 @@ def load_from_nemo(
             restore_path=restore_path, trainer=trainer, return_config=True, save_restore_connector=connector,
         )
         model_cfg = modify_config_fn(origin_cfg, model_cfg, add_cfg_to_tree=False)
-
     model = cls.restore_from(
         restore_path=restore_path,
         trainer=trainer,

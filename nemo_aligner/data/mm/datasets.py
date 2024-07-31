@@ -101,8 +101,6 @@ class MultimodalChatDataset(NevaDataset):
         else:
             self.special_tokens = special_tokens
         
-        
-
     def get_prompt(self, system_token, system_message, messages) -> str:
         prompt_dict = []
 
@@ -531,7 +529,7 @@ class DataCollatorForSupervisedDataset(object):
                 media = rearrange(media, "b T c h w -> b T 1 c h w")
             elif media_type == 'video':
                 media = rearrange(media, "b T F c h w -> b T F c h w")
-        print(f'{media.shape = }')
+        
         batch = {
             'tokens': tokens,
             'labels': labels,

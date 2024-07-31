@@ -106,6 +106,9 @@ model:
     pretrain_mm_mlp_adapter: null # path to pretrained mm adapter
     mm_mlp_adapter_type: linear
     use_im_start_end: False
+    image_token: "<image>"
+    video_token: "<video>"
+    image_patch_token: "<extra_id_3>"
 
   # can be used to customize behavior of model.generate for inference metrics
   # note that you have to specify all parameters explicitly even if they match defaults
