@@ -377,6 +377,25 @@ PPO Results with TensorRT-LLM
 
 We used the TensorRT-LLM PPO integration to train the `LLaMa3-70B-PPO-Chat <https://huggingface.co/nvidia/Llama3-70B-PPO-Chat>`__ model. This model was trained using a global batch size of 128, num_rollout_samples of 128, constant learning rate of 1e-7 and KL penalty of 3e-3. For more details please see the Helpsteer2 `paper <https://arxiv.org/pdf/2406.08673>`__.
 
+PPO Performance Results with TensorRT-LLM
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+We test the scaling of our TRT-LLM system by running llama3 70B Actor and llama3 70B Reward model on the Helpsteer2 prompts with ``num_rollout_samples=1024``, ``global_batch_size=128``, reshard enabled and engine offloading set to False.
+
++------------------+-------------------+-----------------------------+----------------------+----------------+
+| Actor Node Count | Critic Node Count | Number of Tokens Generated  | Step Time (seconds)  | Scaling Factor |
++==================+===================+=============================+======================+================+
+| 8                | 4                 | 350.7                       | 366.7                |                |
++------------------+-------------------+-----------------------------+----------------------+----------------+
+| 16               | 8                 | 323.3                       | 190.4                | 1.93           |
++------------------+-------------------+-----------------------------+----------------------+----------------+
+| 32               | 16                | 331.7                       | 108                  | 1.76           |
++------------------+-------------------+-----------------------------+----------------------+----------------+
+| 64               | 32                | 334                         | 56.9                 | 1.9            |
++------------------+-------------------+-----------------------------+----------------------+----------------+
+
+NOTE: for 64x32 config we used a rollout_micro_batch_size of 16 instead of 8 since we have more memory coming from the distributed optimizer.
+
 PPO Results
 %%%%%%%%%%%
 
