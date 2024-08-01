@@ -35,9 +35,6 @@ from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-from transformers import CLIPImageProcessor, SiglipImageProcessor
-from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import TiledSiglipImageProcessor
-from nemo.collections.multimodal.data.clip.augmentations.augmentations import image_transform
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     """A save connector that will ask the Reward model to not try to load
@@ -81,6 +78,7 @@ def load_from_nemo(
     restore_path=None,
     load_base_model_only=False,
     return_updated_cfg=False,
+    restore_mm_adapter=False,
 ):
     """load a model using nemo checkpoint
     """
@@ -97,14 +95,16 @@ def load_from_nemo(
         )
         model_cfg = modify_config_fn(origin_cfg, model_cfg, add_cfg_to_tree=False)
     
-    model = cls(model_cfg, trainer)
-    #model = cls.restore_from(
-    #    restore_path=restore_path,
-    #    trainer=trainer,
-    #    override_config_path=model_cfg,
-    #    save_restore_connector=connector,
-    #    strict=strict,
-    #)
+    if not restore_mm_adapter:
+        model = cls(model_cfg, trainer)
+    else:
+        model = cls.restore_from(
+            restore_path=restore_path,
+            trainer=trainer,
+            override_config_path=model_cfg,
+            save_restore_connector=connector,
+            strict=strict,
+        )
     return (model, model_cfg) if return_updated_cfg else model
 
 
@@ -442,39 +442,3 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
         tuple(model_param.shape) == reference_param.local_shape
     ), f"Model shape ({tuple(model_param.shape)} does not match reference shape ({reference_param.local_shape})"
     return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param, dtype=model_param.dtype)
-
-def load_image_processor(mm_cfg):
-    if mm_cfg.vision_encoder.get("from_hf", False):
-        if "clip" in mm_cfg.vision_encoder.from_pretrained:
-            image_processor = CLIPImageProcessor.from_pretrained(
-                mm_cfg.vision_encoder.from_pretrained, torch_dtype=torch.bfloat16
-            )
-        elif "siglip" in mm_cfg.vision_encoder.from_pretrained:
-            image_processor = SiglipImageProcessor.from_pretrained(
-                mm_cfg.vision_encoder.from_pretrained, torch_dtype=torch.bfloat16
-            )
-            image_processor = TiledSiglipImageProcessor(image_processor,
-                                                        grid_width = mm_cfg.vision_encoder.get("grid_width", 1),
-                                                        grid_height = mm_cfg.vision_encoder.get("grid_height", 1),
-                                                        max_upscale = mm_cfg.vision_encoder.get("max_upscale", 2.0),
-                                                        )
-        else:
-            raise (ValueError("Currently only support CLIPImageProcessor and SiglipImageProcessor from Huggingface"))
-
-        crop_size = mm_cfg.vision_encoder.get("crop_size")
-        if hasattr(image_processor, 'crop_size') and crop_size is not None:
-            assert crop_size == (
-                image_processor.crop_size['height'],
-                image_processor.crop_size['width'],
-            ), f"Crop size {crop_size} does not match the HuggingFace CLIP model's crop size {(image_processor.crop_size['height'], image_processor.crop_size['width'])}"
-
-    else:
-        # Corresponds to MegatronCLIPModel
-        crop_size = mm_cfg.get("crop_size", (224, 224))
-        image_processor = image_transform(
-            crop_size,
-            is_train=False,
-            mean=None,
-            std=None,
-        )
-    return image_processor

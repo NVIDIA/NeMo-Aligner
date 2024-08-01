@@ -176,6 +176,7 @@ def main(cfg) -> None:
         modify_config_fn=_modify_config,
         restore_path=cfg.model.restore_from_path if restore_mm_adapter else cfg.model.mm_cfg.llm.from_pretrained,
         return_updated_cfg=True,
+        restore_mm_adapter=restore_mm_adapter,
     )
 
     init_peft(ptl_model, updated_cfg)

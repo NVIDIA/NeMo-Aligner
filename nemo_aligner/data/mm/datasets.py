@@ -25,7 +25,7 @@ from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, proc
 from PIL import Image
 from transformers import CLIPImageProcessor, SiglipImageProcessor
 from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import TiledSiglipImageProcessor
-from nemo_aligner.utils.utils import load_image_processor
+from nemo.collections.multimodal.parts.utils import create_image_processor
 
 MAX_NUM_IMAGES = 1
 
@@ -63,7 +63,7 @@ class MultimodalChatDataset(NevaDataset):
                 use_im_start_end=mm_cfg.get("use_im_start_end", False),
                 patch_dim=mm_cfg.vision_encoder.patch_dim,
                 mm_mlp_adapter_type=mm_cfg.get("mm_mlp_adapter_type", "linear"),
-                image_processor=load_image_processor(mm_cfg),
+                image_processor=create_image_processor(mm_cfg),
                 add_extra_token=add_extra_token,
                 context_length=data_cfg.max_seq_length,
                 media_type=media_type,
