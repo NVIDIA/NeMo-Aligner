@@ -123,7 +123,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                 topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
 
                 if self.use_k_add_1_logits:
-                    assert target_log_sum_exp_logits is not None
                     # When target_log_sum_exp_logits is not None. The objective is
                     # target_prob_k = exp(target_logits_k) / exp(target_log_sum_exp_logits), k=1,..., K
                     # target_prob_{K+1} = 1 - sum_{k=1}^K target_prob_k
@@ -147,9 +146,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     
                     target_topk_logits_in_loss = target_topk_logits
                     
-                # #(TODO) this needs only be computed in one rank, so I guess we don't need to scatter them to all ranks. For now, I still keep it.
-                # topk_logits = tensor_parallel.scatter_to_tensor_model_parallel_region(topk_logits)
-                
                 loss = self.loss_func(topk_logits, target_topk_logits_in_loss, loss_mask=loss_mask)
                 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
@@ -169,9 +165,10 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         loss_mask: Tensor of [B, seq_len].
         """
         logprobs = torch.nn.functional.log_softmax(self.logits_scale * logits, dim=-1)
-        target_probs = torch.nn.functional.softmax(self.logits_scale * target_logits, dim=-1)
-        loss = - torch.sum(target_probs * logprobs, dim=-1)
-        return torch.sum(loss * loss_mask) / torch.sum(loss_mask)
+        target_logprobs = torch.nn.functional.log_softmax(self.target_logits_scale * target_logits, dim=-1)
+        loss = torch.sum(target_logprobs.exp() * (target_logprobs - logprobs), dim=-1)
+        loss_mask = loss_mask.clamp(min=0, max=1)
+        return torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
 
     def get_loss_and_metrics(self, batch, forward_only):
         """Take a data_iter which is an interator over the microbatches

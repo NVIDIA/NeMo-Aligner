@@ -54,14 +54,14 @@ def _collate_fn(batch, eos_id, reset_position_ids=False, reset_attention_mask=Fa
         topk_token_ids = [item['topk_token_ids'] for item in batch]
 
         tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
-        labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
-        loss_mask = torch.nn.utils.rnn.pad_sequence(loss_mask, batch_first=True, padding_value=-100)
+        labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=eos_id)
+        loss_mask = torch.nn.utils.rnn.pad_sequence(loss_mask, batch_first=True, padding_value=0)
         assert len(tokens.shape) == 2, "tokens size should be [B, seq_length], got {tokens.shape}"
         assert len(labels.shape) == 2, "labels size should be [B, seq_length], got {labels.shape}"
         assert len(loss_mask.shape) == 2, "loss_mask size should be [B, seq_length], got {loss_mask.shape}"
         
         topk_logits = torch.nn.utils.rnn.pad_sequence(topk_logits, batch_first=True, padding_value=0)
-        topk_token_ids = torch.nn.utils.rnn.pad_sequence(topk_token_ids, batch_first=True, padding_value=0)
+        topk_token_ids = torch.nn.utils.rnn.pad_sequence(topk_token_ids, batch_first=True, padding_value=eos_id)
         assert len(topk_logits.shape) == 3, "topk_logits size should be [B, seq_length], got {topk_logits.shape}"
         assert len(topk_token_ids.shape) == 3, "topk_token_ids size should be [B, seq_length], got {topk_token_ids.shape}"
         
@@ -70,7 +70,7 @@ def _collate_fn(batch, eos_id, reset_position_ids=False, reset_attention_mask=Fa
             log_sum_exp_logits = torch.nn.utils.rnn.pad_sequence(log_sum_exp_logits, batch_first=True, padding_value=0)
             assert len(log_sum_exp_logits.shape) == 2, "log_sum_exp_logits size should be [B, seq_length], got {log_sum_exp_logits.shape}"
         else:
-            log_sum_exp_logits = None
+            log_sum_exp_logits = torch.ones_like(topk_logits[..., 0])
     
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
             tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
