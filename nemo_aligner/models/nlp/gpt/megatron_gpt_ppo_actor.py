@@ -39,7 +39,10 @@ from nemo_aligner.utils.distributed import (
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
 )
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
+from nemo_aligner.utils.text_generation_utils import (
+    TrackLengthGPTModelTextGenerationStrategy,
+    verify_is_valid_and_clamp_range_,
+)
 from nemo_aligner.utils.train_utils import (
     grad_reductions,
     prepare_for_training_step,
@@ -49,6 +52,7 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import (
     adapter_control,
+    clear_memory,
     configure_batch_sizes,
     cpu_weight_swap,
     masked_mean,
@@ -101,8 +105,10 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 sample_temperature=self.cfg.ppo.sampling_params["temperature"],
                 sample_top_k=self.cfg.ppo.sampling_params["top_k"],
                 sample_top_p=self.cfg.ppo.sampling_params["top_p"],
+                repetition_penalty=self.cfg.ppo.sampling_params["repetition_penalty"],
                 use_greedy=self.cfg.ppo.sampling_params.get("use_greedy", False),
                 tokenizer=self.tokenizer,
+                seed=self.cfg.ppo.trt_llm.get("seed", self.cfg.seed),
             )
 
     # training calls
@@ -119,7 +125,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     required_keys.update(("response_tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("response_tokens", "advantages", "mask", "prev_logprobs"))
+                    required_keys.update(("response_tokens", "advantages", "mask", "prev_logprobs", "is_end"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
@@ -132,6 +138,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 advantages = batch["advantages"]
                 prev_log_probs = batch["prev_logprobs"]
                 tokens = batch["response_tokens"]
+                is_end = batch["is_end"]
+
+                is_end_mask = mask * is_end.view(-1, 1)
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
@@ -139,7 +148,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
                 scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
                 if self.entropy_bonus > 0:
-                    scaled_entropy = calculate_distributed_entropy(parallel_logits, mask) * self.entropy_bonus
+                    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask) * self.entropy_bonus
 
                 # Calculate clipped PPO surrogate loss function.
                 ratios = (curr_log_probs - prev_log_probs).exp()
@@ -147,8 +156,13 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
                 loss1 = -advantages * ratios
                 loss2 = -advantages * ratios_clamped
-                actor_loss = masked_mean(torch.max(loss1, loss2), mask)
-                loss = actor_loss - scaled_entropy
+
+                if is_end_mask.sum() > 0:
+                    actor_loss = masked_mean(torch.max(loss1, loss2), is_end_mask)
+                    loss = actor_loss - scaled_entropy
+                else:
+                    # hack to disable this update since there are no valid tokens
+                    loss = loss1.view(-1)[0] * 0
 
                 with torch.no_grad():
                     ppo_ratio = masked_mean(ratios.detach(), mask)
@@ -298,6 +312,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         if self.use_trtllm_generation:
             self.trtllm_generate.refit(self.model)
+            clear_memory()
 
     @torch.no_grad()
     def infer(self, inference_batch):
@@ -313,14 +328,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             actor_output = self.trtllm_generate.generate(inputs)
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
-
-            # double check with nemo logic to make sure it ended
-            is_end = strategy.end_of_generation_condition(
-                response_tokens, response_tokens[:, -1], self.tokenizer.eos_id, self._sampling_params["end_strings"]
-            )
-            assert torch.all(
-                is_end
-            ), f"rank {torch.distributed.get_rank()} did NOT stop properly accoridng to nemo! {response_tokens=}"
         else:
             actor_output = self.generate(
                 inputs=inputs,
@@ -331,6 +338,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             response_tokens = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
             response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
+
             max_response_length = response_lengths.max().item()
 
             # Sanity check to validate response length.
@@ -348,10 +356,17 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         f"`response_tokens` ({response_tokens.size(1)})"
                     )
 
+        # sometimes backends like TRT-LLM will generate invalid tokens
+        # so we need to also inplace mutate the response_tokens to be within the tokenizer range
+        is_valid = verify_is_valid_and_clamp_range_(
+            response_tokens, response_lengths, strategy, self.tokenizer, self.cfg.ppo.sampling_params["end_strings"]
+        )
+
         rollout_batch = {
             "response_tokens": response_tokens,
             "response_lengths": response_lengths,
             "prompt_lengths": prompt_lengths,
+            "is_end": is_valid,
         }
 
         # return in GPU, trainer needs to move to cpu
@@ -387,7 +402,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         if self.distributed_adam_offload_manager is None:
 
             self.distributed_adam_offload_manager = (
-                offload_distributed_adam(self._optimizer.state_dict(state_dict_format=1, gather_on_root=False))
+                offload_distributed_adam(
+                    self._optimizer.state_dict(state_dict_format=1, gather_on_root=False), force_clear_memory=True
+                )
                 if self.to_offload_adam_states and self.with_distributed_adam
                 else nullcontext()
             )

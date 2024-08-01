@@ -5,7 +5,7 @@ trainer:
   num_nodes: 8
   devices: 8
   accelerator: gpu
-  precision: bf16-mixed
+  precision: bf16
   
   # spin specific args
   spin:
@@ -21,7 +21,7 @@ trainer:
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
-      max_input_tokens: ${multiply:${trainer.spin.trt_llm.max_input_len}, ${model.spin.rollout_micro_batch_size}}
+      max_input_tokens: null
 
       model_type: gptnext
 
@@ -111,6 +111,8 @@ model:
       constant_steps: 1000
       min_lr: 9e-7
 
+  precision: ${trainer.precision}
+
   data:
     chat: True # whether use chatbot data or not
     chat_prompt_tokens:  # special tokens for the chat prompts, a dictionary of {token_type: token}. note that some tokenizer may combine the characters at the junction between {end_of_turn}{turn_start}. e.g. '<im end><im start>', the '><' sometimes is merged to be a single token. This is not supported, try to avoid
@@ -161,7 +163,3 @@ model:
     data:
       train_ds:
         file_path: True
-      validation_ds:
-        file_path: True
-
-precision: ${trainer.precision}

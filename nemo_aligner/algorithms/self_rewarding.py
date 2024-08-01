@@ -32,9 +32,9 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
-from nemo_aligner.utils.distributed import SyncTimer, gather_tensor
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor_within_pp
 from nemo_aligner.utils.ppo_utils import create_mask
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
+from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy, verify_is_valid_and_clamp_range_
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import (
@@ -157,8 +157,10 @@ helpful, even if there is slight room for improvement in clarity, conciseness or
 - Bestow a fifth point for a response that is impeccably tailored to the user's question
 by an AI Assistant, without extraneous information, reflecting expert knowledge, and
 demonstrating a high-quality, engaging, and insightful answer.
-User: {{ prompt }}
+
+<prompt>{{ prompt }}</prompt>
 <response>{{ response }}</response>
+
 After examining the user's instruction and the response:
 - Briefly justify your total score, up to 100 words.
 - Conclude with the score using the format: "Score: <total points>"
@@ -267,8 +269,8 @@ class SelfRewardingTrainer:
             self.trtllm_generate = GPTGenerateTRTLLM(
                 model_cfg=self.model.cfg,
                 max_generation_length=self.length_params["max_length"],
-                max_input_len=self.cfg.trt_llm.get("max_input_len", 1024),
-                max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", 4096),
+                max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
+                max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2) * dp_batch_size),
                 generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
                 unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
                 trt_model_type=self.cfg.trt_llm.get("model_type", "llama"),
@@ -280,6 +282,7 @@ class SelfRewardingTrainer:
                 repetition_penalty=self.sampling_params["repetition_penalty"],
                 use_greedy=self.sampling_params.get("use_greedy", False),
                 tokenizer=self.model.tokenizer,
+                seed=self.model.cfg.get("seed", None),
             )
 
     def validation_step(self, global_batch):
@@ -433,32 +436,40 @@ class SelfRewardingTrainer:
             )
 
         if self.use_trtllm_generation:
-            actor_output = self.trtllm_generate.generate(inputs)
-            response_tokens = actor_output["response_tokens"]
-            response_lengths = actor_output["response_lengths"]
-            
+            generations = self.trtllm_generate.generate(inputs)
+            response_tokens = generations["response_tokens"]
+            response_lengths = generations["response_lengths"]
+            '''
             prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
             # double check with nemo logic to make sure it ended
-            is_end = strategy.end_of_generation_condition(
+            is_valid = strategy.end_of_generation_condition(
                 response_tokens, prev, self.model.tokenizer.eos_id, self.sampling_params["end_strings"]
             )
             
             for idx in range(len(response_tokens)):
                 if torch.min(response_tokens[idx]).item() < 0 or torch.max(response_tokens[idx]).item() >= self.model.tokenizer.vocab_size:
-                    is_end[idx] = False
+                    is_valid[idx] = False
                     response_tokens[idx] = torch.clamp(response_tokens[idx], min=self.model.tokenizer.eos_id, max=self.model.tokenizer.vocab_size - 1)
+            '''
         else:
             generations = self.model.generate(
-                inputs=(prompt_tokens, prompt_lengths),
+                inputs=inputs,
                 length_params=self.length_params | {"max_length": adj_generation_length},
                 sampling_params=self.sampling_params,
                 strategy=strategy,
             )
     
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
-            response_lengths, is_end = strategy.get_lengths(return_is_end=True)
+            #response_lengths = strategy.get_lengths()
+            #max_response_length = response_lengths.max().item()
+            #response_tokens = torch.LongTensor(generations["token_ids"])
+            
+            # this is a 1D LongTensor with the length of the responses where response is prompt+response
+            response_tokens = torch.cuda.LongTensor(generations["token_ids"]) if generations else None
+            response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
+            response_lengths = strategy.get_lengths()
+            
             max_response_length = response_lengths.max().item()
-            response_tokens = torch.LongTensor(generations["token_ids"])
     
             # Sanity check to validate response length.
             if max_response_length != response_tokens.size(1):
@@ -474,12 +485,25 @@ class SelfRewardingTrainer:
                         f"max response length ({max_response_length}) does not match the size of "
                         f"`response_tokens` ({response_tokens.size(1)})"
                     )
+        
+        # sometimes backends like TRT-LLM will generate invalid tokens
+        # so we need to also inplace mutate the response_tokens to be within the tokenizer range
+        #if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        #    is_valid = torch.all((0 <= response_tokens) & (response_tokens < self.model.tokenizer.vocab_size), dim=-1)
+        #    response_tokens.clamp_(0, self.model.tokenizer.vocab_size - 1)
+        #else:
+        #    is_valid = verify_is_valid_and_clamp_range_(
+        #        response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
+        #    )
+        is_valid = verify_is_valid_and_clamp_range_(
+            response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
+        )
 
         self.model.finish_inference()
         if self.use_trtllm_generation:
             self.trtllm_generate.free()
 
-        return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu(), is_end.cpu()
+        return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu(), is_valid.cpu()
     
     def get_rewards(self, list_of_batches):
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
@@ -496,12 +520,12 @@ class SelfRewardingTrainer:
             for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
                 #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and r is None:
                 #    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
-                if r is not None and r > 10000:
-                    print("*** high_score_response: ", batch_responses_str[idx])
+                #if r is not None and r > 10000:
+                #    print("*** high_score_response: ", batch_responses_str[idx])
                 # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
                 # a valid score, it's all good, we don't need correctness beyond that
                 #reward_scores[idx].append(r if end else None)
-                reward_scores[idx].append(r)
+                reward_scores[idx].append(r if (r >= 0 and r <= 5) else None)
         #print("*** reward_scores_get_rewards: ", reward_scores)
         assert all([len(b) == self.num_evals_to_average for b in reward_scores]), "did not get generate the correct number of reward scores"
         reward_scores = [[*filter(exists, b)] for b in reward_scores]
@@ -637,18 +661,6 @@ class SelfRewardingTrainer:
 
                     metrics.clear()
                     self.model.finish_training()
-                    
-                    '''
-                    generations = batch_pad_to_fixed_len(global_batch["generated"], self.model.cfg.encoder_seq_length, pad_token=self.model.tokenizer.eos_id)
-                    generations_list = gather_tensor(
-                        generations, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()
-                    )
-                    if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and generations_list is not None:
-                        for t in generations_list:
-                            for p in t:
-                                payload = {"iteration": self.iteration, "epoch": self.epoch, "step": self.step - 1, "response": self.model.tokenizer.ids_to_text(p.long().tolist())}
-                                self.generations_fh.write(json.dumps(payload, ensure_ascii=False) + '\n')
-                    '''
 
 
             # update the reference policy weights

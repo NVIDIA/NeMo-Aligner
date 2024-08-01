@@ -202,6 +202,7 @@ class PPOTrainer:
         values = rollout_batch["values"]
         rewards = rollout_batch["rewards"]
         logprobs = rollout_batch["logprobs"]
+        is_end = rollout_batch["is_end"]
 
         if self.compute_init_policy_kl:
             init_policy_kl = calculate_kl_penalty(
@@ -215,8 +216,8 @@ class PPOTrainer:
         rewards_with_kl = calculate_ppo_rewards(
             values, rewards, response_lengths, init_policy_kl, self.cfg.initial_policy_kl_penalty
         )
-        mask = create_mask(values=values, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
+        mask = create_mask(values=values, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
         advantages, returns = calculate_advantages_and_returns(
             values=values,
             rewards=rewards_with_kl,
@@ -230,6 +231,7 @@ class PPOTrainer:
         ppo_rollout_data["advantages"] = advantages
         ppo_rollout_data["prev_logprobs"] = logprobs
         ppo_rollout_data["response_tokens"] = response_tokens
+        ppo_rollout_data["is_end"] = is_end
         # for the critic
         ppo_rollout_data["values"] = values
         ppo_rollout_data["returns"] = returns
@@ -364,6 +366,7 @@ class PPOTrainer:
         response_lengths = rollout_batch["response_lengths"]
         response_tokens = rollout_batch["response_tokens"]
         rewards = rollout_batch["rewards"]
+        is_end = rollout_batch["is_end"]
 
         reward = rewards[0]
         prompt_length = prompt_lengths[0]
@@ -381,6 +384,7 @@ class PPOTrainer:
             "prompt_lengths": prompt_lengths.float().mean().item(),
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
             "rewards": rewards.mean().item(),
+            "amount_of_samples_properly_ended": is_end.sum().item(),
         }
 
         return metrics
@@ -507,6 +511,7 @@ class PPOTrainer:
 
                 for _ in range(critic_train_loop_amount):
                     self.timer.start("rollout_time")
+                    clear_memory()
                     ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
                     timing_metrics["rollout_time"] = self.timer.stop_and_get_time("rollout_time")
 
