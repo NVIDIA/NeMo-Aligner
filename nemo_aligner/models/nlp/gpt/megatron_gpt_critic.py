@@ -268,6 +268,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def _infer_rm(self, *args, **kwargs):
         string_inputs = list(map(modify_prompt, self.tokenizer.ids_to_text(kwargs["inputs"][0].tolist())))
+        print("### RUNNING INFERENCE ON\n", string_inputs)
         self._load_rm()
         return self.infer(string_inputs)
 

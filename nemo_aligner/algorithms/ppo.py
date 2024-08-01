@@ -302,11 +302,14 @@ class PPOTrainer:
                 rollout_batch = self.model.infer(batch)
 
                 to_dump = []
-                for text, _valid in zip(
+                for text, _valid, toks, lengths in zip(
                     self.model.tokenizer.ids_to_text(rollout_batch["response_tokens"].tolist()),
                     rollout_batch["is_end"].tolist(),
+                    rollout_batch["response_tokens"].tolist(),
+                    rollout_batch["response_lengths"].tolist(),
                 ):
-                    to_dump.append({"text": text, "valid": _valid})
+                    to_dump.append({"text": text, "valid": _valid, "length": lengths, "toks": toks})
+
                 filename = os.path.join(
                     self.cfg.output_dir,
                     "rank_{}_time_{}_step_{}.jsonl".format(torch.distributed.get_rank(), time.time(), self.step),
