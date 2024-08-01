@@ -21,9 +21,10 @@ from typing import Any, Dict, List
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.core import Dataset
 from nemo.utils import logging
-from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset
+from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, process_image
 from PIL import Image
-from transformers import CLIPImageProcessor
+from transformers import CLIPImageProcessor, SiglipImageProcessor
+from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import TiledSiglipImageProcessor
 from nemo_aligner.utils.utils import load_image_processor
 
 MAX_NUM_IMAGES = 1
@@ -60,10 +61,9 @@ class MultimodalChatDataset(NevaDataset):
                 video_folder=video_folder,
                 image_aspect_ratio=image_aspect_ratio,
                 use_im_start_end=mm_cfg.get("use_im_start_end", False),
-                image_processor=load_image_processor(
-                    mm_cfg.vision_encoder.from_pretrained, 
-                    mm_cfg.vision_encoder.from_hf, 
-                    mm_cfg.vision_encoder.crop_size),
+                patch_dim=mm_cfg.vision_encoder.patch_dim,
+                mm_mlp_adapter_type=mm_cfg.get("mm_mlp_adapter_type", "linear"),
+                image_processor=load_image_processor(mm_cfg),
                 add_extra_token=add_extra_token,
                 context_length=data_cfg.max_seq_length,
                 media_type=media_type,
@@ -281,6 +281,9 @@ class MultimodalChatDataset(NevaDataset):
         if media_type == 'video':
             num_patches *= multimodal_cfg['num_frames']
 
+        if multimodal_cfg['mm_mlp_adapter_type'] == 'mlp_downsample':
+            num_patches //= 4
+
         if multimodal_cfg['use_im_start_end']:
             replace_token = self.image_patch_token * num_patches
         else:
@@ -312,108 +315,34 @@ class MultimodalChatDataset(NevaDataset):
                 image = self.image_loader.open_image(image_file)
                 if image is None:
                     logging.warning(f"Image {image_file} could not be found!")
-                if isinstance(self.processor, CLIPImageProcessor):
-                    # image processor from HF
-                    if self.multimodal_cfg['image_aspect_ratio'] == 'keep':
-                        max_hw, min_hw = max(image.size), min(image.size)
-                        aspect_ratio = max_hw / min_hw
-                        max_len, min_len = 448, 224
-                        shortest_edge = int(min(max_len / aspect_ratio, min_len))
-                        image = self.processor.preprocess(
-                            image, return_tensors='pt', do_center_crop=False, size={"shortest_edge": shortest_edge}
-                        )['pixel_values'][0]
-                    elif self.multimodal_cfg['image_aspect_ratio'] == 'pad':
-
-                        def expand2square(pil_img, background_color):
-                            width, height = pil_img.size
-                            if width == height:
-                                return pil_img
-                            elif width > height:
-                                result = Image.new(pil_img.mode, (width, width), background_color)
-                                result.paste(pil_img, (0, (width - height) // 2))
-                                return result
-                            else:
-                                result = Image.new(pil_img.mode, (height, height), background_color)
-                                result.paste(pil_img, ((height - width) // 2, 0))
-                                return result
-
-                        image = expand2square(image, tuple(int(x * 255) for x in self.processor.image_mean))
-                        image = self.processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
-                    else:
-                        image = self.processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
-                else:
-                    assert (
-                        self.multimodal_cfg['image_aspect_ratio'] == 'square'
-                    ), 'NeMo image transform with setting `image_aspect_ratio` to `square`.'
-                    image = self.processor(image)
+                image = process_image(self.processor, image, self.multimodal_cfg['image_aspect_ratio'])
                 images.append(image)
             media_tensors = torch.tensor([])
             if images:
                 media_tensors = torch.stack(images)
-                cur_token_len = (media_tensors[0].shape[1] // 14) * (
-                    media_tensors[0].shape[2] // 14
-                )  # FIXME: 14 is hardcoded patch size
+                patch_dim = self.multimodal_cfg['patch_dim']
+
+                height_num_patches = media_tensors[0].shape[1] // patch_dim
+                width_num_patches = media_tensors[0].shape[2] // patch_dim
+
+                if isinstance(self.processor, TiledSiglipImageProcessor):
+                    height_num_patches = height_num_patches // self.processor.grid_height
+                    width_num_patches = width_num_patches // self.processor.grid_width
+                elif self.multimodal_cfg['mm_mlp_adapter_type'] == 'mlp_downsample':
+                    if height_num_patches % 2 != 0:
+                        height_num_patches += 1
+                    if width_num_patches % 2 != 0:
+                        width_num_patches += 1
+
+                cur_token_len = height_num_patches * width_num_patches
+
                 sources = self.preprocess_media_tokens(
                     copy.deepcopy(sources),
                     cur_token_len,
                     use_plain=(self.conv_template == "plain"),
                 )
         elif 'video' in sources[0]:
-            if not isinstance(self.list_data_dict[i]['video'], list):
-                self.list_data_dict[i]['video'] = [self.list_data_dict[i]['video']]
-
-            videos = []
-            for video_file in self.list_data_dict[i]['video']:
-                frames = self.video_loader.open_video(video_file)
-                if frames is None:
-                    logging.warning(f"Video {video_file} could not be found!")
-                if isinstance(self.processor, CLIPImageProcessor):
-                    # image processor from HF
-                    if self.multimodal_cfg['image_aspect_ratio'] == 'keep':
-                        max_hw, min_hw = max(frames.size), min(frames.size)
-                        aspect_ratio = max_hw / min_hw
-                        max_len, min_len = 448, 224
-                        shortest_edge = int(min(max_len / aspect_ratio, min_len))
-                        frames = self.processor.preprocess(
-                            frames, return_tensors='pt', do_center_crop=False, size={"shortest_edge": shortest_edge}
-                        )['pixel_values']
-                    elif self.multimodal_cfg['image_aspect_ratio'] == 'pad':
-
-                        def expand2square(pil_img, background_color):
-                            width, height = pil_img.size
-                            if width == height:
-                                return pil_img
-                            elif width > height:
-                                result = Image.new(pil_img.mode, (width, width), background_color)
-                                result.paste(pil_img, (0, (width - height) // 2))
-                                return result
-                            else:
-                                result = Image.new(pil_img.mode, (height, height), background_color)
-                                result.paste(pil_img, ((height - width) // 2, 0))
-                                return result
-
-                        frames = expand2square(frames, tuple(int(x * 255) for x in self.processor.image_mean))
-                        frames = self.processor.preprocess(frames, return_tensors='pt')['pixel_values']
-                    else:
-                        frames = self.processor.preprocess(frames, return_tensors='pt')['pixel_values']
-                else:
-                    assert (
-                        self.multimodal_cfg['image_aspect_ratio'] == 'square'
-                    ), 'NeMo image transform with setting `image_aspect_ratio` to `square`.'
-                    frames = self.processor(frames)
-                videos.append(frames)
-            media_tensors = frames
-            if videos:
-                media_tensors = torch.stack(videos)
-                cur_token_len = (media_tensors[0].shape[-1] // 14) * (
-                    media_tensors[0].shape[-2] // 14
-                )  # FIXME: 14 is hardcoded patch size
-                sources = self.preprocess_media_tokens(
-                    copy.deepcopy(sources),
-                    cur_token_len,
-                    use_plain=(self.conv_template == "plain"),
-                )
-
+            raise NotImplementedError("Only image modality is supported for now.")
         else:
             logging.warning("media not found in sources")
             media_tensors = torch.tensor([])
@@ -429,8 +358,11 @@ class MultimodalChatDataset(NevaDataset):
             if isinstance(self.processor, CLIPImageProcessor):
                 crop_size = [self.processor.crop_size['height'], self.processor.crop_size['width']]
             else:
-                crop_size = self.multimodal_cfg['crop_size']
-
+                crop_size = copy.deepcopy(self.multimodal_cfg['crop_size'])
+                if isinstance(self.processor, TiledSiglipImageProcessor):
+                    crop_size[0] *= self.processor.grid_height
+                    crop_size[1] *= self.processor.grid_width
+                    
             # Image does not exist in the data, but the model is multimodal
             # TODO, if there are different videos on T dimensions.
             if media_tensors.shape[0] < MAX_NUM_IMAGES:
