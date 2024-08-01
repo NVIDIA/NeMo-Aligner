@@ -105,10 +105,18 @@ class MegatronGPTKTOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 required_keys.add("attention_mask")
 
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("sample", "position_ids"))
+                    required_keys.update(("samples", "kl_samples", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("ref_policy_log_probs", "sample_labels",))
+                    required_keys.update(
+                        (
+                            "ref_policy_log_probs_samples",
+                            "ref_policy_log_probs_kl_samples",
+                            "sample_labels",
+                            "kl_sample_labels",
+                            "preference",
+                        )
+                    )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
@@ -120,8 +128,8 @@ class MegatronGPTKTOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 labels = torch.cat((batch["sample_labels"], batch["kl_sample_labels"]), dim=0)
 
             if (
-                batch["ref_policy_log_probs_samples"] is not None
-                and batch["ref_policy_log_probs_kl_samples"] is not None
+                batch.get("ref_policy_log_probs_samples") is not None
+                and batch.get("ref_policy_log_probs_kl_samples") is not None
             ):
                 ref_logprobs = torch.cat(
                     (batch["ref_policy_log_probs_samples"], batch["ref_policy_log_probs_kl_samples"]), dim=0
@@ -210,15 +218,18 @@ class MegatronGPTKTOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         return fwd_output_and_loss_func
 
-    def split_output_tensor(self, output_tensor, preferences):
+    def split_output_tensor(self, output_tensor, preferences=None):
         logps, kl_logps = torch.split(output_tensor.float(), len(output_tensor) // 2, dim=0)
+        if preferences is None:
+            # this is for the sample_logprobs
+            return logps, kl_logps
+        else:
+            chosen_idx = torch.where(preferences == 1)[0]
+            rejected_idx = torch.where(preferences == 0)[0]
+            chosen_logps = logps[chosen_idx, ...]
+            reject_logps = logps[rejected_idx, ...]
 
-        chosen_idx = torch.where(preferences == 1)[0]
-        rejected_idx = torch.where(preferences == 0)[0]
-        chosen_logps = logps[chosen_idx, ...]
-        reject_logps = logps[rejected_idx, ...]
-
-        return chosen_logps, reject_logps, kl_logps
+            return chosen_logps, reject_logps, kl_logps
 
     def get_reduced_masked_logps(self, logps, labels, average_log_probs=False):
         assert logps.shape == labels.shape, "logps and labels shape mismatch"
@@ -375,9 +386,9 @@ class MegatronGPTKTOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             sample_logprobs_list = []
             kl_sample_logprobs_list = []
             for item in logprobs_list:
-                chosen_logprobs, rejected_logprobs = self.split_output_tensor(item["logprobs"])
-                sample_logprobs_list.append(chosen_logprobs)
-                kl_sample_logprobs_list.append(rejected_logprobs)
+                sample_logprobs, kl_sample_logprobs_logprobs = self.split_output_tensor(item["logprobs"])
+                sample_logprobs_list.append(sample_logprobs)
+                kl_sample_logprobs_list.append(kl_sample_logprobs_logprobs)
 
             logprobs = torch.cat([torch.cat(sample_logprobs_list), torch.cat(kl_sample_logprobs_list)], dim=0)
         else:
@@ -406,97 +417,3 @@ class MegatronGPTKTOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         # return in GPU, trainer needs to move to cpu
         return ref_log_probs
-
-    # def get_logprob_output_only_func(self, inference_only=True):
-    #     fwd_output_only_func = self.get_forward_output_only_func()
-
-    #     def log_prob_output_only_func(dataloader_iter, model):
-    #         batch = next(dataloader_iter)
-    #         logits, _ = fwd_output_only_func(iter([batch[0:3],]), model)
-
-    #         def id_func(logits, non_loss_data=True):
-    #             logprobs = from_parallel_logits_to_logprobs(
-    #                 vocab_parallel_logits=logits,
-    #                 target=batch[-1].cuda() if len(batch) == 4 else batch[0].cuda(),
-    #                 inference_only=inference_only,
-    #                 higher_stability=True,
-    #             )
-    #             return {"logprobs": logprobs}
-
-    #         return logits, id_func
-
-    #     return log_prob_output_only_func
-
-    # @torch.no_grad()
-    # def get_logprob_batch(self, global_batch):
-    #     set_sync_funcs(self, forward_only=True)
-
-    #     # assumes we pad to seq length before going into the model
-    #     # response_tokens = sequences.cuda()
-    #     # labels = labels.cuda() if labels is not None else None
-
-    #     dp_size = parallel_state.get_data_parallel_world_size()
-    #     local_batch_size, seq_len = global_batch[0].shape
-    #     global_batch_size = local_batch_size * dp_size
-
-    #     forward_mbs = self.cfg.kto.log_prob_forward_micro_batch_size
-    #     forward_mbs_times_dp = forward_mbs * dp_size
-
-    #     data_iter = get_iterator_k_split(global_batch, global_batch_size // forward_mbs_times_dp)
-
-    #     fwd_bwd_function = get_forward_backward_func()
-    #     logprobs_list = fwd_bwd_function(
-    #         forward_step_func=self.get_logprob_output_only_func(inference_only=True),
-    #         data_iterator=data_iter,
-    #         model=self.model,
-    #         num_microbatches=global_batch_size // forward_mbs_times_dp,
-    #         forward_only=True,
-    #         seq_length=seq_len,
-    #         micro_batch_size=forward_mbs,
-    #         collect_non_loss_data=True,
-    #     )
-
-    #     if len(logprobs_list) > 0:
-    #         logprobs = torch.cat([item["logprobs"] for item in logprobs_list])
-    #     else:
-    #         logprobs = None
-
-    #     if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-    #         # broadcast it from last PP stage to everything else
-    #         logprobs = broadcast_2d_tensor(
-    #             logprobs,
-    #             parallel_state.get_pipeline_model_parallel_last_rank(),
-    #             parallel_state.get_pipeline_model_parallel_group(),
-    #         )
-
-    #     return logprobs
-
-    # def get_ref_policy_logprobs(self, list_of_batches):
-    #     tokens = torch.cat([torch.cat((b["samples"], b["kl_samples"]), dim=0) for b in list_of_batches], dim=0)
-    #     masks = torch.cat(
-    #         [torch.cat((b["attention_mask"], b["attention_mask"]), dim=0) for b in list_of_batches], dim=0
-    #     )
-    #     pos_ids = torch.cat([torch.cat((b["position_ids"], b["position_ids"]), dim=0) for b in list_of_batches], dim=0)
-    #     labels = torch.cat(
-    #         [torch.cat((b["sample_labels"], b["kl_sample_labels"]), dim=0) for b in list_of_batches], dim=0
-    #     )
-
-    #     global_batch = [tokens, masks, pos_ids, labels]
-    #     with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
-    #         ref_log_probs = self.get_logprob_batch(global_batch)
-
-    #     # return in GPU, trainer needs to move to cpu
-    #     return ref_log_probs
-
-# def average_rewards_across_data_parallel_group(rewards):
-#     """Reduce a tensor of losses across all GPUs."""
-
-#     num_rewards = torch.tensor([(rewards[0].numel())], device=rewards[0].device)
-#     averaged_rewards = torch.cat([reward.clone().detach().sum().view(1) for reward in rewards])
-
-#     torch.distributed.all_reduce(averaged_rewards, group=parallel_state.get_data_parallel_group())
-#     torch.distributed.all_reduce(num_rewards, group=parallel_state.get_data_parallel_group())
-
-#     averaged_rewards = averaged_rewards / num_rewards.clamp(min=1)
-
-#     return averaged_rewards

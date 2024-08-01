@@ -355,9 +355,10 @@ class DPOModelDataset(Dataset):
 
 class KTOModelDataset(Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
-       with the prompt, along with the response (response only, no prompt), and the status denoting whether the response is chosen or rejected. This Dataset will combine the prompt with the corresponding chosen or 
-       rejected response, and then tokenize it. It will also create a score field that has 1 if the sample is chosen and 0 if rejected. It also returns the labels for each, which is the response tokens
-       with -100 for the prompt part.
+       with the prompt, along with the response (response only, no prompt), and the status denoting whether the response is
+       chosen or rejected. This Dataset will combine the prompt with the corresponding response, and then tokenize it. It 
+       will also create a score field that has 1 if the sample is chosen and 0 if rejected. It also returns the labels for 
+       each, which is the response tokens with -100 for the prompt part.
        
        WARNING: This class will tokenize the text, but it will raise an exception on model max seq len violations!
                 Meaning it will not truncate tokens to fit to model max seq len, because of special prefix/suffix
@@ -385,6 +386,8 @@ class KTOModelDataset(Dataset):
         np_rng = np.random.default_rng(seed=seed)
         np_rng.shuffle(self.data)
 
+        self.nograd_length = 32
+
         # Checks
         assert np.min(documents) >= 0
         assert np.max(documents) < len(self.data)
@@ -407,23 +410,22 @@ class KTOModelDataset(Dataset):
 
     def __getitem__(self, idx):
         """Returns a sample = prompt + response, their respective lengths, and labels.
+        Differently from DPO need to separate the prompt from the response.
         """
         payload = self.data[idx]
         prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
         sample, sample_len = self.encode(
             payload["prompt"] + payload["response"], append_eod=self.cfg.data.get("append_eod", False)
         )
-        response = sample[prompt_len:]
-
-        preference = 1 if payload["preference"] == "chosen" else 0
-
         labels = ([-100] * prompt_len) + sample[prompt_len:]
+        # Separate the response from the prompt
+        response = sample[prompt_len:]
+        preference = 1 if payload["preference"] == "chosen" else 0
 
         assert sample[0:prompt_len] == prompt, "the tokenizer for KTO has merged tokens between prompt and response"
 
-        max_curr_seq_len = sample_len
         assert (
-            max_curr_seq_len <= self.seq_length
+            sample_len <= self.seq_length
         ), "tokenized text exceeds max seq len! truncate your data in preprocessing prior to KTO training"
 
         output = {
