@@ -270,7 +270,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
         dataset_cls = GPTSFTChatDataset
     elif packed_sequence:
         dataset_cls = GPTSFTPackedDataset
-        dataset_kwargs = {'return_cu_seqlen': data_cfg.get("packed_sequence_return_cu_seqlen", True)}
+        dataset_kwargs = {"return_cu_seqlen": data_cfg.get("packed_sequence_return_cu_seqlen", True)}
         assert data_cfg.micro_batch_size == 1, "Micro batch size must be 1 if using packed sequence"
     else:
         dataset_cls = GPTSFTDataset
