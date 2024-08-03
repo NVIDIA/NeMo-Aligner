@@ -257,12 +257,6 @@ class SelfRewardingTrainer:
         
         self.parse_reward_fn = create_parse_reward_fn(self.reward_regex_template)
         
-        # storage for generated responses which we want to save
-        #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
-        #    self.generations_fh = open(os.path.join(exp_manager.explicit_log_dir, "generations.jsonl"), "a", encoding="utf_8", newline="\n")
-        #else:
-        #    self.generations_fh = None
-        
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
             assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
@@ -486,15 +480,6 @@ class SelfRewardingTrainer:
                         f"`response_tokens` ({response_tokens.size(1)})"
                     )
         
-        # sometimes backends like TRT-LLM will generate invalid tokens
-        # so we need to also inplace mutate the response_tokens to be within the tokenizer range
-        #if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-        #    is_valid = torch.all((0 <= response_tokens) & (response_tokens < self.model.tokenizer.vocab_size), dim=-1)
-        #    response_tokens.clamp_(0, self.model.tokenizer.vocab_size - 1)
-        #else:
-        #    is_valid = verify_is_valid_and_clamp_range_(
-        #        response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
-        #    )
         is_valid = verify_is_valid_and_clamp_range_(
             response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
         )
@@ -629,7 +614,7 @@ class SelfRewardingTrainer:
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
 
-                        if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+                        if (not self.first_iteration_sft) and torch.distributed.get_rank() == 0:
                             for idx in range(len(global_batch["bad_samples"])):
                                 if not global_batch["bad_samples"][idx]:
                                     self.train_df.loc[len(self.train_df)] = [
@@ -672,9 +657,6 @@ class SelfRewardingTrainer:
         
         if self.use_trtllm_generation:
             self.trtllm_generate.free(force_unload=True)
-        
-        #if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
-        #    self.generations_fh.close()
 
     def save(self, extra_candidates=None, is_train_end=False):
         # load back in the adam states if needed

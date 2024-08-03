@@ -149,7 +149,8 @@ class GenerationTrainer:
         
         # storage for generated responses which we want to save
         if torch.distributed.get_rank() == 0:
-            self.generations_fh = open(os.path.join(exp_manager.explicit_log_dir, "generations.jsonl"), "a", encoding="utf_8", newline="\n")
+            os.makedirs(os.path.join(exp_manager.explicit_log_dir, "generations"), exist_ok=True)
+            self.generations_fh = open(os.path.join(exp_manager.explicit_log_dir, "generations", "generations.jsonl"), "a", encoding="utf_8", newline="\n")
         else:
             self.generations_fh = None
         
@@ -251,18 +252,6 @@ class GenerationTrainer:
                         f"`response_tokens` ({response_tokens.size(1)})"
                     )
 
-        #is_end = strategy.end_of_generation_condition(
-        #    response_tokens, response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1], self.model.tokenizer.eos_id, self.sampling_params["end_strings"]
-        #)
-        # sometimes backends like TRT-LLM will generate invalid tokens
-        # so we need to also inplace mutate the response_tokens to be within the tokenizer range
-        #if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-        #    is_valid = torch.all((0 <= response_tokens) & (response_tokens < self.model.tokenizer.vocab_size), dim=-1)
-        #    response_tokens.clamp_(0, self.model.tokenizer.vocab_size - 1)
-        #else:
-        #    is_valid = verify_is_valid_and_clamp_range_(
-        #        response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
-        #    )
         is_valid = verify_is_valid_and_clamp_range_(
             response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
         )

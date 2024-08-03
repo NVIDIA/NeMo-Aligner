@@ -151,6 +151,10 @@ class GPTGenerateTRTLLM:
             )
 
             _output_ids[src_index_mask] = output_ids[valid_tokens]
+            
+            resp_len_mask = torch.arange(max_unpadded_length, device=response_lengths.device).view(1, -1) < response_lengths.view(-1, 1)
+            _output_ids[~resp_len_mask] = self.pad_id
+            
             output_ids = _output_ids
 
         output_ids = output_ids[..., :max_length].contiguous()

@@ -81,7 +81,7 @@ def main(cfg) -> None:
         custom_trainer_state_dict = None
         consumed_samples = 0
     
-    if os.path.exists(gen_file := os.path.join(cfg.exp_manager.explicit_log_dir, "generations.jsonl")):
+    if os.path.exists(gen_file := os.path.join(cfg.exp_manager.explicit_log_dir, "generations", "generations.jsonl")):
         js_line = json.loads(subprocess.check_output(['tail', '-1', gen_file]).decode("utf_8"))
         custom_trainer_state_dict = {"step": js_line["step"], "consumed_samples": js_line["consumed_samples"]}
         consumed_samples = js_line["consumed_samples"]
