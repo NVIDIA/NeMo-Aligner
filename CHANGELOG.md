@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.4.0]
+- Implement reward-aware preference optimization.
 - Added TRT-LLM support in PPO. This can be enabled by doing `trainer.ppo.trt_llm.enable=True`. There is also a reshard option to reshard out pipeline parallelism during inference for further speedup via `trainer.ppo.trt_llm.reshard=True`.
 - PPO algorithm will now detect if the sample sequence is ended, and if so zero out the gradient of the samples that did not stop properly.
 - Added critic warmup to the PPO with the flag trainer.ppo.critic_warmup_steps.
@@ -30,13 +31,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - SFT/SteerLM: LoRA can now be enabled on all model layers.
 - DPO: Enable LoRA on all model layers. In this case, the actor will be a reference model plus LoRA weights. We can switch between the actor/reference model by enabling or disabling LoRA.
 - PPO: Enable LoRA on all model layers. In this case, the actor will be the init policy plus LoRA weights. We can switch between the actor/init_policy model by enabling or disabling LoRA.
+- SteerLM 2.0: Add the SteerLM 2.0 model alignment method.
 - `val_check_interval` in SFT now supports float values.
 - Added support for `limit_train_batches` as a float or int to DPO, SPIN, and SFT. This functionality mirrors the same parameter in PTL.
 
 ### Breaking Changes
 
 ### Bug Fixes
-- Fixed  issue where the random sampler keeps its state during validation resets, resulting in varying validation batches at each step. This was addressed by switching to a deterministic sampler.
+- Fixed issue where the random sampler keeps its state during validation resets, resulting in varying validation batches at each step. This was addressed by switching to a deterministic sampler.
 - Fixed crash with float val check interval in DPOTrainer.
 - Fixed crash with float val check interval when checking progress in DPOTrainer.
 - Fixed potential crash in SPIN when prompts are longer than encoder_seq_len - generation.max_length.
@@ -68,7 +70,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Bug Fixes
 - Fixed a potential issue when the base model's `model.data.data_prefix` config is a list and is about to be overridden with
 a dictionary from the training configuration.
-- `exp_manager.max_time_per_run` is now respected. The trainers will save and run the validation before exiting if the time limit haas been reached.
+- `exp_manager.max_time_per_run` is now respected. The trainers will save and run the validation before exiting if the time limit has been reached.
 - Fixed crash in PPO when using a separate reward model server (i.e., with `combine_rm_and_critic_server=False`).
 - Fixed crash when LR scheduler is not specified.
 
