@@ -6,27 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [0.4.0]
 - Added TRT-LLM support in PPO. This can be enabled by doing `trainer.ppo.trt_llm.enable=True`. There is also a reshard option to reshard out pipeline parallelism during inference for further speedup via `trainer.ppo.trt_llm.reshard=True`.
 - PPO algorithm will now detect if the sample sequence is ended, and if so zero out the gradient of the samples that did not stop properly.
-- Added critic warmup in PPO with the flag `trainer.ppo.critic_warmup_steps`.
+- Added critic warmup to the PPO with the flag trainer.ppo.critic_warmup_steps.
   
-### New features and optimizations
-- Critic and Reward Model server refactored. Now the reward model will have a flag called `model.forward_micro_batch_size` which determines the micro batch size that it runs inferences with. This can be higher than the training micro batch size since during inference we have less memory pressure.
-- In the critic and reward model server it is now possible to specify `inference_micro_batch_size` as a list, this allows us to give more information to PyTriton on the preferred batch sizes we want to run inference with.
+### New Features and Optimizations
+- Critic and Reward Model server refactored. Now the reward model will have a flag called `model.forward_micro_batch_size` which determines the micro batch size on which it runs inferences. This can be higher than the training micro batch size since during inference, we have less memory pressure.
+- In the critic and reward model server, it is now possible to specify `inference_micro_batch_size` as a list.  This allows us to provide more information to PyTriton regarding the preferred batch sizes for inference.
 - It is no longer a requirement to specify `num_rollout_samples` to be a multiple of `inference_micro_batch_size * dp size` in PPO.
 
-### Breaking changes
-- `inference.micro_batch_size` is now renamed to `inference.inference_micro_batch_size` when running reward model inference in `inference_rm.yaml` this is to stay consistent with the naming scheme of the PPO critic.
+### Breaking Changes
+- `inference.micro_batch_size` is now renamed to `inference.inference_micro_batch_size` when running reward model inference in `inference_rm.yaml`.  This is to stay consistent with the naming scheme of the PPO critic.
 - It is no longer possible to specify `add_EOS` when running reward model or critic inference.
-- Aligner now requires Megatron-LM>=0.8.0 for the APIs to calculate the microbatch sizes
+- NeMo-Aligner now requires Megatron-LM>=0.8.0 for the APIs to calculate the microbatch sizes.
 
 ### Bug Fixes
 - Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.
 
 ## [0.3.1] - 2024-05
-- SPIN: added `rollout_micro_batch_size` parameter which allows users to set the batch size for doing generation during SPIN training.
-        previously the generation batch size was automatically set to the data parallel size (DP) of the model
-- SPIN: added wandb logging of average generation length and a small sample of generated responses (in plaintext) along with corresponding prompts
+- SPIN: added `rollout_micro_batch_size` parameter which allows users to set the batch size for doing generation during SPIN training. Previously, the generation batch size was automatically set to the data parallel size (DP) of the model.
+- SPIN: added wandb logging of average generation length and a small sample of generated responses (in plaintext) along with their corresponding prompts.
 
-### New features and optimizations
+### New Features and Optimizations
 - Add MoE Support for our reward models.
 - SFT/SteerLM: LoRA can now be enabled on all model layers
 - DPO: Enable LoRA on all model layers (In this case the actor will be reference model + LoRA weights, we can switch between actor/reference model by enabling/disabling LoRA)
