@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Next Version]
+## [0.4.0]
 - Implement reward-aware preference optimization.
 - Fix log probs mismatch issue between policy and reference policy in DPO & variants.
 - Added TRT-LLM support in PPO. This can be enabled by `trainer.ppo.trt_llm.enable=True`. There is also a reshard option to reshard out pipeline parallelism during inference (i.e running tensor and data parallel only) for further speedup via `trainer.ppo.trt_llm.reshard=True`.
