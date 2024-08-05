@@ -19,6 +19,7 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_micro_batch_size, get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.models.mamba import MambaModel
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -58,6 +59,30 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
             if inference_params["strategy"] is not None:
                 inference_params["strategy"] = hydra.utils.instantiate(inference_params["strategy"], model=self)
         self.set_inference_params(**inference_params)
+    
+    def model_provider_func(self, pre_process, post_process):
+
+        if self.cfg.mamba_model:
+            from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
+            self.hybrid_override_pattern = self.cfg.get(
+                'hybrid_override_pattern', "M" * self.transformer_config.num_layers
+            )
+            self.transformer_config.add_bias_linear = self.cfg.get('add_bias_linear', False)
+            self.transformer_config.gated_linear_unit = self.cfg.get('gated_linear_unit', False)
+            self.transformer_config.layernorm_epsilon = self.cfg.get('layernorm_epsilon', 1e-5)
+
+            model = MambaModel(
+                config=self.transformer_config,
+                max_sequence_length=self.cfg.get('encoder_seq_length', 4096),
+                vocab_size=self.cfg.get('vocab_size', 65536),
+                mamba_ssm_ngroups=self.cfg.get('mamba_ssm_ngroups', 8),
+                mamba_stack_spec=mamba_stack_spec,
+                hybrid_override_pattern=self.hybrid_override_pattern,
+            )
+        else:
+            return super().model_provider_func(pre_process, post_process)
+
+        return model
 
     def set_inference_params(self, length_params=None, sampling_params=None, strategy=None):
         # TODO (igitman): the name self._inference_params is very similar to self.inference_params

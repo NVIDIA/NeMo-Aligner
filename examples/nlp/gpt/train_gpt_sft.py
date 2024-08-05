@@ -67,6 +67,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         gpt_cfg.activations_checkpoint_layers_per_pipeline = cfg.model.get(
             "activations_checkpoint_layers_per_pipeline", None
         )
+        gpt_cfg.mamba_model = cfg.model.get("mamba_model", False)
         gpt_cfg.peft = cfg.model.peft
         gpt_cfg.data = cfg.model.data
         gpt_cfg.optim = cfg.model.optim
