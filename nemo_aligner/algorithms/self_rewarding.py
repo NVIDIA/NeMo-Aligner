@@ -278,6 +278,7 @@ class SelfRewardingTrainer:
                 tokenizer=self.model.tokenizer,
                 seed=self.model.cfg.get("seed", None),
             )
+        print(f"*** MAX_SEQ_LEN_IS: {self.model.cfg.data.train_ds.max_seq_length}")
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -510,7 +511,7 @@ class SelfRewardingTrainer:
                 # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
                 # a valid score, it's all good, we don't need correctness beyond that
                 #reward_scores[idx].append(r if end else None)
-                reward_scores[idx].append(r if (r >= 0 and r <= 5) else None)
+                reward_scores[idx].append(r if ((r is not None) and (r >= 0 and r <= 5)) else None)
         #print("*** reward_scores_get_rewards: ", reward_scores)
         assert all([len(b) == self.num_evals_to_average for b in reward_scores]), "did not get generate the correct number of reward scores"
         reward_scores = [[*filter(exists, b)] for b in reward_scores]
@@ -747,16 +748,43 @@ class SelfRewardingTrainer:
                         # Transform into batch of LLM-as-judge template samples for reward scoring
                         reward_buffer = []
                         for t,s,e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
-                            prompt = self.model.tokenizer.ids_to_text(t[:s].tolist())
-                            response = self.model.tokenizer.ids_to_text(t[s:e].tolist())
-                            reward_prompt_str = self.template_fn(prompt=prompt.replace("<extra_id_0>System\n\n", ""), response=response.replace("\n<extra_id_1>", ""))
+                            prompt = self.model.tokenizer.ids_to_text(t[:s].tolist()).replace("<extra_id_0>System\n\n", "")
+                            response = self.model.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
+                            reward_prompt_str = self.template_fn(prompt=prompt, response=response)
                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                            if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
+                            #if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
+                            if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
                                 prompt_and_response = self.model.tokenizer.ids_to_text(t.tolist())
-                                reward_prompt_str = self.template_fn(prompt=re.findall(r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0], response=re.findall(r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0])
-                                reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                try:
+                                    prompt_ft = re.findall(r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0]
+                                    response_ft = re.findall(r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0]
+                                    reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
+                                    reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                    if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
+                                        overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
+                                        response_ft = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response_ft)[:-(overage+1)])
+                                        reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
+                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                except:
+                                    print(f"*** TOO_LONG: {prompt_and_response}")
+                                    #overage = len(reward_prompt) - (self.model.cfg.encoder_seq_length - self.max_gen_seq_len)
+                                    overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
+                                    if len(self.model.tokenizer.text_to_ids(response)) >= overage:
+                                        # truncate response only
+                                        response = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response)[:-(overage+1)])
+                                        reward_prompt_str = self.template_fn(prompt=prompt, response=response)
+                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                        #assert len(reward_prompt) <= self.model.cfg.data.train_ds.max_seq_length, f"truncation of response only failed: {reward_prompt_str}"
+                                    else:
+                                        # truncate response and prompt *SHOULD NEVER HAPPEN*
+                                        print("*** PROMPT_AND_RESPONSE_NEED_TRUNCATION")
+                                        reward_prompt_str = self.template_fn(prompt="How does one make tea?", response="I have no answer at all.")
+                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                assert len(reward_prompt) <= self.model.cfg.data.train_ds.max_seq_length, f"truncation of response only failed: {reward_prompt_str}"
+                                    
                             reward_buffer.append({"prompt_lengths": torch.LongTensor([len(reward_prompt)]), "prompts_only": torch.LongTensor(reward_prompt).unsqueeze(0)})
                         
+                        #assert all([x['prompt_lengths'].item() <= self.model.cfg.data.train_ds.max_seq_length for x in reward_buffer]), f"reward_buffer violation: {[x['prompt_lengths'] for x in reward_buffer]}"
                         # list of floats, same length as gen_tokens_buf
                         reward_scores = self.get_rewards(reward_buffer)
                         #print("*** reward_scores: ", reward_scores)
