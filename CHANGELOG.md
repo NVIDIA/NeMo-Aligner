@@ -27,11 +27,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### New Features and Optimizations
 - Add MoE Support for our reward models.
-- SFT/SteerLM: LoRA can now be enabled on all model layers
-- DPO: Enable LoRA on all model layers (In this case the actor will be reference model + LoRA weights, we can switch between actor/reference model by enabling/disabling LoRA)
-- PPO: Enable LoRA on all model layers (In this case the actor will be init policy + LoRA weights, we can switch between actor/init_policy model by enabling/disabling LoRA)
-- Added support for float values for `val_check_interval` for SFT
-- Added support for `limit_train_batches` as a float or int to DPO, SPIN, and SFT. This functionality mirrors the same parameter in PTL
+- SFT/SteerLM: LoRA can now be enabled on all model layers.
+- DPO: Enable LoRA on all model layers. In this case, the actor will be a reference model plus LoRA weights. We can switch between the actor/reference model by enabling or disabling LoRA.
+- PPO: Enable LoRA on all model layers. In this case, the actor will be the init policy plus LoRA weights. We can switch between the actor/init_policy model by enabling or disabling LoRA.
+- `val_check_interval` in SFT now supports float values.
+- Added support for `limit_train_batches` as a float or int to DPO, SPIN, and SFT. This functionality mirrors the same parameter in PTL.
+
 ### Breaking changes
 
 ### Bug Fixes
