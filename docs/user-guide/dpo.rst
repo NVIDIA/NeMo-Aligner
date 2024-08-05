@@ -61,7 +61,7 @@ Helpfully, TransformerEngine exposes a flag to set if you want to guarantee dete
 
 Instruction Following Taught by Supervised Fine-Tuning (SFT)
 ############################################################
-For best DPO training performance, it is recommended that you start with a SFT model, rather than the base model. For a full guide on how to perform SFT on a Megatron  GPT model, please refer to the :ref:`SFT guide <sft>`.
+For best DPO training performance, it is recommended that you start with a SFT model, rather than the base model. For a full guide on how to perform SFT on a Megatron GPT model, please refer to the :ref:`SFT guide <sft>`.
 
 DPO Model Training
 #####################
