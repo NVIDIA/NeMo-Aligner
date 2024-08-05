@@ -218,6 +218,7 @@ def main(cfg) -> None:
         train_data_cfg,
         mm_cfg,
         ptl_model.tokenizer,
+        ptl_model.model.module.image_processor,
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
     if cfg.model.data.get("sample", False):
@@ -229,6 +230,7 @@ def main(cfg) -> None:
         val_data_cfg,
         mm_cfg,
         ptl_model.tokenizer,
+        ptl_model.model.module.image_processor,
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
 

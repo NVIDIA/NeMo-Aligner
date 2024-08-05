@@ -19,7 +19,7 @@ from typing import Any, List
 import torch
 
 from megatron.core import parallel_state
-from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
+from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy, TextGenerationStrategy
 from nemo.utils import logging
 
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
@@ -122,3 +122,99 @@ def tokenize_batch(tokenizer, sentences, max_len, add_BOS, add_EOS=False):
     context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
     context_length_tensor = torch.cuda.LongTensor(context_lengths)
     return context_tokens_tensor, context_length_tensor, exceeded
+
+class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
+    def __init__(self, model):
+        super().__init__(model)
+        self.forward_model = self.model.model
+        self.tokenizer = self.model.tokenizer
+        self.image_paths = []
+        self.cfg = self.model.cfg
+        self.data_cfg = self.model.cfg.data
+
+        add_extra_token = 0
+        self.image_token = self.cfg.mm_cfg.get("image_token", "<image>")
+        self.video_token = self.cfg.mm_cfg.get("video_token", "<video>")
+        self.image_patch_token = self.cfg.mm_cfg.get("image_patch_token", "<extra_id_3>")
+        self.im_start_token = self.cfg.mm_cfg.get("im_start_token", "<extra_id_4>")
+        self.im_end_token = self.cfg.mm_cfg.get("im_end_token", "<extra_id_5>")
+
+        self.multimodal_cfg = dict(
+            is_multimodal=self.data_cfg.is_multimodal,
+            sep_image_conv_front=False,
+            conv_template=None,
+            patch_dim=self.cfg.mm_cfg.vision_encoder.patch_dim,
+            crop_size=self.cfg.mm_cfg.vision_encoder.get("crop_size", None),
+            image_folder=self.data_cfg.get('image_folder', None),
+            video_folder=self.data_cfg.get('video_folder', None),
+            image_aspect_ratio=self.data_cfg.image_aspect_ratio,
+            use_im_start_end=getattr(self.cfg.mm_cfg, 'use_im_start_end', False),
+            image_processor=None,
+            add_extra_token=add_extra_token,
+            context_length=self.cfg.encoder_seq_length,
+            media_type=getattr(self.data_cfg, 'media_type', 'image'),
+            num_frames=getattr(self.data_cfg, 'num_frames', 1),
+            mm_mlp_adapter_type=getattr(self.cfg.mm_cfg, 'mm_mlp_adapter_type', 'linear'),
+        )
+
+        patch_dim = self.multimodal_cfg['patch_dim']
+        height_num_patches = self.multimodal_cfg['crop_size'][0] // patch_dim
+        width_num_patches = self.multimodal_cfg['crop_size'][1] // patch_dim
+        self.num_media_latents = height_num_patches * width_num_patches
+
+    def preprocess_media_tokens(self, sources: dict, cur_token_len: int, use_plain: bool = False):
+        """
+        Preprocesses multimodal sources based on the provided configuration.
+
+        This function modifies the sources for multimodal data processing. It checks if the data is multimodal and
+        adjusts the token lengths accordingly. It also handles the start and end tokens for images and replaces
+        image tokens in conversations.
+
+        Parameters:
+        - sources (dict): A dictionary containing the multimodal sources to be processed.
+        - multimodal_cfg (dict): A configuration dictionary specifying various options for multimodal processing.
+          It includes keys like 'is_multimodal', 'use_im_start_end', and 'sep_image_conv_front'.
+        - cur_token_len (int): The current length of tokens to be considered for image processing.
+        - use_plain (bool, optional): A boolean flag to use plain image token replacement without additional processing.
+          Defaults to False.
+
+        Returns:
+        - dict: The processed sources dictionary after applying multimodal preprocessing steps.
+        """
+        multimodal_cfg = self.multimodal_cfg
+        is_multimodal = multimodal_cfg['is_multimodal']
+        media_type = multimodal_cfg['media_type']
+        image_token_len = cur_token_len
+        if media_type == 'image':
+            default_token = self.image_token
+        elif media_type == 'video':
+            default_token = self.video_token
+        else:
+            return sources
+
+        if not is_multimodal:
+            return sources
+
+        num_patches = image_token_len
+        if media_type == 'video':
+            num_patches *= multimodal_cfg['num_frames']
+
+        if multimodal_cfg['mm_mlp_adapter_type'] == 'mlp_downsample':
+            num_patches //= 4
+
+        if multimodal_cfg['use_im_start_end']:
+            replace_token = self.image_patch_token * num_patches
+        else:
+            replace_token = self.image_patch_token * (num_patches - 2)
+
+        replace_token = self.im_start_token + replace_token + self.im_end_token
+
+        for source in sources:
+            conversation = source['conversations']
+            if use_plain:
+                assert default_token in conversation[0]['value']
+                conversation[0]['value'] = default_token
+            for turn in conversation:
+                turn["value"] = turn["value"].replace(default_token, replace_token)
+
+        return sources

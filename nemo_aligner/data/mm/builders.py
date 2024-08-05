@@ -14,11 +14,12 @@
 
 from nemo_aligner.data.mm.datasets import MultimodalChatDataset
 
-def build_mm_sft_dataset(model_cfg, data_cfg, mm_cfg, tokenizer, special_tokens=None):
+def build_mm_sft_dataset(model_cfg, data_cfg, mm_cfg, tokenizer, image_processor, special_tokens=None):
     dataset = MultimodalChatDataset(
         data_cfg=data_cfg,
         mm_cfg=mm_cfg,
         tokenizer=tokenizer,
+        image_processor=image_processor,
         media_type=model_cfg.data.get("media_type","image"),
         image_folder=model_cfg.data.get("image_folder", None),
         video_folder=model_cfg.data.get("video_folder", None),

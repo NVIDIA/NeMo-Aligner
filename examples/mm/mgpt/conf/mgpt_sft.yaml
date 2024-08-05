@@ -100,6 +100,8 @@ model:
       patch_dim: 14
       crop_size: [224, 224]
       hidden_size: 1024 # could be found from model but tricky in code
+      downsample_height: 1
+      downsample_width: 1
       vision_select_layer: -2   # default to the last layer
       class_token_length: 1
       freeze: True

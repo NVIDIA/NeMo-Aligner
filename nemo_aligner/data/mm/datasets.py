@@ -25,7 +25,6 @@ from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, proc
 from PIL import Image
 from transformers import CLIPImageProcessor, SiglipImageProcessor
 from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import TiledSiglipImageProcessor
-from nemo.collections.multimodal.parts.utils import create_image_processor
 
 MAX_NUM_IMAGES = 1
 
@@ -34,7 +33,8 @@ class MultimodalChatDataset(NevaDataset):
             self, 
             data_cfg, 
             mm_cfg, 
-            tokenizer, 
+            tokenizer,
+            image_processor,
             media_type="image",
             image_folder=None,
             video_folder=None,
@@ -63,7 +63,7 @@ class MultimodalChatDataset(NevaDataset):
                 use_im_start_end=mm_cfg.get("use_im_start_end", False),
                 patch_dim=mm_cfg.vision_encoder.patch_dim,
                 mm_mlp_adapter_type=mm_cfg.get("mm_mlp_adapter_type", "linear"),
-                image_processor=create_image_processor(mm_cfg),
+                image_processor=image_processor,
                 add_extra_token=add_extra_token,
                 context_length=data_cfg.max_seq_length,
                 media_type=media_type,
@@ -84,9 +84,9 @@ class MultimodalChatDataset(NevaDataset):
         self.add_extra_token = add_extra_token
         self.ignore_index = ignore_index
 
-        self.image_token = mm_cfg.get("image_token", "<image>")        
+        self.image_token = mm_cfg.get("image_token", "<image>")
         self.video_token = mm_cfg.get("video_token", "<video>")
-        self.image_patch_token = mm_cfg.get("image_patch_token", "<extra_id_3>") 
+        self.image_patch_token = mm_cfg.get("image_patch_token", "<extra_id_3>")
         self.im_start_token = mm_cfg.get("im_start_token", "<extra_id_4>")
         self.im_end_token = mm_cfg.get("im_end_token", "<extra_id_5>")
         
@@ -268,9 +268,6 @@ class MultimodalChatDataset(NevaDataset):
         if media_type == 'video':
             num_patches *= multimodal_cfg['num_frames']
 
-        if multimodal_cfg['mm_mlp_adapter_type'] == 'mlp_downsample':
-            num_patches //= 4
-
         if multimodal_cfg['use_im_start_end']:
             replace_token = self.image_patch_token * num_patches
         else:
@@ -310,16 +307,7 @@ class MultimodalChatDataset(NevaDataset):
                 patch_dim = self.multimodal_cfg['patch_dim']
 
                 height_num_patches = media_tensors[0].shape[1] // patch_dim
-                width_num_patches = media_tensors[0].shape[2] // patch_dim
-
-                if isinstance(self.processor, TiledSiglipImageProcessor):
-                    height_num_patches = height_num_patches // self.processor.grid_height
-                    width_num_patches = width_num_patches // self.processor.grid_width
-                elif self.multimodal_cfg['mm_mlp_adapter_type'] == 'mlp_downsample':
-                    if height_num_patches % 2 != 0:
-                        height_num_patches += 1
-                    if width_num_patches % 2 != 0:
-                        width_num_patches += 1
+                width_num_patches  = media_tensors[0].shape[2] // patch_dim
 
                 cur_token_len = height_num_patches * width_num_patches
 
