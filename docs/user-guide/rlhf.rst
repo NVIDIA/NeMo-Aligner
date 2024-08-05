@@ -383,6 +383,7 @@ PPO Performance Results with TensorRT-LLM
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 We test the scaling of our TRT-LLM system by running llama3 70B Actor and llama3 70B Reward model on the Helpsteer2 prompts with ``num_rollout_samples=1024``, ``global_batch_size=128``, reshard enabled and engine offloading set to False.
+
 +------------------+-------------------+-----------------------------+----------------------+-------------------+
 | Actor Node Count | Critic Node Count | Number of Tokens Generated  | Step Time(seconds)  | Scaling Efficiency |
 +==================+===================+=============================+======================+===================+
