@@ -82,6 +82,21 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             raise TypeError(
                 f"`ref_policy_kl_penalty` must be a scalar or list, but got {type(self.spin_config['ref_policy_kl_penalty'])}"
             )
+        '''
+        # RPO params
+        self.preference_avg_log_probs = self.cfg.spin.get("preference_average_log_probs", False)
+        self.sft_avg_log_probs = self.cfg.spin.get("sft_average_log_probs", self.preference_avg_log_probs)
+
+        self.preference_loss_weight = self.cfg.spin.get("preference_loss_weight", 1)
+        self.sft_loss_weight = self.cfg.spin.get("sft_loss_weight", 0)
+        assert (
+            self.preference_loss_weight != 0 or self.sft_loss_weight != 0
+        ), "sft loss weight and dpo loss weight cannot both be 0"
+
+        # variants of preference losses, by default DPO.
+        self.preference_loss = self.cfg.spin.get("preference_loss", "dpo")
+        self.gt_reward_scale = self.cfg.spin.get("gt_reward_scale", 1.0)
+        '''
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, masks):
@@ -101,7 +116,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         return out_chosen.flatten(), out_rejected.flatten()
 
-    def get_forward_output_and_loss_func(self, validation_step=False):
+    def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
             batch = next(dataloader_iter)
 
@@ -114,33 +129,33 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 required_keys.add("attention_mask")
 
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("actual", "generated", "position_ids"))
+                    required_keys.update(("chosen", "rejected", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
                     required_keys.update(
                         (
-                            "ref_policy_log_probs_actual",
-                            "ref_policy_log_probs_generated",
-                            "actual_mask",
-                            "generated_mask",
+                            "ref_policy_log_probs_chosen",
+                            "ref_policy_log_probs_rejected",
+                            "chosen_mask",
+                            "rejected_mask",
                         )
                     )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
             tokens, masks, ref_logprobs = None, None, None
-            if batch["actual"] is not None and batch["generated"] is not None:
-                tokens = torch.cat((batch["actual"], batch["generated"]), dim=0)
+            if batch["chosen"] is not None and batch["rejected"] is not None:
+                tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
 
-            if batch["actual_mask"] is not None and batch["generated_mask"] is not None:
-                masks = torch.cat((batch["actual_mask"], batch["generated_mask"]), dim=0)
+            if batch["chosen_mask"] is not None and batch["rejected_mask"] is not None:
+                masks = torch.cat((batch["chosen_mask"], batch["rejected_mask"]), dim=0)
 
             if (
-                batch["ref_policy_log_probs_actual"] is not None
-                and batch["ref_policy_log_probs_generated"] is not None
+                batch.get("ref_policy_log_probs_chosen") is not None
+                and batch.get("ref_policy_log_probs_rejected") is not None
             ):
                 ref_logprobs = torch.cat(
-                    (batch["ref_policy_log_probs_actual"], batch["ref_policy_log_probs_generated"]), dim=0
+                    (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
                 )
 
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
@@ -172,6 +187,15 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             if not parallel_state.is_pipeline_last_stage():
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
+            def logprobs_func(output_tensor, non_loss_data=True):
+                # This function is expected to be used only when `collect_non_loss_data=True` in the fwd_bwd_function of Megatron-LM.
+                # See https://github.com/NVIDIA/Megatron-LM/blob/0bc3547702464501feefeb5523b7a17e591b21fa/megatron/core/pipeline_parallel/schedules.py#L228
+                assert non_loss_data
+                logprobs = from_parallel_logits_to_logprobs(
+                    vocab_parallel_logits=output_tensor, target=tokens, inference_only=True, higher_stability=True,
+                )
+                return {"logprobs": logprobs}
+
             def loss_func(output_tensor):
                 if validation_step and not self.cfg.data.validation_ds.get("drop_last", True):
                     raise NotImplementedError(
@@ -187,19 +211,22 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 reduced_loss = average_losses_across_data_parallel_group([loss])
                 reduced_acc = average_losses_across_data_parallel_group([acc_chosen])
 
-                out_actual, out_generated = self.gather_and_split_rewards(per_token_logps, ref_logprobs, masks)
+                out_chosen, out_rejected = self.gather_and_split_rewards(per_token_logps, ref_logprobs, masks)
 
                 return (
                     loss,
                     {
                         "avg": reduced_loss,
                         "acc": reduced_acc,
-                        "out_actual": out_actual,
-                        "out_generated": out_generated,
+                        "out_chosen": out_chosen,
+                        "out_rejected": out_rejected,
                     },
                 )
 
-            return output_tensor, loss_func
+            if logprobs_only:
+                return output_tensor, logprobs_func
+            else:
+                return output_tensor, loss_func
 
         return fwd_output_and_loss_func
 
@@ -231,7 +258,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         return loss, acc_chosen
 
     def get_loss_and_metrics(self, batch, forward_only):
-        seq_length = batch["actual"].shape[1]
+        seq_length = batch["chosen"].shape[1]
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
@@ -239,7 +266,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         fwd_bwd_function = get_forward_backward_func()
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
-            forward_step_func=self.get_forward_output_and_loss_func(forward_only),
+            forward_step_func=self.get_forward_output_and_loss_func(forward_only, logprobs_only=False),
             data_iterator=data_iter,
             model=self.model,
             num_microbatches=get_num_microbatches(),
@@ -252,8 +279,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         # only the last stages of the pipeline return losses
         if losses_reduced_per_micro_batch:
             # NOTE: assume that the returned values are already gathered across the DP workers
-            rewards_chosen = torch.cat([item["out_actual"] for item in losses_reduced_per_micro_batch])
-            rewards_rejected = torch.cat([item["out_generated"] for item in losses_reduced_per_micro_batch])
+            rewards_chosen = torch.cat([item["out_chosen"] for item in losses_reduced_per_micro_batch])
+            rewards_rejected = torch.cat([item["out_rejected"] for item in losses_reduced_per_micro_batch])
 
             rewards_all = torch.cat((rewards_chosen, rewards_rejected))
             rewards_chosen_mean = rewards_chosen.mean()
@@ -294,8 +321,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         metrics = {
             "loss": loss_mean,
             "acc": acc_mean,
-            "rewards_actual_mean": rewards_chosen_mean,
-            "rewards_generated_mean": rewards_rejected_mean,
+            "rewards_chosen_mean": rewards_chosen_mean,
+            "rewards_rejected_mean": rewards_rejected_mean,
             "rewards_all_mean": rewards_all_mean,
             "rewards_all_std": rewards_all_std,
         }
@@ -552,6 +579,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         else:
             raise RuntimeError("legacy checkpoints are not supported by NeMo-Aligner")
 
+    '''
     def get_logprob_output_only_func(self, inference_only=True):
         fwd_output_only_func = self.get_forward_output_only_func()
 
@@ -615,7 +643,51 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             )
 
         return logprobs
+    '''
+    
+    @torch.no_grad()
+    def get_logprob_batch(self, batch):
+        seq_length = batch["chosen"].shape[1]
 
+        data_iter = get_iterator_k_split(batch, get_num_microbatches())
+        set_sync_funcs(self, forward_only=True)
+
+        fwd_bwd_function = get_forward_backward_func()
+
+        logprobs_list = fwd_bwd_function(
+            forward_step_func=self.get_forward_output_and_loss_func(logprobs_only=True),
+            data_iterator=data_iter,
+            model=self.model,
+            num_microbatches=get_num_microbatches(),
+            forward_only=True,
+            seq_length=seq_length,
+            micro_batch_size=self.cfg.spin.log_prob_forward_micro_batch_size,
+            collect_non_loss_data=True,
+        )
+
+        if len(logprobs_list) > 0:
+            chosen_logprobs_list = []
+            rejected_logprobs_list = []
+            for item in logprobs_list:
+                chosen_logprobs, rejected_logprobs = self.split_output_tensor(item["logprobs"])
+                chosen_logprobs_list.append(chosen_logprobs)
+                rejected_logprobs_list.append(rejected_logprobs)
+
+            logprobs = torch.cat([torch.cat(chosen_logprobs_list), torch.cat(rejected_logprobs_list)], dim=0)
+        else:
+            logprobs = None
+
+        if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+            # broadcast it from last PP stage to everything else
+            logprobs = broadcast_2d_tensor(
+                logprobs,
+                parallel_state.get_pipeline_model_parallel_last_rank(),
+                parallel_state.get_pipeline_model_parallel_group(),
+            )
+
+        return logprobs
+
+    '''
     def get_ref_policy_logprobs(self, batch):
         tokens = torch.cat((batch["actual"], batch["generated"]), dim=0)
         masks = torch.cat((batch["attention_mask"], batch["attention_mask"]), dim=0)
@@ -623,6 +695,14 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         global_batch = [tokens, masks, pos_ids]
         with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             ref_log_probs = self.get_logprob_batch(global_batch)
+
+        # return in GPU, trainer needs to move to cpu
+        return ref_log_probs
+    '''
+    
+    def get_ref_policy_logprobs(self, batch):
+        with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
+            ref_log_probs = self.get_logprob_batch(batch)
 
         # return in GPU, trainer needs to move to cpu
         return ref_log_probs

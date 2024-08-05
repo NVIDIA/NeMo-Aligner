@@ -376,25 +376,25 @@ class SelfRewardingTrainer:
         num_bad_ends = 0
         sum_chosen_rewards = 0
         sum_reject_rewards = 0
-        num_samples += global_batch["actual"].shape[0]
+        num_samples += global_batch["chosen"].shape[0]
         num_bad_samples += global_batch["bad_samples"].sum()
         num_bad_ends += global_batch["bad_ends"].sum()
         gen_lengths_chosen += (global_batch["chosen_gen_lens"] - global_batch["chosen_prompt_lens"]).sum()
         gen_lengths_reject += (global_batch["reject_gen_lens"] - global_batch["reject_prompt_lens"]).sum()
         sum_chosen_rewards += global_batch["chosen_rewards"][global_batch["chosen_rewards"] != -1].sum()
-        sum_reject_rewards += global_batch["reject_rewards"][global_batch["reject_rewards"] != -1].sum()
+        sum_reject_rewards += global_batch["rejected_rewards"][global_batch["rejected_rewards"] != -1].sum()
         tensor_to_accumulate = torch.tensor(
             [gen_lengths_chosen, gen_lengths_reject, num_bad_samples, num_bad_ends, num_samples, sum_chosen_rewards, sum_reject_rewards], dtype=torch.float32, device=torch.cuda.current_device(),
         )
         torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())
 
         (global_chosen_response_lengths, global_reject_response_lengths, GBS_sum_bad_samples, GBS_sum_bad_ends, GBS_num_samples, global_chosen_rewards, global_reject_rewards,) = tensor_to_accumulate.tolist()
-        metrics["avg_chosen_lengths"] = global_chosen_response_lengths / GBS_num_samples
-        metrics["avg_reject_lengths"] = global_reject_response_lengths / GBS_num_samples
-        metrics["avg_bad_samples_per_GBS"] = GBS_sum_bad_samples / GBS_num_samples
-        metrics["avg_bad_ends_per_GBS"] = GBS_sum_bad_ends / (GBS_num_samples * self.num_responses_to_gen)
-        metrics["avg_chosen_generated_rewards"] = global_chosen_rewards / GBS_num_samples
-        metrics["avg_rejected_generated_rewards"] = global_reject_rewards / GBS_num_samples
+        metrics["chosen_lengths"] = global_chosen_response_lengths / GBS_num_samples
+        metrics["reject_lengths"] = global_reject_response_lengths / GBS_num_samples
+        metrics["bad_samples_per_GBS"] = GBS_sum_bad_samples / GBS_num_samples
+        metrics["bad_ends_per_GBS"] = GBS_sum_bad_ends / (GBS_num_samples * self.num_responses_to_gen)
+        metrics["chosen_generated_rewards"] = global_chosen_rewards / GBS_num_samples
+        metrics["rejected_generated_rewards"] = global_reject_rewards / GBS_num_samples
 
 
         return loss_mean, {**metrics, **trainer_metrics}
@@ -620,12 +620,12 @@ class SelfRewardingTrainer:
                                 if not global_batch["bad_samples"][idx]:
                                     self.train_df.loc[len(self.train_df)] = [
                                         self.step,
-                                        self.model.tokenizer.ids_to_text(global_batch["actual"][idx][:global_batch["chosen_prompt_lens"][idx].item()].tolist()),
+                                        self.model.tokenizer.ids_to_text(global_batch["chosen"][idx][:global_batch["chosen_prompt_lens"][idx].item()].tolist()),
                                         self.model.tokenizer.ids_to_text(
-                                            global_batch["actual"][idx][global_batch["chosen_prompt_lens"][idx].item():global_batch["chosen_gen_lens"][idx].item()].tolist()
+                                            global_batch["chosen"][idx][global_batch["chosen_prompt_lens"][idx].item():global_batch["chosen_gen_lens"][idx].item()].tolist()
                                         ),
                                         self.model.tokenizer.ids_to_text(
-                                            global_batch["generated"][idx][global_batch["reject_prompt_lens"][idx].item():global_batch["reject_gen_lens"][idx].item()].tolist()
+                                            global_batch["rejected"][idx][global_batch["reject_prompt_lens"][idx].item():global_batch["reject_gen_lens"][idx].item()].tolist()
                                         ),
                                     ]
                                     self.logger.log_table(
@@ -898,37 +898,16 @@ class SelfRewardingTrainer:
                         attention_mask = attention_mask.repeat(
                             len(chosen_tokens_pad), *((1,) * (len(attention_mask.shape) - 1))
                         )
-
-                    '''
+                    
                     new_batch = {
                         "chosen": chosen_tokens_pad,
                         "rejected": reject_tokens_pad,
-                        "chosen_length": chosen_gen_lens,
-                        "rejected_length": reject_gen_lens,
-                        "chosen_labels": chosen_labels,
-                        "rejected_labels": reject_labels,
                         "attention_mask": attention_mask,
                         "position_ids": position_ids,
+                        "chosen_mask": chosen_mask,
+                        "rejected_mask": reject_mask,
                         "chosen_rewards": chosen_scores,
                         "rejected_rewards": reject_scores,
-                    }
-
-                    logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
-                    chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
-
-                    new_batch["ref_policy_log_probs_chosen"] = chosen_logps
-                    new_batch["ref_policy_log_probs_rejected"] = reject_logps
-                    '''
-                    
-                    new_batch = {
-                        "actual": chosen_tokens_pad,
-                        "generated": reject_tokens_pad,
-                        "attention_mask": attention_mask,
-                        "position_ids": position_ids,
-                        "actual_mask": chosen_mask,
-                        "generated_mask": reject_mask,
-                        "chosen_rewards": chosen_scores,
-                        "reject_rewards": reject_scores,
                         "chosen_prompt_lens": chosen_prompt_lens,
                         "reject_prompt_lens": reject_prompt_lens,
                         "chosen_gen_lens": chosen_gen_lens,
@@ -941,10 +920,10 @@ class SelfRewardingTrainer:
                     assert (reject_gen_lens - reject_prompt_lens >= 0).all(), "negative generated length encountered in rejected"
 
                     logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
-                    act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
+                    chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
 
-                    new_batch["ref_policy_log_probs_actual"] = act_logps
-                    new_batch["ref_policy_log_probs_generated"] = gen_logps
+                    new_batch["ref_policy_log_probs_chosen"] = chosen_logps
+                    new_batch["ref_policy_log_probs_rejected"] = reject_logps
 
                     yield new_batch
                     #del logprobs, chosen_logps, reject_logps, new_batch
