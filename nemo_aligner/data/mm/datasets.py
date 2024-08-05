@@ -175,12 +175,6 @@ class MultimodalChatDataset(NevaDataset):
         ----------
         sources: List[str]
             A list of dictionaries containing conversational data.
-        tokenizer: PreTrainedTokenizer 
-            A tokenizer from the Hugging Face Transformers library.
-        conversation_template: 
-            An instance of the Conversation class with the desired template.
-        max_length: 
-            Maximum length for tokenization.
 
         Returns:
         ----------
@@ -188,28 +182,21 @@ class MultimodalChatDataset(NevaDataset):
         """
         add_extra_token = self.add_extra_token
         context_length = self.max_seq_length
-        #conv = conversation_template
-        # Apply prompt templates
-        #conversations = []
+
+        # Apply the prompt template
         for source in sources:
             messages = []
-            #conv.messages = []
-            #conv.system = source.get('system', "")
-            #conv.set_system(system=source.get('system', ""), system_token=source.get('system_token', None))
             system_message = source.get('system', "")
             system_token = source.get('system_token', "System")
-            mask_role = source.get('mask', None)
+            mask_role = source.get('mask', "User")
             for i, turn in enumerate(source['conversations']):
                 if i % 2 == 1:
                     mask_turn = True if turn['from'] == mask_role else False
-                    #conv.append_message(turn['from'], turn['value'], mask_turn)
                     messages.append({"from": turn['from'], "value": turn['value'], "mask": mask_turn})
                 else:
                     mask_turn = True if turn['from'] == mask_role else False
-                    #conv.append_message(turn['from'], turn['value'], mask_turn)
                     messages.append({"from": turn['from'], "value": turn['value'], "mask": mask_turn})
-            context, context_dict = self.get_prompt(system_token, system_message, messages)
-            #conversations.append(context)
+            _, context_dict = self.get_prompt(system_token, system_message, messages)
 
         # Mask targets
         tokens_list = []
@@ -231,7 +218,7 @@ class MultimodalChatDataset(NevaDataset):
         tokens, labels = self._maybe_process_tokens(tokens_list, labels_list, context_length, add_extra_token)
 
         # Check if masking works correctly
-        #print([x for x in zip(tokenizer.ids_to_tokens(tokens[0].numpy().tolist()), tokens[0].numpy().tolist(), labels[0].numpy().tolist())])
+        #print([x for x in zip(self.tokenizer.ids_to_tokens(tokens[0].numpy().tolist()), tokens[0].numpy().tolist(), labels[0].numpy().tolist())])
 
         if self.add_extra_token:
             tokens = tokens[:, :-1].contiguous()
