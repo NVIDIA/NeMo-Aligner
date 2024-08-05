@@ -65,7 +65,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - SFT/SteerLM: added LoRA tuning as an option besides full fine-tuning, only attention_qkv layer is supported.
 
 ### Breaking Changes
-- We have changed the shuffle logic in the data sampler to support multi-epoch training, so training runs using identical parameters. It will no longer give the same results because the shuffle logic has changed (specifically the seed value is modified slightly per epoch).
+- We have changed the shuffle logic in the data sampler to support multi-epoch training, so training runs using identical parameters. It will no longer give the same results because the shuffle logic has changed (specifically the seed value is modified slightly per epoch). If you run CI/regression type tests, be warned that the test may break due to this shuffle change.
 
 ### Bug Fixes
 - Fixed a potential issue when the base model's `model.data.data_prefix` config is a list and is about to be overridden with
