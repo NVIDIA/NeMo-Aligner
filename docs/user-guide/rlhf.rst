@@ -408,42 +408,6 @@ We also support running RLHF on Llama3.1 405B Actor and Reward Model. The follow
 
 In the future we aim to improve the performance of generation with large models that have high pipeline parallelism size.
 
-Speeding up PPO with TensorRT-LLM
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-NeMo-Aligner has support for accelerating RLHF with `TensorRT-LLM <https://github.com/NVIDIA/TensorRT-LLM>`__. This can provide a significant speedup to the PPO training time when enabled. There are a few crucial flags to set when using TensorRT-LLM with Aligner.
-
-#. `trainer.ppo.trt_llm.enable=True` enables TensorRT-LLM.
-#. `trainer.ppo.trt_llm.reshard=True` enables on the fly pipeline parallelism resharding during inference. This essentially runs training with pipeline parallelism but inference with tensor paralleism only.
-#. `trainer.ppo.trt_llm.unload_engine_train=False` if we should unload the engine during training or not, since the engine is on GPU this frees up more memory for training but comes at a cost of loading and offloading the engine. It's recommended to keep this False.
-#. `trainer.trt_llm.model_type=llama` tells TensorRT-LLM which model type we want to run inference on. Must be changed for other model types, as an example for nemotron this should be gptnext.
-#. `trainer.ppo.batch_iterator.use_flask=True` enables a flask server to balance work across different DP workers.
-
-For more information please see the aligner `paper <https://arxiv.org/pdf/2405.01481>`__.
-
-PPO Results with TensorRT-LLM
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-We used the TensorRT-LLM PPO integration to train the `LLaMa3-70B-PPO-Chat <https://huggingface.co/nvidia/Llama3-70B-PPO-Chat>`__ model. This model was trained using a global batch size of 128, num_rollout_samples of 128, constant learning rate of 1e-7 and KL penalty of 3e-3. For more details please see the Helpsteer2 `paper <https://arxiv.org/pdf/2406.08673>`__.
-
-PPO Performance Results with TensorRT-LLM
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-We test the scaling of our TRT-LLM system by running llama3 70B Actor and llama3 70B Reward model on the Helpsteer2 prompts with ``num_rollout_samples=1024``, ``global_batch_size=128``, reshard enabled and engine offloading set to False.
-
-+------------------+-------------------+-----------------------------+----------------------+-------------------+
-| Actor Node Count | Critic Node Count | Number of Tokens Generated  | Step Time(seconds)  | Scaling Efficiency |
-+==================+===================+=============================+======================+===================+
-| 8                | 4                 | 350.7                       | 366.7                | 1                 |
-+------------------+-------------------+-----------------------------+----------------------+-------------------+
-| 16               | 8                 | 323.3                       | 190.4                | 1.93              |
-+------------------+-------------------+-----------------------------+----------------------+-------------------+
-| 32               | 16                | 331.7                       | 108                  | 3.40              |
-+------------------+-------------------+-----------------------------+----------------------+-------------------+
-| 64               | 32                | 334                         | 56.9                 | 6.44              |
-+------------------+-------------------+-----------------------------+----------------------+-------------------+
-
-NOTE: for 64x32 config we used a rollout_micro_batch_size of 16 instead of 8 since we have more memory coming from the distributed optimizer.
-
 PPO Results
 %%%%%%%%%%%
 
