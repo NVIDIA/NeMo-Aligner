@@ -1,20 +1,15 @@
-# CUDA 12.3
-FROM nvcr.io/nvidia/pytorch:24.02-py3
-FROM nvcr.io/nvidia/pytorch:24.02-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
-### config tags
-ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
-ARG TE_TAG=a51ff542dcb1f605aa54f9b0e1aaadb132acd53d
-ARG MLM_TAG=core_r0.7.0
-ARG NEMO_TAG=r2.0.0rc0
-ARG PYTRITON_VERSION=0.5.5
-ARG APEX_TAG=810ffae374a2b9cb4b5c5e28eaeca7d7998fca0c
-ARG TE_TAG=bfe21c3d68b0a9951e5716fb520045db53419c5e
-ARG MLM_TAG=fbb375d4b5e88ce52f5f7125053068caff47f93f
-ARG NEMO_TAG=1ff3a061da9751e4d645c8de66c0dfd27bd5d119
-ARG PYTRITON_VERSION=0.5.5
+FROM ${BASE_IMAGE}
+ARG APEX_TAG=59b80ee8df79cec125794949327f29913c328746
+ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
+ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
+ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
+ARG ALIGNER_COMMIT=r0.4.0rc0
+
+ARG PYTRITON_VERSION=0.5.10
 ARG PROTOBUF_VERSION=4.24.4
-ARG ALIGNER_COMMIT=main
+ARG TRTLLM_VERSION=v0.10.0
 
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
@@ -88,14 +83,19 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
     apt-get install git-lfs && \
     git lfs install
 
-# TRTLLM-0.9
+# TRTLLM
 RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     cd TensorRT-LLM && \
-    git checkout v0.9.0 && \
-    git apply ../NeMo-Aligner/trtllm.patch && \
+    git checkout ${TRTLLM_VERSION} && \
+    patch -p1 < ../NeMo-Aligner/trtllm.patch && \
     . docker/common/install_tensorrt.sh && \
     python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
 
 RUN cd TensorRT-LLM && \
     pip install ./build/tensorrt_llm*.whl
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.3/compat/lib.real/
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.4/compat/lib.real/
+
+# WAR(0.4.0): The pin of NeMo requires a higher nvidia-modelopt version than
+#             TRT-LLM allows. This installation must follow TRT-LLM and is
+#             only necessary when NeMo 2.0.0rc1 is installed with TRT-LLM v10.
+RUN pip install --upgrade-strategy only-if-needed nvidia-modelopt==0.13.0
