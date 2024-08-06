@@ -13,16 +13,12 @@
 # limitations under the License.
 
 from typing import List, Optional, Tuple, Union
-import logging
 
 import hydra
 import torch
-from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches, get_current_global_batch_size
+from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state, tensor_parallel
-from megatron.core.parallel_state import (
-            get_tensor_model_parallel_group,
-            get_tensor_model_parallel_rank,
-            )
+from megatron.core.parallel_state import get_tensor_model_parallel_group
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
@@ -36,7 +32,6 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
     get_iterator_k_split,
 )
 from nemo_aligner.models.alignable_interface import SupervisedInterface
-from nemo_aligner.utils.distributed import all_reduce_autograd
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -44,7 +39,6 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_validation_step,
     set_sync_funcs,
 )
-from nemo_aligner.utils.utils import configure_batch_sizes
 
 
 class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
@@ -56,6 +50,13 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         self.target_logits_scale = self.cfg.knowledge_distillation.get("target_logits_scale", 1.0)
         self.logits_scale = self.cfg.knowledge_distillation.get("logits_scale", 1.0)
         self.use_k_add_1_logits = self.cfg.knowledge_distillation.get("use_k_add_1_logits", False)
+        
+        self.kd_loss_weight = self.cfg.knowledge_distillation.get("kd_loss_weight", 1)
+        self.sft_loss_weight = self.cfg.knowledge_distillation.get("sft_loss_weight", 0)
+        assert (
+            self.kd_loss_weight != 0 or self.sft_loss_weight != 0
+        ), "sft loss weight and knowledge distillation loss weight cannot both be 0"
+
         
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
@@ -84,7 +85,7 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
 
             tokens = batch["tokens"]
             labels = batch["labels"]
-            loss_mask = batch["loss_mask"]
+            loss_mask = batch["loss_mask"].clamp(min=0, max=1)
             target_topk_logits = batch["topk_logits"]
             target_topk_token_ids = batch["topk_token_ids"]
             target_log_sum_exp_logits = batch["log_sum_exp_logits"]
@@ -118,8 +119,9 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                                              op=torch.distributed.ReduceOp.MAX,
                                              group=get_tensor_model_parallel_group())
                 output_tensor = output_tensor - output_tensor_max.unsqueeze(dim=-1).detach()
-                
                 output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
+                
+                # compute the knowlodge distillation loss against the ground-truth logits
                 topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
 
                 if self.use_k_add_1_logits:
@@ -130,10 +132,10 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     # prob_{K+1} = 1 - sum_{k=1}^K prob_k
                     # neg_loss = sum_{k=1}^{K+1} target_prob_k * log prob_{k}
                     
-                    sum_exp_logits = torch.sum(torch.exp(output_tensor), dim=-1)
+                    log_sum_exp_logits = torch.logsumexp(output_tensor, dim=-1)
                     # We can't use `gather_from_tensor_model_parallel_region` here since it discards
                     # gradients from other ranks - we need to all_reduce the gradients as well.
-                    sum_exp_logits_subtract_topk_exp_logits = (sum_exp_logits - topk_logits.exp().sum(-1)).clamp(min=1e-10)
+                    sum_exp_logits_subtract_topk_exp_logits = (log_sum_exp_logits.exp() - topk_logits.exp().sum(-1)).clamp(min=1e-10)
                     topk_logits = torch.cat([topk_logits, sum_exp_logits_subtract_topk_exp_logits.log().unsqueeze(-1)], -1)
                     
                     target_sum_exp_logits_subtract_topk_exp_logits = (target_log_sum_exp_logits.exp() - target_topk_logits.exp().sum(-1)).clamp(min=1e-10)
@@ -144,15 +146,32 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
                     # neg_loss = sum_{k=1}^{K} target_prob_k * log prob_{k} 
                     
+                    log_sum_exp_logits = None
                     target_topk_logits_in_loss = target_topk_logits
                     
-                loss = self.loss_func(topk_logits, target_topk_logits_in_loss, loss_mask=loss_mask)
+                kd_loss = self.loss_func(topk_logits, target_topk_logits_in_loss, loss_mask=loss_mask)
                 
-                reduced_loss = average_losses_across_data_parallel_group([loss])
+                # compute the sft loss against the ground-truth labels
+                sft_loss = torch.zeros_like(kd_loss)
+                if self.sft_loss_weight != 0:
+                    target_label_logits = torch.gather(output_tensor, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+                    if log_sum_exp_logits is None:
+                        log_sum_exp_logits = torch.logsumexp(output_tensor, dim=-1)
+                    target_label_logprobs = target_label_logits - log_sum_exp_logits
+                    sft_loss = - torch.sum(target_label_logprobs * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
                 
-                # logging.info(f"rank={torch.distributed.get_rank()} |TP rank = {get_tensor_model_parallel_rank()} | loss={loss} | reduce_loss={reduced_loss} | output_tensor={output_tensor.shape} | topk logits={topk_logits.shape} + {topk_logits.mean()} | target_topk_logits_in_loss={target_topk_logits_in_loss.shape} + {target_topk_logits_in_loss.mean()} | loss_mask={loss_mask.shape}")
+                # compute the aggregated loss
+                loss = self.kd_loss_weight * kd_loss + self.sft_loss_weight * sft_loss
+                reduced_loss, reduced_kd_loss, reduced_sft_loss = average_losses_across_data_parallel_group([loss, kd_loss, sft_loss])
                 
-                return (loss, {"avg": reduced_loss})
+                return (
+                    loss,
+                    {
+                        "avg": reduced_loss,
+                        "avg_sft_loss": reduced_sft_loss,
+                        "avg_kd_loss": reduced_kd_loss,
+                    },
+                )
 
             return output_tensor, loss_func
 
@@ -167,7 +186,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         logprobs = torch.nn.functional.log_softmax(self.logits_scale * logits, dim=-1)
         target_logprobs = torch.nn.functional.log_softmax(self.target_logits_scale * target_logits, dim=-1)
         loss = torch.sum(target_logprobs.exp() * (target_logprobs - logprobs), dim=-1)
-        loss_mask = loss_mask.clamp(min=0, max=1)
         return torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
 
     def get_loss_and_metrics(self, batch, forward_only):
@@ -177,9 +195,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         _, seq_length = batch["tokens"].shape
         batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
 
-        # for k, v in batch.items():
-        #     logging.info(f"rank={torch.distributed.get_rank()} | TP rank = {get_tensor_model_parallel_rank()} | {k} | {v.shape} ")
-        # logging.info(f"num_microbatches = {get_num_microbatches()} | gbs = {get_current_global_batch_size()} | mbs={get_micro_batch_size()}")
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
 
         set_sync_funcs(self, forward_only)
@@ -202,13 +217,32 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         # only the last stages of the pipeline return losses
         if parallel_state.is_pipeline_last_stage():
             # average loss across micro batches
-            loss_mean = torch.concat([loss_reduced["avg"] for loss_reduced in losses_reduced]).mean()
+            loss_mean = torch.as_tensor(
+                [loss_reduced["avg"] for loss_reduced in losses_reduced],
+                device=torch.cuda.current_device(),
+            ).mean()
+            sft_loss_mean = torch.as_tensor(
+                [loss_reduced["avg_sft_loss"] for loss_reduced in losses_reduced],
+                device=torch.cuda.current_device(),
+            ).mean()
+            kd_loss_mean = torch.as_tensor(
+                [loss_reduced["avg_kd_loss"] for loss_reduced in losses_reduced],
+                device=torch.cuda.current_device(),
+            ).mean()
         else:
-            loss_mean = torch.tensor(0.0).cuda()
+            loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            sft_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            kd_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
         # Logging
         torch.distributed.broadcast(loss_mean, get_last_rank())
-        loss_value = loss_mean.detach().item()
-        metrics = {"loss": loss_value}
+        torch.distributed.broadcast(sft_loss_mean, get_last_rank())
+        torch.distributed.broadcast(kd_loss_mean, get_last_rank())
+        loss_value = sft_loss_mean.item()
+        metrics = {
+            "loss": loss_value,
+            "sft_loss": sft_loss_mean.item(),
+            "kd_loss": kd_loss_mean.item(),
+        }
         return loss_value, metrics
 
     def prepare_for_training_step(self):

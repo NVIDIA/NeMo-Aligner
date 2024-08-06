@@ -425,25 +425,6 @@ def compute_topk_logits_in_batched_sequence(
     return topk_logits, topk_token_ids, log_sum_exp_logits
 
 
-class _AllReduce(torch.autograd.Function):
-    """ Implementation from old PyTorch `torch.distributed.nn.parallel`. """
-    @staticmethod
-    def forward(ctx, op, group, tensor):
-        ctx.group = group
-        ctx.op = op
-        tensor = tensor.clone()
-        torch.distributed.all_reduce(tensor, op=op, group=group)
-        return tensor
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        return (None, None) + (_AllReduce.apply(ctx.op, ctx.group, grad_output),)
-
-
-def all_reduce_autograd(tensor, op=torch.distributed.ReduceOp.SUM, group=torch.distributed.group.WORLD):
-    return _AllReduce.apply(op, group, tensor)
-
-
 # class _TopKLogitsCrossEntropy(torch.autograd.Function):
 #     @staticmethod
 #     def forward(ctx, vocab_parallel_logits, target_logits, target_token_ids, target_log_sum_exp_logits):

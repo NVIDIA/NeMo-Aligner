@@ -93,6 +93,8 @@ model:
     target_logits_scale: 1.0
     logits_scale: 1.0
     use_k_add_1_logits: False
+    kd_loss_weight: 1.0
+    sft_loss_weight: 0.0
     
   data:
     data_impl: chunked_jsonl
