@@ -28,7 +28,7 @@ from unittest.mock import patch
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
-from megatron.core.num_microbatches_calculator import reconfigure_microbatch_calculator
+from megatron.core.num_microbatches_calculator import reconfigure_num_microbatches_calculator
 from omegaconf import DictConfig, OmegaConf
 from torch.masked import as_masked_tensor
 
@@ -229,7 +229,7 @@ def calculate_response_lengths(tokens, eos_id):
 
 def configure_batch_sizes(mbs, gbs, dp=1):
     app_state = AppState()
-    reconfigure_microbatch_calculator(
+    reconfigure_num_microbatches_calculator(
         rank=app_state.global_rank,
         rampup_batch_size=None,
         global_batch_size=gbs,
