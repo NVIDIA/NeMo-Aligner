@@ -257,7 +257,7 @@ class MultimodalChatDataset(NevaDataset):
         if media_type == 'image':
             default_token = self.image_token
         elif media_type == 'video':
-            default_token = self.video_token
+            raise NotImplementedError("Video modality is not supported.")
         else:
             return sources
 
@@ -265,9 +265,6 @@ class MultimodalChatDataset(NevaDataset):
             return sources
 
         num_patches = image_token_len
-        if media_type == 'video':
-            num_patches *= multimodal_cfg['num_frames']
-
         if multimodal_cfg['use_im_start_end']:
             replace_token = self.image_patch_token * num_patches
         else:

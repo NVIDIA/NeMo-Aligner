@@ -46,7 +46,8 @@ from nemo_aligner.utils.train_utils import (
     set_train,
 )
 from nemo_aligner.utils.utils import configure_batch_sizes
-
+from nemo.collections.nlp.modules.common.text_generation_utils import generate
+from nemo_aligner.utils.text_generation_utils import MGPTModelTextGenerationStrategy
 
 class MultimodalGPTSFTModel(MegatronNevaModel, SupervisedInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
@@ -151,7 +152,7 @@ class MultimodalGPTSFTModel(MegatronNevaModel, SupervisedInterface):
         length_params: LengthParam,
         sampling_params: SamplingParam = None,
         *,
-        strategy: Optional[TextGenerationStrategy] = None,
+        strategy: Optional[MGPTModelTextGenerationStrategy] = None,
     ) -> OutputType:
         """
         Same as base model generate, except the following:

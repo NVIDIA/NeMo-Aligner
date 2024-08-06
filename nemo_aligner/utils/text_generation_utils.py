@@ -15,7 +15,7 @@
 """Utilities for generating text."""
 
 from typing import Any, List
-
+import re
 import torch
 
 from megatron.core import parallel_state
@@ -23,7 +23,7 @@ from nemo.collections.nlp.modules.common.text_generation_strategy import GPTMode
 from nemo.utils import logging
 
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
-
+from nemo.collections.multimodal.data.neva.neva_dataset import tokenize
 
 class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
     """
@@ -134,10 +134,10 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
 
         add_extra_token = 0
         self.image_token = self.cfg.mm_cfg.get("image_token", "<image>")
-        self.video_token = self.cfg.mm_cfg.get("video_token", "<video>")
         self.image_patch_token = self.cfg.mm_cfg.get("image_patch_token", "<extra_id_3>")
         self.im_start_token = self.cfg.mm_cfg.get("im_start_token", "<extra_id_4>")
         self.im_end_token = self.cfg.mm_cfg.get("im_end_token", "<extra_id_5>")
+        self.use_im_start_end = self.cfg.mm_cfg.get("use_im_start_end", False)
 
         self.multimodal_cfg = dict(
             is_multimodal=self.data_cfg.is_multimodal,
@@ -162,7 +162,17 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
         width_num_patches = self.multimodal_cfg['crop_size'][1] // patch_dim
         self.num_media_latents = height_num_patches * width_num_patches
 
-    def preprocess_media_tokens(self, sources: dict, cur_token_len: int, use_plain: bool = False):
+    def process_prompt(self, prompt):
+        prompt_with_media = self.preprocess_media_tokens(prompt)
+        tokens = tokenize(
+            texts=prompt_with_media,
+            tokenizer=self.tokenizer,
+            context_length=self.cfg.encoder_seq_length,
+            add_extra_token=0,
+            )
+        return tokens
+
+    def preprocess_media_tokens(self, conversation: str, media_type: str = "image", is_multimodal: bool = True):
         """
         Preprocesses multimodal sources based on the provided configuration.
 
@@ -175,46 +185,45 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
         - multimodal_cfg (dict): A configuration dictionary specifying various options for multimodal processing.
           It includes keys like 'is_multimodal', 'use_im_start_end', and 'sep_image_conv_front'.
         - cur_token_len (int): The current length of tokens to be considered for image processing.
-        - use_plain (bool, optional): A boolean flag to use plain image token replacement without additional processing.
-          Defaults to False.
 
         Returns:
-        - dict: The processed sources dictionary after applying multimodal preprocessing steps.
+        - str: The processed sources dictionary after applying multimodal preprocessing steps.
         """
-        multimodal_cfg = self.multimodal_cfg
-        is_multimodal = multimodal_cfg['is_multimodal']
-        media_type = multimodal_cfg['media_type']
-        image_token_len = cur_token_len
         if media_type == 'image':
             default_token = self.image_token
         elif media_type == 'video':
-            default_token = self.video_token
+            raise NotImplementedError("Video modality is not supported.")
         else:
-            return sources
+            return conversation
 
         if not is_multimodal:
-            return sources
+            return conversation
 
-        num_patches = image_token_len
-        if media_type == 'video':
-            num_patches *= multimodal_cfg['num_frames']
+        num_patches = self.num_media_latents
 
-        if multimodal_cfg['mm_mlp_adapter_type'] == 'mlp_downsample':
-            num_patches //= 4
-
-        if multimodal_cfg['use_im_start_end']:
+        if self.use_im_start_end:
             replace_token = self.image_patch_token * num_patches
         else:
             replace_token = self.image_patch_token * (num_patches - 2)
 
         replace_token = self.im_start_token + replace_token + self.im_end_token
+        conversation = conversation.replace(default_token, replace_token)
 
-        for source in sources:
-            conversation = source['conversations']
-            if use_plain:
-                assert default_token in conversation[0]['value']
-                conversation[0]['value'] = default_token
-            for turn in conversation:
-                turn["value"] = turn["value"].replace(default_token, replace_token)
+        return conversation
+    
+    def tokenize_batch(self, prompt, max_len, add_BOS, add_EOS=False):
+        if type(prompt) == str:
+            context_tokens = self.process_prompt(prompt=prompt)
+        elif type(prompt) == list:
+            context_tokens = []
+            for p in prompt:
+                context_tokens.append(
+                    self.process_prompt(p)[0]
+                )
+        else:
+            raise ValueError(f'{type(prompt)} is not supported for tokenization')
 
-        return sources
+        context_tokens, context_lengths = pad_batch(context_tokens, self.tokenizer.eos_id, max_len)
+        context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
+        context_length_tensor = torch.cuda.LongTensor(context_lengths)
+        return context_tokens_tensor, context_length_tensor
