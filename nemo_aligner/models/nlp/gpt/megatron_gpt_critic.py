@@ -47,29 +47,10 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
 
-        # must be populated by the examples script
-        self.rm_state_dict_cpu = None
-
-        self.critic_state_dict_cpu = copy_model_states_to_cpu(
-            self, cpu_dict=None, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
-        )
-
-        # for distributed adam offload
-        self.distributed_adam_offload_manager = None
-
-        self.loaded_state_dict = StateDictState.CRITIC
-        self.to_offload_adam_states = self.cfg.get("offload_adam_states")
         self.clip_val = self.cfg.get("loss_clip_val")
-
-    def on_load_checkpoint(self, *args, **kwargs):
-        super().on_load_checkpoint(*args, **kwargs)
-        self.critic_state_dict_cpu = copy_model_states_to_cpu(
-            self, cpu_dict=self.critic_state_dict_cpu, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
-        )
 
     def prepare_for_inference(self):
         super().prepare_for_inference()
-        self.offload_adam_states()
 
     def prepare_for_training(self):
         app_state = AppState()
@@ -80,8 +61,6 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             micro_batch_size=self.cfg.micro_batch_size,
             data_parallel_size=parallel_state.get_data_parallel_world_size(),
         )
-        self.onload_adam_states()
-        self._load_critic()
 
     def get_loss_and_metrics(self, batch, forward_only):
         sequence_length = batch["tokens"].size(-1)
@@ -122,140 +101,46 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         # validation step is not used
         def fwd_output_and_loss_func(data_iterator, model):
             batch = next(data_iterator)
-            tokens = batch["tokens"].cuda()
-            returns = batch["returns"]
-            prev_values = batch["prev_values"]
-            mask = batch["mask"]
 
-            attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-                tokens, self.tokenizer.eos_id, False, True, False,
-            )
+            required_keys = set()
 
-            attention_mask = attention_mask[0:1]
+            if parallel_state.is_pipeline_first_stage():
+                required_keys.update(batch.keys())
+            else:
+                required_keys.add("attention_mask")
 
-            # when using PP, set the unused variables to None just to be safe
-            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
                 if parallel_state.is_pipeline_first_stage():
-                    returns, prev_values, mask = None, None, None
+                    required_keys.update(("tokens", "position_ids"))
 
-                    tokens, position_ids = map(lambda x: x.cuda(non_blocking=True), (tokens, position_ids))
+                if parallel_state.is_pipeline_last_stage():
+                    required_keys.update(("scores", "mask"))
 
-                elif parallel_state.is_pipeline_last_stage():
-                    tokens, position_ids = None, None
-
-                    # loss needs these 3 values
-                    prev_values, mask, returns = map(lambda x: x.cuda(non_blocking=True), (prev_values, mask, returns))
-
-                else:
-                    # intermediates don't need anything
-                    tokens, position_ids, returns, prev_values, mask = [None] * 5
+            batch = {
+                key: val.cuda(non_blocking=True) if key in required_keys and isinstance(val, torch.Tensor) else None
+                for key, val in batch.items()
+            }
 
             output = model(
-                input_ids=tokens, lengths=None, position_ids=position_ids, attention_mask=attention_mask, labels=None,
+                input_ids=batch["tokens"],
+                lengths=None,
+                position_ids=batch["position_ids"],
+                attention_mask=batch["attention_mask"],
+                labels=None,
             )
 
             if not parallel_state.is_pipeline_last_stage():
                 output = output.to(dtype=self.autocast_dtype)
 
             def loss_func(curr_values):
-                curr_values = curr_values[:, :-1].contiguous()
+                scores = batch["scores"]
+                mask = batch["mask"]
 
-                # Standardize values to subtract a bias.
-                if self.enable_standardization:
-                    curr_values = (curr_values - self.rew_mean) / self.rew_std
-
-                # Critic loss. Uses clipped version of the loss.
-                clip_val = self.clip_val
-
-                if clip_val > 0.0:
-                    values_clipped = prev_values + (curr_values - prev_values).clamp(-clip_val, clip_val)
-                    v_loss1 = (values_clipped - returns) ** 2
-                else:
-                    v_loss1 = torch.tensor(0.0).cuda()
-                v_loss2 = (curr_values - returns) ** 2
-
-                # Critic loss
-                loss = 0.5 * masked_mean(torch.max(v_loss1, v_loss2), mask)
-
+                loss = 0.5 * (curr_values - scores) ** 2
+                loss = (loss * mask).sum() / mask.sum()
                 reduced_loss = average_losses_across_data_parallel_group([loss])
+
                 return loss, {"avg": reduced_loss}
 
             return output, loss_func
 
         return fwd_output_and_loss_func
-
-    def offload_adam_states(self):
-        if self.distributed_adam_offload_manager is None:
-
-            self.distributed_adam_offload_manager = (
-                offload_distributed_adam(self._optimizer.state_dict(state_dict_format=1, gather_on_root=False))
-                if self.to_offload_adam_states and self.with_distributed_adam
-                else nullcontext()
-            )
-
-            # offload onto cpu
-            self.distributed_adam_offload_manager.__enter__()
-
-    def onload_adam_states(self):
-        if self.distributed_adam_offload_manager is not None:
-            # load back onto GPU
-            self.distributed_adam_offload_manager.__exit__(None, None, None)
-
-        self.distributed_adam_offload_manager = None
-
-    def infer_rm_critic(self, *args, **kwargs):
-        call_order = (self._infer_rm, self._infer_critic)
-
-        original_state = self.loaded_state_dict
-
-        if original_state == StateDictState.CRITIC:
-            # if we have the critic model already do that first
-            # so we don't need to load again
-            call_order = reversed(call_order)
-
-        outputs = []
-        for fn in call_order:
-            output = fn(*args, **kwargs)
-            outputs.append(output)
-
-        if original_state == StateDictState.CRITIC:
-            # reverse the output back
-            outputs = reversed(outputs)
-
-        return tuple(outputs)
-
-    def set_output_sequence_flag(self, value_to_set):
-        if isinstance(self.model, Float16Module):
-            base_module = self.model.module
-        else:
-            base_module = self.model
-
-        if hasattr(base_module, "rm_head"):
-            base_module.rm_head.output_sequence = value_to_set
-
-    def _load_critic(self):
-        if self.loaded_state_dict == StateDictState.REWARD:
-            self.load_state_dict(self.critic_state_dict_cpu)
-
-            self.set_output_sequence_flag(True)
-            self.loaded_state_dict = StateDictState.CRITIC
-
-    def _load_rm(self):
-        if self.loaded_state_dict == StateDictState.CRITIC:
-            self.load_state_dict(self.rm_state_dict_cpu)
-
-            self.set_output_sequence_flag(False)
-            self.loaded_state_dict = StateDictState.REWARD
-
-    def _infer_critic(self, *args, **kwargs):
-        self._load_critic()
-        return self.infer(*args, **kwargs)
-
-    def _infer_rm(self, *args, **kwargs):
-        self._load_rm()
-        return self.infer(*args, **kwargs)
-
-    def finish_training(self):
-        self.critic_state_dict_cpu = copy_model_states_to_cpu(
-            self, cpu_dict=self.critic_state_dict_cpu, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
-        )

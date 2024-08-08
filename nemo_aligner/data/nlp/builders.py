@@ -348,9 +348,5 @@ def build_dataloader(
     batch_sampler = cls(**common_params)
 
     return torch.utils.data.DataLoader(
-        dataset,
-        batch_sampler=batch_sampler,
-        num_workers=cfg.model.data.num_workers,
-        pin_memory=True,
-        collate_fn=collate_fn,
+        dataset, batch_sampler=batch_sampler, num_workers=0, pin_memory=True, collate_fn=collate_fn,
     )
