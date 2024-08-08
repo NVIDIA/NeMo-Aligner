@@ -135,8 +135,8 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
                 scores = batch["scores"]
                 mask = batch["mask"]
 
-                loss = 0.5 * (curr_values - scores) ** 2
-                loss = (loss * mask).sum() / mask.sum()
+                loss = torch.nn.functional.huber_loss(curr_values, scores, reduction="none", delta=self.clip_val)
+                loss = (loss * mask).sum((1, 2)) / mask.sum((1, 2))
                 reduced_loss = average_losses_across_data_parallel_group([loss])
 
                 return loss, {"avg": reduced_loss}
