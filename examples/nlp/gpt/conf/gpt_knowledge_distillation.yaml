@@ -95,10 +95,12 @@ model:
     use_k_add_1_logits: False
     kd_loss_weight: 1.0
     sft_loss_weight: 0.0
+    kd_loss: bwd_kl
     
   data:
     data_impl: chunked_jsonl
     n_chunks: 1000
+    hf_dataset_loader: False
     splits_string: null
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True
