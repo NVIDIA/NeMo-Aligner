@@ -28,7 +28,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.data.mm.builders import build_mm_sft_dataset
-from nemo_aligner.models.mm.mgpt.mgpt_sft_model import MultimodalGPTSFTModel
+from nemo_aligner.models.mm.mgpt.megatron_mgpt_sft_model import MegatronMGPTSFTModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -95,7 +95,7 @@ def _modify_config(mgpt_cfg, cfg, add_cfg_to_tree=False):
             mgpt_cfg.data.train_ds.prompt_template = prompt_template
             mgpt_cfg.data.validation_ds.prompt_template = prompt_template
 
-        sft_cls = MultimodalGPTSFTModel
+        sft_cls = MegatronMGPTSFTModel
         mgpt_cfg.target = f"{sft_cls.__module__}.{sft_cls.__name__}"
 
         if cfg.model.get("use_flash_attention", None) is not None:
@@ -169,7 +169,7 @@ def main(cfg) -> None:
 
     restore_mm_adapter = False if (cfg.model.mm_cfg.llm.freeze and cfg.model.restore_from_path is None) else True
     ptl_model, updated_cfg = load_from_nemo(
-        MultimodalGPTSFTModel,
+        MegatronMGPTSFTModel,
         cfg,
         trainer,
         strict=True,

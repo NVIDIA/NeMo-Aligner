@@ -24,7 +24,6 @@ from nemo.utils import logging
 from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, process_image
 from PIL import Image
 from transformers import CLIPImageProcessor, SiglipImageProcessor
-from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import TiledSiglipImageProcessor
 
 MAX_NUM_IMAGES = 1
 
@@ -331,9 +330,6 @@ class MultimodalChatDataset(NevaDataset):
                 crop_size = [self.processor.crop_size['height'], self.processor.crop_size['width']]
             else:
                 crop_size = copy.deepcopy(self.multimodal_cfg['crop_size'])
-                if isinstance(self.processor, TiledSiglipImageProcessor):
-                    crop_size[0] *= self.processor.grid_height
-                    crop_size[1] *= self.processor.grid_width
                     
             # Image does not exist in the data, but the model is multimodal
             # TODO, if there are different videos on T dimensions.
