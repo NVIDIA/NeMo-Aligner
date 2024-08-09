@@ -16,7 +16,7 @@
 modified from: https://github.com/NVIDIA/NeMo/blob/2baef811f21372c3340dd2d82635d2377e78a660/nemo/collections/nlp/data/language_modeling/megatron/gpt_dataset.py
 to allow us to build SFT, RewardModel and RLHF datasets
 """
-
+import os
 import json
 from functools import partial
 
@@ -56,8 +56,16 @@ class ChunkedJsonl:
     def __init__(self, path_placeholder, n_chunks):
         self.CHUNK_ID_STRING = "CHUNK_ID"
         assert self.CHUNK_ID_STRING in path_placeholder, f"path_placehold ({path_placeholder}) does not have the CHUNK_ID_STRING ({self.CHUNK_ID_STRING})"
-        self.n_chunks = n_chunks
         self.path_placeholder = path_placeholder
+        
+        # get the maximum number of chunks
+        max_n_chunks = 0
+        for i in range(n_chunks):
+            max_n_chunks = i
+            if not os.path.exists(self.path_placeholder.replace(self.CHUNK_ID_STRING, str(i))):
+                break
+        assert max_n_chunks > 0, "no files match the required path {path_placehold}"
+        self.n_chunks = min(n_chunks, max_n_chunks)
         
         print(f"Initializing chunked jsonl...")
         lengths = []
