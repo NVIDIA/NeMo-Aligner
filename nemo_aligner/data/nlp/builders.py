@@ -24,6 +24,7 @@ import numpy as np
 import torch
 from megatron.core import parallel_state
 from omegaconf.dictconfig import DictConfig
+from datasets import load_dataset
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
     get_datasets_weights_and_num_samples,
@@ -90,13 +91,16 @@ class ChunkedJsonl:
         raise ValueError("Reading the item {i} failed. Computed chunk_id={chunk_id}, idx_in_chunk={idx_in_chunk}.")
 
 
-def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name, n_chunks=None):
+def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name, n_chunks=None,
+                          hf_dataset_loader=False):
     def _build_dataset(current_data_prefix, current_num_samples):
         if data_impl == "mmap":
             data_payload = get_indexed_dataset_(current_data_prefix, data_impl, cfg.data.get("skip_warmup", True))
-        elif data_impl.startswith("json"):
+        elif data_impl.startswith("json") and not hf_dataset_loader:
             with open(current_data_prefix, "r", encoding="utf_8") as fr:
                 data_payload = [json.loads(line.strip()) for line in fr]
+        elif data_impl.startswith("json") and hf_dataset_loader:
+            data_payload = load_dataset("json", data_files=current_data_prefix)["train"]
         elif data_impl == "chunked_jsonl":
             assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
             data_payload = ChunkedJsonl(current_data_prefix, n_chunks)
@@ -138,7 +142,7 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
 
 
 def build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, n_chunks=None,
+    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, n_chunks=None, hf_dataset_loader=False,
 ):
     if isinstance(data_prefix, DictConfig):
         assert (
@@ -159,6 +163,7 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="train",
             n_chunks=n_chunks,
+            hf_dataset_loader=hf_dataset_loader,
         )
         validation_ds = build_dataset_generic(
             cls=cls,
@@ -171,6 +176,7 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="validation",
             n_chunks=n_chunks,
+            hf_dataset_loader=hf_dataset_loader,
         )
         test_ds = build_dataset_generic(
             cls=cls,
@@ -183,6 +189,7 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="test",
             n_chunks=n_chunks,
+            hf_dataset_loader=hf_dataset_loader,
         )
         return train_ds, validation_ds, test_ds
 
@@ -200,6 +207,7 @@ def build_train_valid_test_datasets(
                 seed=seed,
                 tokenizer=tokenizer,
                 n_chunks=n_chunks,
+                hf_dataset_loader=hf_dataset_loader,
             )
 
         # Blending dataset.
@@ -223,6 +231,7 @@ def build_train_valid_test_datasets(
                 seed=seed,
                 tokenizer=tokenizer,
                 n_chunks=n_chunks,
+                hf_dataset_loader=hf_dataset_loader,
             )
             if train_ds:
                 train_datasets.append(train_ds)
@@ -248,19 +257,21 @@ def build_train_valid_test_datasets(
 
 
 def _build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, n_chunks=None,
+    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, n_chunks=None, hf_dataset_loader=False,
 ):
     """Build train, valid, and test datasets."""
 
     # Indexed dataset or jsonl
     if data_impl == "mmap":
         data_payload = get_indexed_dataset_(data_prefix, data_impl, cfg.data.get("skip_warmup", True))
-    elif data_impl.startswith("json"):
+    elif data_impl.startswith("json") and not hf_dataset_loader:
         with open(data_prefix, "r", encoding="utf_8") as fr:
             data_payload = [json.loads(line.strip()) for line in fr]
+    elif data_impl.startswith("json") and hf_dataset_loader:
+        data_payload = load_dataset("json", data_files=data_prefix)["train"]
     elif data_impl == "chunked_jsonl":
         assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
-        data_payload = ChunkedJsonl(current_data_prefix, n_chunks)
+        data_payload = ChunkedJsonl(data_prefix, n_chunks)
     else:
         raise RuntimeError(f"data.data_impl must be either mmap or json or jsonl, but got {data_impl}")
     total_num_of_documents = len(data_payload)

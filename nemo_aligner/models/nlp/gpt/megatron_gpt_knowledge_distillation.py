@@ -51,6 +51,7 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         self.logits_scale = self.cfg.knowledge_distillation.get("logits_scale", 1.0)
         self.use_k_add_1_logits = self.cfg.knowledge_distillation.get("use_k_add_1_logits", False)
         
+        self.kd_loss = self.cfg.knowledge_distillation.get("kd_loss", "bwd_kl")
         self.kd_loss_weight = self.cfg.knowledge_distillation.get("kd_loss_weight", 1)
         self.sft_loss_weight = self.cfg.knowledge_distillation.get("sft_loss_weight", 0)
         assert (
@@ -185,7 +186,13 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         """
         logprobs = torch.nn.functional.log_softmax(self.logits_scale * logits, dim=-1)
         target_logprobs = torch.nn.functional.log_softmax(self.target_logits_scale * target_logits, dim=-1)
-        loss = torch.sum(target_logprobs.exp() * (target_logprobs - logprobs), dim=-1)
+        
+        if self.kd_loss == "bwd_kl":
+            loss = torch.sum(target_logprobs.exp() * (target_logprobs - logprobs), dim=-1)
+        elif self.kd_loss == "fwd_kl":
+            loss = torch.sum(logprobs.exp() * (logprobs - target_logprobs), dim=-1)
+        else:
+            raise ValueError(f"kd_loss {self.kd_loss} is not supported.")
         return torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
 
     def get_loss_and_metrics(self, batch, forward_only):
