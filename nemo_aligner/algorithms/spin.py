@@ -238,7 +238,7 @@ class SPINTrainer:
 
         num_samples = 0
         gen_lengths = 0
-        num_samples += global_batch["actual"].shape[0]
+        num_samples += global_batch["chosen"].shape[0]
         gen_lengths += global_batch["generated_lengths"].sum()
         tensor_to_accumulate = torch.tensor(
             [gen_lengths, num_samples], dtype=torch.float32, device=torch.cuda.current_device(),
@@ -246,7 +246,7 @@ class SPINTrainer:
         torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())
 
         (global_response_lengths, global_num_samples,) = tensor_to_accumulate.tolist()
-        metrics["avg_generated_lengths"] = global_response_lengths / global_num_samples
+        metrics["generated_lengths"] = global_response_lengths / global_num_samples
 
         return loss_mean, {**metrics, **trainer_metrics}
 
@@ -406,12 +406,12 @@ class SPINTrainer:
 
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
-                        if torch.distributed.get_rank() == 0 and parallel_state.get_data_parallel_rank() == 0:
+                        if torch.distributed.get_rank() == 0:
                             self.train_df.loc[len(self.train_df)] = [
                                 self.step - 1,
                                 self.model.tokenizer.ids_to_text(global_batch["prompts_only"][0].tolist()),
                                 self.model.tokenizer.ids_to_text(
-                                    global_batch["generated"][0][
+                                    global_batch["rejected"][0][
                                         len(global_batch["prompts_only"][0]) : (
                                             len(global_batch["prompts_only"][0])
                                             + global_batch["generated_lengths"][0].item()
@@ -552,12 +552,12 @@ class SPINTrainer:
                         )
 
                     new_batch = {}
-                    new_batch["actual"] = act_tokens_pad
-                    new_batch["generated"] = gen_tokens_pad
+                    new_batch["chosen"] = act_tokens_pad
+                    new_batch["rejected"] = gen_tokens_pad
                     new_batch["attention_mask"] = attention_mask
                     new_batch["position_ids"] = position_ids
-                    new_batch["actual_mask"] = act_mask
-                    new_batch["generated_mask"] = gen_mask
+                    new_batch["chosen_mask"] = act_mask
+                    new_batch["rejected_mask"] = gen_mask
                     new_batch["prompts_only"] = batch["prompts_only"]
                     new_batch["generated_lengths"] = gen_lengths - batch["prompt_lengths"]
                     assert (gen_lengths - batch["prompt_lengths"] >= 0).all(), "negative generated length encountered"
@@ -565,8 +565,8 @@ class SPINTrainer:
                     logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
                     act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
 
-                    new_batch["ref_policy_log_probs_actual"] = act_logps
-                    new_batch["ref_policy_log_probs_generated"] = gen_logps
+                    new_batch["ref_policy_log_probs_chosen"] = act_logps
+                    new_batch["ref_policy_log_probs_rejected"] = gen_logps
 
                     start += batch_size
 

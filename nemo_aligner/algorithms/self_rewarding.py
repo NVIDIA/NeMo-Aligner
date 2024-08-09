@@ -230,6 +230,16 @@ class SelfRewardingTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
+        self.spin_config = OmegaConf.to_container(self.model.cfg.spin, resolve=True)
+        if isinstance(self.spin_config["length_control"], (float, int)):
+            self.rho = self.spin_config["length_control"]
+        elif isinstance(self.spin_config["length_control"], list) or self.spin_config.get("length_control") is None:
+            self.rho = 0.0
+        else:
+            raise TypeError(
+                f"`length_control` must be a scalar or list, but got {type(self.spin_config['length_control'])}"
+            )
+        
         self.num_responses_to_gen = self.model.cfg.spin.num_responses_to_gen
         self.num_evals_to_average = self.model.cfg.spin.num_evals_to_average
         self.first_iteration_sft = self.model.cfg.spin.get("first_iteration_sft", False)
@@ -547,6 +557,8 @@ class SelfRewardingTrainer:
 
             # call this in case the model is using a KL scheduler based on iteration number
             self.model.set_KL_penalty_by_iteration(self.iteration)
+            # call this in case we are using a length_control scheduler based on iteration number
+            self.set_rho_by_iteration(self.iteration)
             
             #self.generated_responses.clear()
 
@@ -796,7 +808,8 @@ class SelfRewardingTrainer:
                     for cand_list in candidate_responses_with_rewards:
                         scores = [b[0] for b in cand_list]
                         ends = [b[-1] for b in cand_list]
-                        filtered_scores = [(s,idx) for idx, (s,e) in enumerate(zip(scores, ends)) if (s is not None) and e]
+                        r_lengths = [len(b[1][b[2]:b[3]]) for b in cand_list]
+                        filtered_scores = [(s,r,idx) for idx, (s,r,e) in enumerate(zip(scores, r_lengths, ends)) if (s is not None) and e]
                         bad_sample = False
                         
                         # TODO: sample more from the underlying Dataset instead
@@ -811,8 +824,16 @@ class SelfRewardingTrainer:
                             idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
                             bad_sample = True
                         elif len(filtered_scores) > 1:
-                            idx_chosen = filtered_scores[np.argmax([s[0] for s in filtered_scores])][-1]
-                            idx_reject = filtered_scores[np.argmin([s[0] for s in filtered_scores])][-1]
+                            #idx_chosen = filtered_scores[np.argmax([s[0] for s in filtered_scores])][-1]
+                            #idx_reject = filtered_scores[np.argmin([s[0] for s in filtered_scores])][-1]
+                            s_min = np.min([s[0] for s in filtered_scores])
+                            s_max = np.max([s[0] for s in filtered_scores])
+                            rng_chosen = [(1.0 - self.rho) * s_max + self.rho * s_min, s_max]
+                            rng_reject = [s_min, (1.0 - self.rho) * s_min + self.rho * s_max]
+                            chosen_cands = [s for s in filtered_scores if s[0] >= rng_chosen[0] and s[0] <= rng_chosen[-1]]
+                            reject_cands = [s for s in filtered_scores if s[0] >= rng_reject[0] and s[0] <= rng_reject[-1]]
+                            idx_chosen = filtered_scores[np.argmin([s[1] for s in chosen_cands])][-1]
+                            idx_reject = filtered_scores[np.argmax([s[1] for s in reject_cands])][-1]
                         else:
                             print(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
                             raise RuntimeError("hit strange score selection state, please investigate")
@@ -851,10 +872,10 @@ class SelfRewardingTrainer:
                 for batch in divide_chunks(final_buffer, original_gbs_size):
                     chosen_prompt_lens = torch.LongTensor([b["chosen_prompt_len"] for b in batch])
                     chosen_gen_lens = torch.LongTensor([b["chosen_gen_len"] for b in batch])
-                    chosen_scores = torch.FloatTensor([(-1 if b["chosen_score"] is None else b["chosen_score"]) for b in batch])
+                    chosen_scores = torch.FloatTensor([(0 if b["chosen_score"] is None else b["chosen_score"]) for b in batch])
                     reject_prompt_lens = torch.LongTensor([b["reject_prompt_len"] for b in batch])
                     reject_gen_lens = torch.LongTensor([b["reject_gen_len"] for b in batch])
-                    reject_scores = torch.FloatTensor([(-1 if b["reject_score"] is None else b["reject_score"]) for b in batch])
+                    reject_scores = torch.FloatTensor([(0 if b["reject_score"] is None else b["reject_score"]) for b in batch])
                     bad_samples = torch.BoolTensor([b["bad_sample"] for b in batch])
 
                     max_batch_len = max([len(b["chosen_tokens"]) for b in batch] + [len(b["reject_tokens"]) for b in batch])
@@ -926,10 +947,19 @@ class SelfRewardingTrainer:
                     new_batch["ref_policy_log_probs_rejected"] = reject_logps
 
                     yield new_batch
-                    #del logprobs, chosen_logps, reject_logps, new_batch
-                    del logprobs, act_logps, gen_logps, new_batch
+                    del logprobs, chosen_logps, reject_logps, new_batch
 
                 buffer.clear()
+    
+    def set_rho_by_iteration(self, iteration):
+        if isinstance(self.spin_config["length_control"], (float, int)):
+            return
+        elif isinstance(self.spin_config["length_control"], list):
+            assert iteration < len(
+                self.spin_config["length_control"]
+            ), f"iteration [ {iteration} ] is out of bounds for length_control schedule {self.spin_config['length_control']}"
+
+            self.rho = self.spin_config["length_control"][iteration]
 
     @property
     def epoch(self):

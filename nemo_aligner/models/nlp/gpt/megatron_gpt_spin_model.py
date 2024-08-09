@@ -82,7 +82,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             raise TypeError(
                 f"`ref_policy_kl_penalty` must be a scalar or list, but got {type(self.spin_config['ref_policy_kl_penalty'])}"
             )
-        '''
+        
         # RPO params
         self.preference_avg_log_probs = self.cfg.spin.get("preference_average_log_probs", False)
         self.sft_avg_log_probs = self.cfg.spin.get("sft_average_log_probs", self.preference_avg_log_probs)
@@ -96,15 +96,14 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         # variants of preference losses, by default DPO.
         self.preference_loss = self.cfg.spin.get("preference_loss", "dpo")
         self.gt_reward_scale = self.cfg.spin.get("gt_reward_scale", 1.0)
-        '''
 
     @torch.no_grad()
-    def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, masks):
+    def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, masks, average_log_probs=False):
         pi_logprobs = pi_logprobs.detach()
 
         dp_group = parallel_state.get_data_parallel_group()
 
-        batch_logs = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, masks[:, 1:])
+        batch_logs = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, masks[:, 1:], average_log_probs=average_log_probs)
 
         output_list = [torch.zeros_like(batch_logs) for _ in range(dp_group.size())]
 
@@ -138,12 +137,14 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                             "ref_policy_log_probs_rejected",
                             "chosen_mask",
                             "rejected_mask",
+                            "chosen_rewards",
+                            "rejected_rewards",
                         )
                     )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            tokens, masks, ref_logprobs = None, None, None
+            tokens, masks, ref_logprobs, gt_rewards = None, None, None, None
             if batch["chosen"] is not None and batch["rejected"] is not None:
                 tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
 
@@ -157,6 +158,9 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 ref_logprobs = torch.cat(
                     (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
                 )
+            
+            if batch.get("chosen_rewards") is not None and batch.get("rejected_rewards") is not None:
+                gt_rewards = torch.cat((batch["chosen_rewards"], batch["rejected_rewards"]), dim=0)
 
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
             # these two lines ensure your position_ids and attn_mask are always B=1
@@ -206,17 +210,48 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                     vocab_parallel_logits=output_tensor, target=tokens, higher_stability=True, inference_only=validation_step
                 )
 
-                loss, acc_chosen = self.loss_func(per_token_logps, ref_logprobs, masks[:, 1:])
+                #loss, acc_chosen = self.loss_func(per_token_logps, ref_logprobs, masks[:, 1:])
+                preference_loss, acc_chosen = self.loss_func(
+                    per_token_logps,
+                    ref_logprobs,
+                    masks[:, 1:],
+                    gt_rewards,
+                    average_log_probs=self.preference_avg_log_probs,
+                )
 
-                reduced_loss = average_losses_across_data_parallel_group([loss])
-                reduced_acc = average_losses_across_data_parallel_group([acc_chosen])
+                #reduced_loss = average_losses_across_data_parallel_group([loss])
+                #reduced_acc = average_losses_across_data_parallel_group([acc_chosen])
+                sft_loss = torch.zeros_like(preference_loss)
+                if self.sft_loss_weight != 0:
+                    sft_loss = self.sft_loss_func(
+                        per_token_logps, masks[:, 1:], average_log_probs=self.sft_avg_log_probs
+                    )
+                loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
+                
+                (
+                    reduced_loss,
+                    reduced_preference_loss,
+                    reduced_sft_loss,
+                    reduced_acc,
+                ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss, acc_chosen])
 
-                out_chosen, out_rejected = self.gather_and_split_rewards(per_token_logps, ref_logprobs, masks)
+                #out_chosen, out_rejected = self.gather_and_split_rewards(per_token_logps, ref_logprobs, masks)
+                out_chosen, out_rejected = self.gather_and_split_rewards(
+                    per_token_logps, ref_logprobs, masks, average_log_probs=self.preference_avg_log_probs
+                )
 
                 return (
                     loss,
+                    #{
+                    #    "avg": reduced_loss,
+                    #    "acc": reduced_acc,
+                    #    "out_chosen": out_chosen,
+                    #    "out_rejected": out_rejected,
+                    #},
                     {
                         "avg": reduced_loss,
+                        "avg_sft_loss": reduced_sft_loss,
+                        "avg_preference_loss": reduced_preference_loss,
                         "acc": reduced_acc,
                         "out_chosen": out_chosen,
                         "out_rejected": out_rejected,
@@ -245,17 +280,62 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         else:
             return (logps * loss_mask).sum(-1)
 
-    def loss_func(self, pi_logprobs, ref_logprobs, masks, average_log_probs=False):
+    def loss_func(self, pi_logprobs, ref_logprobs, masks, gt_rewards, average_log_probs=False):
         rewards = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, masks, average_log_probs=average_log_probs)
-        chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards)
+        #chosen_rewards, reject_rewards = self.split_output_tensor(self.ref_policy_kl_penalty * rewards)
 
-        loss = -torch.nn.functional.logsigmoid(chosen_rewards - reject_rewards)
+        #loss = -torch.nn.functional.logsigmoid(chosen_rewards - reject_rewards)
+        chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
+        rewards_delta = chosen_rewards - reject_rewards
+
+        if self.preference_loss == "dpo":
+            loss = -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)
+        elif self.preference_loss == "rpo_bwd_kl":
+            logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
+            logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
+
+            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
+            logalpha_hat_chosen = torch.nn.functional.logsigmoid(gt_rewards_delta)
+            logalpha_hat_rejected = torch.nn.functional.logsigmoid(-gt_rewards_delta)
+
+            loss = (
+                torch.exp(logalpha_hat_chosen) * (logalpha_hat_chosen - logbeta_hat_chosen)
+                + torch.exp(logalpha_hat_rejected) * (logalpha_hat_rejected - logbeta_hat_rejected)
+            ).mean(0)
+        elif self.preference_loss == "rpo_fwd_kl":
+            logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
+            logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
+
+            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
+            logalpha_hat_chosen = torch.nn.functional.logsigmoid(gt_rewards_delta)
+            logalpha_hat_rejected = torch.nn.functional.logsigmoid(-gt_rewards_delta)
+
+            loss = (
+                torch.exp(logbeta_hat_chosen) * (logbeta_hat_chosen - logalpha_hat_chosen)
+                + torch.exp(logbeta_hat_rejected) * (logbeta_hat_rejected - logalpha_hat_rejected)
+            ).mean(0)
+        elif self.preference_loss == "ipo":
+            loss = torch.mean((chosen_rewards - reject_rewards - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2, 0)
+        elif self.preference_loss == "rpo_sq":
+            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
+
+            loss = torch.mean((self.ref_policy_kl_penalty * rewards_delta - gt_rewards_delta) ** 2, 0)
+        else:
+            raise NotImplementedError(f"preference_loss {self.preference_loss} is not implemented")
 
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
             acc_chosen = comp.float().mean()
 
         return loss, acc_chosen
+    
+    def sft_loss_func(self, pi_logprobs, labels, average_log_probs=False):
+        logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
+        chosen_logprobs, _ = self.split_output_tensor(logprobs)
+        return -chosen_logprobs.mean(0)
 
     def get_loss_and_metrics(self, batch, forward_only):
         seq_length = batch["chosen"].shape[1]
@@ -289,19 +369,37 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             rewards_all_std = rewards_all.std()
 
             # average loss across micro batches
-            loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
-            loss_tensor = torch.concat(loss_tensors_list)
-            loss_mean = loss_tensor.mean()
-            acc_tensors_list = [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch]
+            #loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
+            #loss_tensor = torch.concat(loss_tensors_list)
+            #loss_mean = loss_tensor.mean()
+            #acc_tensors_list = [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch]
 
-            if len(acc_tensors_list) == 1:
-                acc_tensor = acc_tensors_list[0]
-            elif len(acc_tensors_list) > 1:
-                acc_tensor = torch.concat(acc_tensors_list)
-            acc_mean = acc_tensor.mean()
+            #if len(acc_tensors_list) == 1:
+            #    acc_tensor = acc_tensors_list[0]
+            #elif len(acc_tensors_list) > 1:
+            #    acc_tensor = torch.concat(acc_tensors_list)
+            #acc_mean = acc_tensor.mean()
+            loss_mean = torch.as_tensor(
+                [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch],
+                device=torch.cuda.current_device(),
+            ).mean()
+            sft_loss_mean = torch.as_tensor(
+                [loss_reduced["avg_sft_loss"] for loss_reduced in losses_reduced_per_micro_batch],
+                device=torch.cuda.current_device(),
+            ).mean()
+            preference_loss_mean = torch.as_tensor(
+                [loss_reduced["avg_preference_loss"] for loss_reduced in losses_reduced_per_micro_batch],
+                device=torch.cuda.current_device(),
+            ).mean()
+            acc_mean = torch.as_tensor(
+                [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch],
+                device=torch.cuda.current_device(),
+            ).mean()
         else:
 
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            sft_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            preference_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             acc_mean = torch.tensor(0.0, device=torch.cuda.current_device())
 
             rewards_chosen_mean = torch.tensor(0.0, device=torch.cuda.current_device())
@@ -311,6 +409,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
+        torch.distributed.broadcast(sft_loss_mean, get_last_rank())
+        torch.distributed.broadcast(preference_loss_mean, get_last_rank())
         torch.distributed.broadcast(acc_mean, get_last_rank())
 
         torch.distributed.broadcast(rewards_chosen_mean, get_last_rank())
@@ -320,6 +420,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         metrics = {
             "loss": loss_mean,
+            "sft_loss": sft_loss_mean,
+            "preference_loss": preference_loss_mean,
             "acc": acc_mean,
             "rewards_chosen_mean": rewards_chosen_mean,
             "rewards_rejected_mean": rewards_rejected_mean,
