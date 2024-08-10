@@ -17,7 +17,6 @@ from enum import Enum
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from megatron.core.transformer.module import Float16Module
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -31,6 +30,7 @@ from nemo.utils import AppState
 from nemo_aligner.models.alignable_interface import CriticModelInterface
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
 from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
 from nemo_aligner.utils.train_utils import set_sync_funcs
 from nemo_aligner.utils.utils import copy_model_states_to_cpu, masked_mean, offload_distributed_adam
 
@@ -84,15 +84,26 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         if losses_reduced_per_micro_batch:
             # average loss across micro batches
             loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
-            loss_tensor = torch.concat(loss_tensors_list)
+            loss_tensor = torch.as_tensor(loss_tensors_list, device=torch.cuda.current_device())
             loss_mean = loss_tensor.mean()
+            pred_values = torch.stack(
+                [
+                    torch.as_tensor(loss_reduced["values"], device=torch.cuda.current_device())
+                    for loss_reduced in losses_reduced_per_micro_batch
+                ]
+            ).mean(0)
         else:
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
 
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
+
+        pred_values = broadcast_2d_tensor_within_pp(pred_values.view(1, -1)).view(-1)
+        dictionary = {f"pred_value_{i}": item for i, item in enumerate(pred_values)}
+
         metrics = {
             "loss": loss_mean.item(),
+            **dictionary,
         }
 
         return loss_mean.item(), metrics
@@ -137,9 +148,13 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
                 loss = torch.nn.functional.huber_loss(curr_values, scores, reduction="none", delta=self.clip_val)
                 loss = (loss * mask).sum((1, 2)) / mask.sum((1, 2))
-                reduced_loss = average_losses_across_data_parallel_group([loss])
 
-                return loss, {"avg": reduced_loss}
+                with torch.no_grad():
+                    pred_values = ((curr_values * mask).sum((0, 1)) / mask.sum((0, 1))).nan_to_num(0)
+
+                reduced_loss, *values = average_losses_across_data_parallel_group([loss, *pred_values])
+
+                return loss, {"avg": reduced_loss, "values": values}
 
             return output, loss_func
 
