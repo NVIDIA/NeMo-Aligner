@@ -288,7 +288,6 @@ class SelfRewardingTrainer:
                 tokenizer=self.model.tokenizer,
                 seed=self.model.cfg.get("seed", None),
             )
-        print(f"*** MAX_SEQ_LEN_IS: {self.model.cfg.data.train_ds.max_seq_length}")
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -560,7 +559,7 @@ class SelfRewardingTrainer:
             # call this in case we are using a length_control scheduler based on iteration number
             self.set_rho_by_iteration(self.iteration)
             
-            #self.generated_responses.clear()
+            print(f"*** Iteration [ {self.iteration} ]  RHO [ {self.rho} ] ***")
 
             for _ in epoch_iter:
                 num_steps_in_epoch = min(
@@ -828,12 +827,19 @@ class SelfRewardingTrainer:
                             #idx_reject = filtered_scores[np.argmin([s[0] for s in filtered_scores])][-1]
                             s_min = np.min([s[0] for s in filtered_scores])
                             s_max = np.max([s[0] for s in filtered_scores])
-                            rng_chosen = [(1.0 - self.rho) * s_max + self.rho * s_min, s_max]
-                            rng_reject = [s_min, (1.0 - self.rho) * s_min + self.rho * s_max]
+                            rng_chosen = [((1.0 - self.rho) * s_max) + (self.rho * s_min), s_max]
+                            rng_reject = [s_min, ((1.0 - self.rho) * s_min) + (self.rho * s_max)]
                             chosen_cands = [s for s in filtered_scores if s[0] >= rng_chosen[0] and s[0] <= rng_chosen[-1]]
                             reject_cands = [s for s in filtered_scores if s[0] >= rng_reject[0] and s[0] <= rng_reject[-1]]
-                            idx_chosen = filtered_scores[np.argmin([s[1] for s in chosen_cands])][-1]
-                            idx_reject = filtered_scores[np.argmax([s[1] for s in reject_cands])][-1]
+                            idx_chosen = chosen_cands[np.argmin([s[1] for s in chosen_cands])][-1]
+                            idx_reject = reject_cands[np.argmax([s[1] for s in reject_cands])][-1]
+                            if self.rho == 0:
+                                assert all([s_max == s[0] for s in chosen_cands]), "chosen_cands violation"
+                                assert all([s_min == s[0] for s in reject_cands]), "reject_cands violation"
+                                #if len(chosen_cands) > 1:
+                                #    print(f"*** CONDITION_1_CHOSEN: {chosen_cands}")
+                                #if len(reject_cands) > 1:
+                                #    print(f"*** CONDITION_1_REJECT: {reject_cands}")
                         else:
                             print(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
                             raise RuntimeError("hit strange score selection state, please investigate")
