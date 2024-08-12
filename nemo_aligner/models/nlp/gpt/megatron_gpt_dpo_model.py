@@ -72,7 +72,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         # variants of preference losses, by default DPO.
         self.preference_loss = self.cfg.dpo.get("preference_loss", "dpo")
         self.gt_reward_scale = self.cfg.dpo.get("gt_reward_scale", 1.0)
-    
+
     def model_provider_func(self, pre_process, post_process):
 
         if self.cfg.mamba_model:
