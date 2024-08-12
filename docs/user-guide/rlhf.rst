@@ -243,7 +243,7 @@ The above script launches the initial and Actor server on 1 node with 8 GPUs.
 Launching Both Servers for RLHF Training
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-You can use Slurm to launch both jobs and coordinate them together in a full RLHF job using the following script::
+You can use Slurm to launch both jobs and coordinate them together in a full RLHF job using the following script:
 
 .. code-block:: bash 
 
