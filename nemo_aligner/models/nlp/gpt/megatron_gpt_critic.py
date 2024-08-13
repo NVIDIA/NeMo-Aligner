@@ -79,7 +79,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             seq_length=sequence_length,
             micro_batch_size=self.cfg.micro_batch_size,
         )
-
+        pred_values = None
         # only the last stages of the pipeline return losses
         if losses_reduced_per_micro_batch:
             # average loss across micro batches
