@@ -78,7 +78,7 @@ def load_from_nemo(
     restore_path=None,
     load_base_model_only=False,
     return_updated_cfg=False,
-    restore_mm_adapter=False,
+    restore_mm_adapter=True,
 ):
     """load a model using nemo checkpoint
     """
