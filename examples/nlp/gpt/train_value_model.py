@@ -103,37 +103,60 @@ def main(cfg) -> None:
 
     eos_id = ptl_model.tokenizer.eos_id
 
+    tokenizer = ptl_model.tokenizer
+
+    SYSTEM_PROMPT = (
+        "A chat between a curious user and an artificial intelligence assistant. "
+        "The assistant gives helpful, detailed, and polite answers to the user's questions."
+    )
+    SYSTEM_PROMPT_TEMPLATE = f"<extra_id_0>System\n{SYSTEM_PROMPT}\n"
+
+    USER_TURN_TEMPLATE = "<extra_id_1>User\n{value}\n"
+
+    # had to delete the value here because we concat the prompts
+    ASSISTANT_TURN_TEMPLATE = "<extra_id_1>Assistant\n"
+
+    # TODO: what to do with this?
+    LABEL_PREFIX = "<extra_id_2>"
+
     def collate_fn(batch, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
-        tokens = [torch.as_tensor(item["tokens"], dtype=torch.long) for item in batch]
-        scores = []
 
-        for item in batch:
-            all_scores = item["scores"]
+        tokens = []
+        masks = []
+        values = []
 
-            inner_scores = []
-            for score in all_scores:
-                inner_list = [-100] * 9
-                if isinstance(score, dict):
-                    inner_list = [
-                        -100,
-                        -100,
-                        -100,
-                        -100,
-                        score["helpfulness"],
-                        score["correctness"],
-                        score["coherence"],
-                        score["complexity"],
-                        score["verbosity"],
-                    ]
+        values_padding = [-100] * 9
 
-                inner_scores.append(torch.as_tensor(inner_list, dtype=torch.float32))
+        for b in batch:
+            assert len(b["masks"]) == len(b["values"]) == len(b["token_ids"])
 
-            scores.append(torch.stack(inner_scores))
+            prompt = SYSTEM_PROMPT_TEMPLATE + USER_TURN_TEMPLATE.format(value=b["prompt"]) + ASSISTANT_TURN_TEMPLATE
+            prompt = tokenizer.text_to_ids(b["prompt"])
+            response = prompt + b["token_ids"]
+            mask = len(prompt) * [0] + b["masks"]
 
-        # TODO: is it an issue that sequence lengths might be different betweeen DPs?
+            value = [values_padding] * len(prompt) + [
+                [
+                    -100,
+                    -100,
+                    -100,
+                    -100,
+                    score["helpfulness"],
+                    score["correctness"],
+                    score["coherence"],
+                    score["complexity"],
+                    score["verbosity"],
+                ]
+                for score in b["values"]
+            ]
+
+            tokens.append(torch.as_tensor(response, dtype=torch.long))
+            masks.append(torch.as_tensor(mask, dtype=torch.float32))
+            values.append(torch.as_tensor(value, dtype=torch.float32))
+
         tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
-        scores = torch.nn.utils.rnn.pad_sequence(scores, batch_first=True, padding_value=0)
-        mask = scores != -100
+        scores = torch.nn.utils.rnn.pad_sequence(values, batch_first=True, padding_value=-100)
+        masks = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True, padding_value=0)
 
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(tokens, eos_id, False, True, False,)
 
@@ -145,7 +168,7 @@ def main(cfg) -> None:
         output = {
             "tokens": tokens,
             "scores": scores,
-            "mask": mask,
+            "mask": masks,
             "attention_mask": attention_mask,
             "position_ids": position_ids,
         }

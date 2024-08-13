@@ -144,7 +144,10 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
             def loss_func(curr_values):
                 scores = batch["scores"]
-                mask = batch["mask"]
+                sequence_mask = batch["mask"]
+
+                # mask out the prefices we don't want and scores we don't want
+                mask = (scores != -100) & sequence_mask.bool().unsqueeze(-1)
 
                 loss = torch.nn.functional.huber_loss(curr_values, scores, reduction="none", delta=self.clip_val)
                 loss = (loss * mask).sum((1, 2)) / mask.sum((1, 2))
