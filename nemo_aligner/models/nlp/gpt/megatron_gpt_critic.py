@@ -91,15 +91,15 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
                     torch.as_tensor(loss_reduced["values"], device=torch.cuda.current_device())
                     for loss_reduced in losses_reduced_per_micro_batch
                 ]
-            ).mean(0)
+            ).mean(0).view(1, -1)
         else:
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
 
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
 
-        pred_values = broadcast_2d_tensor_within_pp(pred_values.view(1, -1)).view(-1)
-        dictionary = {f"pred_value_{i}": item for i, item in enumerate(pred_values)}
+        pred_values = broadcast_2d_tensor_within_pp(pred_values).view(-1)
+        dictionary = {f"pred_value_{i}": item for i, item in enumerate(pred_values.tolist())}
 
         metrics = {
             "loss": loss_mean.item(),
