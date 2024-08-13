@@ -165,18 +165,17 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
                 mask = (scores != -100) & sequence_mask.bool().unsqueeze(-1)
 
                 loss = torch.nn.functional.huber_loss(curr_values, scores, reduction="none", delta=self.clip_val)
-                loss = (loss * mask).sum((1, 2)) / mask.sum((1, 2))
 
-                is_valid_mask = ~loss.isnan()
-
-                if is_valid_mask.sum() > 0:
-                    loss = loss[is_valid_mask].mean()
+                mask_denom = mask.sum((1, 2))
+                if mask_denom.sum() > 0:
+                    loss = (loss * mask).sum((1, 2)) / mask_denom
+                    loss = loss[mask_denom].mean()
                 else:
                     loss = loss.sum() * 0
 
                 with torch.no_grad():
-                    pred_values = ((curr_values * mask).sum((0, 1)) / mask.sum((0, 1))).nan_to_num(0)
-                    mask_amount_0 = (mask.sum((1, 2)) == 0).sum()
+                    pred_values = (curr_values * mask).sum((0, 1)) / mask.sum((0, 1))
+                    mask_amount_0 = (mask_denom == 0).sum()
 
                 reduced_loss, *values = average_losses_across_data_parallel_group([loss, *pred_values])
                 torch.distributed.all_reduce(mask_amount_0, group=parallel_state.get_data_parallel_group())
