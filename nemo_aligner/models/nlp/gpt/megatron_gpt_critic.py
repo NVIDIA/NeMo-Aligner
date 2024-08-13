@@ -86,23 +86,38 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
             loss_tensor = torch.as_tensor(loss_tensors_list, device=torch.cuda.current_device())
             loss_mean = loss_tensor.mean()
-            pred_values = torch.stack(
-                [
-                    torch.as_tensor(loss_reduced["values"], device=torch.cuda.current_device())
-                    for loss_reduced in losses_reduced_per_micro_batch
-                ]
-            ).mean(0).view(1, -1)
+            pred_values = (
+                torch.stack(
+                    [
+                        torch.as_tensor(loss_reduced["values"], device=torch.cuda.current_device())
+                        for loss_reduced in losses_reduced_per_micro_batch
+                    ]
+                )
+                .mean(0)
+                .view(1, -1)
+            )
+            mask_amount_0 = (
+                torch.as_tensor(
+                    [loss_reduced["mask_amount_0"] for loss_reduced in losses_reduced_per_micro_batch],
+                    device=torch.cuda.current_device(),
+                )
+                .sum()
+                .float()
+            )
         else:
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            mask_amount_0 = torch.tensor(0.0, device=torch.cuda.current_device())
 
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
+        torch.distributed.broadcast(mask_amount_0, get_last_rank())
 
         pred_values = broadcast_2d_tensor_within_pp(pred_values).view(-1)
         dictionary = {f"pred_value_{i}": item for i, item in enumerate(pred_values.tolist())}
 
         metrics = {
             "loss": loss_mean.item(),
+            "mask_amount_0": mask_amount_0.item(),
             **dictionary,
         }
 
@@ -152,12 +167,21 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
                 loss = torch.nn.functional.huber_loss(curr_values, scores, reduction="none", delta=self.clip_val)
                 loss = (loss * mask).sum((1, 2)) / mask.sum((1, 2))
 
+                is_valid_mask = ~loss.isnan()
+
+                if is_valid_mask.sum() > 0:
+                    loss = loss[is_valid_mask].mean()
+                else:
+                    loss = loss.sum() * 0
+
                 with torch.no_grad():
                     pred_values = ((curr_values * mask).sum((0, 1)) / mask.sum((0, 1))).nan_to_num(0)
+                    mask_amount_0 = (mask.sum((1, 2)) == 0).sum()
 
                 reduced_loss, *values = average_losses_across_data_parallel_group([loss, *pred_values])
+                torch.distributed.all_reduce(mask_amount_0, group=parallel_state.get_data_parallel_group())
 
-                return loss, {"avg": reduced_loss, "values": values}
+                return loss, {"avg": reduced_loss, "values": values, "mask_amount_0": mask_amount_0}
 
             return output, loss_func
 
