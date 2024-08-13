@@ -169,12 +169,12 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
                 mask_denom = mask.sum((1, 2))
                 if mask_denom.sum() > 0:
                     loss = (loss * mask).sum((1, 2)) / mask_denom
-                    loss = loss[mask_denom].mean()
+                    loss = loss[loss.isfinite()].mean()
                 else:
                     loss = loss.sum() * 0
 
                 with torch.no_grad():
-                    pred_values = (curr_values * mask).sum((0, 1)) / mask.sum((0, 1))
+                    pred_values = ((curr_values * mask).sum((0, 1)) / mask.sum((0, 1))).nan_to_num(0)
                     mask_amount_0 = (mask_denom == 0).sum()
 
                 reduced_loss, *values = average_losses_across_data_parallel_group([loss, *pred_values])
