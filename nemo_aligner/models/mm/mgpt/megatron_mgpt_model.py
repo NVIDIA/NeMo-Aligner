@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Dict
 
 import hydra
 import torch
@@ -109,58 +109,57 @@ class MultimodalGPTModel(MegatronNevaModel):
     
     def generate(
         self,
-        inputs: Union[List[str], Tuple[torch.Tensor, torch.Tensor]],
+        inputs: Union[Dict, List[Dict]],
         length_params: LengthParam,
         sampling_params: SamplingParam = None,
         *,
-        strategy: Optional[TextGenerationStrategy] = None,
+        strategy: Optional[MGPTModelTextGenerationStrategy] = None,
     ) -> OutputType:
-        """
-        Same as base model generate, except the following:
+        
+        # set the default sampling params if it is None.
+        # default do greedy sampling
+        if sampling_params is None:
+            sampling_params = get_default_sampling_params()
 
-        1. Apply padding to max length.
-        2. Add a "predictions" key to the output, which is the model output without the prompt.
+        # set the default length params if it is None.
+        # default do greedy sampling
+        if length_params is None:
+            length_params = get_default_length_params()
 
-        These two additional steps above are only performed for actual generation from the model:
-        if `generate()` is called with `compute_logprob=True` then the base model method is used.
-        """
-        if sampling_params is not None and sampling_params.get("compute_logprob", False):
-            return super().generate(
-                inputs=inputs, length_params=length_params, sampling_params=sampling_params, strategy=strategy
-            )
-
-        if not isinstance(inputs, (list, tuple)):
-            raise NotImplementedError(f"Expected type(inputs)=(list or tuple) but got {type(inputs)=}")
-
-        if isinstance(inputs[0], str):
-            # add_EOS=False since it is absent from nemo.collections.nlp.modules.common.text_generation_utils.megatron_gpt_generate
-            prompt_tokens, prompt_lengths = tokenize_batch(
-                sentences=inputs,
-                tokenizer=self.tokenizer,
-                max_len=self.cfg.encoder_seq_length,
-                add_BOS=sampling_params["add_BOS"],
-                add_EOS=False,
-            )
+        extra = {}
+        if strategy is None:
+            strategy = MGPTModelTextGenerationStrategy(self.cuda())
+            extra['strategy'] = strategy
         else:
-            prompt_tokens, prompt_lengths = inputs
-
-        max_prompt_length = prompt_lengths.max().item()
-        max_response_length = length_params["max_length"]
-        max_length = max_prompt_length + max_response_length
-        # # nemo requires us to pad the response length up before we do anything
-        prompt_tokens = torch.nn.functional.pad(prompt_tokens, (0, max_length), value=self.tokenizer.eos_id)
-        output = super().generate(
-            inputs=(prompt_tokens, prompt_lengths),
-            length_params=length_params,
-            sampling_params=sampling_params,
-            strategy=strategy,
+            extra['strategy'] = strategy
+        
+        output = generate(
+            self.cuda(),
+            inputs=inputs.get('prompt'),
+            tokens_to_generate=length_params['max_length'],
+            all_probs=sampling_params['all_probs'],
+            compute_logprob=sampling_params['compute_logprob'],
+            temperature=sampling_params['temperature'],
+            add_BOS=sampling_params['add_BOS'],
+            top_k=sampling_params['top_k'],
+            top_p=sampling_params['top_p'],
+            greedy=sampling_params['use_greedy'],
+            repetition_penalty=sampling_params['repetition_penalty'],
+            end_strings=sampling_params['end_strings'],
+            min_tokens_to_generate=length_params['min_length'],
+            compute_attention_mask=sampling_params.get("compute_attention_mask", True),
+            image_list=inputs.get("image"),
+            **extra,
         )
+       
         if output is not None:  # may be `None` for intermediate PP ranks when PP>2
-            # adding predictions key which contains only model predictions without the prompt
-            output["predictions"] = [
-                self.tokenizer.ids_to_text(tokens[length.item() :][:max_response_length])
-                for tokens, length in zip(output["token_ids"], prompt_lengths)
-            ]
+            for k in output:
+                if isinstance(output[k], torch.Tensor):
+                    output[k] = output[k].tolist()
+
+            if not sampling_params['all_probs']:
+                del output['full_logprob']             
+
         return output
 
 
