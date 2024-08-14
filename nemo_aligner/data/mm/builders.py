@@ -43,7 +43,7 @@ from nemo_aligner.data.mm.datasets import (
     )
 
 
-def build_mm_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name, processor):
+def build_mm_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name, image_processor):
     def _build_dataset(current_data_prefix, current_num_samples):
         if data_impl == "mmap":
             data_payload = get_indexed_dataset_(current_data_prefix, data_impl, cfg.data.get("skip_warmup", True))
@@ -71,7 +71,7 @@ def build_mm_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_
             data=data_payload,
             seq_length=seq_length,
             seed=seed,
-            processor=processor,
+            image_processor=image_processor,
             drop_last=drop_last,
         )
         return dataset
@@ -89,7 +89,7 @@ def build_mm_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_
 
 
 def build_mm_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, processor,
+    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, image_processor,
 ):
     if isinstance(data_prefix, DictConfig):
         assert (
@@ -109,7 +109,7 @@ def build_mm_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="train",
-            processor=processor,
+            image_processor=image_processor,
         )
         validation_ds = build_mm_dataset_generic(
             cls=cls,
@@ -121,7 +121,7 @@ def build_mm_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="validation",
-            processor=processor,
+            image_processor=image_processor,
         )
         test_ds = build_mm_dataset_generic(
             cls=cls,
@@ -133,7 +133,7 @@ def build_mm_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="test",
-            processor=processor,
+            image_processor=image_processor,
         )
         return train_ds, validation_ds, test_ds
 
@@ -150,7 +150,7 @@ def build_mm_train_valid_test_datasets(
                 seq_length=seq_length,
                 seed=seed,
                 tokenizer=tokenizer,
-                processor=processor,
+                image_processor=image_processor,
             )
 
         # Blending dataset.
@@ -173,7 +173,7 @@ def build_mm_train_valid_test_datasets(
                 seq_length=seq_length,
                 seed=seed,
                 tokenizer=tokenizer,
-                processor=processor,
+                image_processor=image_processor,
             )
             if train_ds:
                 train_datasets.append(train_ds)
@@ -199,7 +199,7 @@ def build_mm_train_valid_test_datasets(
 
 
 def _build_mm_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, processor,
+    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, image_processor,
 ):
     """Build train, valid, and test datasets."""
 
@@ -245,7 +245,7 @@ def _build_mm_train_valid_test_datasets(
                 num_samples=train_valid_test_num_samples[index],
                 seq_length=seq_length,
                 seed=seed,
-                processor=processor,
+                image_processor=image_processor,
                 drop_last=drop_last,
             )
         return dataset
