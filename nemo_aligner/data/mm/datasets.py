@@ -27,19 +27,79 @@ from PIL import Image
 from transformers import CLIPImageProcessor, SiglipImageProcessor
 
 MAX_NUM_IMAGES = 1
-def process_media_tokens(record: dict, media_token: str, media_patch_token: str, media_start_token: str, media_end_token: str, num_media_tokens: int, use_im_start_end: bool) -> Dict:
-    if not record['image']:
-        return record
 
+def process_media_tokens(
+        text: str, 
+        media_token: str, 
+        media_patch_token: str, 
+        media_start_token: str, 
+        media_end_token: str, 
+        num_media_tokens: int, 
+        use_im_start_end: bool
+    ) -> Dict:
     if use_im_start_end:
         replace_token = media_patch_token * num_media_tokens
     else:
         replace_token = media_patch_token * (num_media_tokens - 2)
     replace_token = media_start_token + replace_token + media_end_token
     
-    record["text"] = record["text"].replace(media_token, replace_token)
-    return record
+    text = text.replace(media_token, replace_token)
+    return text
 
+def maybe_process_images(
+        record,
+        text,
+        image_loader, 
+        image_processor, 
+        image_token, 
+        image_patch_token, 
+        image_start_token, 
+        image_end_token, 
+        image_aspect_ratio, 
+        image_patch_dim, 
+        use_im_start_end, 
+        crop_size,
+        image_token_len,
+        is_multimodal: bool = True
+    ):
+    if "image" in record[0]:
+        if not isinstance(record['image'], list):
+            record['image'] = [record['image']]
+        images = []
+        for image_file in record["image"]:
+            image = image_loader.open_image(image_file)
+            if image is None:
+                logging.warning(f"Image {image} could not be found!")
+            image = process_image(image_processor, image, image_aspect_ratio)
+            images.append(image)
+        media_tensors = torch.tensor([])
+        if images:
+            media_tensors = torch.stack(images)
+            height_num_patches = media_tensors[0].shape[1] // image_patch_dim
+            width_num_patches  = media_tensors[0].shape[2] // image_patch_dim
+            num_image_tokens = height_num_patches * width_num_patches
+            assert num_image_tokens == image_token_len, f"Error in image_token_len: image_token_len != num_image_tokens: {image_token_len = }\t{num_image_tokens}"
+            record["text"] = process_media_tokens(
+                text,
+                image_token,
+                image_patch_token,
+                image_start_token,
+                image_end_token,
+                num_image_tokens,
+                use_im_start_end,
+            )
+
+        # image exist in the data
+        if is_multimodal:
+            # Image does not exist in the data, but the model is multimodal
+            # TODO, if there are different videos on T dimensions.
+            if media_tensors.shape[0] < MAX_NUM_IMAGES:
+                padding_size = MAX_NUM_IMAGES - media_tensors.shape[0]
+                zero_padding = torch.zeros((padding_size, 3, crop_size[0], crop_size[1]), dtype=torch.float)
+                media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
+        
+        record["image"] = media_tensors
+    return record
 
 class MultimodalChatDataset(NevaDataset):
     def __init__(
@@ -363,7 +423,6 @@ class MultimodalRewardModelDataset(Dataset):
     """This class assumes that we only have 2 responses per prompt that is ranked. Chosen is the better
         one(even index) whereas Rejected is the worse response(odd index)
     """
-
     def __init__(
         self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed,  image_processor, drop_last=True,
     ):
@@ -391,8 +450,10 @@ class MultimodalRewardModelDataset(Dataset):
         self.image_loader = TarOrFolderImageLoader(self.image_folder) if self.image_folder else None
         self.image_processor = image_processor
         self.image_aspect_ratio = cfg.data.image_aspect_ratio
-        self.patch_dim = cfg.mm_cfg.vision_encoder.patch_dim
+        self.image_patch_dim = cfg.mm_cfg.vision_encoder.patch_dim
         self.use_im_start_end = cfg.mm_cfg.use_im_start_end
+        self.crop_size = cfg.mm_cfg.vision_encoder.crop_size
+        self.num_image_tokens = cfg.data.image_token_len
 
         # Checks
         assert np.min(documents) >= 0
@@ -449,56 +510,52 @@ class MultimodalRewardModelDataset(Dataset):
             chosen = self.data[multiple * idx]
             rejected = self.data[multiple * idx + 1]
             if self.cfg.data.data_impl.startswith("json"):
-                chosen, _ = self.encode(chosen["text"])
-                rejected, _ = self.encode(rejected["text"])
-            if len(chosen) > self.seq_length or len(rejected) > self.seq_length:
+                chosen_text, _ = self.encode(chosen["text"])
+                rejected_text, _ = self.encode(rejected["text"])
+            if (len(chosen_text) + self.num_image_tokens) > self.seq_length or (len(rejected_text) + self.num_image_tokens) > self.seq_length:
                 idx += multiple
                 continue
             found = True
         
         # Process media
-        if "image" in chosen[0]:
-            if not rejected.get("image"):
-                raise ValueError(f"Image field is empty or missing for the rejected record at index {idx}")
-            if not isinstance(chosen['image'], list):
-                chosen['image'] = [chosen['image']]
+        chosen = maybe_process_images(
+            chosen,
+            chosen_text,
+            self.image_loader,
+            self.image_processor,
+            self.image_token,
+            self.image_patch_token,
+            self.image_start_token,
+            self.image_end_token,
+            self.image_aspect_ratio,
+            self.image_patch_dim,
+            self.use_im_start_end,
+            self.crop_size,
+            self.num_image_tokens,
+            self.is_multimodal,
+            )
 
-            images = []
-            for image_file in chosen["image"]:
-                image = self.image_loader.open_image(image_file)
-                if image is None:
-                    logging.warning(f"Image {image} could not be found!")
-                image = process_image(self.image_processor, image, self.image_aspect_ratio)
-                images.append(image)
-            media_tensors = torch.tensor([])
-            if images:
-                media_tensors = torch.stack(images)
-                height_num_patches = media_tensors[0].shape[1] // self.patch_dim
-                width_num_patches  = media_tensors[0].shape[2] // self.patch_dim
-                num_image_tokens = height_num_patches * width_num_patches
-                chosen = process_media_tokens(
-                    chosen,
-                    self.image_token,
-                    self.image_patch_token,
-                    self.image_start_token,
-                    self.image_end_token,
-                    num_image_tokens,
-                    self.use_im_start_end,
-                )
-
-        # image exist in the data
-        if self.multimodal_cfg['is_multimodal']:
-            if isinstance(self.processor, CLIPImageProcessor):
-                crop_size = [self.processor.crop_size['height'], self.processor.crop_size['width']]
-            else:
-                crop_size = copy.deepcopy(self.multimodal_cfg['crop_size'])
-                    
-            # Image does not exist in the data, but the model is multimodal
-            # TODO, if there are different videos on T dimensions.
-            if media_tensors.shape[0] < MAX_NUM_IMAGES:
-                padding_size = MAX_NUM_IMAGES - media_tensors.shape[0]
-                zero_padding = torch.zeros((padding_size, 3, crop_size[0], crop_size[1]), dtype=torch.float)
-                media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
+        rejected = maybe_process_images(
+            rejected,
+            rejected_text,
+            self.image_loader,
+            self.image_processor,
+            self.image_token,
+            self.image_patch_token,
+            self.image_start_token,
+            self.image_end_token,
+            self.image_aspect_ratio,
+            self.image_patch_dim,
+            self.use_im_start_end,
+            self.crop_size,
+            self.num_image_tokens,
+            self.is_multimodal,
+            )
+        
+        chosen_media   = chosen["image"]
+        rejected_media = rejected["image"]
+        chosen = chosen["text"]
+        rejected = rejected["text"]
 
         # in the future, we should pad to the max seq len of the mini-batch instead of model.seq_length
         # max_curr_seq_len = max(len(chosen), len(rejected))
@@ -531,6 +588,8 @@ class MultimodalRewardModelDataset(Dataset):
         output = {
             "chosen": chosen_tokens,
             "rejected": rejected_tokens,
+            "chosen_media": chosen_media,
+            "rejected_media": rejected_media,
             "chosen_length": chosen_np.shape[0],
             "rejected_length": rejected_np.shape[0],
             "attention_mask": attention_mask,

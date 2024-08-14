@@ -163,7 +163,6 @@ def main(cfg) -> None:
             if cfg.vision_encoder:
                 pretrained_cfg.mm_cfg.vision_encoder.from_pretrained = cfg.get("vision_encoder", None)    
             
-        
         model = MultimodalGPTModel.restore_from(
             restore_path=cfg.gpt_model_file,
             trainer=trainer,
