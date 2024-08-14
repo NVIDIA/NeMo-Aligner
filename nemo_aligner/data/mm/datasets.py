@@ -14,6 +14,7 @@
 
 """Custom datasets for Multimodal training"""
 import os
+import re
 import copy
 import numpy as np
 import torch
@@ -21,11 +22,24 @@ from typing import Any, Dict, List
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.core import Dataset
 from nemo.utils import logging
-from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, process_image
+from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, TarOrFolderImageLoader, process_image
 from PIL import Image
 from transformers import CLIPImageProcessor, SiglipImageProcessor
 
 MAX_NUM_IMAGES = 1
+def process_media_tokens(record: dict, media_token: str, media_patch_token: str, media_start_token: str, media_end_token: str, num_media_tokens: int, use_im_start_end: bool) -> Dict:
+    if not record['image']:
+        return record
+
+    if use_im_start_end:
+        replace_token = media_patch_token * num_media_tokens
+    else:
+        replace_token = media_patch_token * (num_media_tokens - 2)
+    replace_token = media_start_token + replace_token + media_end_token
+    
+    record["text"] = record["text"].replace(media_token, replace_token)
+    return record
+
 
 class MultimodalChatDataset(NevaDataset):
     def __init__(
@@ -344,4 +358,183 @@ class MultimodalChatDataset(NevaDataset):
                 data_dict['video'] = media_tensors
 
         return data_dict
-    
+
+class MultimodalRewardModelDataset(Dataset):
+    """This class assumes that we only have 2 responses per prompt that is ranked. Chosen is the better
+        one(even index) whereas Rejected is the worse response(odd index)
+    """
+
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed,  image_processor, drop_last=True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.name = name
+        self.drop_last = drop_last
+        self.seq_length = seq_length
+        self.tokenizer = tokenizer
+
+        self.reset_position_ids = cfg.data.get("reset_position_ids", False)
+        self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
+        self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
+        self.eos_id = tokenizer.eos_id
+
+        # Multimodal
+        self.is_multimodal = cfg.data.get("is_multimodal", True)
+        self.media_type = cfg.data.get("media_type", "image") # Only image is supported for now
+        self.image_token = cfg.mm_cfg.get("image_token", "<image>")
+        self.image_patch_token = cfg.mm_cfg.get("image_patch_token", "<extra_id_3>")
+        self.image_folder = cfg.data.get("image_folder", None)        
+        self.image_start_token = cfg.mm_cfg.get("im_start_token", "<extra_id_4>")
+        self.image_end_token = cfg.mm_cfg.get("im_end_token", "<extra_id_5>")
+        self.add_extra_token = cfg.data.get("add_extra_token", 0) 
+        self.image_loader = TarOrFolderImageLoader(self.image_folder) if self.image_folder else None
+        self.image_processor = image_processor
+        self.image_aspect_ratio = cfg.data.image_aspect_ratio
+        self.patch_dim = cfg.mm_cfg.vision_encoder.patch_dim
+        self.use_im_start_end = cfg.mm_cfg.use_im_start_end
+
+        # Checks
+        assert np.min(documents) >= 0
+        assert np.max(documents) < len(self.data)
+
+        # save index mappings to a configurable dir
+        self.index_mapping_dir = cfg.data.get("index_mapping_dir", None)
+
+        self.data = []
+        for record in data:
+            # This currently supports only a single image
+            # search for <img src="/absolute/path/to/image" in the conversation
+            #   add it as record['image'], remove src tag from the <img> tag
+            record['image'] = []
+            matches = re.finditer('<img src="([^"]+)"', record['text'])
+            for match in matches:
+                image_name = match.group(1).split("/")[-1]
+                image_path = os.path.join(self.image_folder, image_name)
+                if not os.path.isfile(image_path):
+                    logging.warning(f"Image not found: {image_path}")
+                    continue
+                record['image'].append(image_name)  # url
+            record['text'] = re.sub('<img src="([^"]+)">', self.media_token, record['text'])
+            self.data.append(record)
+        
+        # create index_mapping_dir on rank 0
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            if torch.distributed.get_rank() == 0:
+                if self.index_mapping_dir is not None and not os.path.isdir(self.index_mapping_dir):
+                    os.makedirs(self.index_mapping_dir)
+            torch.distributed.barrier()
+
+    def __len__(self):
+        return len(self.data) // 2
+
+    def encode(self, text):
+        if self.cfg.data.get("apply_ftfy", False):
+            import ftfy
+
+            text = ftfy.fix_text(text)
+
+        text_ids = self.tokenizer.text_to_ids(text)
+
+        if len(text_ids) > 0 and self.cfg.data.get("append_eod", False):
+            text_ids.append(self.tokenizer.eos_id)
+
+        return text_ids, len(text_ids)
+
+    def __getitem__(self, idx, multiple=2):
+        """Returns a pair of chosen/rejected pairs, and their respective lengths.
+        """
+        found = False
+        while not found:
+            chosen = self.data[multiple * idx]
+            rejected = self.data[multiple * idx + 1]
+            if self.cfg.data.data_impl.startswith("json"):
+                chosen, _ = self.encode(chosen["text"])
+                rejected, _ = self.encode(rejected["text"])
+            if len(chosen) > self.seq_length or len(rejected) > self.seq_length:
+                idx += multiple
+                continue
+            found = True
+        
+        # Process media
+        if "image" in chosen[0]:
+            if not rejected.get("image"):
+                raise ValueError(f"Image field is empty or missing for the rejected record at index {idx}")
+            if not isinstance(chosen['image'], list):
+                chosen['image'] = [chosen['image']]
+
+            images = []
+            for image_file in chosen["image"]:
+                image = self.image_loader.open_image(image_file)
+                if image is None:
+                    logging.warning(f"Image {image} could not be found!")
+                image = process_image(self.image_processor, image, self.image_aspect_ratio)
+                images.append(image)
+            media_tensors = torch.tensor([])
+            if images:
+                media_tensors = torch.stack(images)
+                height_num_patches = media_tensors[0].shape[1] // self.patch_dim
+                width_num_patches  = media_tensors[0].shape[2] // self.patch_dim
+                num_image_tokens = height_num_patches * width_num_patches
+                chosen = process_media_tokens(
+                    chosen,
+                    self.image_token,
+                    self.image_patch_token,
+                    self.image_start_token,
+                    self.image_end_token,
+                    num_image_tokens,
+                    self.use_im_start_end,
+                )
+
+        # image exist in the data
+        if self.multimodal_cfg['is_multimodal']:
+            if isinstance(self.processor, CLIPImageProcessor):
+                crop_size = [self.processor.crop_size['height'], self.processor.crop_size['width']]
+            else:
+                crop_size = copy.deepcopy(self.multimodal_cfg['crop_size'])
+                    
+            # Image does not exist in the data, but the model is multimodal
+            # TODO, if there are different videos on T dimensions.
+            if media_tensors.shape[0] < MAX_NUM_IMAGES:
+                padding_size = MAX_NUM_IMAGES - media_tensors.shape[0]
+                zero_padding = torch.zeros((padding_size, 3, crop_size[0], crop_size[1]), dtype=torch.float)
+                media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
+
+        # in the future, we should pad to the max seq len of the mini-batch instead of model.seq_length
+        # max_curr_seq_len = max(len(chosen), len(rejected))
+
+        chosen_np = np.array(chosen, dtype=np.int64)
+        chosen_np_pad = np.pad(
+            chosen_np, (0, max(0, self.seq_length - chosen_np.shape[0])), mode="constant", constant_values=self.eos_id
+        )
+        rejected_np = np.array(rejected, dtype=np.int64)
+        rejected_np_pad = np.pad(
+            rejected_np,
+            (0, max(0, self.seq_length - rejected_np.shape[0])),
+            mode="constant",
+            constant_values=self.eos_id,
+        )
+
+        chosen_tokens = torch.tensor(chosen_np_pad)
+        rejected_tokens = torch.tensor(rejected_np_pad)
+
+        attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
+            chosen_tokens, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
+        )
+
+        # Negative index comes when we pad the last batch in MegatronPretrainingBatchSampler
+        # We make the loss_mask zero to mask out loss from these samples
+        if idx == -1:
+            logging.info("WARNING: Got -1 as item index. Masking loss from this sample")
+            loss_mask = torch.zeros_like(loss_mask)
+
+        output = {
+            "chosen": chosen_tokens,
+            "rejected": rejected_tokens,
+            "chosen_length": chosen_np.shape[0],
+            "rejected_length": rejected_np.shape[0],
+            "attention_mask": attention_mask,
+            "loss_mask": loss_mask,
+            "position_ids": position_ids,
+        }
+        return output

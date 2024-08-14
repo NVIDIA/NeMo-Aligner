@@ -158,6 +158,12 @@ def main(cfg) -> None:
                 pretrained_cfg.megatron_amp_O2 = False
             elif trainer.precision in ["bf16", "bf16-mixed"] and cfg.get("megatron_amp_O2", False):
                 pretrained_cfg.megatron_amp_O2 = True
+            
+            pretrained_cfg.mm_cfg.llm.from_pretrained = cfg.get("base_model_file", None)            
+            if cfg.vision_encoder:
+                pretrained_cfg.mm_cfg.vision_encoder.from_pretrained = cfg.get("vision_encoder", None)    
+            
+        
         model = MultimodalGPTModel.restore_from(
             restore_path=cfg.gpt_model_file,
             trainer=trainer,
