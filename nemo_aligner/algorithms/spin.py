@@ -29,7 +29,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_an
 from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.ppo_utils import create_mask
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
+from nemo_aligner.utils.text_generation_strategy import TrackLengthGPTModelTextGenerationStrategy
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import (

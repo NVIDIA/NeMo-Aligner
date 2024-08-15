@@ -38,7 +38,7 @@ from nemo_aligner.utils.distributed import (
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
 )
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
+from nemo_aligner.utils.text_generation_strategy import TrackLengthGPTModelTextGenerationStrategy
 from nemo_aligner.utils.train_utils import (
     grad_reductions,
     prepare_for_training_step,
