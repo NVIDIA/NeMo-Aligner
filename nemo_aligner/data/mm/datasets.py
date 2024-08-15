@@ -24,12 +24,13 @@ from nemo.core import Dataset
 from nemo.utils import logging
 from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, TarOrFolderImageLoader, process_image
 from PIL import Image
+from einops import rearrange
 from transformers import CLIPImageProcessor, SiglipImageProcessor
 
 MAX_NUM_IMAGES = 1
 
 def process_media_tokens(
-        text: str, 
+        record: Dict, 
         media_token: str, 
         media_patch_token: str, 
         media_start_token: str, 
@@ -43,12 +44,11 @@ def process_media_tokens(
         replace_token = media_patch_token * (num_media_tokens - 2)
     replace_token = media_start_token + replace_token + media_end_token
     
-    text = text.replace(media_token, replace_token)
-    return text
+    record["text"] = record["text"].replace(media_token, replace_token)
+    return record
 
-def maybe_process_images(
+def maybe_process_prompt_and_media(
         record,
-        text,
         image_loader, 
         image_processor, 
         image_token, 
@@ -79,8 +79,8 @@ def maybe_process_images(
             width_num_patches  = media_tensors[0].shape[2] // image_patch_dim
             num_image_tokens = height_num_patches * width_num_patches
             assert num_image_tokens == image_token_len, f"Error in image_token_len: image_token_len != num_image_tokens: {image_token_len = }\t{num_image_tokens}"
-            record["text"] = process_media_tokens(
-                text,
+            record = process_media_tokens(
+                record,
                 image_token,
                 image_patch_token,
                 image_start_token,
@@ -509,54 +509,40 @@ class MultimodalRewardModelDataset(Dataset):
         while not found:
             chosen = self.data[multiple * idx]
             rejected = self.data[multiple * idx + 1]
+            items = []
+            for i in range(multiple):
+                item = self.data[multiple * idx + i]
+                # Process media-related items
+                item = maybe_process_prompt_and_media(
+                    item,
+                    self.image_loader,
+                    self.image_processor,
+                    self.image_token,
+                    self.image_patch_token,
+                    self.image_start_token,
+                    self.image_end_token,
+                    self.image_aspect_ratio,
+                    self.image_patch_dim,
+                    self.use_im_start_end,
+                    self.crop_size,
+                    self.num_image_tokens,
+                    self.is_multimodal,
+                )
+                items.append(item)
+
+            chosen, rejected = items
+            chosen_media   = rearrange(chosen["image"]  , "T c h w -> T 1 c h w")
+            rejected_media = rearrange(rejected["image"], "T c h w -> T 1 c h w")
+
             if self.cfg.data.data_impl.startswith("json"):
                 chosen_text, _ = self.encode(chosen["text"])
                 rejected_text, _ = self.encode(rejected["text"])
-            if (len(chosen_text) + self.num_image_tokens) > self.seq_length or (len(rejected_text) + self.num_image_tokens) > self.seq_length:
+
+            if len(chosen_text) > self.seq_length or len(rejected_text) > self.seq_length:
                 idx += multiple
                 continue
             found = True
         
-        # Process media
-        chosen = maybe_process_images(
-            chosen,
-            chosen_text,
-            self.image_loader,
-            self.image_processor,
-            self.image_token,
-            self.image_patch_token,
-            self.image_start_token,
-            self.image_end_token,
-            self.image_aspect_ratio,
-            self.image_patch_dim,
-            self.use_im_start_end,
-            self.crop_size,
-            self.num_image_tokens,
-            self.is_multimodal,
-            )
-
-        rejected = maybe_process_images(
-            rejected,
-            rejected_text,
-            self.image_loader,
-            self.image_processor,
-            self.image_token,
-            self.image_patch_token,
-            self.image_start_token,
-            self.image_end_token,
-            self.image_aspect_ratio,
-            self.image_patch_dim,
-            self.use_im_start_end,
-            self.crop_size,
-            self.num_image_tokens,
-            self.is_multimodal,
-            )
-        
-        chosen_media   = chosen["image"]
-        rejected_media = rejected["image"]
-        chosen = chosen["text"]
-        rejected = rejected["text"]
-
         # in the future, we should pad to the max seq len of the mini-batch instead of model.seq_length
         # max_curr_seq_len = max(len(chosen), len(rejected))
 
@@ -595,5 +581,122 @@ class MultimodalRewardModelDataset(Dataset):
             "attention_mask": attention_mask,
             "loss_mask": loss_mask,
             "position_ids": position_ids,
+        }
+        return output
+
+class MultimodalRegressionRewardModelDataset(MultimodalRewardModelDataset):
+    """This class assumes each line of the dataset file is a dictionary with "text" and "label" field, 
+        where "text" is a string representing the input prompt, and "label" is a list of float or int values. 
+        Note that when training the model with multiple datasets which contain different attributes,
+        we should set missing attributes to model.regression.loss_mask_val(according to training_rm.yaml)
+        in the dataset files so that their losses are masked. At least one attribute should be present for each sample.
+
+        WARNING: It's recommended to preprocess your data in advance to ensure all samples are within self.seq_length.
+                 Otherwise if all samples in a batch are longer than self.seq_length, you may get NaN loss.
+    """
+
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, image_processor, drop_last=True,
+    ):
+
+        assert cfg.data.data_impl.startswith(
+            "json"
+        ), f"data.data_impl must be either json or jsonl, but got {cfg.data.data_impl}"
+
+        super().__init__(
+            cfg=cfg,
+            tokenizer=tokenizer,
+            name=name,
+            data_prefix=data_prefix,
+            documents=documents,
+            data=data,
+            seq_length=seq_length,
+            seed=seed,
+            image_processor=image_processor,
+            drop_last=drop_last,
+        )
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        """
+        Returns one training sample, its label, and its respective length.
+        """
+
+        orig_idx = idx = idx % len(self)
+        while True:
+            sample = self.data[idx]
+            # Process media-related items
+            sample = maybe_process_prompt_and_media(
+                sample,
+                self.image_loader,
+                self.image_processor,
+                self.image_token,
+                self.image_patch_token,
+                self.image_start_token,
+                self.image_end_token,
+                self.image_aspect_ratio,
+                self.image_patch_dim,
+                self.use_im_start_end,
+                self.crop_size,
+                self.num_image_tokens,
+                self.is_multimodal,
+            )
+            sample_text, sample_length = self.encode(sample["text"])
+            sample_label = sample["label"]
+            if idx == orig_idx:
+                orig_length = sample_length
+            if sample_length <= self.seq_length:
+                break
+
+            idx = (idx + 1) % len(self)
+            if idx == orig_idx:
+                raise RuntimeError(f"All samples have length > {self.seq_length}")
+
+        assert isinstance(sample_label, list) and all(
+            isinstance(value, (float, int)) for value in sample_label
+        ), "label should be a list of float or int values"
+
+        sample_label = [float(value) for value in sample_label]
+
+        label_tensor = torch.tensor(sample_label, dtype=torch.float)
+
+        text_np = np.array(sample_text, dtype=np.int64)
+        text_np_pad = np.pad(
+            text_np, (0, max(0, self.seq_length - text_np.shape[0])), mode="constant", constant_values=self.eos_id
+        )
+
+        text_tensor = torch.tensor(text_np_pad)
+        attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
+            text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
+        )
+
+        # Negative index comes when we pad the last batch in MegatronPretrainingBatchSampler
+        # We make the loss_mask zero to mask out loss from these samples
+        if idx == -1:
+            logging.waring("WARNING: Got -1 as item index. Masking loss from this sample")
+            loss_mask = torch.zeros_like(loss_mask)
+
+        # Replace current sample (when it exceeds max length) with another sample but mask its loss
+        if idx != orig_idx:
+            logging.warning(
+                f"Sample {orig_idx} in dataset '{self.name}' has length "
+                f"{orig_length} > {self.seq_length} "
+                f"=> replacing it with sample {idx} and masking its loss"
+            )
+            loss_mask = torch.zeros_like(loss_mask)
+
+        # Rearrange the media tensor to accommodate video for future releases
+        media_tensor = rearrange(sample["image"], "T c h w -> T 1 c h w")
+
+        output = {
+            "inputs": text_tensor,
+            "media": media_tensor,
+            "lengths": text_np.shape[0],
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "loss_mask": loss_mask,
+            "labels": label_tensor,
         }
         return output
