@@ -19,12 +19,13 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
+from nemo_aligner.data.nlp.builders import build_dataloader
+
 from nemo_aligner.data.nlp.builders import (
-    build_dataloader,
-    build_train_valid_test_regression_rm_datasets,
-    build_train_valid_test_rm_datasets,
+    build_mm_train_valid_test_regression_rm_datasets,
+    build_mm_train_valid_test_rm_datasets,
 )
-from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
+from nemo_aligner.models.mm.mgpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -89,12 +90,13 @@ def main(cfg) -> None:
     train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
 
     if reward_model_type == RewardModelType.BINARY_RANKING:
-        dataset_builder = build_train_valid_test_rm_datasets
+        dataset_builder = build_mm_train_valid_test_rm_datasets
     elif reward_model_type == RewardModelType.REGRESSION:
-        dataset_builder = build_train_valid_test_regression_rm_datasets
+        dataset_builder = build_mm_train_valid_test_regression_rm_datasets
     else:
         raise ValueError(f"Only support binary_ranking and regression reward model, but get {reward_model_type} ")
 
+    image_processor = ptl_model.model.module.image_processor if hasattr(ptl_model.model, "module") else ptl_model.model.image_processor
     train_ds, validation_ds, _ = dataset_builder(
         cfg=cfg.model,
         data_prefix=cfg.model.data.data_prefix,
@@ -104,6 +106,7 @@ def main(cfg) -> None:
         seq_length=cfg.model.data.seq_length,
         seed=cfg.model.seed,
         tokenizer=ptl_model.tokenizer,
+        image_processor=image_processor,
     )
 
     train_dataloader = build_dataloader(

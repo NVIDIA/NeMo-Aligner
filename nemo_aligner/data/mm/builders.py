@@ -15,8 +15,6 @@ import json
 from functools import partial
 
 import numpy as np
-import torch
-from megatron.core import parallel_state
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
@@ -24,17 +22,8 @@ from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils imp
     get_train_valid_test_split_,
 )
 from nemo.collections.nlp.data.language_modeling.megatron.blendable_dataset import BlendableDataset
-from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
-    MegatronPretrainingRandomSampler,
-    MegatronPretrainingSampler,
-)
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
-from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
-    MegatronPretrainingBatchSampler,
-    MegatronPretrainingRandomBatchSampler,
-)
 from nemo.utils import logging
-from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 from nemo_aligner.data.mm.datasets import (
     MultimodalChatDataset,
     MultimodalRewardModelDataset,
@@ -255,9 +244,8 @@ def _build_mm_train_valid_test_datasets(
 
     return (train_dataset, valid_dataset, test_dataset)
 
-
 build_mm_train_valid_test_rm_datasets = partial(build_mm_train_valid_test_datasets, MultimodalRewardModelDataset)
-build_train_valid_test_regression_rm_datasets = partial(build_mm_train_valid_test_datasets, MultimodalRegressionRewardModelDataset)
+build_mm_train_valid_test_regression_rm_datasets = partial(build_mm_train_valid_test_datasets, MultimodalRegressionRewardModelDataset)
 
 def build_mm_sft_dataset(model_cfg, data_cfg, mm_cfg, tokenizer, image_processor, special_tokens=None):
     dataset = MultimodalChatDataset(
