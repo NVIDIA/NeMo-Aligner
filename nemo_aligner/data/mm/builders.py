@@ -29,8 +29,6 @@ from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
     MegatronPretrainingSampler,
 )
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
     MegatronPretrainingRandomBatchSampler,
@@ -40,6 +38,7 @@ from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 from nemo_aligner.data.mm.datasets import (
     MultimodalChatDataset,
     MultimodalRewardModelDataset,
+    MultimodalRegressionRewardModelDataset,
     )
 
 
@@ -258,6 +257,7 @@ def _build_mm_train_valid_test_datasets(
 
 
 build_mm_train_valid_test_rm_datasets = partial(build_mm_train_valid_test_datasets, MultimodalRewardModelDataset)
+build_train_valid_test_regression_rm_datasets = partial(build_mm_train_valid_test_datasets, MultimodalRegressionRewardModelDataset)
 
 def build_mm_sft_dataset(model_cfg, data_cfg, mm_cfg, tokenizer, image_processor, special_tokens=None):
     dataset = MultimodalChatDataset(
