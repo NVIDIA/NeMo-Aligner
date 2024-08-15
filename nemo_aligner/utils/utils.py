@@ -78,7 +78,6 @@ def load_from_nemo(
     restore_path=None,
     load_base_model_only=False,
     return_updated_cfg=False,
-    restore_mm_adapter=True,
 ):
     """load a model using nemo checkpoint
     """
@@ -95,16 +94,13 @@ def load_from_nemo(
         )
         model_cfg = modify_config_fn(origin_cfg, model_cfg, add_cfg_to_tree=False)
     
-    if not restore_mm_adapter:
-        model = cls(model_cfg, trainer)
-    else:
-        model = cls.restore_from(
-            restore_path=restore_path,
-            trainer=trainer,
-            override_config_path=model_cfg,
-            save_restore_connector=connector,
-            strict=strict,
-        )
+    model = cls.restore_from(
+        restore_path=restore_path,
+        trainer=trainer,
+        override_config_path=model_cfg,
+        save_restore_connector=connector,
+        strict=strict,
+    )
     return (model, model_cfg) if return_updated_cfg else model
 
 
