@@ -144,8 +144,9 @@ def main(cfg) -> None:
                     score["helpfulness"],
                     score["correctness"],
                     score["coherence"],
-                    score["complexity"],
-                    score["verbosity"],
+                    -100,
+                    -100,
+                    -100,
                 ]
                 for score in b["values"]
             ]
