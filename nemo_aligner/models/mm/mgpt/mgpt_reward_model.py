@@ -1,4 +1,4 @@
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,12 +15,12 @@
 from copy import deepcopy
 from typing import Callable, List, Literal, Optional, Union
 from unittest.mock import patch
-
+from omegaconf.dictconfig import DictConfig
 import torch
 from megatron.core import parallel_state
+from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.utils import make_sharded_tensor_for_checkpoint, make_tp_sharded_tensor_for_checkpoint
 from torch import Tensor
 from nemo.collections.multimodal.models.multimodal_llm.neva.neva_model import MCoreNevaModel
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import RewardModelHead
@@ -33,6 +33,9 @@ class MultimodalGPTRewardModel(MCoreNevaModel):
 
     def __init__(
         self,
+        mm_cfg: DictConfig,
+        media_start_id: int,
+        media_end_id: int,
         config: TransformerConfig,
         transformer_layer_spec: ModuleSpec,
         vocab_size: int,
@@ -54,6 +57,10 @@ class MultimodalGPTRewardModel(MCoreNevaModel):
         merge_attributes: bool = False,
     ):
         super().__init__(
+            mm_cfg=mm_cfg,
+            media_start_id=media_start_id,
+            media_end_id=media_end_id,
+            mcore_gpt=True,
             config=config,
             transformer_layer_spec=transformer_layer_spec,
             vocab_size=vocab_size,
@@ -91,12 +98,15 @@ class MultimodalGPTRewardModel(MCoreNevaModel):
         attention_mask: Tensor,
         decoder_input: Tensor = None,
         labels: Tensor = None,
+        media: Tensor = None,
         inference_params=None,
     ):
+        if parallel_state.is_pipeline_first_stage(ignore_virtual=True):
+            self.embedding.word_embeddings.set_media(media)
         # TODO(geshen): hack to get the hidden states
         # and for mcore to not call the output layer
         with patch.object(self, "post_process", False):
-            hidden_states = super().forward(
+            hidden_states = MCoreGPTModel.forward(
                 input_ids=input_ids,
                 position_ids=position_ids,
                 attention_mask=attention_mask,
