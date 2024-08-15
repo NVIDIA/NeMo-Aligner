@@ -14,15 +14,16 @@
 
 
 import warnings
-from typing import List, Union
+from typing import List, Union, Tuple
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
+from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
+from megatron.core.utils import divide
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import  get_specs
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
@@ -47,7 +48,6 @@ from nemo_aligner.utils.train_utils import (
     set_train,
 )
 
-
 class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrable):
     """
     Megatron MGPT Reward Model Training.
@@ -71,6 +71,8 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
             self.rew_mean = cfg.reward_standardization.mean
             self.rew_std = cfg.reward_standardization.std
 
+        self.forward_micro_batch_size = self.cfg.get("forward_micro_batch_size", self.cfg.micro_batch_size)
+
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
 
@@ -90,6 +92,14 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
 
         media_start_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_start_token", "<extra_id_4>"))
         media_end_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_end_token", "<extra_id_5>"))
+
+        if not parallel_state.is_initialized():
+            def dummy():
+                return
+            
+            if self.trainer.strategy.launcher is not None:
+                self.trainer.strategy.launcher.launch(dummy, trainer=self.trainer)
+            self.trainer.strategy.setup_environment()
 
         model = MultimodalGPTRewardModel(
             mm_cfg=self.cfg.mm_cfg,
@@ -260,7 +270,7 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_forward_output_and_loss_func(forward_only),
-            data_iterator=data_iter,
+            data_iterator=self._make_data_iterator_list(data_iter),
             model=self.model,
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
@@ -363,92 +373,66 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
 
     def infer(
         self,
-        inputs: Union[List[str], List[List[int]]] = None,
-        sequence_length: List[int] = None,
+        inputs: Union[List[str], Tuple[torch.Tensor, torch.Tensor]],
+        add_BOS: bool = False,
         add_EOS: bool = False,
     ):
-        tokenizer = self.tokenizer
-        max_seq_length = self.cfg.encoder_seq_length
+        if isinstance(inputs, tuple):
+            context_tokens_tensor, context_length_tensor = inputs
+        elif isinstance(inputs, list):
+            assert all(isinstance(item, str) for item in inputs), "list must contain all strings in infer function"
+            context_tokens_tensor, context_length_tensor = tokenize_batch(
+                inputs, self.tokenizer, self.cfg.encoder_seq_length, add_BOS=add_BOS, add_EOS=add_EOS,
+            )
+        else:
+            raise NotImplementedError(f"{type(inputs)=} is not supported in infer function")
 
-        exceeded = None
-        context_tokens_tensor = None
-        context_length_tensor = None
-        if torch.distributed.get_rank() == 0:
-            if sequence_length is not None:
-                exceeded = [False for _ in range(len(inputs))]
-                context_tokens_tensor = torch.tensor(inputs).cuda()
-                context_length_tensor = torch.tensor(sequence_length).cuda()
-            else:
-                context_tokens_tensor, context_length_tensor, exceeded = tokenize_batch(
-                    tokenizer, inputs, max_seq_length, False, add_EOS=add_EOS
-                )
-            if context_length_tensor.dim() == 1:
-                context_length_tensor = context_length_tensor.unsqueeze(-1)
+        context_tokens_tensor = context_tokens_tensor.cuda()
+        context_length_tensor = context_length_tensor.cuda()
 
-        context_length_tensor = broadcast_2d_tensor(context_length_tensor, src=0, group=None, dtype=torch.int64)
-        if context_length_tensor.dim() == 2:
-            context_length_tensor = context_length_tensor.squeeze(-1)
-
-        context_tokens_tensor = broadcast_2d_tensor(context_tokens_tensor, src=0, group=None, dtype=torch.int64)
-
-        # Select subset of data needed for this rank.
-        dp_size = parallel_state.get_data_parallel_world_size()
-        dp_rank = parallel_state.get_data_parallel_rank()
-        context_length_tensor = context_length_tensor.chunk(dp_size)[dp_rank]
-        context_tokens_tensor = context_tokens_tensor.chunk(dp_size)[dp_rank]
-
+        inference_batch_size, sequence_length = context_tokens_tensor.size()
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
             context_tokens_tensor,
-            tokenizer.eos_id,
+            self.tokenizer.eos_id,
             self.cfg.get("reset_position_ids", False),
             self.cfg.get("reset_attention_mask", False),
             self.cfg.get("eod_mask_loss", False),
         )
-        micro_batch_size = context_tokens_tensor.shape[0]
-        sequence_length = context_tokens_tensor.shape[1]
+        attention_mask = attention_mask.expand(inference_batch_size, -1, -1, -1)
+        inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask]
 
-        app_state = AppState()
-        _reconfigure_microbatch_calculator(
-            rank=app_state.global_rank,
-            rampup_batch_size=None,
-            global_batch_size=micro_batch_size,
-            micro_batch_size=micro_batch_size,
-            data_parallel_size=1,
-        )
-        attention_mask_repeat = torch.concat([attention_mask for _ in range(micro_batch_size)])
-        rewards = self.forward_step(
-            [context_tokens_tensor, context_length_tensor, position_ids, attention_mask_repeat],
-            micro_batch_size,
-            sequence_length,
-        )
+        # if inference batch size is smaller than forward mbs run it at the lower batch size
+        forward_micro_batch_size = min(inference_batch_size, self.forward_micro_batch_size)
+
+        num_microbatches = divide(inference_batch_size, forward_micro_batch_size)
+        data_iter = get_iterator_k_split(inputs, num_microbatches)
+
+        rewards = self.forward_step(data_iter, forward_micro_batch_size, sequence_length, num_microbatches)
 
         if parallel_state.is_pipeline_last_stage():
-            rewards = rewards[0]["reward"]
+            rewards = torch.cat(rewards)
 
             # Standardize values to subtract a bias.
             if self.enable_standardization:
                 rewards = (rewards - self.rew_mean) / self.rew_std
 
         rewards = broadcast_2d_tensor_within_pp(rewards)
+        return rewards
 
-        rewards_list = gather_tensor(
-            rewards, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()
-        )
-
-        return rewards_list, exceeded
-
-    def forward_step(self, batch, micro_batch_size, sequence_length):
+    def forward_step(self, data_iter, micro_batch_size, sequence_length, num_microbatches):
         set_sync_funcs(self, forward_only=True)
 
         fwd_bwd_function = get_forward_backward_func()
         output_tensor = fwd_bwd_function(
             forward_step_func=self.get_forward_output_only_func(),
-            data_iterator=iter([batch]),
+            data_iterator=self._make_data_iterator_list(data_iter),
             model=self.model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=sequence_length,
             micro_batch_size=micro_batch_size,
+            # Prevent automatic scaling by the number of micro-batches, as we are not in training mode.
+            collect_non_loss_data=True,
         )
         return output_tensor
 
@@ -463,8 +447,8 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
             if not parallel_state.is_pipeline_last_stage():
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
-            def id_func(output_tensor):
-                return output_tensor, {"reward": output_tensor}
+            def id_func(output_tensor, non_loss_data=True):
+                return output_tensor
 
             return output_tensor, id_func
 

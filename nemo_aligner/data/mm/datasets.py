@@ -62,7 +62,7 @@ def maybe_process_prompt_and_media(
         image_token_len,
         is_multimodal: bool = True
     ):
-    if "image" in record[0]:
+    if "image" in record:
         if not isinstance(record['image'], list):
             record['image'] = [record['image']]
         images = []
@@ -454,10 +454,10 @@ class MultimodalRewardModelDataset(Dataset):
         self.use_im_start_end = cfg.mm_cfg.use_im_start_end
         self.crop_size = cfg.mm_cfg.vision_encoder.crop_size
         self.num_image_tokens = cfg.data.image_token_len
-
+        
         # Checks
         assert np.min(documents) >= 0
-        assert np.max(documents) < len(self.data)
+        assert np.max(documents) < len(data)
 
         # save index mappings to a configurable dir
         self.index_mapping_dir = cfg.data.get("index_mapping_dir", None)
@@ -476,7 +476,7 @@ class MultimodalRewardModelDataset(Dataset):
                     logging.warning(f"Image not found: {image_path}")
                     continue
                 record['image'].append(image_name)  # url
-            record['text'] = re.sub('<img src="([^"]+)">', self.media_token, record['text'])
+            record['text'] = re.sub('<img src="([^"]+)">', self.image_token, record['text'])
             self.data.append(record)
         
         # create index_mapping_dir on rank 0
@@ -535,10 +535,10 @@ class MultimodalRewardModelDataset(Dataset):
             rejected_media = rearrange(rejected["image"], "T c h w -> T 1 c h w")
 
             if self.cfg.data.data_impl.startswith("json"):
-                chosen_text, _ = self.encode(chosen["text"])
-                rejected_text, _ = self.encode(rejected["text"])
+                chosen, _ = self.encode(chosen["text"])
+                rejected, _ = self.encode(rejected["text"])
 
-            if len(chosen_text) > self.seq_length or len(rejected_text) > self.seq_length:
+            if len(chosen) > self.seq_length or len(rejected) > self.seq_length:
                 idx += multiple
                 continue
             found = True

@@ -36,6 +36,7 @@ class MultimodalGPTRewardModel(MCoreNevaModel):
         mm_cfg: DictConfig,
         media_start_id: int,
         media_end_id: int,
+        mcore_gpt: bool,
         config: TransformerConfig,
         transformer_layer_spec: ModuleSpec,
         vocab_size: int,
@@ -60,7 +61,7 @@ class MultimodalGPTRewardModel(MCoreNevaModel):
             mm_cfg=mm_cfg,
             media_start_id=media_start_id,
             media_end_id=media_end_id,
-            mcore_gpt=True,
+            mcore_gpt=mcore_gpt,
             config=config,
             transformer_layer_spec=transformer_layer_spec,
             vocab_size=vocab_size,
@@ -107,6 +108,7 @@ class MultimodalGPTRewardModel(MCoreNevaModel):
         # and for mcore to not call the output layer
         with patch.object(self, "post_process", False):
             hidden_states = MCoreGPTModel.forward(
+                self,
                 input_ids=input_ids,
                 position_ids=position_ids,
                 attention_mask=attention_mask,

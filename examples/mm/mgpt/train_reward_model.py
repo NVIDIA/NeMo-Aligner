@@ -21,7 +21,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader
 
-from nemo_aligner.data.nlp.builders import (
+from nemo_aligner.data.mm.builders import (
     build_mm_train_valid_test_regression_rm_datasets,
     build_mm_train_valid_test_rm_datasets,
 )
@@ -70,7 +70,7 @@ def main(cfg) -> None:
         reward_model_cls,
         cfg.model,
         trainer,
-        strict=True,
+        strict=False,
         load_base_model_only=True,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
