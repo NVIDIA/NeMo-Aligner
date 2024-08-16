@@ -36,7 +36,7 @@ from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterf
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
-from nemo_aligner.utils.text_generation_utils import tokenize_batch
+from nemo_aligner.utils.text_generation_strategy import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,

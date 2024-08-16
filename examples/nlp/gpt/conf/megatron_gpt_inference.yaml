@@ -14,6 +14,7 @@ inference:
   value_model:
     host: "localhost"
     port: 5555
+    enable: True
 
 
 trainer:

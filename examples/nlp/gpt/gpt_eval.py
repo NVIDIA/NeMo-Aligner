@@ -321,7 +321,7 @@ def local_generate(
     inputs: Union[List[str], torch.Tensor, List[dict]],
     length_params: LengthParam,
     sampling_params: SamplingParam = None,
-    value_model_params={},
+    value_model_params={"enable": False},
     *,
     strategy: Optional[TextGenerationStrategy] = None,
 ) -> OutputType:
@@ -397,7 +397,7 @@ def main(cfg) -> None:
         "compute_logprob": cfg.inference.compute_logprob,
         "end_strings": cfg.inference.end_strings,
     }
-    value_model_params = {"host": cfg.inference.value_model.host, "port": cfg.inference.value_model.port}
+    value_model_params = {"host": cfg.inference.value_model.host, "port": cfg.inference.value_model.port, "enable": cfg.inference.value_model.enable}
 
     prompts = load_prompts(cfg)
 

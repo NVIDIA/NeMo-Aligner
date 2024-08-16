@@ -22,6 +22,8 @@ from collections.abc import Iterable
 from functools import partial
 from typing import Callable, Tuple
 
+from pytriton.client import ModelClient
+
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -392,10 +394,12 @@ def top_k_logits(logits, top_k=0, top_p=0.0, filter_value=-float('Inf'), started
      @started: a tensor of bools indicating whether the text generation starts for the batch
      returns the filtered logits
     """
+    top_k_indexes = None
     if top_k > 0:
         # Remove all tokens with a probability less than the
         # last token of the top-k
-        indices_to_remove = logits < torch.topk(logits, top_k)[0][..., -1, None]
+        top_k_values, top_k_indexes = torch.topk(logits, top_k)
+        indices_to_remove = logits <  top_k_values[..., -1, None]
         if started is not None:
             for i in np.arange(indices_to_remove.size(0))[started.cpu().numpy()]:
                 logits[i, indices_to_remove[i]] = filter_value
@@ -422,7 +426,7 @@ def top_k_logits(logits, top_k=0, top_p=0.0, filter_value=-float('Inf'), started
                 indices_to_remove = sorted_indices[i][sorted_indices_to_remove[i]]
                 logits[i, indices_to_remove] = filter_value
 
-    return logits
+    return logits, top_k_indexes
 
 
 def repetition_penalty(logits, repetition_penalty, used_tokens):
@@ -486,6 +490,7 @@ def send_generate_info(
         min_tokens_to_generate,
         random_seed,
         value_model_params["port"],
+        value_model_params["enable"],
     ]
     input_info_tensor = torch.cuda.FloatTensor(input_info)
     torch.distributed.broadcast(input_info_tensor, src, model_parallel_group)
@@ -516,7 +521,7 @@ def receive_generate_info():
     """
     model_parallel_group = parallel_state.get_model_parallel_group()
     src = get_model_parallel_src_rank()
-    input_info_tensor = torch.empty(13, dtype=torch.float32, device=torch.cuda.current_device())
+    input_info_tensor = torch.empty(14, dtype=torch.float32, device=torch.cuda.current_device())
     torch.distributed.broadcast(input_info_tensor, src, model_parallel_group)
     batch_size = int(input_info_tensor[0].item())
     seq_len = int(input_info_tensor[1].item())
@@ -531,6 +536,7 @@ def receive_generate_info():
     min_tokens_to_generate = int(input_info_tensor[10].item())
     random_seed = int(input_info_tensor[11].item())
     value_model_params_port = int(input_info_tensor[12].item())
+    value_model_params_enable = bool(input_info_tensor[13].item())
     if random_seed == -1:  # was converted to -1 before broadcast
         random_seed = None
 
@@ -572,7 +578,7 @@ def receive_generate_info():
         min_tokens_to_generate,
         end_strings,
         random_seed,
-        {"host": vm_host, "port": value_model_params_port}
+        {"host": vm_host, "port": value_model_params_port, "enable": value_model_params_enable}
     )
 
 
@@ -1001,11 +1007,23 @@ def sample_sequence_batch(
                 else:
                     logits = logits.float()
                     logits /= temperature
-                    logits = top_k_logits(
-                        logits, top_k=extra.get('top_k', 0), top_p=extra.get('top_p', 0.9), started=started
+                    top_k = extra.get('top_k', 0)
+                    logits, top_k_indexes = top_k_logits(
+                        logits, top_k=top_k, top_p=extra.get('top_p', 0.9), started=started
                     )
-                    probs = F.softmax(logits, dim=-1)
-                    prev = torch.multinomial(probs, num_samples=1).view(-1)
+                    if extra["value_model_params"]["enable"]:
+                        repeated_context_tokens = context_tokens.expand(top_k, context_tokens.shape[1]).clone()
+                        repeated_context_tokens[:, context_length] = top_k_indexes.view(-1)
+                        repeated_context_tokens = repeated_context_tokens[:, :context_length+1].cpu().numpy()
+                        repeated_context_token_lengths = np.ones((top_k, 1), dtype=repeated_context_tokens.dtype) * context_length
+                        host, port = extra["value_model_params"]["host"], extra["value_model_params"]["port"]
+                        with ModelClient(f"{host}:{port}", "reward_model") as client:
+                            values = client.infer_batch(tokens=repeated_context_tokens, sequence_lengths=repeated_context_token_lengths)["rewards"][:, -1]
+                            prev = top_k_indexes[:, np.argmax(values)]
+
+                    else:
+                        probs = F.softmax(logits, dim=-1)
+                        prev = torch.multinomial(probs, num_samples=1).view(-1)
 
                 # Clamp the predicted out of vocabulary tokens
                 prev = torch.clamp(prev, max=tokenizer.vocab_size - 1)
