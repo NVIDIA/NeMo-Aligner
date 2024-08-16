@@ -470,9 +470,15 @@ class MultimodalRewardModelDataset(Dataset):
             for match in matches:
                 image_name = match.group(1).split("/")[-1]
                 image_path = os.path.join(self.image_folder, image_name)
-                if not os.path.isfile(image_path):
-                    logging.warning(f"Image not found: {image_path}")
-                    continue
+                if self.image_folder.endswith('.tar'):
+                    if image_name not in self.image_loader.tar_index:
+                        logging.warning(f"Image not found in tar: {image_name}")
+                        continue
+                else:
+                    image_path = os.path.join(self.image_folder, image_name)
+                    if not os.path.isfile(image_path):
+                        logging.warning(f"Image not found: {image_path}")
+                        continue
                 record['image'].append(image_name)  # url
             record['text'] = re.sub(img_pattern, self.image_token, record['text'])
             self.data.append(record)
