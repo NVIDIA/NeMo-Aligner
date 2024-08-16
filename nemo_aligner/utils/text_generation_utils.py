@@ -1,4 +1,3 @@
-
 # Copyright (c) 2022, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,12 +21,11 @@ from collections.abc import Iterable
 from functools import partial
 from typing import Callable, Tuple
 
-from pytriton.client import ModelClient
-
 import numpy as np
 import torch
 import torch.nn.functional as F
 from lightning_fabric.utilities.seed import seed_everything
+from pytriton.client import ModelClient
 
 from nemo.collections.multimodal.data.neva.conversation import (
     DEFAULT_IM_END_TOKEN,
@@ -95,31 +93,33 @@ def get_default_length_params():
     return length_params
 
 
-def megatron_gpt_generate(model, inputs, tokenizer, length_params, sampling_params, value_model_params, **strategy_args):
+def megatron_gpt_generate(
+    model, inputs, tokenizer, length_params, sampling_params, value_model_params, **strategy_args
+):
     # reproduce the old compute_prob method
     # a very special case
-    if sampling_params['compute_logprob']:
+    if sampling_params["compute_logprob"]:
         # need to overwrite some configuration, make it immutable
         sampling_params = sampling_params.copy()
         length_params = length_params.copy()
-        length_params['max_length'] = 1
-        sampling_params['all_probs'] = True
+        length_params["max_length"] = 1
+        sampling_params["all_probs"] = True
         sampling_params["add_BOS"] = False
-        sampling_params['greedy'] = True
+        sampling_params["greedy"] = True
         response = generate(
             model,
             inputs=inputs,
-            tokens_to_generate=length_params['max_length'],
-            all_probs=sampling_params['all_probs'],
-            compute_logprob=sampling_params['compute_logprob'],
-            temperature=sampling_params['temperature'],
-            add_BOS=sampling_params['add_BOS'],
-            top_k=sampling_params['top_k'],
-            top_p=sampling_params['top_p'],
-            greedy=sampling_params['use_greedy'],
-            repetition_penalty=sampling_params['repetition_penalty'],
-            end_strings=sampling_params['end_strings'],
-            min_tokens_to_generate=length_params['min_length'],
+            tokens_to_generate=length_params["max_length"],
+            all_probs=sampling_params["all_probs"],
+            compute_logprob=sampling_params["compute_logprob"],
+            temperature=sampling_params["temperature"],
+            add_BOS=sampling_params["add_BOS"],
+            top_k=sampling_params["top_k"],
+            top_p=sampling_params["top_p"],
+            greedy=sampling_params["use_greedy"],
+            repetition_penalty=sampling_params["repetition_penalty"],
+            end_strings=sampling_params["end_strings"],
+            min_tokens_to_generate=length_params["min_length"],
             compute_attention_mask=sampling_params.get("compute_attention_mask", True),
             value_model_params=value_model_params,
             **strategy_args,
@@ -133,17 +133,17 @@ def megatron_gpt_generate(model, inputs, tokenizer, length_params, sampling_para
     output = generate(
         model,
         inputs=inputs,
-        tokens_to_generate=length_params['max_length'],
-        all_probs=sampling_params['all_probs'],
-        compute_logprob=sampling_params['compute_logprob'],
-        temperature=sampling_params['temperature'],
-        add_BOS=sampling_params['add_BOS'],
-        top_k=sampling_params['top_k'],
-        top_p=sampling_params['top_p'],
-        greedy=sampling_params['use_greedy'],
-        repetition_penalty=sampling_params['repetition_penalty'],
-        end_strings=sampling_params['end_strings'],
-        min_tokens_to_generate=length_params['min_length'],
+        tokens_to_generate=length_params["max_length"],
+        all_probs=sampling_params["all_probs"],
+        compute_logprob=sampling_params["compute_logprob"],
+        temperature=sampling_params["temperature"],
+        add_BOS=sampling_params["add_BOS"],
+        top_k=sampling_params["top_k"],
+        top_p=sampling_params["top_p"],
+        greedy=sampling_params["use_greedy"],
+        repetition_penalty=sampling_params["repetition_penalty"],
+        end_strings=sampling_params["end_strings"],
+        min_tokens_to_generate=length_params["min_length"],
         value_model_params=value_model_params,
         **strategy_args,
     )
@@ -176,7 +176,7 @@ def decode_time_tokens(tokenizer, text: str, duration: float, time_tokens: list[
         time = min(max(time, 0), duration)
         time = round(time, 2)
         # time_str = '<' + str(time) + '>'
-        time_str = '<%s>' % str(time)
+        time_str = "<%s>" % str(time)
         new_output_ids.extend(tokenizer.text_to_ids(time_str))
 
         last_processed = indices[j]
@@ -213,9 +213,9 @@ def encode_time_str(text: str, duration: float, num_time_tokens: int = 100, time
 
 
 def megatron_neva_generate(model, prompt_dict_list, length_params, sampling_params, inference_config, **strategy_args):
-    use_lita = model.cfg.mm_cfg.get('use_lita', False)
+    use_lita = model.cfg.mm_cfg.get("use_lita", False)
     if use_lita:
-        num_time_tokens = model.cfg.data.get('num_time_tokens', 100)
+        num_time_tokens = model.cfg.data.get("num_time_tokens", 100)
         TIME_TOKEN_TEMPLATE = "<t{t}>"
         time_tokens = [TIME_TOKEN_TEMPLATE.format(t=i) for i in range(num_time_tokens)]
         time_token_ids = model.tokenizer.tokens_to_ids(time_tokens)
@@ -229,25 +229,25 @@ def megatron_neva_generate(model, prompt_dict_list, length_params, sampling_para
         if use_lita:
             if prompt_dict.get("duration") is not None:
                 duration = prompt_dict.get("duration")
-                prompt_dict['prompt'] = encode_time_str(
-                    prompt_dict['prompt'], duration, num_time_tokens, TIME_TOKEN_TEMPLATE
+                prompt_dict["prompt"] = encode_time_str(
+                    prompt_dict["prompt"], duration, num_time_tokens, TIME_TOKEN_TEMPLATE
                 )
             else:
                 print("duration field is not in prompt file, skipping time encoding.")
         response = generate(
             model,
-            inputs=prompt_dict.get('prompt'),
-            tokens_to_generate=length_params['max_length'],
-            all_probs=sampling_params['all_probs'],
-            compute_logprob=sampling_params['compute_logprob'],
-            temperature=sampling_params['temperature'],
-            add_BOS=sampling_params['add_BOS'],
-            top_k=sampling_params['top_k'],
-            top_p=sampling_params['top_p'],
-            greedy=sampling_params['use_greedy'],
-            repetition_penalty=sampling_params['repetition_penalty'],
-            end_strings=sampling_params['end_strings'],
-            min_tokens_to_generate=length_params['min_length'],
+            inputs=prompt_dict.get("prompt"),
+            tokens_to_generate=length_params["max_length"],
+            all_probs=sampling_params["all_probs"],
+            compute_logprob=sampling_params["compute_logprob"],
+            temperature=sampling_params["temperature"],
+            add_BOS=sampling_params["add_BOS"],
+            top_k=sampling_params["top_k"],
+            top_p=sampling_params["top_p"],
+            greedy=sampling_params["use_greedy"],
+            repetition_penalty=sampling_params["repetition_penalty"],
+            end_strings=sampling_params["end_strings"],
+            min_tokens_to_generate=length_params["min_length"],
             compute_attention_mask=sampling_params.get("compute_attention_mask", True),
             image_list=prompt_dict.get(media_type_token),
             **strategy_args,
@@ -259,20 +259,20 @@ def megatron_neva_generate(model, prompt_dict_list, length_params, sampling_para
 
         # Regular expression pattern to match the sequence
         pattern = re.compile(
-            rf'{DEFAULT_IM_START_TOKEN[model_type]}( ⁇ )+{DEFAULT_IM_END_TOKEN[model_type]}'.replace(r'|', r'\|')
+            rf"{DEFAULT_IM_START_TOKEN[model_type]}( ⁇ )+{DEFAULT_IM_END_TOKEN[model_type]}".replace(r"|", r"\|")
         )
         pattern_nvgpt = re.compile(
-            rf'{DEFAULT_IM_START_TOKEN[model_type]}({DEFAULT_IMAGE_PATCH_TOKEN[model_type]})+{DEFAULT_IM_END_TOKEN[model_type]}'.replace(
-                r'|', r'\|'
+            rf"{DEFAULT_IM_START_TOKEN[model_type]}({DEFAULT_IMAGE_PATCH_TOKEN[model_type]})+{DEFAULT_IM_END_TOKEN[model_type]}".replace(
+                r"|", r"\|"
             )
         )
 
         if use_lita:
-            pattern_lita = re.compile(rf'{DEFAULT_IM_START_TOKEN[model_type]}(.)+{DEFAULT_IM_END_TOKEN[model_type]}')
-            combined_pattern = re.compile(f'{pattern_lita.pattern}')
+            pattern_lita = re.compile(rf"{DEFAULT_IM_START_TOKEN[model_type]}(.)+{DEFAULT_IM_END_TOKEN[model_type]}")
+            combined_pattern = re.compile(f"{pattern_lita.pattern}")
         else:
-            combined_pattern = re.compile(f'{pattern.pattern}|{pattern_nvgpt.pattern}')
-        clean_text = re.sub(combined_pattern, f"<{media_type_token}>", response['sentences'][0])
+            combined_pattern = re.compile(f"{pattern.pattern}|{pattern_nvgpt.pattern}")
+        clean_text = re.sub(combined_pattern, f"<{media_type_token}>", response["sentences"][0])
 
         clean_response = clean_text
 
@@ -284,7 +284,7 @@ def megatron_neva_generate(model, prompt_dict_list, length_params, sampling_para
             if last_match_end_position is not None:
                 clean_response = clean_response[last_match_end_position:]
             clean_response = clean_response.strip("<extra_id_1>")
-        elif conv_template == 'nv_dpo':
+        elif conv_template == "nv_dpo":
             clean_response = clean_response.split("<extra_id_1>Assistant\n")[-1]
             clean_response = clean_response.strip("<extra_id_1>")
         elif conv_template == "llama_2":
@@ -328,7 +328,7 @@ def get_computeprob_response(tokenizer, response, inputs):
         log_probs = []
         full_logprobs = []
         offsets = []
-        for batch_id in range(len(response['tokens'])):
+        for batch_id in range(len(response["tokens"])):
             if isinstance(inputs, (list, tuple)):
                 if isinstance(inputs[0], str):
                     new_token_id = tokenizer.text_to_ids(inputs[batch_id])
@@ -347,17 +347,17 @@ def get_computeprob_response(tokenizer, response, inputs):
                     f"Unsupported type of parameter `inputs`: {type(inputs)}. Supported types: `list` and `tuple`"
                 )
             new_token_ids.append(new_token_id)
-            new_tokens.append(response['tokens'][batch_id][:token_len])
+            new_tokens.append(response["tokens"][batch_id][:token_len])
             new_texts.append(new_text)
-            log_probs.append(response['logprob'][batch_id][:token_len])
-            full_logprobs.append(response['full_logprob'][batch_id][:token_len])
-            offsets.append(response['offsets'][batch_id][:-1])
-        compute_prob_response['sentences'] = new_texts
-        compute_prob_response['tokens'] = new_tokens
-        compute_prob_response['token_ids'] = new_token_ids
-        compute_prob_response['logprob'] = log_probs
-        compute_prob_response['full_logprob'] = full_logprobs
-        compute_prob_response['offsets'] = offsets
+            log_probs.append(response["logprob"][batch_id][:token_len])
+            full_logprobs.append(response["full_logprob"][batch_id][:token_len])
+            offsets.append(response["offsets"][batch_id][:-1])
+        compute_prob_response["sentences"] = new_texts
+        compute_prob_response["tokens"] = new_tokens
+        compute_prob_response["token_ids"] = new_token_ids
+        compute_prob_response["logprob"] = log_probs
+        compute_prob_response["full_logprob"] = full_logprobs
+        compute_prob_response["offsets"] = offsets
         return compute_prob_response
     else:
         # intermediate stages
@@ -372,15 +372,15 @@ def get_batch(model, tokenizer, context_tokens):
     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
         tokens,
         tokenizer.eos_id,
-        model.cfg.get('reset_position_ids', False),
-        model.cfg.get('reset_attention_mask', False),
-        model.cfg.get('eod_mask_loss', False),
+        model.cfg.get("reset_position_ids", False),
+        model.cfg.get("reset_attention_mask", False),
+        model.cfg.get("eod_mask_loss", False),
     )
 
     return tokens, attention_mask, position_ids
 
 
-def top_k_logits(logits, top_k=0, top_p=0.0, filter_value=-float('Inf'), started=None):
+def top_k_logits(logits, top_k=0, top_p=0.0, filter_value=-float("Inf"), started=None):
     """
     This function has been mostly taken from huggingface conversational
       ai code at
@@ -399,7 +399,7 @@ def top_k_logits(logits, top_k=0, top_p=0.0, filter_value=-float('Inf'), started
         # Remove all tokens with a probability less than the
         # last token of the top-k
         top_k_values, top_k_indexes = torch.topk(logits, top_k)
-        indices_to_remove = logits <  top_k_values[..., -1, None]
+        indices_to_remove = logits < top_k_values[..., -1, None]
         if started is not None:
             for i in np.arange(indices_to_remove.size(0))[started.cpu().numpy()]:
                 logits[i, indices_to_remove[i]] = filter_value
@@ -510,7 +510,9 @@ def send_generate_info(
     vm_host_string_tensor = torch.as_tensor(
         np.frombuffer(pickle.dumps(value_model_params["host"]), dtype=np.int8), device=torch.cuda.current_device()
     )
-    vm_host_size = torch.as_tensor([vm_host_string_tensor.size(0)], device=torch.cuda.current_device(), dtype=torch.int64)
+    vm_host_size = torch.as_tensor(
+        [vm_host_string_tensor.size(0)], device=torch.cuda.current_device(), dtype=torch.int64
+    )
     torch.distributed.broadcast(vm_host_size, src, model_parallel_group)
     torch.distributed.broadcast(vm_host_string_tensor, src, model_parallel_group)
 
@@ -557,7 +559,7 @@ def receive_generate_info():
 
     vm_host_string_tensor = torch.empty(vm_host_array_size[0], dtype=torch.int8, device=torch.cuda.current_device())
     torch.distributed.broadcast(vm_host_string_tensor, src, model_parallel_group)
-    
+
     bytes = string_tensor.cpu().numpy().tobytes()
     end_strings = pickle.loads(bytes)
 
@@ -578,7 +580,7 @@ def receive_generate_info():
         min_tokens_to_generate,
         end_strings,
         random_seed,
-        {"host": vm_host, "port": value_model_params_port, "enable": value_model_params_enable}
+        {"host": vm_host, "port": value_model_params_port, "enable": value_model_params_enable},
     )
 
 
@@ -599,7 +601,7 @@ def synced_generate(
     end_strings=[],
     min_tokens_to_generate=0,
     image_list=None,
-    value_model_params = {},
+    value_model_params={},
     **strategy_args,
 ):
     context_length = context_length_tensor.min().item()
@@ -615,7 +617,7 @@ def synced_generate(
 
     # if input containing neighbors (for Mcore retrieval RETRO model)
     if "neighbors_tokens" in strategy_args:
-        extra['neighbors_tokens'] = strategy_args['neighbors_tokens']
+        extra["neighbors_tokens"] = strategy_args["neighbors_tokens"]
 
     batch_token_iterator = sample_sequence_batch(
         model,
@@ -687,7 +689,7 @@ def generate(
     compute_attention_mask=True,
     compute_logprob=False,
     repetition_penalty=1.0,
-    end_strings=['<|endoftext|>'],
+    end_strings=["<|endoftext|>"],
     image_list=None,
     min_tokens_to_generate=0,
     random_seed=None,
@@ -722,8 +724,8 @@ def generate(
             token_ids: List[Tensor], output sentence token ids
             offsets: List[List[int]]  # list of tokens start positions in text
     """
-    if 'strategy' in strategy_args:
-        inference_strategy = strategy_args['strategy']
+    if "strategy" in strategy_args:
+        inference_strategy = strategy_args["strategy"]
     else:
         inference_strategy = model_inference_strategy_dispatcher(model, **strategy_args)
     tokenizer = model.tokenizer
@@ -753,10 +755,10 @@ def generate(
         )
 
         # tokenize neighbors and broadcast (for Mcore retrieval RETRO model)
-        if 'neighbors' in strategy_args:
+        if "neighbors" in strategy_args:
             # tokenize neighbors
             neighbors_tokens_tensor, neighbors_tokens_tensor_shape = inference_strategy.tokenize_neighbors_batch(
-                strategy_args['neighbors'], strategy_args['retro_inference']
+                strategy_args["neighbors"], strategy_args["retro_inference"]
             )
 
             # send neighbors tensors to all ranks
@@ -786,7 +788,7 @@ def generate(
         ) = receive_generate_info()
 
         # receive broadcast (for Mcore retrieval RETRO model)
-        if 'neighbors' in strategy_args:
+        if "neighbors" in strategy_args:
             # receive neighbors tensors to all ranks
             model_parallel_group = parallel_state.get_model_parallel_group()
             src = get_model_parallel_src_rank()
@@ -803,13 +805,13 @@ def generate(
             neighbors_tokens_tensor = None
 
     # add neighbors to strategy_args (for retrieval RETRO model)
-    if 'neighbors' in strategy_args:
-        strategy_args['neighbors_tokens'] = neighbors_tokens_tensor
+    if "neighbors" in strategy_args:
+        strategy_args["neighbors_tokens"] = neighbors_tokens_tensor
 
     if random_seed is not None:
         seed_everything(random_seed)
 
-    if hasattr(model, 'get_attention_mask_from_fusion') and model.get_attention_mask_from_fusion:
+    if hasattr(model, "get_attention_mask_from_fusion") and model.get_attention_mask_from_fusion:
         compute_attention_mask = False
 
     output = synced_generate(
@@ -833,19 +835,19 @@ def generate(
         **strategy_args,
     )
     special_tokens = set()
-    if hasattr(tokenizer, 'pad_token') and tokenizer.pad_token is not None:
+    if hasattr(tokenizer, "pad_token") and tokenizer.pad_token is not None:
         special_tokens.add(tokenizer.pad_token)
-    if hasattr(tokenizer, 'eos_token') and tokenizer.eos_token is not None:
+    if hasattr(tokenizer, "eos_token") and tokenizer.eos_token is not None:
         special_tokens.add(tokenizer.eos_token)
-    if hasattr(tokenizer, 'bos_token') and tokenizer.bos_token is not None:
+    if hasattr(tokenizer, "bos_token") and tokenizer.bos_token is not None:
         special_tokens.add(tokenizer.bos_token)
-    if hasattr(tokenizer, 'cls_token') and tokenizer.cls_token is not None:
+    if hasattr(tokenizer, "cls_token") and tokenizer.cls_token is not None:
         special_tokens.add(tokenizer.cls_token)
-    if hasattr(tokenizer, 'unk_token') and tokenizer.unk_token is not None:
+    if hasattr(tokenizer, "unk_token") and tokenizer.unk_token is not None:
         special_tokens.add(tokenizer.unk_token)
-    if hasattr(tokenizer, 'sep_token') and tokenizer.sep_token is not None:
+    if hasattr(tokenizer, "sep_token") and tokenizer.sep_token is not None:
         special_tokens.add(tokenizer.sep_token)
-    if hasattr(tokenizer, 'mask_token') and tokenizer.mask_token is not None:
+    if hasattr(tokenizer, "mask_token") and tokenizer.mask_token is not None:
         special_tokens.add(tokenizer.mask_token)
     if output is not None:
         decode_tokens, output_logits, full_logits = output
@@ -863,9 +865,9 @@ def generate(
                 word = tokenizer.ids_to_tokens(token)
                 if isinstance(word, Iterable):
                     word = word[0]
-                if hasattr(tokenizer.tokenizer, 'byte_decoder'):
+                if hasattr(tokenizer.tokenizer, "byte_decoder"):
                     word = bytearray([tokenizer.tokenizer.byte_decoder[c] for c in word]).decode(
-                        'utf-8', errors='replace'
+                        "utf-8", errors="replace"
                     )
                 words.append(word)
             resp_sentences_seg.append(words)
@@ -883,12 +885,12 @@ def generate(
             all_offsets.append(offsets)
 
         output = {}
-        output['sentences'] = resp_sentences
-        output['tokens'] = resp_sentences_seg
-        output['logprob'] = output_logits
-        output['full_logprob'] = full_logits
-        output['token_ids'] = decode_tokens
-        output['offsets'] = all_offsets
+        output["sentences"] = resp_sentences
+        output["tokens"] = resp_sentences_seg
+        output["logprob"] = output_logits
+        output["full_logprob"] = full_logits
+        output["token_ids"] = decode_tokens
+        output["offsets"] = all_offsets
         output = inference_strategy.post_generation_process(output)
         return output
 
@@ -909,7 +911,7 @@ def sample_sequence_batch(
     compute_logprob=False,
     type_ids=None,
     temperature=None,
-    end_strings=['<|endoftext|>'],
+    end_strings=["<|endoftext|>"],
     image_list=None,
     extra={},
 ):
@@ -925,17 +927,17 @@ def sample_sequence_batch(
         data_parallel_size=1,
     )
     assert (
-        model.cfg.get('activations_checkpoint_granularity', None) is None
-    ), 'activations_checkpoint_granularity should be None during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint'
+        model.cfg.get("activations_checkpoint_granularity", None) is None
+    ), "activations_checkpoint_granularity should be None during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint"
     assert (
-        model.cfg.get('activations_checkpoint_method', None) is None
-    ), 'activations_checkpoint_method should be None during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint'
+        model.cfg.get("activations_checkpoint_method", None) is None
+    ), "activations_checkpoint_method should be None during inference. Disable it in the model config if restoring from nemo or in hparams.yaml if restoring from PTL checkpoint"
 
     tokenizer = model.tokenizer
     # initialize the batch
     with torch.no_grad():
         context_length = context_lengths.min().item()
-        if 'neighbors_tokens' in extra:  # for Mcore retrieval RETRO model
+        if "neighbors_tokens" in extra:  # for Mcore retrieval RETRO model
 
             # For Mcore retrieval RETRO model, context_tokens tensors are updated after init_batch() (the length is doubled after processing)
             context_tokens = inference_strategy.init_batch(
@@ -975,50 +977,54 @@ def sample_sequence_batch(
             if parallel_state.is_pipeline_last_stage():
 
                 if compute_logprob:
-                    output = output[0]['logits']
+                    output = output[0]["logits"]
                     output = tensor_parallel.gather_from_tensor_model_parallel_region(output)
                     assert output is not None
                     logits = output[:, -1].view(batch_size, -1).contiguous()
 
                 else:
-                    if 'neighbors_tokens' in extra:  # for Mcore retrieval RETRO model
+                    if "neighbors_tokens" in extra:  # for Mcore retrieval RETRO model
                         # for Mcore RETRO inference, disimilar to GPT, we will get the logits of the (context_length - 1)th token, instead of the last token
-                        logits = output[0]['logits'][:, context_length - 1].contiguous()
+                        logits = output[0]["logits"][:, context_length - 1].contiguous()
                     else:
-                        logits = output[0]['logits'][:, -1].contiguous()
+                        logits = output[0]["logits"][:, -1].contiguous()
                     logits = tensor_parallel.gather_from_tensor_model_parallel_region(logits)
                     assert logits is not None
                     logits = logits.view(batch_size, -1)
 
                 # make sure it will generate at least min_length
-                min_length = extra.get('min_tokens_to_generate', 0)
+                min_length = extra.get("min_tokens_to_generate", 0)
                 if min_length > 0:
                     within_min_length = (context_length - context_lengths) < min_length
-                    logits[within_min_length, eod_id] = -float('Inf')
+                    logits[within_min_length, eod_id] = -float("Inf")
 
                 # make sure it won't sample outside the vocab_size range
-                logits[:, tokenizer.vocab_size :] = -float('Inf')
+                logits[:, tokenizer.vocab_size :] = -float("Inf")
 
                 # started indicates whether the current token step passes the context_length, so we make sure not to overwrite the context tokens
 
                 started = context_lengths <= context_length
-                if extra.get('greedy', False):
+                if extra.get("greedy", False):
                     prev = torch.argmax(logits, dim=-1).view(-1)
                 else:
                     logits = logits.float()
                     logits /= temperature
-                    top_k = extra.get('top_k', 0)
+                    top_k = extra.get("top_k", 0)
                     logits, top_k_indexes = top_k_logits(
-                        logits, top_k=top_k, top_p=extra.get('top_p', 0.9), started=started
+                        logits, top_k=top_k, top_p=extra.get("top_p", 0.9), started=started
                     )
                     if extra["value_model_params"]["enable"]:
                         repeated_context_tokens = context_tokens.expand(top_k, context_tokens.shape[1]).clone()
                         repeated_context_tokens[:, context_length] = top_k_indexes.view(-1)
-                        repeated_context_tokens = repeated_context_tokens[:, :context_length+1].cpu().numpy()
-                        repeated_context_token_lengths = np.ones((top_k, 1), dtype=repeated_context_tokens.dtype) * context_length
+                        repeated_context_tokens = repeated_context_tokens[:, : context_length + 1].cpu().numpy()
+                        repeated_context_token_lengths = (
+                            np.ones((top_k, 1), dtype=repeated_context_tokens.dtype) * context_length
+                        )
                         host, port = extra["value_model_params"]["host"], extra["value_model_params"]["port"]
                         with ModelClient(f"{host}:{port}", "reward_model") as client:
-                            values = client.infer_batch(tokens=repeated_context_tokens, sequence_lengths=repeated_context_token_lengths)["rewards"][:, -1]
+                            values = client.infer_batch(
+                                tokens=repeated_context_tokens, sequence_lengths=repeated_context_token_lengths
+                            )["rewards"][:, -1]
                             prev = top_k_indexes[:, np.argmax(values)]
 
                     else:
@@ -1122,7 +1128,7 @@ def sample_token_greedy(logits):
     return log_probs, token_ids
 
 
-def sample_token_topk(logits, top_k=0, top_p=0.0, temperature=1.0, filter_value=-float('Inf')):
+def sample_token_topk(logits, top_k=0, top_p=0.0, temperature=1.0, filter_value=-float("Inf")):
     """
     Greedy sampling. Returns the token with the highest probability, and corresponding log_prob.
 
@@ -1209,9 +1215,9 @@ def get_sampling_token_fn(sampling_method: str, sampling_kwargs: dict) -> Tuple[
         default_sampling_kwargs: sampling_kwargs augmented with default sampling kwargs
     """
     all_default_sampling_kwargs = {
-        'greedy-search': {},
-        'topkp-sampling': {'top_k': 0, 'top_p': 0.0, 'temperature': 1.0},
-        'beam-search': {'beam_size': 1, 'beam_alpha': 0.0, 'keep_only_best_tokens': False, 'return_scores': False},
+        "greedy-search": {},
+        "topkp-sampling": {"top_k": 0, "top_p": 0.0, "temperature": 1.0},
+        "beam-search": {"beam_size": 1, "beam_alpha": 0.0, "keep_only_best_tokens": False, "return_scores": False},
     }
 
     # update default sampling kwargs with user provided kwargs
@@ -1219,23 +1225,23 @@ def get_sampling_token_fn(sampling_method: str, sampling_kwargs: dict) -> Tuple[
     default_sampling_kwargs.update(sampling_kwargs)
     # sampling_kwargs = default_sampling_kwargs
 
-    if sampling_method == 'greedy-search':
+    if sampling_method == "greedy-search":
         sampling_token_fn = sample_token_greedy
 
     elif sampling_method == "topkp-sampling":
-        top_k = default_sampling_kwargs['top_k']
-        top_p = default_sampling_kwargs['top_p']
-        temperature = default_sampling_kwargs['temperature']
+        top_k = default_sampling_kwargs["top_k"]
+        top_p = default_sampling_kwargs["top_p"]
+        temperature = default_sampling_kwargs["temperature"]
         sampling_token_fn = partial(sample_token_topk, top_k=top_k, top_p=top_p, temperature=temperature)
 
     elif sampling_method == "beam-search":
-        beam_size = default_sampling_kwargs['beam_size']
+        beam_size = default_sampling_kwargs["beam_size"]
         sampling_token_fn = partial(sample_token_topk_beam_search, beam_size=beam_size)
 
     else:
         raise ValueError(
-            f'Invalid sampling method {sampling_method}. '
-            f'Supported sampling methods are {all_default_sampling_kwargs.keys()}'
+            f"Invalid sampling method {sampling_method}. "
+            f"Supported sampling methods are {all_default_sampling_kwargs.keys()}"
         )
 
     return sampling_token_fn, default_sampling_kwargs
