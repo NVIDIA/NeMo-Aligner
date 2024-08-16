@@ -146,7 +146,6 @@ def main(cfg) -> None:
                     score["coherence"],
                     -100,
                     -100,
-                    -100,
                 ]
                 for score in b["values"]
             ]
