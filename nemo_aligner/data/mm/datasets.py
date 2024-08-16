@@ -454,7 +454,7 @@ class MultimodalRewardModelDataset(Dataset):
         self.use_im_start_end = cfg.mm_cfg.use_im_start_end
         self.crop_size = cfg.mm_cfg.vision_encoder.crop_size
         self.num_image_tokens = cfg.data.image_token_len
-        
+
         # Checks
         assert np.min(documents) >= 0
         assert np.max(documents) < len(data)
@@ -462,13 +462,14 @@ class MultimodalRewardModelDataset(Dataset):
         # save index mappings to a configurable dir
         self.index_mapping_dir = cfg.data.get("index_mapping_dir", None)
 
+        img_pattern = r'<img\s+src=[\'"]([^\'"]+)[\'"](?:[^>]*)?/?>'
         self.data = []
         for record in data:
             # This currently supports only a single image
             # search for <img src="/absolute/path/to/image" in the conversation
             #   add it as record['image'], remove src tag from the <img> tag
             record['image'] = []
-            matches = re.finditer('<img src="([^"]+)"', record['text'])
+            matches = re.finditer(img_pattern, record['text'])
             for match in matches:
                 image_name = match.group(1).split("/")[-1]
                 image_path = os.path.join(self.image_folder, image_name)
@@ -476,7 +477,7 @@ class MultimodalRewardModelDataset(Dataset):
                     logging.warning(f"Image not found: {image_path}")
                     continue
                 record['image'].append(image_name)  # url
-            record['text'] = re.sub('<img src="([^"]+)">', self.image_token, record['text'])
+            record['text'] = re.sub(img_pattern, self.image_token, record['text'])
             self.data.append(record)
         
         # create index_mapping_dir on rank 0
