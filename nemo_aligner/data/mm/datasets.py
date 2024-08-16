@@ -59,7 +59,6 @@ def maybe_process_prompt_and_media(
         image_patch_dim, 
         use_im_start_end, 
         crop_size,
-        image_token_len,
         is_multimodal: bool = True
     ):
     if "image" in record:
@@ -78,7 +77,6 @@ def maybe_process_prompt_and_media(
             height_num_patches = media_tensors[0].shape[1] // image_patch_dim
             width_num_patches  = media_tensors[0].shape[2] // image_patch_dim
             num_image_tokens = height_num_patches * width_num_patches
-            assert num_image_tokens == image_token_len, f"Error in image_token_len: image_token_len != num_image_tokens: {image_token_len = }\t{num_image_tokens}"
             record = process_media_tokens(
                 record,
                 image_token,
@@ -453,7 +451,6 @@ class MultimodalRewardModelDataset(Dataset):
         self.image_patch_dim = cfg.mm_cfg.vision_encoder.patch_dim
         self.use_im_start_end = cfg.mm_cfg.use_im_start_end
         self.crop_size = cfg.mm_cfg.vision_encoder.crop_size
-        self.num_image_tokens = cfg.data.image_token_len
 
         # Checks
         assert np.min(documents) >= 0
@@ -526,7 +523,6 @@ class MultimodalRewardModelDataset(Dataset):
                     self.image_patch_dim,
                     self.use_im_start_end,
                     self.crop_size,
-                    self.num_image_tokens,
                     self.is_multimodal,
                 )
                 items.append(item)
@@ -641,7 +637,6 @@ class MultimodalRegressionRewardModelDataset(MultimodalRewardModelDataset):
                 self.image_patch_dim,
                 self.use_im_start_end,
                 self.crop_size,
-                self.num_image_tokens,
                 self.is_multimodal,
             )
             sample_text, sample_length = self.encode(sample["text"])

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf
+from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
@@ -58,6 +58,11 @@ def main(cfg) -> None:
     reward_model_cls = REWARD_MODEL_CLASS_DICT[reward_model_type]
 
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
+    
+    # We need this to looking for the base LLM path, which is not needed
+    with open_dict(cfg):
+        cfg.model.mm_cfg.llm.from_pretrained = None
+        cfg.model.mm_cfg.llm.freeze = False
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
