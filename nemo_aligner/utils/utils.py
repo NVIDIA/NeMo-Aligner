@@ -100,6 +100,7 @@ def load_from_nemo(
         override_config_path=model_cfg,
         save_restore_connector=connector,
         strict=strict,
+        validate_access_integrity=False if model_cfg.pipeline_model_parallel_size > 1 else True,
     )
     return (model, model_cfg) if return_updated_cfg else model
 
