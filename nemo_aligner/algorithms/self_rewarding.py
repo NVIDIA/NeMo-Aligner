@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os, json
+import os, json, itertools
 from functools import partial
 import numpy as np
 from collections import defaultdict
@@ -133,6 +133,26 @@ def create_parse_reward_fn(reward_regex_template):
 
     return parse_reward_fn
 
+def create_meta_parse_reward_fn(reward_regex_template):
+    assert find_variables_from_jinja_template(reward_regex_template) == {'reward'}, 'reward template must include "score" variable'
+    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward = "([A-B\.]+)")
+
+    # @always(lambda: randrange(0, 10))
+    def parse_reward_fn(llm_response: str) -> float:
+        result = re.search(rf"{reward_regex_str}", llm_response)
+
+        if not exists(result) or result.groups == 0:
+            return None
+
+        group_one = result.groups(1)[0] if isinstance(result.groups(1), tuple) else result.groups(1)
+        
+        if group_one == "A" or group_one == "B":
+            return group_one
+        else:
+            return None
+
+    return parse_reward_fn
+
 def divide_chunks(l, n):
     for i in range(0, len(l), n):  
         yield l[i:i + n]
@@ -170,7 +190,77 @@ systematically attribute points based on the outlined criteria.
 <extra_id_1>Assistant
 """
 
+
+DEFAULT_LLM_AS_JUDGE_PROMPT_LLAMA3 = """<|start_header_id|>system<|end_header_id|>
+
+<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Review the user's question and the corresponding response using the additive 5-point
+scoring system described below. Points are accumulated based on the satisfaction of each
+criterion:
+- Add 1 point if the response is relevant and provides some information related to
+the user's inquiry, even if it is incomplete or contains some irrelevant content.
+- Add another point if the response addresses a substantial portion of the user's question,
+but does not completely resolve the query or provide a direct answer.
+- Award a third point if the response answers the basic elements of the user's question in a
+useful way, regardless of whether it seems to have been written by an AI Assistant or if it
+has elements typically found in blogs or search results.
+- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
+addressing the user's question directly and comprehensively, and is well-organized and
+helpful, even if there is slight room for improvement in clarity, conciseness or focus.
+- Bestow a fifth point for a response that is impeccably tailored to the user's question
+by an AI Assistant, without extraneous information, reflecting expert knowledge, and
+demonstrating a high-quality, engaging, and insightful answer.
+
+<prompt>{{ prompt }}</prompt>
+<response>{{ response }}</response>
+
+After examining the user's instruction and the response:
+- Briefly justify your total score, up to 100 words.
+- Conclude with the score using the format: "Score: <total points>"
+Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
+necessary. To evaluate the response in alignment with this additive scoring model, we'll
+systematically attribute points based on the outlined criteria.
+<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+"""
+
+
+DEFAULT_META_JUDGE_PROMPT = """<extra_id_0>System
+
+<extra_id_1>User
+Review the user's question and the corresponding response, along with two judgments.
+Determine which judgment is more accurate according to the rubric provided below. The
+rubric used for the initial judgments is as follows:
+- Add 1 point if the response is relevant and provides some information related to
+the user's inquiry, even if it is incomplete or contains some irrelevant content.
+- Add another point if the response addresses a substantial portion of the user's question,
+but does not completely resolve the query or provide a direct answer.
+- Award a third point if the response answers the basic elements of the user's question in a
+useful way, regardless of whether it seems to have been written by an AI Assistant or if it
+has elements typically found in blogs or search results.
+- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
+addressing the user's question directly and comprehensively, and is well-organized and helpful,
+even if there is slight room for improvement in clarity, conciseness or focus.
+- Bestow a fifth point for a response that is impeccably tailored to the user's question
+by an AI Assistant, without extraneous information, reflecting expert knowledge, and
+demonstrating a high-quality, engaging, and insightful answer.
+
+<prompt>{{ prompt }}<prompt>
+<response>{{ response }}<response>
+<judgement A>{{ judgement_a }}<judgement A>
+<judgement B>{{ judgement_b }}<judgement B>
+
+After examining the original question, response, and both judgments:
+- Explain which judgment is more accurate according to the original rubric and why.
+Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
+consistency in applying the criteria.
+- Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
+<extra_id_1>Assistant
+"""
+
 DEFAULT_REWARD_REGEX_TEMPLATE = "(?i)(?:Score|Points): {{ reward }}"
+DEFAULT_META_REWARD_REGEX_TEMPLATE = r"(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
 
 
 class SelfRewardingTrainer:
@@ -243,6 +333,7 @@ class SelfRewardingTrainer:
         self.num_responses_to_gen = self.model.cfg.spin.num_responses_to_gen
         self.num_evals_to_average = self.model.cfg.spin.num_evals_to_average
         self.first_iteration_sft = self.model.cfg.spin.get("first_iteration_sft", False)
+        self.use_meta_judge = self.model.cfg.spin.get("use_meta_judge", False)
         self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
         self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
@@ -260,12 +351,16 @@ class SelfRewardingTrainer:
         #self.prompt_template = dedent(DEFAULT_LLM_AS_JUDGE_PROMPT)
         #self.reward_regex_template = dedent(DEFAULT_REWARD_REGEX_TEMPLATE)
         self.prompt_template = DEFAULT_LLM_AS_JUDGE_PROMPT
+        self.meta_judge_template = DEFAULT_META_JUDGE_PROMPT
         self.reward_regex_template = DEFAULT_REWARD_REGEX_TEMPLATE
+        self.meta_judge_reward_regex_template = DEFAULT_META_REWARD_REGEX_TEMPLATE
         
         assert find_variables_from_jinja_template(self.prompt_template) == {'prompt', 'response'}, 'template must include prompt and response templating variables'
         self.template_fn = jinja2_env.from_string(self.prompt_template).render
+        self.meta_judge_template_fn = jinja2_env.from_string(self.meta_judge_template).render
         
         self.parse_reward_fn = create_parse_reward_fn(self.reward_regex_template)
+        self.meta_parse_reward_fn = create_meta_parse_reward_fn(self.meta_judge_reward_regex_template)
         
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
@@ -502,17 +597,15 @@ class SelfRewardingTrainer:
     
     def get_rewards(self, list_of_batches):
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
+        judge_responses = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
         for _ in range(self.num_evals_to_average):
             reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
             batch_responses_str = []
             for t,s,e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
                 response = self.model.tokenizer.ids_to_text(t[s:e].tolist())
                 batch_responses_str.append(response)
-            #print("*** batch_responses_str_len: ", len(batch_responses_str))
-            #print("*** sample_reward_response: ", batch_responses_str[0])
             rewards = [self.parse_reward_fn(resp_str) for resp_str in batch_responses_str]
-            #print("*** rewards_after_parse: ", rewards)
-            for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
+            for idx, (r, t, s, e, end) in enumerate(zip(rewards, reward_responses, prompt_lengths.tolist(), resp_lengths.tolist(), is_end.tolist())):
                 #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and r is None:
                 #    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
                 #if r is not None and r > 10000:
@@ -521,11 +614,43 @@ class SelfRewardingTrainer:
                 # a valid score, it's all good, we don't need correctness beyond that
                 #reward_scores[idx].append(r if end else None)
                 reward_scores[idx].append(r if ((r is not None) and (r >= 0 and r <= 5)) else None)
+                # should we include responses which only contain valid scores?
+                if self.use_meta_judge:
+                    judge_responses[idx].append((t,s,e,end) if ((r is not None) and (r >= 0 and r <= 5)) else None)
         #print("*** reward_scores_get_rewards: ", reward_scores)
-        assert all([len(b) == self.num_evals_to_average for b in reward_scores]), "did not get generate the correct number of reward scores"
+        assert all([len(b) == self.num_evals_to_average for b in reward_scores]), f"did not get generate the correct number of reward scores: {reward_scores}"
         reward_scores = [[*filter(exists, b)] for b in reward_scores]
+        if self.use_meta_judge:
+            assert all([len(b) == self.num_evals_to_average for b in judge_responses]), f"did not get generate the correct number of judge scores: {judge_responses}"
+            judge_responses = [[*filter(exists, b)] for b in judge_responses]
         
         reward_means = [(np.mean(b) if len(b) > 0 else None) for b in reward_scores]
+        reward_variance = [(np.var(b) if len(b) > 0 else None) for b in reward_scores]
+        
+        return reward_means, reward_variance, judge_responses
+    
+    def get_rewards_meta(self, list_of_batches):
+        reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
+        for _ in range(1):
+            reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
+            batch_responses_str = []
+            for t,s,e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
+                response = self.model.tokenizer.ids_to_text(t[s:e].tolist())
+                batch_responses_str.append(response)
+            rewards = [self.meta_parse_reward_fn(resp_str) for resp_str in batch_responses_str]
+            for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
+                #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and r is None:
+                #    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
+                #if r is not None and r > 10000:
+                #    print("*** high_score_response: ", batch_responses_str[idx])
+                # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
+                # a valid score, it's all good, we don't need correctness beyond that
+                #reward_scores[idx].append(r if end else None)
+                reward_scores[idx].append(r if ((r is not None) and (r == 'A' or r == 'B')) else None)
+        #print("*** reward_scores_get_rewards: ", reward_scores)
+        reward_scores = [[*filter(exists, b)] for b in reward_scores]
+        
+        reward_means = [(b[0] if len(b) > 0 else None) for b in reward_scores]
         
         return reward_means
 
@@ -722,6 +847,7 @@ class SelfRewardingTrainer:
         """Augment dataloader with generations and ref policy log probs"""
         iter_dataloader = iter(dataloader)
         buffer = []
+        meta_buffer_pending, meta_buffer_done = [], []
         done = False
         while not done:
             try:
@@ -761,6 +887,9 @@ class SelfRewardingTrainer:
                         for t,s,e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
                             prompt = self.model.tokenizer.ids_to_text(t[:s].tolist()).replace("<extra_id_0>System\n\n", "")
                             response = self.model.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
+                            # llama3
+                            #prompt = self.model.tokenizer.ids_to_text(t[:s].tolist()).replace("<|start_header_id|>system<|end_header_id|>\n\n", "")
+                            #response = self.model.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
                             reward_prompt_str = self.template_fn(prompt=prompt, response=response)
                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                             #if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
@@ -769,6 +898,9 @@ class SelfRewardingTrainer:
                                 try:
                                     prompt_ft = re.findall(r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0]
                                     response_ft = re.findall(r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0]
+                                    # llama3
+                                    #prompt_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
+                                    #response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
                                     reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
                                     reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                                     if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
@@ -797,18 +929,21 @@ class SelfRewardingTrainer:
                         
                         #assert all([x['prompt_lengths'].item() <= self.model.cfg.data.train_ds.max_seq_length for x in reward_buffer]), f"reward_buffer violation: {[x['prompt_lengths'] for x in reward_buffer]}"
                         # list of floats, same length as gen_tokens_buf
-                        reward_scores = self.get_rewards(reward_buffer)
+                        reward_scores, reward_variances, judge_responses = self.get_rewards(reward_buffer)
                         #print("*** reward_scores: ", reward_scores)
-                        for idx, (t, s, e, r, end) in enumerate(zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist(), reward_scores, is_end.tolist())):
-                            candidate_responses_with_rewards[idx].append((r,t,s,e,end))
+                        for idx, (t, s, e, r, v, j, end) in enumerate(zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist(), reward_scores, reward_variances, judge_responses, is_end.tolist())):
+                            candidate_responses_with_rewards[idx].append((r,t,s,e,v,j,end))
                     
                     final_buffer = []
                     # now we need to pick the chosen/rejected
                     for cand_list in candidate_responses_with_rewards:
                         scores = [b[0] for b in cand_list]
                         ends = [b[-1] for b in cand_list]
-                        r_lengths = [len(b[1][b[2]:b[3]]) for b in cand_list]
-                        filtered_scores = [(s,r,idx) for idx, (s,r,e) in enumerate(zip(scores, r_lengths, ends)) if (s is not None) and e]
+                        resp_lengths = [len(b[1][b[2]:b[3]]) for b in cand_list]
+                        variances = [b[-3] for b in cand_list]
+                        j_responses = [b[-2] for b in cand_list]
+                        filtered_scores = [(s,r,v,idx) for idx, (s,r,v,e) in enumerate(zip(scores, resp_lengths, variances, ends)) if (s is not None) and e]
+                        filtered_variances = [(v,j,idx) for idx, (v,j,e) in enumerate(zip(variances, j_responses, ends)) if (v is not None) and (len(j) > 1) and e]
                         bad_sample = False
                         
                         # TODO: sample more from the underlying Dataset instead
@@ -829,26 +964,22 @@ class SelfRewardingTrainer:
                             s_max = np.max([s[0] for s in filtered_scores])
                             rng_chosen = [((1.0 - self.rho) * s_max) + (self.rho * s_min), s_max]
                             rng_reject = [s_min, ((1.0 - self.rho) * s_min) + (self.rho * s_max)]
-                            chosen_cands = [s for s in filtered_scores if s[0] >= rng_chosen[0] and s[0] <= rng_chosen[-1]]
-                            reject_cands = [s for s in filtered_scores if s[0] >= rng_reject[0] and s[0] <= rng_reject[-1]]
-                            idx_chosen = chosen_cands[np.argmin([s[1] for s in chosen_cands])][-1]
-                            idx_reject = reject_cands[np.argmax([s[1] for s in reject_cands])][-1]
+                            chosen_cands = [s for s in filtered_scores if s[0] >= rng_chosen[0] and s[0] <= rng_chosen[1]]
+                            reject_cands = [s for s in filtered_scores if s[0] >= rng_reject[0] and s[0] <= rng_reject[1]]
+                            if self.rho > 0:
+                                # choose based on shortest/longest response length
+                                idx_chosen = chosen_cands[np.argmin([s[1] for s in chosen_cands])][-1]
+                                idx_reject = reject_cands[np.argmax([s[1] for s in reject_cands])][-1]
+                            else:
+                                # choose based on lowest variance of judgements
+                                idx_chosen = chosen_cands[np.argmin([s[2] for s in chosen_cands])][-1]
+                                idx_reject = reject_cands[np.argmin([s[2] for s in reject_cands])][-1]
                             if self.rho == 0:
                                 assert all([s_max == s[0] for s in chosen_cands]), "chosen_cands violation"
                                 assert all([s_min == s[0] for s in reject_cands]), "reject_cands violation"
-                                #if len(chosen_cands) > 1:
-                                #    print(f"*** CONDITION_1_CHOSEN: {chosen_cands}")
-                                #if len(reject_cands) > 1:
-                                #    print(f"*** CONDITION_1_REJECT: {reject_cands}")
                         else:
                             print(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
                             raise RuntimeError("hit strange score selection state, please investigate")
-                        
-                        #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and bad_sample:
-                        #    print(f"*** Scores [ {scores} ]  Ends [ {ends} ]  filtered_scores [ {filtered_scores} ] ***")
-                            #for idx in range(len(cand_list)):
-                            #    gen_text = self.model.tokenizer.ids_to_text(cand_list[idx][1][cand_list[idx][2]:cand_list[idx][3]].tolist())
-                            #    print(f"*** cand_idx [ {idx} ]  cand_text: {gen_text}")
                         
                         # 1 x max_len tensor
                         chosen_tokens = cand_list[idx_chosen][1]
@@ -859,6 +990,28 @@ class SelfRewardingTrainer:
                         reject_prompt_len = cand_list[idx_reject][2]
                         reject_gen_len = cand_list[idx_reject][3]
                         reject_score = scores[idx_reject]
+                        
+                        # meta-judge logic goes here
+                        if self.use_meta_judge and len(filtered_variances) > 0:
+                            # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
+                            reward_tokens_raw = filtered_variances[np.argmax([s[0] for s in filtered_variances])][1]
+                            idx_for_cand = filtered_variances[np.argmax([s[0] for s in filtered_variances])][-1]
+                            cand_for_meta = cand_list[idx_for_cand]
+                            orig_prompt_str = self.model.tokenizer.ids_to_text(cand_for_meta[1][:cand_for_meta[2]].tolist())
+                            orig_response_str = self.model.tokenizer.ids_to_text(cand_for_meta[1][cand_for_meta[2]:cand_for_meta[3]].tolist())
+                            meta_batch = []
+                            for a, b in itertools.combinations([self.model.tokenizer.ids_to_text(s[0][s[1]:s[2]].tolist()) for s in reward_tokens_raw], 2):
+                                meta_str_ab = self.meta_judge_template(prompt=orig_prompt_str, response=orig_response_str, judgement_a=a, judgement_b=b)
+                                meta_str_ba = self.meta_judge_template(prompt=orig_prompt_str, response=orig_response_str, judgement_a=b, judgement_b=a)
+                                meta_tokens_ab = self.model.tokenizer.text_to_ids(meta_str_ab)
+                                meta_tokens_ba = self.model.tokenizer.text_to_ids(meta_str_ba)
+                                # check for seq len violation
+                                if len(meta_tokens_ab) > self.model.cfg.data.train_ds.max_seq_length or len(meta_tokens_ba) > self.model.cfg.data.train_ds.max_seq_length:
+                                    continue
+                                meta_batch.append({"prompt_lengths": torch.LongTensor([len(meta_tokens_ab)]), "prompts_only": torch.LongTensor(meta_tokens_ab).unsqueeze(0)})
+                                meta_batch.append({"prompt_lengths": torch.LongTensor([len(meta_tokens_ba)]), "prompts_only": torch.LongTensor(meta_tokens_ba).unsqueeze(0)})
+                            if len(meta_batch) > 1:
+                                meta_buffer_pending.append( (reward_tokens_raw, meta_batch) )
                         
                         final_buffer.append({
                             "chosen_tokens": chosen_tokens,
@@ -956,6 +1109,34 @@ class SelfRewardingTrainer:
                     del logprobs, chosen_logps, reject_logps, new_batch
 
                 buffer.clear()
+                
+                '''
+                if done:
+                    meta_buffer_pending.clear()
+                    meta_buffer_done.clear()
+                if (not done) and sum([len(x[-1]) for x in meta_buffer_pending]) == self.rollout_micro_batch_size:
+                    batch_for_rewards = [y for x in meta_buffer_pending for y in x[-1]]
+                    meta_reward_scores = self.get_rewards_meta(batch_for_rewards)
+                    comp = []
+                    for tup in meta_buffer_pending:
+                        N = len(tup[-1])
+                        # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
+                        # we need to find a chosen and reject index in this list
+                        reward_tokens_raw = tup[0]
+                        players = list(range(len(reward_tokens_raw)))
+                        Bm = list(itertools.combinations(players, 2))
+                        alloc = []
+                        for _ in range(N):
+                            alloc.append(meta_reward_scores.pop(0))
+                        assert len(alloc) % 2 == 0, "alloc should always be divisible by 2"
+                        for ab, ba in divide_chunks(alloc, 2):
+                            r_ab = (1 if ab == "A" else -1) if ab is not None else 0
+                            r_ba = (1 if ba == "B" else -1) if ba is not None else 0
+                            w1 = (ba == 'A') / ((ab == 'A') + (ba == 'A'))
+                            w2 = (ab == 'A') / ((ab == 'A') + (ba == 'A'))
+                            B_ab = w1 * (1 if r_ab == 1 else 0) + w2 * (1 if r_ba == -1 else 0)
+                '''
+                            
     
     def set_rho_by_iteration(self, iteration):
         if isinstance(self.spin_config["length_control"], (float, int)):

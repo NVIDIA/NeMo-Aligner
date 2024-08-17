@@ -27,7 +27,7 @@ from unittest.mock import patch
 
 import torch
 from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
-from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
+from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory, LocalNonpersistentObject
 from omegaconf import DictConfig, OmegaConf
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
@@ -488,6 +488,8 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
         return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param)
     if isinstance(reference_param, ShardedObject):
         return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param)
+    if isinstance(reference_param, LocalNonpersistentObject):
+        return LocalNonpersistentObject(model_param)
 
     assert (
         tuple(model_param.shape) == reference_param.local_shape
