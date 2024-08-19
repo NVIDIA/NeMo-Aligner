@@ -191,6 +191,8 @@ class SupervisedTrainer:
             self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
             logging.info("Initial validation metrics logged.")
 
+        self.model.prepare_for_training()
+
         for _ in epoch_iter:
             num_steps_in_epoch = min(
                 self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
@@ -205,7 +207,6 @@ class SupervisedTrainer:
             )
 
             for _, batch in zip(loop_iter, global_pbar):
-
                 self.timer.start("train_step_time")
                 loss, metrics = self.train_single_step(batch)
                 self.timer.stop("train_step_time")
