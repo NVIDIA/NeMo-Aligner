@@ -15,7 +15,7 @@ from contextlib import nullcontext
 from enum import Enum
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator, get_num_microbatches
+from megatron.core.num_microbatches_calculator import get_num_microbatches, reconfigure_num_microbatches_calculator
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
@@ -54,7 +54,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def prepare_for_training(self):
         app_state = AppState()
-        _reconfigure_microbatch_calculator(
+        reconfigure_num_microbatches_calculator(
             rank=app_state.global_rank,
             rampup_batch_size=None,
             global_batch_size=self.cfg.global_batch_size,

@@ -16,7 +16,7 @@ from contextlib import nullcontext
 
 import torch
 import torch.distributed
-from apex.transformer.pipeline_parallel.utils import get_num_microbatches
+from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 from omegaconf import OmegaConf
