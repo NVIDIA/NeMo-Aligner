@@ -96,6 +96,7 @@ model:
     kd_loss_weight: 1.0
     sft_loss_weight: 0.0
     kd_loss: bwd_kl
+    jsd_weight: 0.5
     
   data:
     data_impl: chunked_jsonl

@@ -65,7 +65,7 @@ class ChunkedJsonl:
             max_n_chunks = i
             if not os.path.exists(self.path_placeholder.replace(self.CHUNK_ID_STRING, str(i))):
                 break
-        assert max_n_chunks > 0, "no files match the required path {path_placehold}"
+        assert max_n_chunks > 0, f"no files match the required path {path_placehold}"
         self.n_chunks = min(n_chunks, max_n_chunks)
         
         print(f"Initializing chunked jsonl...")

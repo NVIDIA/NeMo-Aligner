@@ -52,6 +52,7 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         self.use_k_add_1_logits = self.cfg.knowledge_distillation.get("use_k_add_1_logits", False)
         
         self.kd_loss = self.cfg.knowledge_distillation.get("kd_loss", "bwd_kl")
+        self.jsd_weight = self.cfg.knowledge_distillation.get("jsd_weight", 0.5)
         self.kd_loss_weight = self.cfg.knowledge_distillation.get("kd_loss_weight", 1)
         self.sft_loss_weight = self.cfg.knowledge_distillation.get("sft_loss_weight", 0)
         assert (
@@ -191,6 +192,11 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
             loss = torch.sum(target_logprobs.exp() * (target_logprobs - logprobs), dim=-1)
         elif self.kd_loss == "fwd_kl":
             loss = torch.sum(logprobs.exp() * (logprobs - target_logprobs), dim=-1)
+        elif self.kd_loss == "jsd":
+            weighted_logprobs = (self.jsd_weight * target_logprobs.exp() + (1 - self.jsd_weight) * logprobs.exp()).log()
+            bwd_kl = torch.sum(target_logprobs.exp() * (target_logprobs - weighted_logprobs), dim=-1)
+            fwd_kl = torch.sum(logprobs.exp() * (logprobs - weighted_logprobs), dim=-1)
+            loss = self.jsd_weight * bwd_kl + (1 - self.jsd_weight) * fwd_kl
         else:
             raise ValueError(f"kd_loss {self.kd_loss} is not supported.")
         return torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
@@ -244,7 +250,7 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         torch.distributed.broadcast(loss_mean, get_last_rank())
         torch.distributed.broadcast(sft_loss_mean, get_last_rank())
         torch.distributed.broadcast(kd_loss_mean, get_last_rank())
-        loss_value = sft_loss_mean.item()
+        loss_value = loss_mean.item()
         metrics = {
             "loss": loss_value,
             "sft_loss": sft_loss_mean.item(),
