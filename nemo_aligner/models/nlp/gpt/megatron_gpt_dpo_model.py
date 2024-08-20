@@ -19,6 +19,7 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -405,8 +406,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
     @torch.no_grad()
     def get_logprob_batch(self, batch):
         seq_length = batch["chosen"].shape[1]
+        batch_size = batch["chosen"].shape[0]
 
-        data_iter = get_iterator_k_split(batch, get_num_microbatches())
+        num_microbatches = divide(batch_size * 2, self.cfg.dpo.log_prob_forward_micro_batch_size)
+        data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only=True)
 
         fwd_bwd_function = get_forward_backward_func()
@@ -415,7 +418,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             forward_step_func=self.get_forward_output_and_loss_func(logprobs_only=True),
             data_iterator=data_iter,
             model=self.model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=seq_length,
             micro_batch_size=self.cfg.dpo.log_prob_forward_micro_batch_size,
