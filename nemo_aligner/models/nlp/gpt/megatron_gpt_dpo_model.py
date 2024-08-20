@@ -407,7 +407,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         seq_length = batch["chosen"].shape[1]
         batch_size = batch["chosen"].shape[0]
 
-        assert (batch_size * 2) % self.cfg.dpo.log_prob_forward_micro_batch_size == 0, f"batch_size ({batch_size}) * 2 is not divisble by log_prob_forward_micro_batch_size ({self.cfg.dpo.log_prob_forward_micro_batch_size})."
+        assert (
+            batch_size * 2
+        ) % self.cfg.dpo.log_prob_forward_micro_batch_size == 0, f"batch_size ({batch_size}) * 2 is not divisble by log_prob_forward_micro_batch_size ({self.cfg.dpo.log_prob_forward_micro_batch_size})."
         num_microbatches = int(batch_size * 2 // self.cfg.dpo.log_prob_forward_micro_batch_size)
         data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only=True)
