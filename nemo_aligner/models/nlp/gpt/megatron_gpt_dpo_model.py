@@ -19,6 +19,7 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -407,10 +408,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         seq_length = batch["chosen"].shape[1]
         batch_size = batch["chosen"].shape[0]
 
-        assert (
-            batch_size * 2
-        ) % self.cfg.dpo.log_prob_forward_micro_batch_size == 0, f"batch_size ({batch_size}) * 2 is not divisble by log_prob_forward_micro_batch_size ({self.cfg.dpo.log_prob_forward_micro_batch_size})."
-        num_microbatches = int(batch_size * 2 // self.cfg.dpo.log_prob_forward_micro_batch_size)
+        num_microbatches = divide(batch_size * 2, self.cfg.dpo.log_prob_forward_micro_batch_size)
         data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only=True)
 
