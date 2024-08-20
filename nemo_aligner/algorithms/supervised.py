@@ -204,6 +204,8 @@ class SupervisedTrainer:
                 self.train_dataloader, initial=self.step, total=self.max_steps, leave=True, desc="Training steps"
             )
 
+            self.model.prepare_for_training()
+
             for _, batch in zip(loop_iter, global_pbar):
 
                 self.timer.start("train_step_time")
