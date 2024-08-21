@@ -17,21 +17,25 @@ import warnings
 from typing import List, Tuple, Union
 
 import torch
-from megatron.core.num_microbatches_calculator import get_num_microbatches
+from apex.transformer.pipeline_parallel.utils import (
+    _reconfigure_microbatch_calculator as reconfigure_num_microbatches_calculator,
+)
+from apex.transformer.pipeline_parallel.utils import get_num_microbatches
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel, get_specs
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
     get_ltor_masks_and_position_ids,
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo.core.optim.distributed_adam import _str_to_dtype as str_to_dtype
 from nemo.utils import logging
-from nemo.utils.dtype import str_to_dtype
 from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterface
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from nemo_aligner.utils import parallel_state
@@ -92,7 +96,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         model = GPTRewardModel(
             config=self.transformer_config,
-            transformer_layer_spec=get_specs(self.spec_name, self.transformer_config.num_moe_experts),
+            transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(),
             vocab_size=self.cfg.get("override_vocab_size", self.padded_vocab_size),
             max_sequence_length=self.cfg.get("encoder_seq_length", 512),
             pre_process=pre_process,
@@ -102,7 +106,6 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             position_embedding_type=self.cfg.get("position_embedding_type", "learned_absolute"),
             rotary_percent=self.cfg.get("rotary_percentage", 1.0),
             seq_len_interpolation_factor=self.cfg.get("seq_len_interpolation_factor", None),
-            rotary_base=self.cfg.get("rotary_base", 10000),
             output_sequence=self.cfg.get("output_sequence", False),
             use_avg_pool=self.cfg.get("use_avg_pool", False),
             head_dtype=head_dtype,
@@ -321,23 +324,22 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
         """
         # mcore uses distributed checkpointing
         # FSDP supports the lagecy checkpointing or torch-FSDP-native sharded checkpointing
-        if not self.use_fsdp:
-            if "state_dict" in checkpoint and checkpoint["state_dict"]:
-                for index, module in enumerate(self.get_model_module_list()):
-                    if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-                        checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
-                    else:
-                        checkpoint_state_dict = checkpoint["state_dict"]
-                    # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
-                    checkpoint_state_dict = {
-                        key.replace("model.", ""): checkpoint_state_dict.pop(key)
-                        for key in list(checkpoint_state_dict.keys())
-                    }
-                    module.load_state_dict(checkpoint_state_dict, strict=False)
-            else:
-                # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
-                # see NLPModel.on_load_checkpoint
-                checkpoint["state_dict"] = {}
+        if "state_dict" in checkpoint and checkpoint["state_dict"]:
+            for index, module in enumerate(self.get_gpt_module_list()):
+                if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+                    checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
+                else:
+                    checkpoint_state_dict = checkpoint["state_dict"]
+                # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
+                checkpoint_state_dict = {
+                    key.replace("model.", ""): checkpoint_state_dict.pop(key)
+                    for key in list(checkpoint_state_dict.keys())
+                }
+                module.load_state_dict(checkpoint_state_dict, strict=False)
+            # else:
+            #     # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
+            #     # see NLPModel.on_load_checkpoint
+            #     checkpoint["state_dict"] = {}
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us

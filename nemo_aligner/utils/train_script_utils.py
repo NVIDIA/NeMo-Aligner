@@ -102,7 +102,7 @@ def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
     disable_data_callbacks(ptl_model, train_dataloader, train_ds)
 
     call._call_setup_hook(ptl_trainer)
-    call._call_configure_model(ptl_trainer)
+    # call._call_configure_model(ptl_trainer)
     ptl_trainer.strategy.setup(ptl_trainer)
     call._call_callback_hooks(ptl_trainer, "on_fit_start")
     call._call_lightning_module_hook(ptl_trainer, "on_fit_start")

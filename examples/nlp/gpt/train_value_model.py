@@ -81,8 +81,9 @@ def main(cfg) -> None:
         MegatronGPTCriticModel,
         cfg.model,
         trainer,
-        strict=True,  # TODO: change back to True
+        strict=False,  # TODO: change back to True
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
+        load_base_model_only=True,
     )
 
     # pull values from checkpoint
@@ -136,17 +137,7 @@ def main(cfg) -> None:
             mask = len(prompt) * [0] + b["masks"]
 
             value = [values_padding] * len(prompt) + [
-                [
-                    -100,
-                    -100,
-                    -100,
-                    -100,
-                    score["helpfulness"],
-                    score["correctness"],
-                    score["coherence"],
-                    -100,
-                    -100,
-                ]
+                [-100, -100, -100, -100, score["helpfulness"], score["correctness"], score["coherence"], -100, -100,]
                 for score in b["values"]
             ]
 
