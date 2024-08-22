@@ -92,7 +92,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         model = GPTRewardModel(
             config=self.transformer_config,
-            transformer_layer_spec=get_specs(self.spec_name, self.transformer_config.num_moe_experts),
+            transformer_layer_spec=get_specs(self.spec_name, self.transformer_config),
             vocab_size=self.cfg.get("override_vocab_size", self.padded_vocab_size),
             max_sequence_length=self.cfg.get("encoder_seq_length", 512),
             pre_process=pre_process,
