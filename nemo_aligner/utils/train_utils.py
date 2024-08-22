@@ -17,7 +17,7 @@ mostly adapted from https://github.com/NVIDIA/NeMo/blob/8c061debd05837148e86fac1
 """
 from functools import partial
 
-# from megatron.core.num_microbatches_calculator import get_current_global_batch_size
+from megatron.core.num_microbatches_calculator import get_current_global_batch_size
 from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
 
 from nemo.collections.nlp.modules.common.megatron.clip_grads import (
@@ -38,7 +38,7 @@ def set_sync_funcs(ptl_model, forward_only):
         param_sync_func = ptl_model.sync_overlap_parameters
 
     # pipeline schedules will get these from ptl_model.model.config
-    for module in ptl_model.get_gpt_module_list():
+    for module in ptl_model.get_model_module_list():
         module.config.no_sync_func = no_sync_func
         module.config.grad_sync_func = grad_sync_func
         module.config.param_sync_func = param_sync_func
@@ -51,11 +51,10 @@ def prepare_for_training_step(ptl_model, zero_grad=True):
         ptl_model.initialize_ub_func()
 
     if ptl_model.rampup_batch_size:
-        pass
-        # current_global_batch_size = get_current_global_batch_size()
+        current_global_batch_size = get_current_global_batch_size()
         # do validation and save the checkpoint when gbs is changed
-        # if ptl_model.prev_global_batch_size != current_global_batch_size and ptl_model.prev_global_batch_size:
-        #     ptl_model.trainer.should_stop = True
+        if ptl_model.prev_global_batch_size != current_global_batch_size and ptl_model.prev_global_batch_size:
+            ptl_model.trainer.should_stop = True
 
     if zero_grad:
         # we zero grads here because we also call backward in the megatron-core fwd/bwd functions
