@@ -99,6 +99,3 @@ ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12.4/compat/lib.real/
 #             TRT-LLM allows. This installation must follow TRT-LLM and is
 #             only necessary when NeMo 2.0.0rc1 is installed with TRT-LLM v10.
 RUN pip install --upgrade-strategy only-if-needed nvidia-modelopt==0.13.0
-
-# WAR(0.4.0): Adds NeMo PR to enable llama3.1 rope scaling
-RUN git -C /opt/NeMo am </opt/NeMo-Aligner/0001-add-rope-scaling-and-convertor.patch
