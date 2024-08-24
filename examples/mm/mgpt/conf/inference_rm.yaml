@@ -1,0 +1,31 @@
+trainer:
+  num_nodes: 1
+  devices: 1
+  accelerator: gpu
+  logger: False # logger provided by exp_manager
+  precision: bf16 # 16, 32, or bf16
+
+inference:
+  micro_batch_size: 1
+  port: 5555 # the port number for the inference server
+  strategy:
+       _target_: nemo_aligner.utils.text_generation_utils.MGPTModelTextGenerationStrategy
+
+#rm_model_file: /results/neva-15b-reward/checkpoints/megatron_gpt.nemo
+
+model:
+  tensor_model_parallel_size: 1
+  pipeline_model_parallel_size: 1
+  sequence_parallel: False
+  activations_checkpoint_granularity: null
+  activations_checkpoint_method: null
+  precision: ${trainer.precision}
+
+  reward_standardization:
+    enable: False
+    mean: null
+    std: null 
+  
+  regression:
+    merge_attributes: False # whether to merge attribute values into a scalar
+    attribute_weights: null # apply these weights to each attributes when merging them into a scalar

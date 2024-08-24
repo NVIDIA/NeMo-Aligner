@@ -36,6 +36,7 @@ def run_rm_or_critic_inference(infer_fn, inputs):
 
     sequence_lengths = inputs.pop("sequence_lengths", None)
     add_EOS = inputs.pop("add_EOS", None)
+    media = inputs.pop("media", None)
 
     assert sentences is not None or tokens is not None, "Both sentences and tokens cannot be None."
 
@@ -45,6 +46,7 @@ def run_rm_or_critic_inference(infer_fn, inputs):
     sentences, extra_sentences = pad_input(sentences, dp_size)
     tokens, extra_tokens = pad_input(tokens, dp_size)
     sequence_lengths, extra_sequence_lengths = pad_input(sequence_lengths, dp_size)
+    media, extra_media = pad_input(media, dp_size)
 
     if add_EOS is not None:
         add_EOS = add_EOS[0]
@@ -56,7 +58,7 @@ def run_rm_or_critic_inference(infer_fn, inputs):
         assert extra_sequence_lengths == extra
 
     try:
-        *list_outputs, exceeded = infer_fn(inputs=inputs, sequence_length=sequence_lengths, add_EOS=add_EOS)
+        *list_outputs, exceeded = infer_fn(inputs=inputs, sequence_length=sequence_lengths, add_EOS=add_EOS, media=media)
 
         processed_outputs = []
 
@@ -85,6 +87,7 @@ class RewardModelCallable:
             Tensor(name="tokens", shape=(-1,), dtype=np.int64, optional=True),
             Tensor(name="sequence_lengths", shape=(-1,), dtype=np.int64, optional=True),
             Tensor(name="add_EOS", shape=(1,), dtype=np.bool_, optional=True),
+            Tensor(name="media", shape=(-1,), dtype=bytes, optional=True),
         )
         self.outputs = (
             Tensor(name="rewards", shape=(1,), dtype=np.float32),

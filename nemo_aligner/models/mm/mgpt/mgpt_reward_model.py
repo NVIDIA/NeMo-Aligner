@@ -103,6 +103,7 @@ class MultimodalGPTRewardModel(MCoreNevaModel):
         inference_params=None,
     ):
         if parallel_state.is_pipeline_first_stage(ignore_virtual=True):
+            print("Setting media", media)
             self.embedding.word_embeddings.set_media(media)
         # TODO(geshen): hack to get the hidden states
         # and for mcore to not call the output layer

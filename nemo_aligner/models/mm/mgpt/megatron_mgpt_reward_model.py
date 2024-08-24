@@ -48,6 +48,11 @@ from nemo_aligner.utils.train_utils import (
     set_train,
 )
 
+import base64
+from io import BytesIO
+from PIL import Image
+
+
 class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrable):
     """
     Megatron MGPT Reward Model Training.
@@ -145,6 +150,8 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
                 if parallel_state.is_pipeline_last_stage():
                     required_keys.update(("chosen_length", "rejected_length", "loss_mask"))
 
+            #print("required_keys", required_keys)
+
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
             # only do the torch.cat if it's available
@@ -174,7 +181,9 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
                 "media": media,
             }
 
+            #print("forward_args", forward_args)
             output_tensor = model(**forward_args)
+            #print("output_tensor", output_tensor)
 
             # in this nemo version the model and autocast dtypes are not synced
             # so we need to explicitly cast it
@@ -374,18 +383,44 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
     def infer(
         self,
         inputs: Union[List[str], Tuple[torch.Tensor, torch.Tensor]],
+        sequence_length: List[int] = None,
         add_BOS: bool = False,
         add_EOS: bool = False,
+        media: Union[List[str], torch.Tensor] = None,
     ):
         if isinstance(inputs, tuple):
             context_tokens_tensor, context_length_tensor = inputs
         elif isinstance(inputs, list):
             assert all(isinstance(item, str) for item in inputs), "list must contain all strings in infer function"
-            context_tokens_tensor, context_length_tensor = tokenize_batch(
-                inputs, self.tokenizer, self.cfg.encoder_seq_length, add_BOS=add_BOS, add_EOS=add_EOS,
+            context_tokens_tensor, context_length_tensor, exceeded = \
+                self.strategy.tokenize_batch(inputs, self.cfg.encoder_seq_length, add_BOS=add_BOS, add_EOS=add_EOS,
             )
+
+            #context_tokens_tensor, context_length_tensor, exceeded = \
+            #    tokenize_batch(self.tokenizer, inputs, self.cfg.encoder_seq_length, add_BOS=add_BOS, add_EOS=add_EOS)
         else:
             raise NotImplementedError(f"{type(inputs)=} is not supported in infer function")
+
+        #print("context_tokens_tensor", context_tokens_tensor.cpu().numpy().tolist())
+        #print("context_length_tensor", context_length_tensor)
+        #print("media", media)
+        #print("inputs", inputs) 
+
+        if isinstance(media, list):
+            processed_media = []
+            for base64_string in media:
+                #print("base64_string", base64_string)
+                # Decode the base64 string
+                img_data = base64.b64decode(base64_string[0])       # Why list?
+                # Open the image using PIL
+                img = Image.open(BytesIO(img_data))
+                # Append to image_list
+                processed_media.append(self.strategy._image_processor(img))
+
+            #print("Muli-image support is not implemented yet")
+            #media = torch.stack(processed_media)
+            media = processed_media[0]
+
 
         context_tokens_tensor = context_tokens_tensor.cuda()
         context_length_tensor = context_length_tensor.cuda()
@@ -399,7 +434,9 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
             self.cfg.get("eod_mask_loss", False),
         )
         attention_mask = attention_mask.expand(inference_batch_size, -1, -1, -1)
-        inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask]
+        media_tensor = media.cuda() if media is not None else None
+        inputs = [context_tokens_tensor, context_length_tensor, position_ids, attention_mask, media_tensor]
+        #print("At infer the media tensor is", media_tensor.shape)
 
         # if inference batch size is smaller than forward mbs run it at the lower batch size
         forward_micro_batch_size = min(inference_batch_size, self.forward_micro_batch_size)
@@ -417,7 +454,14 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
                 rewards = (rewards - self.rew_mean) / self.rew_std
 
         rewards = broadcast_2d_tensor_within_pp(rewards)
-        return rewards
+
+        rewards_list = gather_tensor(
+            rewards, dst=parallel_state.get_data_parallel_src_rank(), group=parallel_state.get_data_parallel_group()
+        )
+        #print("rewards_list", rewards_list)
+        #print("exceeded", exceeded)
+
+        return rewards_list, exceeded
 
     def forward_step(self, data_iter, micro_batch_size, sequence_length, num_microbatches):
         set_sync_funcs(self, forward_only=True)
@@ -438,11 +482,14 @@ class MegatronMGPTRewardModel(MultimodalGPTModel, SupervisedInterface, Inferrabl
 
     def get_forward_output_only_func(self):
         def fwd_output_only_func(batch, model):
-            (tokens, length, position_ids, attention_mask,) = next(batch)
+            (tokens, length, position_ids, attention_mask, media) = next(batch)
             tokens = tokens.cuda()
             position_ids = position_ids.cuda()
             attention_mask = attention_mask.cuda()
-            output_tensor = model(tokens, length, position_ids, attention_mask)
+            media = media.cuda() if media is not None else None
+            #print("At get_forward_output_only_func the media tensor is", media.shape)
+            #print("Model is", model)
+            output_tensor = model(tokens, length, position_ids, attention_mask, media=media)
 
             if not parallel_state.is_pipeline_last_stage():
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Custom datasets for Multimodal training"""
+import gc
 import os
 import re
 import copy
@@ -62,6 +63,7 @@ def maybe_process_prompt_and_media(
         is_multimodal: bool = True
     ):
     if "image" in record:
+        logging.warning(f"Processing image: {record['image']}")
         if not isinstance(record['image'], list):
             record['image'] = [record['image']]
         images = []
@@ -701,4 +703,6 @@ class MultimodalRegressionRewardModelDataset(MultimodalRewardModelDataset):
             "loss_mask": loss_mask,
             "labels": label_tensor,
         }
+
+        gc.collect()
         return output

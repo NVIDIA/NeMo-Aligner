@@ -70,6 +70,8 @@ class MegatronMGPTRegressionRewardModel(MegatronMGPTRewardModel):
                 "media": batch["media"],
             }
 
+            #print("batch['inputs'][0]: ", batch["inputs"][0].cpu().numpy().tolist())  
+            #print("batch['inputs'].shape: ", batch["inputs"].shape) 
             output_tensor = model(**forward_args)
 
             # in this nemo version the model and autocast dtypes are not synced
@@ -123,6 +125,11 @@ class MegatronMGPTRegressionRewardModel(MegatronMGPTRewardModel):
         squared_diff = (output_tensor - label_tensor) ** 2 * mask
         # Calculate the mean of the masked squared differences
         loss = squared_diff.sum() / num_valid_attributes
+
+
+        #print(f"Loss: {loss}")
+        #print(f"Output tensor: {output_tensor}")
+        #print(f"Label tensor: {label_tensor}")
         return loss
 
     def get_loss_and_metrics(self, batch, forward_only):

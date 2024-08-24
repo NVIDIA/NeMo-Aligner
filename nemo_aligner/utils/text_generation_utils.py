@@ -100,6 +100,9 @@ def tokenize_batch(tokenizer, sentences, max_len, add_BOS, add_EOS=False):
         Tuple[torch.Tensor], the tokenized and padded torch tensor and the token context length tensor.
     """
 
+    # print(f"sentences: {sentences}")
+    
+    
     def tokenize(sentence):
         output = tokenizer.text_to_ids(sentence)
 
@@ -200,6 +203,7 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
             Tuple[torch.Tensor], the tokenized and padded torch tensor and the token context length tensor.
         """
         tokenizer = self.tokenizer
+
         def tokenize(sentence):
             output = tokenizer.text_to_ids(sentence)
 
@@ -220,8 +224,17 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
                 logging.warning(f"max seq len of {max_len} exceeded, chunking")
                 exceeded[i] = True
 
+        context_tokens[0] = context_tokens[0] #+ [3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
         context_tokens = [x[:max_len] for x in context_tokens]
-        context_tokens, context_lengths = nemo_pad_batch(context_tokens, tokenizer.eos_id, max_len)
+
+        context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.eos_id) #, max_len)
+        # This pads a lot more tokens, gets inference slower and scores get slightly worse
+        # note, there's weirdness, for some reason  nemo_pad_batch adds more tokens than max_len, so len(context_tokens[0] is used to hack around it at inference time
+        #context_tokens, context_lengths = nemo_pad_batch(context_tokens, tokenizer.eos_id, max_len - len(context_tokens[0]))
+        #print(f"context_tokens: {context_tokens}")
+        #print(f"max_len: {max_len}")
+        #print(f"context_tokens.shape: {context_tokens.shape}")
+
         context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
         context_length_tensor = torch.cuda.LongTensor(context_lengths)
         return context_tokens_tensor, context_length_tensor, exceeded
@@ -235,7 +248,9 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
                 prompt_with_media.append(self.preprocess_media_tokens(p))
         else:
             raise ValueError(f'{type(prompt)} is not supported for tokenization')
-        return self._tokenize_batch(prompt_with_media, max_len, add_BOS, add_EOS=False)
+
+        #print("Very strange hardcoded add_EOS=False")
+        return self._tokenize_batch(prompt_with_media, max_len, add_BOS, add_EOS)
 
     def _image_processor(self, maybe_image_path):
         model = self.model
@@ -247,13 +262,17 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
         processor = (
             model.model.module.image_processor if hasattr(model.model, "module") else model.model.image_processor
         )
+        #print("model:", model)
         image = process_image(processor, image, model.cfg.data.image_aspect_ratio)
+        #print(f"image (after process_image): {image}")
         if model.cfg.precision in [16, '16', '16-mixed']:
             media = image.type(torch.float16)
         elif model.cfg.precision in [32, '32', '32-true']:
             media = image.type(torch.float32)
         else:
             media = image.type(torch.bfloat16)
+
+        #print(f"media: {media} (after type conversion)")
 
         return media.unsqueeze(dim=0).unsqueeze(dim=0).unsqueeze(dim=0)
     
@@ -274,6 +293,8 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
         Returns:
         - str: The processed sources dictionary after applying multimodal preprocessing steps.
         """
+        #cprint(f"conversation: {conversation}")
+
         if media_type == 'image':
             default_token = self.image_token
         elif media_type == 'video':
@@ -292,13 +313,17 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
             replace_token = self.image_patch_token * (num_patches - 2)
 
         replace_token = self.im_start_token + replace_token + self.im_end_token
+        #print(f"default_token: {default_token}, replace_token: {replace_token}")
+        #print(f"original conversation: {conversation}")
         conversation = conversation.replace(default_token, replace_token)
+        #print(f"processed conversation: {conversation}")
 
         return conversation
     
     def tokenize_batch(self, prompt, max_len, add_BOS, add_EOS=False):
-        context_tokens_tensor, context_length_tensor, _ = self.process_prompt(prompt, max_len, add_BOS, add_EOS=False)
-        return context_tokens_tensor, context_length_tensor
+        #print("Very strange hardcoded add_EOS=False")
+        context_tokens_tensor, context_length_tensor, exceeded = self.process_prompt(prompt, max_len, add_BOS, add_EOS)
+        return context_tokens_tensor, context_length_tensor, exceeded
 
     def prepare_batch_at_step(
         self,

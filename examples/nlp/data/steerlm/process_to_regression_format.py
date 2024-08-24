@@ -55,7 +55,7 @@ def parse(s):
 
 
 def process_sample(line, fout):
-    text = SYSTEM_PROMPT_TEMPLATE.format(value=SYSTEM_PROMPT)
+    text = SYSTEM_PROMPT_TEMPLATE.format(value="") #SYSTEM_PROMPT)
     conversations = line["conversations"]
     user = line["mask"]
     for turn in conversations:
