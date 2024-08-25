@@ -3,6 +3,7 @@ defaults:
 
 train_path: null
 validation_path: null
+all_prompt_path: null
 
 trainer:
   num_nodes: 1

@@ -42,21 +42,63 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 """Script to start SFT training"""
 
+SYSTEM_PROMPT = (
+    "A chat between a curious user and an artificial intelligence assistant. "
+    "The assistant gives helpful, detailed, and polite answers to the user's questions."
+)
+SYSTEM_PROMPT_TEMPLATE = f"<extra_id_0>System\n{SYSTEM_PROMPT}\n"
+
+USER_TURN_TEMPLATE = "<extra_id_1>User\n{value}\n"
+
+# had to delete the value here because we concat the prompts
+ASSISTANT_TURN_TEMPLATE_FINAL = "<extra_id_1>Assistant\n"
+
+ASSISTANT_TURN_TEMPLATE = "<extra_id_1>Assistant\n{value}\n"
+
+
+# TODO: what to do with this?
+LABEL_PREFIX = "<extra_id_2>"
+
+
+def process_sample(conversations):
+    text = SYSTEM_PROMPT_TEMPLATE.format(value=SYSTEM_PROMPT)
+
+    last_turn_is_user = False
+    for turn in conversations:
+        last_turn_is_user = False
+        value = turn["text"]
+        if turn["from"] in {"User", "user"}:
+            text += USER_TURN_TEMPLATE.format(value=value)
+            last_turn_is_user = True
+        else:
+            text += ASSISTANT_TURN_TEMPLATE.format(value=value)
+
+    assert last_turn_is_user
+    text += ASSISTANT_TURN_TEMPLATE_FINAL
+    return text
+
 
 @dataclass
 class ValueDataset:
     path_to_jsonl: str
+    path_to_prompts: str
 
     def __post_init__(self):
         assert os.path.exists(self.path_to_jsonl), f"{self.path_to_jsonl=} needs to exist"
         with jsonlines.open(self.path_to_jsonl) as reader:
             self.data = list(iter(reader))
 
+        with jsonlines.open(self.path_to_prompts) as reader:
+            self.prompts = list(iter(reader))
+
+        self.prompts = {int(k): v for dictionary in self.prompts for k, v in dictionary.items()}
+
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
-        return self.data[idx]
+        prompt = process_sample(self.prompts[self.data[idx]["prompt_id"]])
+        return self.data[idx] | {"prompt": prompt}
 
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
@@ -99,55 +141,34 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_ds = ValueDataset(cfg.train_path)
-    validation_ds = ValueDataset(cfg.validation_path)
+    train_ds = ValueDataset(cfg.train_path, cfg.all_prompt_path)
+    validation_ds = ValueDataset(cfg.validation_path, cfg.all_prompt_path)
 
     eos_id = ptl_model.tokenizer.eos_id
 
     tokenizer = ptl_model.tokenizer
 
-    SYSTEM_PROMPT = (
-        "A chat between a curious user and an artificial intelligence assistant. "
-        "The assistant gives helpful, detailed, and polite answers to the user's questions."
-    )
-    SYSTEM_PROMPT_TEMPLATE = f"<extra_id_0>System\n{SYSTEM_PROMPT}\n"
-
-    USER_TURN_TEMPLATE = "<extra_id_1>User\n{value}\n"
-
-    # had to delete the value here because we concat the prompts
-    ASSISTANT_TURN_TEMPLATE = "<extra_id_1>Assistant\n"
-
-    # TODO: what to do with this?
-    LABEL_PREFIX = "<extra_id_2>"
-
     def collate_fn(batch, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
-
         tokens = []
-        masks = []
         values = []
 
-        values_padding = [-100] * 9
-
         for b in batch:
-            assert len(b["masks"]) == len(b["values"]) == len(b["token_ids"])
-
-            prompt = SYSTEM_PROMPT_TEMPLATE + USER_TURN_TEMPLATE.format(value=b["prompt"]) + ASSISTANT_TURN_TEMPLATE
             prompt = tokenizer.text_to_ids(b["prompt"])
-            response = prompt + b["token_ids"]
-            mask = len(prompt) * [0] + b["masks"]
 
-            value = [values_padding] * len(prompt) + [
-                [-100, -100, -100, -100, score["helpfulness"], score["correctness"], score["coherence"], -100, -100,]
-                for score in b["values"]
-            ]
+            response = prompt + b["token_ids"]
+            value = [[-100 for _ in range(9)] for _ in range(len(response))]
+
+            sparse_values = {int(k): v for k, v in b["values"].items()}
+
+            for j, v in enumerate(value[len(prompt) :]):
+                if j in sparse_values:
+                    v[4], v[5], v[6] = sparse_values[j]
 
             tokens.append(torch.as_tensor(response, dtype=torch.long))
-            masks.append(torch.as_tensor(mask, dtype=torch.float32))
             values.append(torch.as_tensor(value, dtype=torch.float32))
 
         tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
         scores = torch.nn.utils.rnn.pad_sequence(values, batch_first=True, padding_value=-100)
-        masks = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True, padding_value=0)
 
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(tokens, eos_id, False, True, False,)
 
@@ -159,7 +180,6 @@ def main(cfg) -> None:
         output = {
             "tokens": tokens,
             "scores": scores,
-            "mask": masks,
             "attention_mask": attention_mask,
             "position_ids": position_ids,
         }

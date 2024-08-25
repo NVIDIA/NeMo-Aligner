@@ -142,7 +142,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
                     required_keys.update(("tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("scores", "mask"))
+                    required_keys.update(("scores",))
 
             batch = {
                 key: val.cuda(non_blocking=True) if key in required_keys and isinstance(val, torch.Tensor) else None
@@ -162,10 +162,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
             def loss_func(curr_values):
                 scores = batch["scores"]
-                sequence_mask = batch["mask"]
-
-                # mask out the prefices we don't want and scores we don't want
-                mask = (scores != -100) & sequence_mask.bool().unsqueeze(-1)
+                mask = scores != -100
 
                 loss = torch.nn.functional.huber_loss(curr_values, scores, reduction="none", delta=self.clip_val)
 
