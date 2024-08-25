@@ -39,6 +39,7 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
+from datasets import load_dataset
 
 """Script to start SFT training"""
 
@@ -85,8 +86,7 @@ class ValueDataset:
 
     def __post_init__(self):
         assert os.path.exists(self.path_to_jsonl), f"{self.path_to_jsonl=} needs to exist"
-        with jsonlines.open(self.path_to_jsonl) as reader:
-            self.data = list(iter(reader))
+        self.data = load_dataset("json", data_files=[self.path_to_jsonl], cache_dir="/tmp")['train']
 
         with jsonlines.open(self.path_to_prompts) as reader:
             self.prompts = list(iter(reader))
