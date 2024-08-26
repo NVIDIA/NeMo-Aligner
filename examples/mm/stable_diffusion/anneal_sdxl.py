@@ -12,19 +12,62 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+from copy import deepcopy
+from functools import partial
+
+import numpy as np
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from megatron.core import parallel_state
+from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
-from copy import deepcopy
-import os
-from functools import partial
-from torch import nn
-import numpy as np
-from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
+from packaging.version import Version
 from PIL import Image
+from torch import nn
+
+# checkpointing
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+    CheckpointImpl,
+    apply_activation_checkpointing,
+    checkpoint_wrapper,
+)
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion_engine import (
+    DiffusionEngine,
+    MegatronDiffusionEngine,
+)
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoencoder import (
+    AutoencoderKL,
+    AutoencoderKLInferenceWrapper,
+)
+from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
+    LatentDiffusion,
+    MegatronLatentDiffusion,
+)
+from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model import (
+    AttnBlock,
+    Decoder,
+    Encoder,
+    ResnetBlock,
+)
+from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel import (
+    ResBlock,
+    SpatialTransformer,
+    TimestepEmbedSequential,
+    UNetModel,
+)
+from nemo.collections.multimodal.modules.stable_diffusion.encoders.modules import (
+    FrozenCLIPEmbedder,
+    FrozenOpenCLIPEmbedder,
+    FrozenOpenCLIPEmbedder2,
+)
+from nemo.collections.nlp.modules.common.megatron.adapters.parallel_adapters import ParallelLinearAdapter
+from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
+from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy, NLPFSDPStrategy
 
 # from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -34,10 +77,9 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.mm import text_webdataset
 from nemo_aligner.data.nlp.builders import build_dataloader
-from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
+from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel, get_reward_model
 from nemo_aligner.models.mm.stable_diffusion.megatron_sdxl_draftp_model import MegatronSDXLDRaFTPModel
 from nemo_aligner.utils.distributed import Timer
-from packaging.version import Version
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -48,59 +90,54 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
     temp_pop_from_config,
 )
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm import (
-    LatentDiffusion,
-    MegatronLatentDiffusion,
-)
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.diffusion_engine import MegatronDiffusionEngine, DiffusionEngine
-from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
-from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy, NLPFSDPStrategy
-from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.openaimodel import UNetModel, ResBlock, SpatialTransformer, TimestepEmbedSequential
-from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.autoencoder import AutoencoderKL, AutoencoderKLInferenceWrapper
-from nemo.collections.multimodal.modules.stable_diffusion.diffusionmodules.model import Encoder, Decoder, ResnetBlock, AttnBlock
-from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel
-from nemo.collections.multimodal.modules.stable_diffusion.encoders.modules import FrozenOpenCLIPEmbedder, FrozenOpenCLIPEmbedder2, FrozenCLIPEmbedder
-from nemo.collections.nlp.modules.common.megatron.adapters.parallel_adapters import ParallelLinearAdapter
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-
-# checkpointing
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (checkpoint_wrapper, CheckpointImpl, apply_activation_checkpointing)
 
 mp.set_start_method("spawn", force=True)
 
+
 class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
     """Builder for SD model Trainer with overrides."""
+
     def _training_strategy(self) -> NLPDDPStrategy:
         """
         Returns a DDP or a FSDP strategy passed to Trainer.strategy.  Copied from `sd_xl_train.py`
         """
-        if self.cfg.model.get('fsdp', False):
+        if self.cfg.model.get("fsdp", False):
             logging.info("FSDP.")
             assert (
-                not self.cfg.model.optim.get('name') == 'distributed_fused_adam'
-            ), 'Distributed optimizer cannot be used with FSDP.'
-            if self.cfg.model.get('megatron_amp_O2', False):
-                logging.info('Torch FSDP is not compatible with O2 precision recipe. Setting O2 `False`.')
+                not self.cfg.model.optim.get("name") == "distributed_fused_adam"
+            ), "Distributed optimizer cannot be used with FSDP."
+            if self.cfg.model.get("megatron_amp_O2", False):
+                logging.info("Torch FSDP is not compatible with O2 precision recipe. Setting O2 `False`.")
                 self.cfg.model.megatron_amp_O2 = False
-            
+
             # Check if its a full-finetuning or PEFT
             return NLPFSDPStrategy(
-                limit_all_gathers=self.cfg.model.get('fsdp_limit_all_gathers', True),
-                sharding_strategy=self.cfg.model.get('fsdp_sharding_strategy', 'full'),
-                cpu_offload=self.cfg.model.get('fsdp_cpu_offload', False),  # offload on is not supported
-                grad_reduce_dtype=self.cfg.model.get('fsdp_grad_reduce_dtype', 32),
+                limit_all_gathers=self.cfg.model.get("fsdp_limit_all_gathers", True),
+                sharding_strategy=self.cfg.model.get("fsdp_sharding_strategy", "full"),
+                cpu_offload=self.cfg.model.get("fsdp_cpu_offload", False),  # offload on is not supported
+                grad_reduce_dtype=self.cfg.model.get("fsdp_grad_reduce_dtype", 32),
                 precision=self.cfg.trainer.precision,
                 ## nn Sequential is supposed to capture the `t_embed`, `label_emb`, `out` layers in the unet
-                extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,ResnetBlock,AttnBlock,nn.Sequential,\
-                                        MegatronCLIPRewardModel,FrozenOpenCLIPEmbedder,FrozenOpenCLIPEmbedder2,FrozenCLIPEmbedder,\
-                                        ParallelLinearAdapter}, 
+                extra_fsdp_wrap_module={
+                    UNetModel,
+                    TimestepEmbedSequential,
+                    Decoder,
+                    ResnetBlock,
+                    AttnBlock,
+                    nn.Sequential,
+                    MegatronCLIPRewardModel,
+                    FrozenOpenCLIPEmbedder,
+                    FrozenOpenCLIPEmbedder2,
+                    FrozenCLIPEmbedder,
+                    ParallelLinearAdapter,
+                },
                 # extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,ResnetBlock,AttnBlock,SpatialTransformer,ResBlock,\
-                use_orig_params=False, #self.cfg.model.inductor,
-                set_buffer_dtype=self.cfg.get('fsdp_set_buffer_dtype', None),
+                use_orig_params=False,  # self.cfg.model.inductor,
+                set_buffer_dtype=self.cfg.get("fsdp_set_buffer_dtype", None),
             )
 
         return NLPDDPStrategy(
-            no_ddp_communication_hook=(not self.cfg.model.get('ddp_overlap')),
+            no_ddp_communication_hook=(not self.cfg.model.get("ddp_overlap")),
             gradient_as_bucket_view=self.cfg.model.gradient_as_bucket_view,
             find_unused_parameters=False,
         )
@@ -113,7 +150,7 @@ def resolve_and_create_trainer(cfg, pop_trainer_key):
     OmegaConf.resolve(cfg)
     with temp_pop_from_config(cfg.trainer, pop_trainer_key):
         return MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
-    
+
 
 @hydra_runner(config_path="conf", config_name="draftp_sdxl")
 def main(cfg) -> None:
@@ -122,7 +159,7 @@ def main(cfg) -> None:
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
     # set cuda device for each process
-    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
 
     # turn off wandb logging
@@ -142,7 +179,7 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
     # Instatiating the model here
     ptl_model = MegatronSDXLDRaFTPModel(cfg.model, trainer).to(torch.cuda.current_device())
-    init_peft(ptl_model, cfg.model)   # init peft 
+    init_peft(ptl_model, cfg.model)  # init peft
 
     trainer_restore_path = trainer.ckpt_path
 
@@ -170,15 +207,19 @@ def main(cfg) -> None:
         load_gbs=True,
     )
     init_using_ptl(trainer, ptl_model, val_dataloader, validation_ds)
-    
-    if cfg.model.get('activation_checkpointing', False):
+
+    if cfg.model.get("activation_checkpointing", False):
         # call activation checkpointing here
         # checkpoint wrapper
         logging.info("Applying activation checkpointing on UNet and Decoder.")
         non_reentrant_wrapper = partial(checkpoint_wrapper, checkpoint_impl=CheckpointImpl.NO_REENTRANT)
+
         def checkpoint_check_fn(module):
             return isinstance(module, (Decoder, UNetModel, MegatronCLIPRewardModel))
-        apply_activation_checkpointing(ptl_model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=checkpoint_check_fn)
+
+        apply_activation_checkpointing(
+            ptl_model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=checkpoint_check_fn
+        )
 
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
@@ -189,7 +230,7 @@ def main(cfg) -> None:
     torch.distributed.barrier()
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:03:55:00"))   # save a model just before 4 hours
+    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:03:55:00"))  # save a model just before 4 hours
 
     draft_p_trainer = SupervisedTrainer(
         cfg=cfg.trainer.draftp_sd,
@@ -213,10 +254,10 @@ def main(cfg) -> None:
     if cfg.get("prompt") is not None:
         logging.info(f"Override val dataset with custom prompt: {cfg.prompt}")
         val_dataloader = [[cfg.prompt]]
-    
+
     wt_types = cfg.get("weight_type", None)
     if wt_types is None:
-        wt_types = ['base', 'draft', 'linear', 'power_2', 'power_4', 'step_0.6']
+        wt_types = ["base", "draft", "linear", "power_2", "power_4", "step_0.6"]
     else:
         wt_types = wt_types.split(",") if isinstance(wt_types, str) else wt_types
     logging.info(f"Running on types: {wt_types}")
@@ -224,28 +265,28 @@ def main(cfg) -> None:
     # run for all weight types
     for wt_type in wt_types:
         global_idx = 0
-        if wt_type is None or wt_type == 'base':
+        if wt_type is None or wt_type == "base":
             # dummy function that assigns a value of 0 all the time
             logging.info("using the base model")
             wt_draft = lambda sigma, sigma_next, i, total: 0
         else:
-            if wt_type == 'linear':
-                wt_draft = lambda sigma, sigma_next, i, total: i*1.0/total
-            elif wt_type == 'draft':
+            if wt_type == "linear":
+                wt_draft = lambda sigma, sigma_next, i, total: i * 1.0 / total
+            elif wt_type == "draft":
                 wt_draft = lambda sigma, sigma_next, i, total: 1
-            elif wt_type.startswith('power'):  # its of the form power_{power}
+            elif wt_type.startswith("power"):  # its of the form power_{power}
                 pow = float(wt_type.split("_")[1])
-                wt_draft = lambda sigma, sigma_next, i, total: (i*1.0/total)**pow
-            elif wt_type.startswith("step"):   # use a step function (step_{p})
+                wt_draft = lambda sigma, sigma_next, i, total: (i * 1.0 / total) ** pow
+            elif wt_type.startswith("step"):  # use a step function (step_{p})
                 frac = float(wt_type.split("_")[1])
-                wt_draft = lambda sigma, sigma_next, i, total: float((i*1.0/total) >= frac)
+                wt_draft = lambda sigma, sigma_next, i, total: float((i * 1.0 / total) >= frac)
             else:
                 raise ValueError(f"invalid weighing type: {wt_type}")
             logging.info(f"using weighing type for annealed outputs: {wt_type}.")
 
         # initialize generator
-        gen = torch.Generator(device='cpu')
-        gen.manual_seed((1243 + 1247837 * local_rank)%(int(2**32 - 1)))
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed((1243 + 1247837 * local_rank) % (int(2 ** 32 - 1)))
         os.makedirs(f"./annealed_outputs_sdxl_{wt_type}/", exist_ok=True)
 
         for batch in val_dataloader:
@@ -261,7 +302,9 @@ def main(cfg) -> None:
                     generator=gen,
                 ).to(torch.cuda.current_device())
             images = ptl_model.annealed_guidance(batch, latents, weighing_fn=wt_draft)
-            images = images.permute(0, 2, 3, 1).detach().cpu().numpy().astype(np.uint8)  # outputs are already scaled from [0, 255]
+            images = (
+                images.permute(0, 2, 3, 1).detach().cpu().numpy().astype(np.uint8)
+            )  # outputs are already scaled from [0, 255]
             # save to pil
             for i in range(images.shape[0]):
                 i = i + global_idx
@@ -272,7 +315,7 @@ def main(cfg) -> None:
                     fi.write(batch[i])
             # increment global index
             global_idx += batch_size
-        logging.info("Saved all images.") 
+        logging.info("Saved all images.")
 
 
 if __name__ == "__main__":

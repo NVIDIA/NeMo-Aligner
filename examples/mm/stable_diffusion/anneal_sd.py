@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+from copy import deepcopy
+from functools import partial
+
+import numpy as np
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
 from megatron.core import parallel_state
+from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
-from copy import deepcopy
-import os
-from functools import partial
-from torch import nn
-import numpy as np
-from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
-from PIL import Image
 from packaging.version import Version
+from PIL import Image
+from torch import nn
 
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronStableDiffusionTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
@@ -68,7 +69,7 @@ def main(cfg) -> None:
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
     # set cuda device for each process
-    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
 
     cfg.exp_manager.create_wandb_logger = False
@@ -147,10 +148,10 @@ def main(cfg) -> None:
     if cfg.get("prompt") is not None:
         logging.info(f"Override val dataset with custom prompt: {cfg.prompt}")
         val_dataloader = [[cfg.prompt]]
-    
+
     wt_types = cfg.get("weight_type", None)
     if wt_types is None:
-        wt_types = ['base', 'draft', 'linear', 'power_2', 'power_4', 'step_0.6']
+        wt_types = ["base", "draft", "linear", "power_2", "power_4", "step_0.6"]
     else:
         wt_types = wt_types.split(",") if isinstance(wt_types, str) else wt_types
     logging.info(f"Running on types: {wt_types}")
@@ -158,28 +159,28 @@ def main(cfg) -> None:
     # run for all weight types
     for wt_type in wt_types:
         global_idx = 0
-        if wt_type is None or wt_type == 'base':
+        if wt_type is None or wt_type == "base":
             # dummy function that assigns a value of 0 all the time
             logging.info("using the base model")
             wt_draft = lambda sigma, sigma_next, i, total: 0
         else:
-            if wt_type == 'linear':
-                wt_draft = lambda sigma, sigma_next, i, total: i*1.0/total
-            elif wt_type == 'draft':
+            if wt_type == "linear":
+                wt_draft = lambda sigma, sigma_next, i, total: i * 1.0 / total
+            elif wt_type == "draft":
                 wt_draft = lambda sigma, sigma_next, i, total: 1
-            elif wt_type.startswith('power'):  # its of the form power_{power}
+            elif wt_type.startswith("power"):  # its of the form power_{power}
                 pow = float(wt_type.split("_")[1])
-                wt_draft = lambda sigma, sigma_next, i, total: (i*1.0/total)**pow
-            elif wt_type.startswith("step"):   # use a step function (step_{p})
+                wt_draft = lambda sigma, sigma_next, i, total: (i * 1.0 / total) ** pow
+            elif wt_type.startswith("step"):  # use a step function (step_{p})
                 frac = float(wt_type.split("_")[1])
-                wt_draft = lambda sigma, sigma_next, i, total: float((i*1.0/total) >= frac)
+                wt_draft = lambda sigma, sigma_next, i, total: float((i * 1.0 / total) >= frac)
             else:
                 raise ValueError(f"invalid weighing type: {wt_type}")
             logging.info(f"using weighing type for annealed outputs: {wt_type}.")
 
         # initialize generator
-        gen = torch.Generator(device='cpu')
-        gen.manual_seed((1243 + 1247837 * local_rank)%(int(2**32 - 1)))
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed((1243 + 1247837 * local_rank) % (int(2 ** 32 - 1)))
         os.makedirs(f"./annealed_outputs_sd_{wt_type}/", exist_ok=True)
 
         for batch in val_dataloader:
@@ -195,7 +196,9 @@ def main(cfg) -> None:
                     generator=gen,
                 ).to(torch.cuda.current_device())
             images = ptl_model.annealed_guidance(batch, latents, weighing_fn=wt_draft)
-            images = images.permute(0, 2, 3, 1).detach().float().cpu().numpy().astype(np.uint8)  # outputs are already scaled from [0, 255]
+            images = (
+                images.permute(0, 2, 3, 1).detach().float().cpu().numpy().astype(np.uint8)
+            )  # outputs are already scaled from [0, 255]
             # save to pil
             for i in range(images.shape[0]):
                 i = i + global_idx
@@ -206,7 +209,7 @@ def main(cfg) -> None:
                     fi.write(batch[i])
             # increment global index
             global_idx += batch_size
-        logging.info("Saved all images.") 
+        logging.info("Saved all images.")
 
 
 if __name__ == "__main__":

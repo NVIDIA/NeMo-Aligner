@@ -207,10 +207,10 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
 
     @torch.no_grad()
     def annealed_guidance(self, batch, x_T, weighing_fn=None):
-        ''' this function tries to perform sampling with a modified score function at each step which is an average
-         of the base model and the trained model '''
+        """ this function tries to perform sampling with a modified score function at each step which is an average
+         of the base model and the trained model """
         if weighing_fn is None:
-            weighing_fn = lambda sigma1, sigma2, i, total: i*1.0/total
+            weighing_fn = lambda sigma1, sigma2, i, total: i * 1.0 / total
 
         with torch.cuda.amp.autocast(
             enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
@@ -273,7 +273,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
                     device_draft_p,
                     prev_img_draft_p.clone(),
                     ts,
-                    None,    # model output, we shouldnt need this
+                    None,  # model output, we shouldnt need this
                     eps,
                     False,
                     False,
@@ -286,7 +286,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
             # stack
             trajectories_predx0 = (
                 torch.stack(last_states, dim=0).transpose(0, 1).contiguous().view(-1, *last_states[0].shape[1:])
-            )       # B1CHW -> BCHW
+            )  # B1CHW -> BCHW
 
             vae_decoder_output = []
             for i in range(0, batch_size, self.vae_batch_size):
@@ -297,7 +297,6 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
             vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1) * 255.0
 
             return vae_decoder_output
-
 
     def generate(
         self, batch, x_T,
