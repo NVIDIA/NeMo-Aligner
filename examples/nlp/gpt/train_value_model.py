@@ -29,6 +29,7 @@ from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.models.nlp.gpt.megatron_gpt_critic import MegatronGPTCriticModel
 from nemo_aligner.utils.distributed import Timer
+from pathlib import Path
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -83,10 +84,11 @@ def process_sample(conversations):
 class ValueDataset:
     path_to_jsonl: str
     path_to_prompts: str
+    cache_dir: str = "/tmp"
 
     def __post_init__(self):
         assert os.path.exists(self.path_to_jsonl), f"{self.path_to_jsonl=} needs to exist"
-        self.data = load_dataset("json", data_files=[self.path_to_jsonl], cache_dir="/tmp")['train']
+        self.data = load_dataset("json", data_files=[self.path_to_jsonl], cache_dir=self.cache_dir, num_proc=0)['train']
 
         with jsonlines.open(self.path_to_prompts) as reader:
             self.prompts = list(iter(reader))
@@ -141,8 +143,8 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_ds = ValueDataset(cfg.train_path, cfg.all_prompt_path)
-    validation_ds = ValueDataset(cfg.validation_path, cfg.all_prompt_path)
+    train_ds = ValueDataset(cfg.train_path, cfg.all_prompt_path, cache_dir=Path(cfg.train_path).parent)
+    validation_ds = ValueDataset(cfg.validation_path, cfg.all_prompt_path, cache_dir="/tmp")
 
     eos_id = ptl_model.tokenizer.eos_id
 
@@ -154,18 +156,13 @@ def main(cfg) -> None:
 
         for b in batch:
             prompt = tokenizer.text_to_ids(b["prompt"])
-
             response = prompt + b["token_ids"]
-            value = [[-100 for _ in range(9)] for _ in range(len(response))]
+            value = torch.empty(len(response), 9, dtype=torch.float32).fill_(-100)
 
-            sparse_values = {int(k): v for k, v in b["values"].items()}
-
-            for j, v in enumerate(value[len(prompt) :]):
-                if j in sparse_values:
-                    v[4], v[5], v[6] = sparse_values[j]
-
+            min_range, max_range = b['range']
+            value[len(prompt) + min_range: len(prompt) + max_range + 1, 4:7] = torch.as_tensor(b['values'], dtype=torch.float32)
             tokens.append(torch.as_tensor(response, dtype=torch.long))
-            values.append(torch.as_tensor(value, dtype=torch.float32))
+            values.append(value)
 
         tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
         scores = torch.nn.utils.rnn.pad_sequence(values, batch_first=True, padding_value=-100)
