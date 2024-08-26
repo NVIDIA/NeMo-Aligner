@@ -167,7 +167,7 @@ def main(cfg) -> None:
         tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
         scores = torch.nn.utils.rnn.pad_sequence(values, batch_first=True, padding_value=-100)
 
-        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(tokens, eos_id, False, True, False,)
+        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(tokens, eos_id, False, False, False,)
 
         if attention_mask.shape[0] == 1:
             # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
