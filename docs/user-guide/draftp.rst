@@ -58,7 +58,7 @@ You can then run the following snipet to convert it to a ``.tar`` file:
 Reward Model
 ############
 
-Currently, we only have support for `Pickscore <https://arxiv.org/pdf/2305.01569.pdf>`__ reward model. Since Pickscore is a CLIP-based model, 
+Currently, we only have support for `Pickscore-style <https://arxiv.org/pdf/2305.01569.pdf>`__ reward models (PickScore/HPSv2). Since Pickscore is a CLIP-based model, 
 you can use the `conversion script <https://github.com/NVIDIA/NeMo/blob/main/examples/multimodal/vision_language_foundation/clip/convert_external_clip_to_nemo.py>`__ from NeMo to convert it from huggingface to NeMo.
 
 DRaFT+ Training
@@ -81,8 +81,9 @@ To launch reward model training, you must have checkpoints for `UNet <https://hu
             UNET_CKPT="/path/to/unet_weights.ckpt"
             VAE_CKPT="/path/to/vae_weights.bin"
             RM_CKPT="/path/to/reward_model.nemo"
+            DRAFTP_SCRIPT="train_sd_draftp.py"       # or train_sdxl_draftp.py 
 
-            torchrun --nproc_per_node=2 ${GPFS}/examples/mm/stable_diffusion/train_sd_draftp.py \
+            torchrun --nproc_per_node=2 ${GPFS}/examples/mm/stable_diffusion/${DRAFTP_SCRIPT} \
                trainer.num_nodes=1 \
                trainer.devices=2 \
                model.micro_batch_size=1 \
@@ -92,7 +93,7 @@ To launch reward model training, you must have checkpoints for `UNet <https://hu
                model.unet_config.from_pretrained=${UNET_CKPT} \
                model.first_stage_config.from_pretrained=${VAE_CKPT} \
                rm.model.restore_from_path=${RM_CKPT} \
-               model.data.trian.webdataset.local_root_path=${TRAIN_DATA_PATH} \
+               model.data.train.webdataset.local_root_path=${TRAIN_DATA_PATH} \
                exp_manager.create_wandb_logger=False \
                exp_manager.explicit_log_dir=/results
 
@@ -135,6 +136,8 @@ To launch reward model training, you must have checkpoints for `UNet <https://hu
 
             MOUNTS="--container-mounts=MOUNTS" # mounts
 
+            DRAFTP_SCRIPT="train_sd_draftp.py"       # or train_sdxl_draftp.py 
+
             read -r -d '' cmd <<EOF
             echo "*******STARTING********" \
             && echo "---------------" \
@@ -142,7 +145,7 @@ To launch reward model training, you must have checkpoints for `UNet <https://hu
             && cd ${GPFS} \
             && export PYTHONPATH="${GPFS}:${PYTHONPATH}" \
             && export HYDRA_FULL_ERROR=1 \
-            && python -u ${GPFS}/examples/nlp/gpt/train_reward_model.py \
+            && python -u ${GPFS}/examples/mm/stable_diffusion/${DRAFTP_SCRIPT} \
                trainer.num_nodes=1 \
                trainer.devices=8 \
                model.micro_batch_size=2 \
@@ -164,9 +167,10 @@ To launch reward model training, you must have checkpoints for `UNet <https://hu
 
 
 .. note::
-   For more info on DRaFT+ hyperparameters please see the model config file:
+   For more info on DRaFT+ hyperparameters please see the model config files (for SD and SDXL respectively):
    
     ``NeMo-Aligner/examples/mm/stable_diffusion/conf/draftp_sd.yaml``
+    ``NeMo-Aligner/examples/mm/stable_diffusion/conf/draftp_sdxl.yaml``
 
 DRaFT+ Results
 %%%%%%%%%%%%%%
@@ -174,3 +178,23 @@ DRaFT+ Results
 Once you have completed fine-tuning Stable Diffusion with DRaFT+, you can run inference on your saved model using the `sd_infer.py <https://github.com/NVIDIA/NeMo/blob/main/examples/multimodal/text_to_image/stable_diffusion/sd_infer.py>`__ 
 and `sd_lora_infer.py <https://github.com/NVIDIA/NeMo/blob/main/examples/multimodal/text_to_image/stable_diffusion/sd_lora_infer.py>`__  scripts from the NeMo codebase. The generated images with the fine-tuned model should have 
 better prompt alignment and aesthetic quality.
+
+User controllable finetuning with Annealed Importance Guidance (AIG)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+AIG provides the inference-time flexibility to interpolate between the base Stable Diffusion model (with low rewards and high diversity) and DRaFT-finetuned model (with high rewards and low diversity) to obtain images with high rewards and high diversity. AIG inference is easily done by specifying comma-separated `weight_type` strategies to interpolate between the base and finetuned model.
+
+.. tab-set::
+    .. tab-item:: Terminal
+        :sync: key2
+
+        Weight type of `base` uses the base model for AIG, `draft` uses the finetuned model (no interpolation is done in either case).
+        Weight type of the form `power_<float>` interpolates using an exponential decay specified in the AIG paper.
+
+         To run AIG inference on the terminal directly:
+
+         .. code-block:: bash 
+
+            SCRIPT="launch_annealing.sh"   # or "launch_annealing_xl.sh"
+            DIR_SAVE_CKPT_PATH=/path/to/explicit_log_dir PROMPT="An astronaut sitting on a swing" ADDITIONAL_KWARGS="+weight_type='draft,base,power_2.0'" bash $SCRIPT
+

@@ -23,15 +23,10 @@ PEFT=${PEFT:="sdlora"}
 NUM_DEVICES=${NUM_DEVICES:=8}
 GLOBAL_BATCH_SIZE=$((MICRO_BS*NUM_DEVICES*GRAD_ACCUMULATION*NUMNODES))
 LOG_WANDB=${LOG_WANDB:="False"}
-SLEEP=${SLEEP:=0}
-if [ -z "${JOBNAME}" ]; then
-    echo "JOBNAME not specified, exiting"
-    exit
-fi
 
 echo "additional kwargs: ${ADDITIONAL_KWARGS}"
 
-WANDB_NAME=SDXL_DRaFT+${JOBNAME}_lr_${LR}_data_${DATASET}_kl_${KL_COEF}_bs_${GLOBAL_BATCH_SIZE}_infstep_${INF_STEPS}_eta_${ETA}_peft_${PEFT}
+WANDB_NAME=SDXL_Draft_annealing
 WEBDATASET_PATH=/path/to/dataset
 
 CONFIG_PATH="/opt/nemo-aligner/examples/mm/stable_diffusion/conf"
@@ -41,13 +36,10 @@ VAE_CKPT="/path/to/vae.ckpt"
 RM_CKPT="/path/to/rewardmodel.nemo"
 PROMPT=${PROMPT:="Bananas growing on an apple tree"}
 
-DIR_SAVE_CKPT_PATH=/opt/nemo-aligner/sdxl_draft_runs/draftp_xl_saved_ckpts_${JOBNAME}
 if [ ! -z "${ACT_CKPT}" ]; then
     ACT_CKPT="model.activation_checkpointing=$ACT_CKPT "
     echo $ACT_CKPT
 fi
-
-mkdir -p ${DIR_SAVE_CKPT_PATH}
 
 ## Setup multinode parameters
 if [ ! -z "${RDZV_ID}" ]; then

@@ -12,7 +12,7 @@ PEFT=${PEFT:="sdlora"}
 NUM_DEVICES=8
 GLOBAL_BATCH_SIZE=$((MICRO_BS*NUM_DEVICES*GRAD_ACCUMULATION))
 
-WANDB_NAME=SD_DRaFT+${JOBNAME}_lr_${LR}_data_${DATASET}_kl_${KL_COEF}_bs_${GLOBAL_BATCH_SIZE}_infstep_${INF_STEPS}_eta_${ETA}_peft_${PEFT}
+WANDB_NAME=SD_DRaFT_annealing
 WEBDATASET_PATH=/path/to/${DATASET}
 
 CONFIG_PATH="/opt/nemo-aligner/examples/mm/stable_diffusion/conf"
@@ -20,12 +20,9 @@ CONFIG_NAME="draftp_sd"
 UNET_CKPT="/path/to/unet.ckpt"
 VAE_CKPT="/path/to/vae.ckpt"
 RM_CKPT="/path/to/rewardmodel.nemo"
-DIR_SAVE_CKPT_PATH=/opt/nemo-aligner/sd_draft_runs/draftp_saved_ckpts_${JOBNAME}
 
 # change this as an end-user
 PROMPT=${PROMPT:-"Bananas growing on an apple tree"}
-
-mkdir -p ${DIR_SAVE_CKPT_PATH}
 
 EVAL_SCRIPT=${EVAL_SCRIPT:-"anneal_sd.py"}
 set -x
