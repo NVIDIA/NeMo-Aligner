@@ -88,7 +88,7 @@ class ValueDataset:
 
     def __post_init__(self):
         assert os.path.exists(self.path_to_jsonl), f"{self.path_to_jsonl=} needs to exist"
-        self.data = load_dataset("json", data_files=[self.path_to_jsonl], cache_dir=self.cache_dir, num_proc=0)['train']
+        self.data = load_dataset("json", data_files=[self.path_to_jsonl], cache_dir=self.cache_dir, num_proc=None)['train']
 
         with jsonlines.open(self.path_to_prompts) as reader:
             self.prompts = list(iter(reader))
