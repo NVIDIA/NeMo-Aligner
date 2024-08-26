@@ -12,30 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-from torch.nn import functional as F
+import pdb
 
+import numpy as np
+import torch
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
+from torch.nn import functional as F
+from torch.utils.data import DataLoader
 from tqdm import tqdm
-import numpy as np
+from transformers import AutoModel, AutoProcessor
 
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.utils.distributed import Timer
-from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
 from nemo_aligner.data.mm.pickscore_dataset import build_train_valid_datasets
-from torch.utils.data import DataLoader
-from transformers import AutoProcessor, AutoModel
-import pdb
+from nemo_aligner.models.mm.stable_diffusion.image_text_rms import get_reward_model
+from nemo_aligner.utils.distributed import Timer
+
 
 @hydra_runner(config_path="conf", config_name="baseline")
 @torch.no_grad()
 def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
-    logging.info(f'\n{OmegaConf.to_yaml(cfg)}')
+    logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
     cfg.model.global_batch_size = cfg.trainer.devices * cfg.trainer.num_nodes * cfg.model.micro_batch_size
 
@@ -44,7 +45,9 @@ def main(cfg) -> None:
     batch_size = cfg.model.micro_batch_size
     _, val_ds, test_ds = build_train_valid_datasets(cfg.model, 0, return_test_data=True)
     val_dl = DataLoader(val_ds, batch_size=batch_size, drop_last=False, shuffle=False, collate_fn=model.dl_collate_fn,)
-    test_dl = DataLoader(test_ds, batch_size=batch_size, drop_last=False, shuffle=False, collate_fn=model.dl_collate_fn)
+    test_dl = DataLoader(
+        test_ds, batch_size=batch_size, drop_last=False, shuffle=False, collate_fn=model.dl_collate_fn
+    )
 
     # collect all labels here
     all_val_probs = []
@@ -56,7 +59,6 @@ def main(cfg) -> None:
         img_0, img_1 = batch['img_0'], batch['img_1']
         label = batch['label']
         prompt = batch['prompt']
-        
         # move to device
         img_0, img_1 = [x.cuda() for x in img_0], [x.cuda() for x in img_1]
         r0 = model.get_reward(img_0, prompt)[:, None]
@@ -76,9 +78,9 @@ def main(cfg) -> None:
     # run on test set
     all_test_probs, all_test_labels = [], []
     for batch in tqdm(test_dl, total=len(test_dl)):
-        img_0, img_1 = batch['img_0'], batch['img_1']
-        label = batch['label']
-        prompt = batch['prompt']
+        img_0, img_1 = batch["img_0"], batch["img_1"]
+        label = batch["label"]
+        prompt = batch["prompt"]
         # move to device
         img_0, img_1 = [x.cuda() for x in img_0], [x.cuda() for x in img_1]
         r0 = model.get_reward(img_0, prompt)[:, None]
@@ -93,7 +95,7 @@ def main(cfg) -> None:
     _, acc = calc_thres(all_test_probs, all_test_labels, [best_thres])
     logging.info(f"Test acc: {acc}.")
 
-        
+
 def calc_thres(probs, labels, thresholds):
     # both are of size [B, 2] and thresholds is a list
     scores = []
@@ -102,9 +104,9 @@ def calc_thres(probs, labels, thresholds):
     batch_size = probs.shape[0]
     # compute ties
     for t in thresholds:
-        ties = 1.0 * (torch.abs(probs[:, 0] - probs[:, 1]) <= t)    # [B, ]
+        ties = 1.0 * (torch.abs(probs[:, 0] - probs[:, 1]) <= t)  # [B, ]
         label_ties = 1.0 * (torch.abs(labels[:, 0] - labels[:, 1]) <= 0.01)
-        # first term gives you a point, 0.5 or 0 points for all non-ambiguous predictions, 
+        # first term gives you a point, 0.5 or 0 points for all non-ambiguous predictions,
         # for predicted ties, if label is a tie, then give full point, else give half a point
         # if label is tie, but pred isnt, 0.5 is added from the first term
         score = (labels[arange, argmax] * (1 - ties)).sum() + (ties * (label_ties + 0.5 * (1 - label_ties))).sum()
@@ -114,5 +116,5 @@ def calc_thres(probs, labels, thresholds):
     return thresholds[idx], scores
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
