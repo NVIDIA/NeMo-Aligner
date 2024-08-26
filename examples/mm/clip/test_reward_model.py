@@ -41,7 +41,7 @@ def main(cfg) -> None:
 
     model = get_reward_model(cfg, cfg.model.micro_batch_size, cfg.model.global_batch_size).cuda()
     model.eval()
-    batch_size = 250
+    batch_size = cfg.model.micro_batch_size
     _, val_ds, test_ds = build_train_valid_datasets(cfg.model, 0, return_test_data=True)
     val_dl = DataLoader(val_ds, batch_size=batch_size, drop_last=False, shuffle=False, collate_fn=model.dl_collate_fn,)
     test_dl = DataLoader(test_ds, batch_size=batch_size, drop_last=False, shuffle=False, collate_fn=model.dl_collate_fn)
@@ -53,8 +53,6 @@ def main(cfg) -> None:
     # run through the val and test datasets
     thresholds = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
     for batch in tqdm(val_dl, total=len(val_dl)):
-        #print(batch)
-        #break
         img_0, img_1 = batch['img_0'], batch['img_1']
         label = batch['label']
         prompt = batch['prompt']

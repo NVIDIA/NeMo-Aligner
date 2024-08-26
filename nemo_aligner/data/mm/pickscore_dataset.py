@@ -135,6 +135,11 @@ class PickScoreDataset(Dataset):
 if __name__ == '__main__':
     from open_clip import tokenizer
     from omegaconf import OmegaConf
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data_path", type=str, required=True)
+    args = parser.parse_args()
+
     cfg = {
         'vision': {
             'img_w': 224,
@@ -146,7 +151,7 @@ if __name__ == '__main__':
             'max_position_embeddings': 77,
         },
         'data': {
-            'data_path': '/opt/nemo-aligner/datasets/pickapic', 
+            'data_path': args.data_path,
         }
     }
     cfg = OmegaConf.create(cfg)

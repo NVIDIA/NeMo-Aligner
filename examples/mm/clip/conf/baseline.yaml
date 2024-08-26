@@ -224,7 +224,7 @@ model:
 
   data:
     num_workers: 8
-    data_path: "/opt/nemo-aligner/datasets/pickapic"
+    data_path: /path/to/dataset
     no_crop_images: True
     train:
       drop_last: True
