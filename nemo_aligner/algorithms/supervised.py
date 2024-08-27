@@ -208,13 +208,13 @@ class SupervisedTrainer:
 
             self.timer.start("data_load_time")
             for _, batch in zip(loop_iter, global_pbar):
+                self.timer.stop("data_load_time")
+                data_load_time = self.timer.get("data_load_time")
+
                 self.timer.start("train_step_time")
                 loss, metrics = self.train_single_step(batch)
                 self.timer.stop("train_step_time")
                 train_step_time = self.timer.get("train_step_time")
-
-                self.timer.stop("data_load_time")
-                data_load_time = self.timer.get("data_load_time")
 
                 # TODO(geshen): maybe use the dataloader instead
                 self.consumed_samples += self.model.cfg.global_batch_size
