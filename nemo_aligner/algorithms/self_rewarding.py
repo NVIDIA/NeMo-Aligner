@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os, json, itertools
+import os, json, itertools, math
 from functools import partial
 import numpy as np
 from collections import defaultdict
 from statistics import mean
 import pandas as pd
 from textwrap import dedent
+from sklearn.linear_model import LogisticRegression
 
 import torch
 from megatron.core import parallel_state
@@ -260,7 +261,11 @@ consistency in applying the criteria.
 """
 
 DEFAULT_REWARD_REGEX_TEMPLATE = "(?i)(?:Score|Points): {{ reward }}"
-DEFAULT_META_REWARD_REGEX_TEMPLATE = r"(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
+DEFAULT_META_REWARD_REGEX_TEMPLATE = "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
+
+
+SCALE = 400
+INIT_RATING = 1000
 
 
 class SelfRewardingTrainer:
@@ -334,6 +339,7 @@ class SelfRewardingTrainer:
         self.num_evals_to_average = self.model.cfg.spin.num_evals_to_average
         self.first_iteration_sft = self.model.cfg.spin.get("first_iteration_sft", False)
         self.use_meta_judge = self.model.cfg.spin.get("use_meta_judge", False)
+        self.meta_judge_pcnt = self.model.cfg.spin.get("meta_judge_pcnt", -1.0)
         self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
         self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
@@ -370,7 +376,7 @@ class SelfRewardingTrainer:
                 max_generation_length=self.length_params["max_length"],
                 max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
                 max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2) * dp_batch_size),
-                generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
+                generation_batch_size=self.cfg.trt_llm.get("generation_batch_size", self.model.cfg.spin.get("rollout_micro_batch_size", 4)),
                 unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
                 trt_model_type=self.cfg.trt_llm.get("model_type", "llama"),
                 end_strings=self.sampling_params["end_strings"],
@@ -845,6 +851,7 @@ class SelfRewardingTrainer:
 
     def augment_dataloader(self, dataloader):
         """Augment dataloader with generations and ref policy log probs"""
+        print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ]  ENTERED_AUGMENT ***")
         iter_dataloader = iter(dataloader)
         buffer = []
         meta_buffer_pending, meta_buffer_done = [], []
@@ -923,7 +930,7 @@ class SelfRewardingTrainer:
                                         print("*** PROMPT_AND_RESPONSE_NEED_TRUNCATION")
                                         reward_prompt_str = self.template_fn(prompt="How does one make tea?", response="I have no answer at all.")
                                         reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                assert len(reward_prompt) <= self.model.cfg.data.train_ds.max_seq_length, f"truncation of response only failed: {reward_prompt_str}"
+                                assert len(reward_prompt) <= (self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8), f"truncation of response only failed [ {len(reward_prompt)} ]: {reward_prompt_str}"
                                     
                             reward_buffer.append({"prompt_lengths": torch.LongTensor([len(reward_prompt)]), "prompts_only": torch.LongTensor(reward_prompt).unsqueeze(0)})
                         
@@ -943,7 +950,7 @@ class SelfRewardingTrainer:
                         variances = [b[-3] for b in cand_list]
                         j_responses = [b[-2] for b in cand_list]
                         filtered_scores = [(s,r,v,idx) for idx, (s,r,v,e) in enumerate(zip(scores, resp_lengths, variances, ends)) if (s is not None) and e]
-                        filtered_variances = [(v,j,idx) for idx, (v,j,e) in enumerate(zip(variances, j_responses, ends)) if (v is not None) and (len(j) > 1) and e]
+                        filtered_variances = [(v,j,idx) for idx, (v,j,e) in enumerate(zip(variances, j_responses, ends)) if (v is not None) and (v > 0) and (len(j) > 1) and e]
                         bad_sample = False
                         
                         # TODO: sample more from the underlying Dataset instead
@@ -957,6 +964,10 @@ class SelfRewardingTrainer:
                         if len(filtered_scores) <= 1 or all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
                             idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
                             bad_sample = True
+                            if len(filtered_scores) <= 1:
+                                print("BAD_SAMPLE_1")
+                            elif all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
+                                print("BAD_SAMPLE_2")
                         elif len(filtered_scores) > 1:
                             #idx_chosen = filtered_scores[np.argmax([s[0] for s in filtered_scores])][-1]
                             #idx_reject = filtered_scores[np.argmin([s[0] for s in filtered_scores])][-1]
@@ -990,6 +1001,11 @@ class SelfRewardingTrainer:
                         reject_prompt_len = cand_list[idx_reject][2]
                         reject_gen_len = cand_list[idx_reject][3]
                         reject_score = scores[idx_reject]
+                        bad_ends = sum(~np.array([cand_list[idx_chosen][-1], cand_list[idx_reject][-1]]))
+                        
+                        if torch.equal(chosen_tokens, reject_tokens):
+                            bad_sample = True
+                            print("BAD_SAMPLE_3")
                         
                         # meta-judge logic goes here
                         if self.use_meta_judge and len(filtered_variances) > 0:
@@ -1001,8 +1017,15 @@ class SelfRewardingTrainer:
                             orig_response_str = self.model.tokenizer.ids_to_text(cand_for_meta[1][cand_for_meta[2]:cand_for_meta[3]].tolist())
                             meta_batch = []
                             for a, b in itertools.combinations([self.model.tokenizer.ids_to_text(s[0][s[1]:s[2]].tolist()) for s in reward_tokens_raw], 2):
-                                meta_str_ab = self.meta_judge_template(prompt=orig_prompt_str, response=orig_response_str, judgement_a=a, judgement_b=b)
-                                meta_str_ba = self.meta_judge_template(prompt=orig_prompt_str, response=orig_response_str, judgement_a=b, judgement_b=a)
+                                score_a = self.parse_reward_fn(a)
+                                score_b = self.parse_reward_fn(b)
+                                print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_SAMPLE_REWARDS  A [ {score_a} ]  B [ {score_b} ]")
+                                if score_a is None or score_b is None or a == b:
+                                    continue
+                                a = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", a)
+                                b = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", b)
+                                meta_str_ab = self.meta_judge_template_fn(prompt=orig_prompt_str, response=orig_response_str, judgement_a=a, judgement_b=b)
+                                meta_str_ba = self.meta_judge_template_fn(prompt=orig_prompt_str, response=orig_response_str, judgement_a=b, judgement_b=a)
                                 meta_tokens_ab = self.model.tokenizer.text_to_ids(meta_str_ab)
                                 meta_tokens_ba = self.model.tokenizer.text_to_ids(meta_str_ba)
                                 # check for seq len violation
@@ -1010,22 +1033,26 @@ class SelfRewardingTrainer:
                                     continue
                                 meta_batch.append({"prompt_lengths": torch.LongTensor([len(meta_tokens_ab)]), "prompts_only": torch.LongTensor(meta_tokens_ab).unsqueeze(0)})
                                 meta_batch.append({"prompt_lengths": torch.LongTensor([len(meta_tokens_ba)]), "prompts_only": torch.LongTensor(meta_tokens_ba).unsqueeze(0)})
-                            if len(meta_batch) > 1:
+                            if len(meta_batch) > 1 and len(meta_buffer_done) < self.model.cfg.global_batch_size * 3:
                                 meta_buffer_pending.append( (reward_tokens_raw, meta_batch) )
                         
-                        final_buffer.append({
-                            "chosen_tokens": chosen_tokens,
-                            "chosen_prompt_len": chosen_prompt_len,
-                            "chosen_gen_len": chosen_gen_len,
-                            "chosen_score": chosen_score,
-                            "reject_tokens": reject_tokens,
-                            "reject_prompt_len": reject_prompt_len,
-                            "reject_gen_len": reject_gen_len,
-                            "reject_score": reject_score,
-                            "bad_sample": bad_sample,
-                            "bad_ends": sum(~np.array(ends)),
-                            }
-                        )
+                        if self.use_meta_judge and ((bad_ends > 0 or bad_sample) or (torch.rand((1,)) <= self.meta_judge_pcnt)) and len(meta_buffer_done) > 0:
+                        #if self.use_meta_judge and (bad_ends > 0 or bad_sample) and len(meta_buffer_done) > 0:
+                            final_buffer.append(meta_buffer_done.pop(0))
+                        else:
+                            final_buffer.append({
+                                "chosen_tokens": chosen_tokens,
+                                "chosen_prompt_len": chosen_prompt_len,
+                                "chosen_gen_len": chosen_gen_len,
+                                "chosen_score": chosen_score,
+                                "reject_tokens": reject_tokens,
+                                "reject_prompt_len": reject_prompt_len,
+                                "reject_gen_len": reject_gen_len,
+                                "reject_score": reject_score,
+                                "bad_sample": bad_sample,
+                                "bad_ends": bad_ends,
+                                }
+                            )
 
                 original_gbs_size = len(buffer[0]["prompt_lengths"])
                 for batch in divide_chunks(final_buffer, original_gbs_size):
@@ -1110,32 +1137,127 @@ class SelfRewardingTrainer:
 
                 buffer.clear()
                 
-                '''
+                print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_BATCH_PENDING [ {len(meta_buffer_pending)} ] META_BATCH_ROLLOUT [ {sum([len(x[-1]) for x in meta_buffer_pending])} ] META_BATCH_DONE [ {len(meta_buffer_done)} ] ***")
                 if done:
                     meta_buffer_pending.clear()
-                    meta_buffer_done.clear()
-                if (not done) and sum([len(x[-1]) for x in meta_buffer_pending]) == self.rollout_micro_batch_size:
-                    batch_for_rewards = [y for x in meta_buffer_pending for y in x[-1]]
-                    meta_reward_scores = self.get_rewards_meta(batch_for_rewards)
-                    comp = []
-                    for tup in meta_buffer_pending:
-                        N = len(tup[-1])
-                        # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
-                        # we need to find a chosen and reject index in this list
-                        reward_tokens_raw = tup[0]
-                        players = list(range(len(reward_tokens_raw)))
-                        Bm = list(itertools.combinations(players, 2))
-                        alloc = []
-                        for _ in range(N):
-                            alloc.append(meta_reward_scores.pop(0))
-                        assert len(alloc) % 2 == 0, "alloc should always be divisible by 2"
-                        for ab, ba in divide_chunks(alloc, 2):
-                            r_ab = (1 if ab == "A" else -1) if ab is not None else 0
-                            r_ba = (1 if ba == "B" else -1) if ba is not None else 0
-                            w1 = (ba == 'A') / ((ab == 'A') + (ba == 'A'))
-                            w2 = (ab == 'A') / ((ab == 'A') + (ba == 'A'))
-                            B_ab = w1 * (1 if r_ab == 1 else 0) + w2 * (1 if r_ba == -1 else 0)
-                '''
+                    #meta_buffer_done.clear()
+                if self.use_meta_judge and (not done) and (rollout_len := sum([len(x[-1]) for x in meta_buffer_pending])) >= self.rollout_micro_batch_size:
+                    #meta_buffer_unroll = [y for x in meta_buffer_pending for y in x[-1]]
+                    num_rollouts = rollout_len // self.rollout_micro_batch_size
+                    meta_buffer_unroll_grp = [(idx,y) for idx,x in enumerate(meta_buffer_pending) for y in x[-1]]
+                    for _ in range(num_rollouts):
+                        meta_buffer_unroll = [meta_buffer_unroll_grp.pop(0) for _ in range(self.rollout_micro_batch_size)]
+                        meta_reward_scores = self.get_rewards_meta([x[-1] for x in meta_buffer_unroll])
+                        meta_pairs = []
+                        reroll = [(grp, [y[-1] for y in x]) for grp, x in itertools.groupby(meta_buffer_unroll, lambda kk: kk[0])]
+                        for tup in reroll:
+                            N = len(tup[-1])
+                            # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
+                            # we need to find a chosen and reject index in this list
+                            reward_tokens_raw = meta_buffer_pending[tup[0]][0]
+                            p = len(reward_tokens_raw)
+                            players = list(range(p))
+                            Bm = itertools.combinations(players, 2)
+                            bad_meta_sample = False
+                            alloc = []
+                            for _ in range(N):
+                                alloc.append(meta_reward_scores.pop(0))
+                            assert len(alloc) % 2 == 0, "alloc should always be divisible by 2"
+                            ptbl_a_win = np.zeros([p, p])
+                            ptbl_b_win = np.zeros([p, p])
+                            ptbl_tie = np.zeros([p, p])
+                            for (m_a, m_b), (ab, ba) in zip(Bm, divide_chunks(alloc, 2)):
+                                if ab is not None and ba is not None:
+                                    ptbl_a_win[m_a, m_b] += int(ab == 'A' and ba == 'B')
+                                    ptbl_b_win[m_a, m_b] += int(ab == 'B' and ba == 'A')
+                                ptbl_tie[m_a, m_b] += int(ab == ba)
+                            
+                            ptbl_win = ptbl_a_win * 1 + ptbl_b_win.T * 1 + (ptbl_tie + ptbl_tie.T)
+                            
+                            X = np.zeros([p * (p - 1) * 2, p])
+                            Y = np.zeros(p * (p - 1) * 2)
+                            #w1 = ptbl_b_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
+                            #w2 = ptbl_a_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
+                            cur_row = 0
+                            sample_weights = []
+                            for m_a in players:
+                                for m_b in players:
+                                    if m_a == m_b:
+                                        continue
+                                    # if nan skip
+                                    if math.isnan(ptbl_win[m_a, m_b]) or math.isnan(ptbl_win[m_b, m_a]):
+                                        continue
+                                    X[cur_row, players[m_a]] = 1.
+                                    X[cur_row, players[m_b]] = -1.
+                                    Y[cur_row] = 1.0
+                                    sample_weights.append(ptbl_win[m_a, m_b])
+                                    #sample_weights.append(w1 * (1 if ptbl_a_win[m_a, m_b] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_a, m_b] >= 1 else 0))
+                            
+                                    X[cur_row + 1, players[m_a]] = 1.
+                                    X[cur_row + 1, players[m_b]] = -1.
+                                    Y[cur_row + 1] = 0.0
+                                    sample_weights.append(ptbl_win[m_b, m_a])
+                                    #sample_weights.append(w1 * (1 if ptbl_a_win[m_b, m_a] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_b, m_a] >= 1 else 0))
+                                    cur_row += 2
+                            X = X[:cur_row]
+                            Y = Y[:cur_row]
+                            
+                            lr = LogisticRegression(fit_intercept=False, penalty=None, tol=1e-6)
+                            lr.fit(X, Y, sample_weight=sample_weights)
+                            
+                            elo_scores = SCALE * lr.coef_[0] + INIT_RATING
+                            if len(np.unique(elo_scores)) < p:
+                                bad_meta_sample = True
+                                print("BAD_META_SAMPLE_1")
+                            
+                            meta_chosen_idx = np.argmax(elo_scores)
+                            meta_reject_idx = np.argmin(elo_scores)
+                            
+                            chosen_tokens = reward_tokens_raw[meta_chosen_idx][0]
+                            chosen_prompt_len = reward_tokens_raw[meta_chosen_idx][1]
+                            chosen_gen_len = reward_tokens_raw[meta_chosen_idx][2]
+                            #chosen_score = 0.
+                            reject_tokens = reward_tokens_raw[meta_reject_idx][0]
+                            reject_prompt_len = reward_tokens_raw[meta_reject_idx][1]
+                            reject_gen_len = reward_tokens_raw[meta_reject_idx][2]
+                            #reject_score = 0.
+                            meta_bad_ends = sum(~np.array([reward_tokens_raw[meta_chosen_idx][-1], reward_tokens_raw[meta_reject_idx][-1]]))
+                            
+                            if torch.equal(chosen_tokens, reject_tokens):
+                                bad_meta_sample = True
+                                print("BAD_META_SAMPLE_2")
+                            
+                            chosen_score = self.parse_reward_fn(self.model.tokenizer.ids_to_text(chosen_tokens[chosen_prompt_len:chosen_gen_len].tolist()))
+                            reject_score = self.parse_reward_fn(self.model.tokenizer.ids_to_text(reject_tokens[reject_prompt_len:reject_gen_len].tolist()))
+                            print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_ACTUAL_REWARDS  CHOSEN[ {chosen_score} ]  REJECT[ {reject_score} ]")
+                            if chosen_score is None or reject_score is None or chosen_score == reject_score:
+                                bad_meta_sample = True
+                                print("BAD_META_SAMPLE_3")
+                            
+                            if meta_bad_ends == 0 and bad_meta_sample == False:
+                                meta_pairs.append({
+                                    "chosen_tokens": chosen_tokens,
+                                    "chosen_prompt_len": chosen_prompt_len,
+                                    "chosen_gen_len": chosen_gen_len,
+                                    "chosen_score": chosen_score,
+                                    "reject_tokens": reject_tokens,
+                                    "reject_prompt_len": reject_prompt_len,
+                                    "reject_gen_len": reject_gen_len,
+                                    "reject_score": reject_score,
+                                    "bad_sample": bad_meta_sample,
+                                    "bad_ends": meta_bad_ends,
+                                    }
+                                )
+                            
+                            if N <= len(meta_buffer_pending[tup[0]][-1]):
+                                [meta_buffer_pending[tup[0]][-1].pop(0) for _ in range(N)]
+                            else:
+                                raise RuntimeError(f"{N=} should never be greater than buffer [ {meta_buffer_pending[tup[0]]} ]")
+    
+                        meta_buffer_done.extend(meta_pairs)
+
+                    del meta_buffer_unroll_grp
+                    meta_buffer_pending = [x for x in meta_buffer_pending if len(x[-1]) > 0]
                             
     
     def set_rho_by_iteration(self, iteration):

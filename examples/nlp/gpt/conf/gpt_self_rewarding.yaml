@@ -28,7 +28,8 @@ trainer:
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
-      max_input_tokens: ${multiply:${trainer.spin.trt_llm.max_input_len}, ${model.spin.rollout_micro_batch_size}}
+      generation_batch_size: ${model.spin.rollout_micro_batch_size}
+      max_input_tokens: ${multiply:${trainer.spin.trt_llm.max_input_len}, ${trainer.spin.trt_llm.generation_batch_size}}
 
       model_type: gptnext
 
@@ -84,6 +85,7 @@ model:
     num_evals_to_average: 3
     length_control: 0.0
     use_meta_judge: False
+    meta_judge_pcnt: -1
     first_iteration_sft: False
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
