@@ -133,7 +133,8 @@ class RewardModelHead(RowParallelLinear):
             # a sequence of multi-attribute rewards, used for critic model, returning tensor with shape [B x S]
             assert attributes.dim() == 3, "for critic, attributes should have shape [B x S x self.output_size]"
             if not self.merge_attributes:
-                return attributes
+                # return the last token's attributes
+                return attributes.permute((1, 0, 2))[lengths - 1, torch.arange(attributes.shape[0], device=hidden_states.device), :]
             else:
                 return attributes @ self.attributes_weights
 
