@@ -36,7 +36,7 @@ from nemo_aligner.models.alignable_interface import Inferrable, SupervisedInterf
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
-from nemo_aligner.utils.text_generation_utils import tokenize_batch
+from nemo_aligner.utils.text_generation_strategy import tokenize_batch
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -92,7 +92,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
         model = GPTRewardModel(
             config=self.transformer_config,
-            transformer_layer_spec=get_specs(self.spec_name, self.transformer_config.num_moe_experts),
+            transformer_layer_spec=get_specs(self.spec_name, self.transformer_config),
             vocab_size=self.cfg.get("override_vocab_size", self.padded_vocab_size),
             max_sequence_length=self.cfg.get("encoder_seq_length", 512),
             pre_process=pre_process,
