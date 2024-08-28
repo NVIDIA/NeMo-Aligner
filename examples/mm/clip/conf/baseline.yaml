@@ -27,7 +27,7 @@ trainer:
 
 exp_manager:
   explicit_log_dir: null
-  exp_dir: /opt/nemo-aligner/checkpoints/reward-training/${name}
+  exp_dir: /path/to/checkpoints/${name}
   name: megatron_rm_baseline
   create_wandb_logger: False
   wandb_logger_kwargs:
@@ -62,7 +62,7 @@ model:
   pipeline_model_parallel_size: 1 # inter-layer model parallelism
   virtual_pipeline_model_parallel_size: null # interleaved pipeline
 
-  from_pretrained: /opt/nemo-aligner/checkpoints/clip/clip_h.ckpt # used in fine-tuning
+  from_pretrained: /path/to/clip_checkpoint.ckpt # used in fine-tuning
   # multimodal configs
   output_dim: 1024
   #  As the number of devices used to train increases, so does the space complexity of
