@@ -56,9 +56,9 @@ def main(cfg) -> None:
     # run through the val and test datasets
     thresholds = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1]
     for batch in tqdm(val_dl, total=len(val_dl)):
-        img_0, img_1 = batch['img_0'], batch['img_1']
-        label = batch['label']
-        prompt = batch['prompt']
+        img_0, img_1 = batch["img_0"], batch["img_1"]
+        label = batch["label"]
+        prompt = batch["prompt"]
         # move to device
         img_0, img_1 = [x.cuda() for x in img_0], [x.cuda() for x in img_1]
         r0 = model.get_reward(img_0, prompt)[:, None]

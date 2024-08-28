@@ -116,25 +116,18 @@ class PickScoreDataset(Dataset):
 
 
 if __name__ == "__main__":
-    from omegaconf import OmegaConf
     import argparse
+
+    from omegaconf import OmegaConf
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, required=True)
     args = parser.parse_args()
 
     cfg = {
-        'vision': {
-            'img_w': 224,
-            'img_h': 224,
-            'img_mean': OPENAI_DATASET_MEAN,
-            'img_std': OPENAI_DATASET_STD
-        },
-        'text': {
-            'max_position_embeddings': 77,
-        },
-        'data': {
-            'data_path': args.data_path,
-        }
+        "vision": {"img_w": 224, "img_h": 224, "img_mean": OPENAI_DATASET_MEAN, "img_std": OPENAI_DATASET_STD},
+        "text": {"max_position_embeddings": 77,},
+        "data": {"data_path": args.data_path,},
     }
     cfg = OmegaConf.create(cfg)
     dataset = PickScoreDataset(cfg, tokenizer=None, split="val")
