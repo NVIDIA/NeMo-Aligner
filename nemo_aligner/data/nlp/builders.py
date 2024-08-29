@@ -54,7 +54,7 @@ from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
 class ChunkedJsonl:
-    def __init__(self, path_placeholder, n_chunks):
+    def __init__(self, path_placeholder, n_chunks, n_examples_per_chunk):
         self.CHUNK_ID_STRING = "CHUNK_ID"
         assert self.CHUNK_ID_STRING in path_placeholder, f"path_placehold ({path_placeholder}) does not have the CHUNK_ID_STRING ({self.CHUNK_ID_STRING})"
         self.path_placeholder = path_placeholder
@@ -65,14 +65,12 @@ class ChunkedJsonl:
             max_n_chunks = i
             if not os.path.exists(self.path_placeholder.replace(self.CHUNK_ID_STRING, str(i))):
                 break
-        assert max_n_chunks > 0, f"no files match the required path {path_placehold}"
+        assert max_n_chunks > 0, f"no files match the required path {path_placeholder}"
         self.n_chunks = min(n_chunks, max_n_chunks)
         
         print(f"Initializing chunked jsonl...")
-        lengths = []
-        for chunk_id in range(self.n_chunks):
-            lengths.append(len([1 for _ in open(self.path_placeholder.replace(self.CHUNK_ID_STRING, str(chunk_id)))]))
-        print(f"Number of Chunks = {self.n_chunks} | Number of Examples = {sum(lengths)}")
+        lengths = [n_examples_per_chunk for _ in range(self.n_chunks)]
+        print(f"Number of Chunks = {self.n_chunks} | Number of Examples = {n_examples_per_chunk * self.n_chunks}")
         self._lengths = np.asarray(lengths)
         self._length_accumulated = np.cumsum(lengths)
 
@@ -91,8 +89,8 @@ class ChunkedJsonl:
         raise ValueError("Reading the item {i} failed. Computed chunk_id={chunk_id}, idx_in_chunk={idx_in_chunk}.")
 
 
-def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name, n_chunks=None,
-                          hf_dataset_loader=False):
+def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name, 
+                          n_chunks=None, n_examples_per_chunk=None, hf_dataset_loader=False):
     def _build_dataset(current_data_prefix, current_num_samples):
         if data_impl == "mmap":
             data_payload = get_indexed_dataset_(current_data_prefix, data_impl, cfg.data.get("skip_warmup", True))
@@ -103,7 +101,7 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
             data_payload = load_dataset("json", data_files=current_data_prefix)["train"]
         elif data_impl == "chunked_jsonl":
             assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
-            data_payload = ChunkedJsonl(current_data_prefix, n_chunks)
+            data_payload = ChunkedJsonl(current_data_prefix, n_chunks, n_examples_per_chunk)
         else:
             raise RuntimeError(f"data.data_impl must be either mmap or json or jsonl, but got {data_impl}")
         total_num_of_documents = len(data_payload)
@@ -142,7 +140,8 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
 
 
 def build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, n_chunks=None, hf_dataset_loader=False,
+    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, 
+    n_chunks=None, n_examples_per_chunk=None, hf_dataset_loader=False,
 ):
     if isinstance(data_prefix, DictConfig):
         assert (
@@ -163,6 +162,7 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="train",
             n_chunks=n_chunks,
+            n_examples_per_chunk=n_examples_per_chunk,
             hf_dataset_loader=hf_dataset_loader,
         )
         validation_ds = build_dataset_generic(
@@ -176,6 +176,7 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="validation",
             n_chunks=n_chunks,
+            n_examples_per_chunk=n_examples_per_chunk,
             hf_dataset_loader=hf_dataset_loader,
         )
         test_ds = build_dataset_generic(
@@ -189,6 +190,7 @@ def build_train_valid_test_datasets(
             tokenizer=tokenizer,
             name="test",
             n_chunks=n_chunks,
+            n_examples_per_chunk=n_examples_per_chunk,
             hf_dataset_loader=hf_dataset_loader,
         )
         return train_ds, validation_ds, test_ds
@@ -207,6 +209,7 @@ def build_train_valid_test_datasets(
                 seed=seed,
                 tokenizer=tokenizer,
                 n_chunks=n_chunks,
+                n_examples_per_chunk=n_examples_per_chunk,
                 hf_dataset_loader=hf_dataset_loader,
             )
 
@@ -231,6 +234,7 @@ def build_train_valid_test_datasets(
                 seed=seed,
                 tokenizer=tokenizer,
                 n_chunks=n_chunks,
+                n_examples_per_chunk=n_examples_per_chunk,
                 hf_dataset_loader=hf_dataset_loader,
             )
             if train_ds:
@@ -257,7 +261,8 @@ def build_train_valid_test_datasets(
 
 
 def _build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, n_chunks=None, hf_dataset_loader=False,
+    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer, 
+    n_chunks=None, n_examples_per_chunk=None, hf_dataset_loader=False,
 ):
     """Build train, valid, and test datasets."""
 
@@ -271,7 +276,7 @@ def _build_train_valid_test_datasets(
         data_payload = load_dataset("json", data_files=data_prefix)["train"]
     elif data_impl == "chunked_jsonl":
         assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
-        data_payload = ChunkedJsonl(data_prefix, n_chunks)
+        data_payload = ChunkedJsonl(data_prefix, n_chunks, n_examples_per_chunk)
     else:
         raise RuntimeError(f"data.data_impl must be either mmap or json or jsonl, but got {data_impl}")
     total_num_of_documents = len(data_payload)

@@ -100,7 +100,8 @@ model:
     
   data:
     data_impl: chunked_jsonl
-    n_chunks: 1000
+    n_chunks: null
+    n_examples_per_chunk: null
     hf_dataset_loader: False
     splits_string: null
     seq_length: ${model.encoder_seq_length}

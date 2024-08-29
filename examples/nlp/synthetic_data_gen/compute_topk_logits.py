@@ -96,6 +96,7 @@ def main(cfg) -> None:
     end_at_idx = cfg.get("end_at_idx", len(dataset) - 1)
     for i in range(start_from_idx, end_at_idx + 1, cfg.batch_size):
         end_i = min(end_at_idx, i + cfg.batch_size-1)
+        logging.info(f"Processing {i}:{end_i} items / till {end_at_idx}.")
         indices = [j for j in range(i, end_i+1) if j not in processed_indices]
         if len(indices) == 0:
             continue
