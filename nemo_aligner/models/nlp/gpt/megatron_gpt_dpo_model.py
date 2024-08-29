@@ -39,7 +39,7 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_validation_step,
     set_sync_funcs,
 )
-from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
+from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap, retrieve_model_state_dict_in_cpu
 
 
 class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
@@ -71,6 +71,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         # variants of preference losses, by default DPO.
         self.preference_loss = self.cfg.dpo.get("preference_loss", "dpo")
         self.gt_reward_scale = self.cfg.dpo.get("gt_reward_scale", 1.0)
+        self.ema_mu = self.cfg.dpo.get("ema_mu", 0.00)
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
@@ -471,3 +472,28 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         # return in GPU, trainer needs to move to cpu
         return ref_log_probs
+    
+    @torch.no_grad()
+    def update_moving_average(self):
+        if self.ema_mu > 0:
+            # Retrieve the model state dict with the current weights
+            offloaded_model_dict = retrieve_model_state_dict_in_cpu(self.model, megatron_amp_O2=self.megatron_amp_O2)
+            
+            prefix = "model.module."
+            ema_mu = self.ema_mu
+
+            # Iterate over the model state dictionary
+            for key, value in offloaded_model_dict.items():
+                # Append prefix to the key
+                full_key = prefix + key
+                
+                # Skip keys that end with '_extra_state'
+                if full_key.endswith('_extra_state'):
+                    continue
+
+                # Ensure the key exists in the reference policy state dict
+                if full_key in self.ref_policy_state_dict:
+                    # Update the ref_policy_state_dict with EMA using in-place operation
+                    self.ref_policy_state_dict[full_key].mul_(1 - ema_mu).add_(value, alpha=ema_mu)
+            
+

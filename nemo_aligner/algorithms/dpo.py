@@ -175,6 +175,9 @@ class DPOTrainer:
         self.optimizer.step()
         self.scheduler.step()
 
+        # Do the EMA update
+        self.model.update_moving_average()
+
         trainer_metrics = {}
         if grad_norm is not None:
             trainer_metrics["grad_norm"] = grad_norm

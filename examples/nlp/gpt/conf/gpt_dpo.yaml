@@ -69,6 +69,7 @@ model:
     preference_loss: dpo # the preference loss, we support dpo, ipo, kto, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
     preference_loss_weight: 1 # the coefficient of the preference loss
     sft_loss_weight: 0 # the coefficient of the SFT loss
+    ema_mu: 0.0 # ema coefficient for the ref policy
   
   #encoder_seq_length: 4096
   #max_position_embeddings: ${model.encoder_seq_length}
