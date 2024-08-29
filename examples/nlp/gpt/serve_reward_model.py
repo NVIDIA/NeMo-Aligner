@@ -28,6 +28,7 @@ from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import RewardModelCallable
 from nemo_aligner.utils.train_script_utils import init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, set_autocast_gpu_dtype
+import datetime
 
 """PyTriton Based Inference Server for the Reward Model"""
 
@@ -38,7 +39,7 @@ ENDPOINT_BIND_ADDRESS = "0.0.0.0"
 def main(cfg) -> None:
     cfg.model = load_and_override_model_config(cfg.rm_model_file, cfg.model)
 
-    trainer = Trainer(strategy=NLPDDPStrategy(), **cfg.trainer)
+    trainer = Trainer(strategy=NLPDDPStrategy(timeout=datetime.timedelta(seconds=18000)), **cfg.trainer)
 
     # needed for autocasting BF16
     set_autocast_gpu_dtype(cfg.trainer.precision)
