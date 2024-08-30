@@ -22,7 +22,6 @@ from functools import partial
 
 import numpy as np
 import torch
-from megatron.core import parallel_state
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
@@ -48,6 +47,7 @@ from nemo_aligner.data.nlp.datasets import (
     RewardModelDataset,
     RLHFDataset,
 )
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
@@ -299,7 +299,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
     return dataset
 
 
-def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg):
+def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_masks_and_position_ids=True):
     """collate function that pads each sequence to the max in the batch
     """
     return partial(
@@ -309,6 +309,7 @@ def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg):
         reset_position_ids=cfg.model.data.get("reset_position_ids", False),
         reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
         eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+        generate_masks_and_position_ids=generate_masks_and_position_ids,
     )
 
 
@@ -339,16 +340,12 @@ def build_dataloader(
         "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
 
-    # Megatron sampler
-    if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type == "single":
-        if use_random_sampler:
-            cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
-            common_params["seed"] = cfg.model.seed
-        else:
-            cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
-        batch_sampler = cls(**common_params)
+    if use_random_sampler:
+        cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
+        common_params["seed"] = cfg.model.seed
     else:
-        raise ValueError('`cfg.model.data.dataloader_type` must be set to "single"')
+        cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+    batch_sampler = cls(**common_params)
 
     return torch.utils.data.DataLoader(
         dataset,

@@ -14,7 +14,6 @@
 
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
@@ -26,6 +25,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import set_sync_funcs
 
 

@@ -15,7 +15,6 @@ from functools import partial
 
 import torch
 import torch.multiprocessing as mp
-from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 
@@ -25,6 +24,7 @@ from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.spin import SPINTrainer, spin_custom_collate
 from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset, collate_with_pad_to_max_batch
 from nemo_aligner.models.nlp.gpt.megatron_gpt_spin_model import MegatronGPTSPINModel
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -41,6 +41,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
