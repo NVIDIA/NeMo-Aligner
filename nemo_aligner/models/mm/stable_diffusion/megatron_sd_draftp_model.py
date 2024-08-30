@@ -17,7 +17,6 @@ from typing import Mapping
 import numpy as np
 import torch
 import wandb
-from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_micro_batch_size, get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
@@ -32,6 +31,7 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm 
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,

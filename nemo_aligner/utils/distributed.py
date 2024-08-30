@@ -17,6 +17,7 @@
 import time
 import warnings
 from collections import defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Optional
@@ -296,6 +297,13 @@ def from_parallel_logits_to_logprobs(vocab_parallel_logits, target, inference_on
     ].contiguous()
 
 
+def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distributed.ReduceOp.SUM):
+    keys = sorted(dictionary)
+    tensor = torch.as_tensor([dictionary[k] for k in keys], dtype=dtype, device=torch.cuda.current_device())
+    torch.distributed.all_reduce(tensor, op=op, group=group)
+    return dict(zip(keys, tensor.tolist()))
+
+
 class SyncTimer(NamedTimer):
     """Wrapper around NamedTimer to sync across DP ranks
         for more precise timing
@@ -318,6 +326,10 @@ class SyncTimer(NamedTimer):
 
         # sync the time
         return self.sync_time([output]).item()
+
+    def stop_and_get_time(self, name=""):
+        self.stop(name=name)
+        return self.get(name=name)
 
     def store(self, name=""):
         """instead of immediately syncing the timing, we'll store it

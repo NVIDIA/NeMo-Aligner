@@ -71,7 +71,7 @@ def req_file(filename, folder="requirements"):
     return [x.strip() for x in content if x.strip()]
 
 
-install_requires = req_file("requirements.txt", folder="")
+install_requires = req_file("requirements.txt", folder="setup")
 
 extras_require = {}
 
