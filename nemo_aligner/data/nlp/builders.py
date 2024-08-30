@@ -266,6 +266,9 @@ build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_d
 
 def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
     packed_sequence = data_cfg.get("packed_sequence", False)
+    dataset_kwargs = {}
+
+    ## NOTE: sequence packing currently not supported with chat dataset
     if is_chat:
         dataset_cls = GPTSFTChatDataset
     elif packed_sequence:
