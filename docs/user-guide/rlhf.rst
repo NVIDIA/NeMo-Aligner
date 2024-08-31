@@ -397,6 +397,16 @@ We test the scaling of our TRT-LLM integration by running Llama3 70B Actor and L
 
 NOTE: for 64x32 config we used a rollout_micro_batch_size of 16 instead of 8 since we have more memory coming from the distributed optimizer.
 
+We also support running RLHF on Llama3.1 405B Actor and Reward Model. The following numbers are generated with ``num_rollout_samples=128``, ``global_batch_size=128``, reshard turned off, engine offloading set to False.
+
++------------------+-------------------+----------------------------+--------------------+
+| Actor Node Count | Critic Node Count | Number of Tokens Generated | Step Time(seconds) |
++==================+===================+============================+====================+
+| 84               | 42                | 915.6                      | 164.6              |
++------------------+-------------------+----------------------------+--------------------+
+
+In the future we aim to improve the performance of generation with large models that have high pipeline parallelism size.
+
 PPO Results
 %%%%%%%%%%%
 
