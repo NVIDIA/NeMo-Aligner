@@ -296,13 +296,18 @@ class DPOModelDataset(Dataset):
         """Returns a pair of chosen/rejected pairs, their respective lengths, and labels.
         """
         payload = self.data[idx]
+        assert not self.cfg.data.get("append_eod", False)
+
         prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
-        chosen, chosen_len = self.encode(
-            payload["prompt"] + payload["chosen_response"], append_eod=self.cfg.data.get("append_eod", False)
-        )
-        reject, reject_len = self.encode(
-            payload["prompt"] + payload["rejected_response"], append_eod=self.cfg.data.get("append_eod", False)
-        )
+
+        chosen, _ = self.encode(payload["chosen_response"], append_eod=False,)
+        reject, _ = self.encode(payload["rejected_response"], append_eod=False,)
+
+        chosen = prompt + chosen
+        reject = prompt + reject
+
+        chosen_len, reject_len = len(chosen), len(reject)
+
         # chosen_response_only, chosen_response_len = self.encode(payload['chosen_response'])
         # reject_response_only, reject_response_len = self.encode(payload['rejected_response'])
         chosen_labels = ([-100] * prompt_len) + chosen[prompt_len:]

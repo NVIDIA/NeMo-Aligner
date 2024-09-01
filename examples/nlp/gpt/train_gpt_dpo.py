@@ -96,6 +96,7 @@ def main(cfg) -> None:
         tokenizer=ptl_model.tokenizer,
     )
 
+    # TODO: should this random sampler be False?
     train_dataloader = build_dataloader(
         cfg=cfg,
         dataset=train_ds,
@@ -111,6 +112,7 @@ def main(cfg) -> None:
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
         ),
+        use_random_sampler=False,
     )
 
     val_dataloader = build_dataloader(
