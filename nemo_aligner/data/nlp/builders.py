@@ -265,12 +265,21 @@ build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_d
 
 
 def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
+    # TE requires that the first input dim is divisible by 8 and the second by 16 for fp8
+    # When using sequence parallel, sequence will further be split by TP size
+    # When using context parallel, sequence is split by CP size as well
+    pad_seq_length_to_mult = (
+        8 * self.cfg.get('tensor_model_parallel_size', 1) if self.cfg.get('sequence_parallel', False) else 16
+    )
+    pad_seq_length_to_mult *= self.cfg.get('context_parallel_size', 1)
+
     dataset_cls = GPTSFTChatDataset if is_chat else GPTSFTDataset
     dataset = dataset_cls(
         file_path=data_cfg.file_path,
         tokenizer=tokenizer,
         max_seq_length=data_cfg.max_seq_length,
         min_seq_length=data_cfg.min_seq_length,
+        pad_seq_length_to_mult=pad_seq_length_to_mult,
         add_bos=data_cfg.get("add_bos", False),
         add_eos=data_cfg.get("add_eos", True),
         add_sep=data_cfg.get("add_sep", False),
