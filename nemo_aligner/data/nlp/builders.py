@@ -268,11 +268,12 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
     packed_sequence = data_cfg.get("packed_sequence", False)
     dataset_kwargs = {}
 
-    ## NOTE: sequence packing currently not supported with chat dataset
     if is_chat:
+        assert not packed_sequence, "Sequence packing is currently not supported with chat datasets."
         dataset_cls = GPTSFTChatDataset
     elif packed_sequence:
         dataset_cls = GPTSFTPackedDataset
+        # Whether to return `cu_seqlen` to pass to model. This should be true for almost all use cases.
         dataset_kwargs = {"return_cu_seqlen": data_cfg.get("packed_sequence_return_cu_seqlen", True)}
         assert data_cfg.micro_batch_size == 1, "Micro batch size must be 1 if using packed sequence"
     else:
