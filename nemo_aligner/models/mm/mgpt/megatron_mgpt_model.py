@@ -133,9 +133,16 @@ class MultimodalGPTModel(MegatronNevaModel):
         else:
             extra['strategy'] = strategy
         
+        if isinstance(inputs, tuple):
+            context_tokens_tensor, context_length_tensor = inputs
+        else:
+            context_tokens_tensor, context_length_tensor = strategy.tokenize_batch(
+                inputs.get('prompt'), length_params['max_length'], sampling_params['add_BOS']
+            )
+
         output = generate(
             self.cuda(),
-            inputs=inputs.get('prompt'),
+            inputs=(context_tokens_tensor, context_length_tensor),
             tokens_to_generate=length_params['max_length'],
             all_probs=sampling_params['all_probs'],
             compute_logprob=sampling_params['compute_logprob'],

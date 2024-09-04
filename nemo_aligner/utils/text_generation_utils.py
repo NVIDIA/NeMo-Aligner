@@ -215,11 +215,6 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
 
         exceeded = [False] * len(context_tokens)
 
-        for i, x in enumerate(context_tokens):
-            if len(x) > max_len:
-                logging.warning(f"max seq len of {max_len} exceeded, chunking")
-                exceeded[i] = True
-
         context_tokens, context_lengths = nemo_pad_batch(context_tokens, tokenizer.eos_id, max_len)
         context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
         context_length_tensor = torch.cuda.LongTensor(context_lengths)
