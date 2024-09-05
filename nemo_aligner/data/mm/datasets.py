@@ -295,8 +295,8 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
 
     media = batch.get('image')
-    media = rearrange(media, "b T c h w -> b T 1 c h w")
-    
+    media = rearrange(media, "b T c h w -> b T 1 c h w") # TODO (tugrul): support different images for chosen and rejected samples
+
     output = {
         "chosen": chosen_tokens,
         "rejected": rejected_tokens,
@@ -308,7 +308,8 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         "position_ids": position_ids,
         "chosen_rewards": chosen_rewards,
         "rejected_rewards": rejected_rewards,
-        "media": media,
+        "chosen_media": media,
+        "rejected_media": media,
     }
     return output
 
