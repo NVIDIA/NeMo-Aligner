@@ -24,7 +24,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils imp
 from nemo.collections.nlp.data.language_modeling.megatron.blendable_dataset import BlendableDataset
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
 from nemo.utils import logging
-from nemo_aligner.data.mm.datasets import MultimodalChatDataset
+from nemo_aligner.data.mm.datasets import MultimodalChatDataset, MultimodalDPOModelDataset
 
 def build_mm_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name, image_processor):
     def _build_dataset(current_data_prefix, current_num_samples):
@@ -238,7 +238,7 @@ def _build_mm_train_valid_test_datasets(
 
     return (train_dataset, valid_dataset, test_dataset)
 
-build_train_valid_test_mdpo_datasets = partial(build_mm_train_valid_test_datasets, DPOModelDataset)
+build_train_valid_test_dpo_datasets = partial(build_mm_train_valid_test_datasets, MultimodalDPOModelDataset)
 
 def build_mm_sft_dataset(model_cfg, data_cfg, mm_cfg, tokenizer, image_processor, special_tokens=None):
     dataset = MultimodalChatDataset(

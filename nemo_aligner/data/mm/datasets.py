@@ -294,7 +294,7 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
         attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
 
-    media = batch.get('image')
+    media = torch.stack([item["media"] for item in batch], dim=0)
     media = rearrange(media, "b T c h w -> b T 1 c h w") # TODO (tugrul): support different images for chosen and rejected samples
 
     output = {
