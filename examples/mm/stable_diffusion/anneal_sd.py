@@ -102,7 +102,6 @@ def main(cfg) -> None:
     train_ds, validation_ds = text_webdataset.build_train_valid_datasets(
         cfg.model.data, consumed_samples=consumed_samples
     )
-    # train_ds = [d["captions"] for d in list(train_ds)]
     validation_ds = [d["captions"] for d in list(validation_ds)]
 
     val_dataloader = build_dataloader(

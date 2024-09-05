@@ -185,16 +185,151 @@ User controllable finetuning with Annealed Importance Guidance (AIG)
 AIG provides the inference-time flexibility to interpolate between the base Stable Diffusion model (with low rewards and high diversity) and DRaFT-finetuned model (with high rewards and low diversity) to obtain images with high rewards and high diversity. AIG inference is easily done by specifying comma-separated `weight_type` strategies to interpolate between the base and finetuned model.
 
 .. tab-set::
-    .. tab-item:: Terminal
+    .. tab-item:: AIG on Stable Diffusion XL 
         :sync: key2
 
         Weight type of `base` uses the base model for AIG, `draft` uses the finetuned model (no interpolation is done in either case).
         Weight type of the form `power_<float>` interpolates using an exponential decay specified in the AIG paper.
 
-         To run AIG inference on the terminal directly:
+        To run AIG inference on the terminal directly:
 
          .. code-block:: bash 
 
-            SCRIPT="launch_annealing.sh"   # or "launch_annealing_xl.sh"
-            DIR_SAVE_CKPT_PATH=/path/to/explicit_log_dir PROMPT="An astronaut sitting on a swing" ADDITIONAL_KWARGS="+weight_type='draft,base,power_2.0'" bash $SCRIPT
+            NUMNODES=1
+            LR=${LR:=0.00025}
+            INF_STEPS=${INF_STEPS:=25}
+            KL_COEF=${KL_COEF:=0.1}
+            ETA=${ETA:=0.0}
+            DATASET=${DATASET:="pickapic50k.tar"}
+            MICRO_BS=${MICRO_BS:=1}
+            GRAD_ACCUMULATION=${GRAD_ACCUMULATION:=4}
+            PEFT=${PEFT:="sdlora"}
+            NUM_DEVICES=${NUM_DEVICES:=8}
+            GLOBAL_BATCH_SIZE=$((MICRO_BS*NUM_DEVICES*GRAD_ACCUMULATION*NUMNODES))
+            LOG_WANDB=${LOG_WANDB:="False"}
+
+            echo "additional kwargs: ${ADDITIONAL_KWARGS}"
+
+            WANDB_NAME=SDXL_Draft_annealing
+            WEBDATASET_PATH=/path/to/${DATASET}
+
+            CONFIG_PATH="/opt/nemo-aligner/examples/mm/stable_diffusion/conf"
+            CONFIG_NAME=${CONFIG_NAME:="draftp_sdxl"}
+            UNET_CKPT="/path/to/unet.ckpt"
+            VAE_CKPT="/path/to/vae.ckpt"
+            RM_CKPT="/path/to/reward_model.nemo"
+            PROMPT=${PROMPT:="Bananas growing on an apple tree"}
+            DIR_SAVE_CKPT_PATH=/path/to/explicit_log_dir
+
+            if [ ! -z "${ACT_CKPT}" ]; then
+                ACT_CKPT="model.activation_checkpointing=$ACT_CKPT "
+                echo $ACT_CKPT
+            fi
+
+            EVAL_SCRIPT=${EVAL_SCRIPT:-"anneal_sdxl.py"}
+            export DEVICE="0,1,2,3,4,5,6,7" && echo "Running DRaFT+ on ${DEVICE}" && export HYDRA_FULL_ERROR=1 
+            set -x
+            CUDA_VISIBLE_DEVICES="${DEVICE}" torchrun --nproc_per_node=$NUM_DEVICES /opt/nemo-aligner/examples/mm/stable_diffusion/${EVAL_SCRIPT} \
+                --config-path=${CONFIG_PATH} \
+                --config-name=${CONFIG_NAME} \
+                model.optim.lr=${LR} \
+                model.optim.weight_decay=0.0005 \
+                model.optim.sched.warmup_steps=0 \
+                model.sampling.base.steps=${INF_STEPS} \
+                model.kl_coeff=${KL_COEF} \
+                model.truncation_steps=1 \
+                trainer.draftp_sd.max_epochs=5 \
+                trainer.draftp_sd.max_steps=10000 \
+                trainer.draftp_sd.save_interval=200 \
+                trainer.draftp_sd.val_check_interval=20 \
+                trainer.draftp_sd.gradient_clip_val=10.0 \
+                model.micro_batch_size=${MICRO_BS} \
+                model.global_batch_size=${GLOBAL_BATCH_SIZE} \
+                model.peft.peft_scheme=${PEFT} \
+                model.data.webdataset.local_root_path=$WEBDATASET_PATH \
+                rm.model.restore_from_path=${RM_CKPT} \
+                trainer.devices=${NUM_DEVICES} \
+                trainer.num_nodes=${NUMNODES} \
+                rm.trainer.devices=${NUM_DEVICES} \
+                rm.trainer.num_nodes=${NUMNODES} \
+                +prompt="${PROMPT}" \
+                exp_manager.create_wandb_logger=${LOG_WANDB} \
+                model.first_stage_config.from_pretrained=${VAE_CKPT} \
+                model.first_stage_config.from_NeMo=True \
+                model.unet_config.from_pretrained=${UNET_CKPT} \
+                model.unet_config.from_NeMo=True \
+                $ACT_CKPT \
+                exp_manager.wandb_logger_kwargs.name=${WANDB_NAME} \
+                exp_manager.resume_if_exists=True \
+                exp_manager.explicit_log_dir=${DIR_SAVE_CKPT_PATH} \
+                exp_manager.wandb_logger_kwargs.project=${PROJECT} +weight_type='draft,base,power_2.0'
+
+    .. tab-item:: AIG on Stable Diffusion v1.1 - v1.5
+        :sync: key
+
+        Weight type of `base` uses the base model for AIG, `draft` uses the finetuned model (no interpolation is done in either case).
+        Weight type of the form `power_<float>` interpolates using an exponential decay specified in the AIG paper.
+
+        To run AIG inference on the terminal directly:
+
+         .. code-block:: bash 
+
+            LR=${LR:=0.00025}
+            INF_STEPS=${INF_STEPS:=25}
+            KL_COEF=${KL_COEF:=0.1}
+            ETA=${ETA:=0.0}
+            DATASET=${DATASET:="pickapic50k.tar"}
+            MICRO_BS=${MICRO_BS:=2}
+            GRAD_ACCUMULATION=${GRAD_ACCUMULATION:=4}
+            PEFT=${PEFT:="sdlora"}
+            NUM_DEVICES=8
+            GLOBAL_BATCH_SIZE=$((MICRO_BS*NUM_DEVICES*GRAD_ACCUMULATION))
+
+            WANDB_NAME=SD_DRaFT_annealing
+            WEBDATASET_PATH=/path/to/${DATASET}
+
+            CONFIG_PATH="/opt/nemo-aligner/examples/mm/stable_diffusion/conf"
+            CONFIG_NAME="draftp_sd"
+            UNET_CKPT="/path/to/unet.ckpt"
+            VAE_CKPT="/path/to/vae.ckpt"
+            RM_CKPT="/path/to/rewardmodel.nemo"
+
+            # change this as an end-user
+            PROMPT=${PROMPT:-"Bananas growing on an apple tree"}
+
+            EVAL_SCRIPT=${EVAL_SCRIPT:-"anneal_sd.py"}
+            set -x
+            DEVICE="0,1,2,3,4,5,6,7"
+            echo "Running DRaFT on ${DEVICE}"
+            export HYDRA_FULL_ERROR=1 \
+            && MASTER_PORT=15003 CUDA_VISIBLE_DEVICES="${DEVICE}" torchrun --nproc_per_node=${NUM_DEVICES} /opt/nemo-aligner/examples/mm/stable_diffusion/${EVAL_SCRIPT} \
+                --config-path=${CONFIG_PATH} \
+                --config-name=${CONFIG_NAME} \
+                model.optim.lr=${LR} \
+                model.optim.weight_decay=0.005 \
+                model.optim.sched.warmup_steps=0 \
+                model.infer.inference_steps=${INF_STEPS} \
+                model.infer.eta=0.0 \
+                model.kl_coeff=${KL_COEF} \
+                model.truncation_steps=1 \
+                trainer.draftp_sd.max_epochs=1 \
+                trainer.draftp_sd.max_steps=4000 \
+                trainer.draftp_sd.save_interval=100 \
+                model.unet_config.from_pretrained=${UNET_CKPT} \
+                model.first_stage_config.from_pretrained=${VAE_CKPT} \
+                model.micro_batch_size=${MICRO_BS} \
+                model.global_batch_size=${GLOBAL_BATCH_SIZE} \
+                model.peft.peft_scheme=${PEFT} \
+                model.data.webdataset.local_root_path=$WEBDATASET_PATH \
+                rm.model.restore_from_path=${RM_CKPT} \
+                +prompt="${PROMPT}" \
+                trainer.draftp_sd.val_check_interval=20 \
+                trainer.draftp_sd.gradient_clip_val=10.0 \
+                trainer.devices=${NUM_DEVICES} \
+                rm.trainer.devices=${NUM_DEVICES} \
+                exp_manager.create_wandb_logger=True \
+                exp_manager.wandb_logger_kwargs.name=${WANDB_NAME} \
+                exp_manager.resume_if_exists=True \
+                exp_manager.explicit_log_dir=${DIR_SAVE_CKPT_PATH} \
+                exp_manager.wandb_logger_kwargs.project=${PROJECT} +weight_type='draft,base,power_2.0'
 

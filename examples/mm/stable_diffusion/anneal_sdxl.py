@@ -93,7 +93,6 @@ from nemo_aligner.utils.train_script_utils import (
 
 mp.set_start_method("spawn", force=True)
 
-
 class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
     """Builder for SD model Trainer with overrides."""
 
@@ -131,8 +130,7 @@ class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
                     FrozenCLIPEmbedder,
                     ParallelLinearAdapter,
                 },
-                # extra_fsdp_wrap_module={UNetModel,TimestepEmbedSequential,Decoder,ResnetBlock,AttnBlock,SpatialTransformer,ResBlock,\
-                use_orig_params=False,  # self.cfg.model.inductor,
+                use_orig_params=False, 
                 set_buffer_dtype=self.cfg.get("fsdp_set_buffer_dtype", None),
             )
 
