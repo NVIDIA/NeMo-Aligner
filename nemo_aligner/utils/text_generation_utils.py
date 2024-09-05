@@ -14,14 +14,16 @@
 
 """Utilities for generating text."""
 
-import math
 from typing import Any, List
 
 import torch
-from megatron.core import parallel_state
 
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
-from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy
+from nemo.collections.nlp.modules.common.text_generation_strategy import (
+    GPTModelTextGenerationStrategy,
+    TextGenerationStrategy,
+)
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
 
 
@@ -70,8 +72,8 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
         if parallel_state.is_pipeline_last_stage():  # only the last stage actually has access to lengths
             lengths = torch.where(self._end_idx >= 0, self._end_idx + 1, self._context_lengths + self._max_length)
             lengths = lengths.to(torch.int64).view((-1, 1))
-        lengths = broadcast_2d_tensor_within_pp(lengths, dtype=torch.int64)
-        return lengths.flatten()
+        lengths = broadcast_2d_tensor_within_pp(lengths, dtype=torch.int64).flatten()
+        return lengths
 
 
 def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False):
@@ -97,3 +99,21 @@ def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False):
     context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
     context_length_tensor = torch.cuda.LongTensor(context_lengths)
     return context_tokens_tensor, context_length_tensor
+
+
+def verify_is_valid_and_clamp_range_(
+    response_tokens, response_lengths, strategy: TextGenerationStrategy, tokenizer, end_strings=None
+):
+    """Function to verify if the tokens have properly ended, and clamp the tokens within the tokenizer range
+    """
+    if end_strings is None:
+        end_strings = []
+
+    prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
+    is_valid = strategy.end_of_generation_condition(response_tokens, prev, tokenizer.eos_id, end_strings)
+
+    mask = (0 <= response_tokens) & (response_tokens < tokenizer.vocab_size)
+    is_valid = is_valid & torch.all(mask, dim=-1)
+
+    response_tokens.clamp_(0, tokenizer.vocab_size - 1)
+    return is_valid

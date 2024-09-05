@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from functools import partial
+
 import torch
 import torch.multiprocessing as mp
-from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf
 
-from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -29,6 +29,8 @@ from nemo_aligner.data.nlp.builders import (
 )
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMCriticClient
+from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -46,6 +48,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
@@ -89,10 +92,8 @@ def main(cfg) -> None:
     # TODO: log this restore path
     if trainer_restore_path is not None:
         custom_trainer_state_dict = retrieve_custom_trainer_state_dict(trainer)
-        consumed_samples = custom_trainer_state_dict["consumed_samples"]
     else:
         custom_trainer_state_dict = None
-        consumed_samples = 0
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
@@ -113,22 +114,22 @@ def main(cfg) -> None:
     eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    collate_fn = collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg)
+    collate_fn = collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg, generate_masks_and_position_ids=False)
 
-    train_dataloader = build_dataloader(
+    train_dataloader_builder = partial(
+        build_dataloader,
         cfg=cfg,
         dataset=train_ds,
-        consumed_samples=consumed_samples,
         mbs=cfg.model.ppo.rollout_micro_batch_size,
         gbs=cfg.model.ppo.num_rollout_samples,
         collate_fn=collate_fn,
         load_gbs=False,
     )
 
-    val_dataloader = build_dataloader(
+    val_dataloader_builder = partial(
+        build_dataloader,
         cfg=cfg,
         dataset=validation_ds,
-        consumed_samples=0,
         mbs=cfg.model.ppo.val_rollout_micro_batch_size,
         gbs=cfg.model.ppo.num_val_samples,
         collate_fn=collate_fn,
@@ -160,14 +161,19 @@ def main(cfg) -> None:
     rm_critic = RemoteGPTRMCriticClient(cfg.remote_critic_rm)
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
+    batch_iterator_cfg = cfg.trainer.ppo.get("batch_iterator", {})
+    batch_iterator_cls = get_batch_iterator_cls(batch_iterator_cfg)
+
     ppo_trainer = PPOTrainer(
         cfg=cfg.trainer.ppo,
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
-        train_dataloader=train_dataloader,
-        val_dataloader=val_dataloader,
+        train_dataloader_builder=train_dataloader_builder,
+        val_dataloader_builder=val_dataloader_builder,
+        collate_fn=collate_fn,
         rm_critic=rm_critic,
+        batch_iterator_cls=batch_iterator_cls,
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
@@ -177,6 +183,15 @@ def main(cfg) -> None:
         ppo_trainer.load_state_dict(custom_trainer_state_dict)
 
     ppo_trainer.fit()
+
+    # Note: The main loop creates multiple HTTPCommunicators which own a
+    # pytriton.client.FuturesModelClient. At the end of the loop, we manually
+    # close all FuturesModelClients since we do not use the context manager
+    # syntax. This guarantees all dangling threads are no longer blocking.
+    # `atexit` does not suffice since the registered cleanup function can be
+    # queued behind another blocking atexit registered function.
+    # TODO: utilize context managers to avoid manual cleanup
+    rm_critic.communicator.close()
 
 
 if __name__ == "__main__":
