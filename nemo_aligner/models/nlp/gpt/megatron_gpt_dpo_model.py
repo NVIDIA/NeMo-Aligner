@@ -408,7 +408,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         seq_length = batch["chosen"].shape[1]
         batch_size = batch["chosen"].shape[0]
 
-        num_microbatches = divide(batch_size * 2, self.cfg.dpo.log_prob_forward_micro_batch_size)
+        num_microbatches = divide(batch_size, self.cfg.dpo.log_prob_forward_micro_batch_size)
         data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only=True)
 
@@ -421,7 +421,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.dpo.log_prob_forward_micro_batch_size,
+            micro_batch_size=self.cfg.dpo.log_prob_forward_micro_batch_size * 2,
             collect_non_loss_data=True,
         )
 
