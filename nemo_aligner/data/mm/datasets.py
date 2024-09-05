@@ -14,18 +14,304 @@
 
 """Custom datasets for Multimodal training"""
 import os
+import re
 import copy
 import numpy as np
 import torch
+from einops import rearrange
 from typing import Any, Dict, List
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
+from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.core import Dataset
 from nemo.utils import logging
-from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, process_image
+from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, TarOrFolderImageLoader, process_image
 from PIL import Image
 from transformers import CLIPImageProcessor, SiglipImageProcessor
 
 MAX_NUM_IMAGES = 1
+
+def process_media_tokens(
+        text: str, 
+        media_token: str, 
+        media_patch_token: str, 
+        media_start_token: str, 
+        media_end_token: str, 
+        num_media_tokens: int, 
+        use_im_start_end: bool
+    ) -> Dict:
+    if use_im_start_end:
+        replace_token = media_patch_token * num_media_tokens
+    else:
+        replace_token = media_patch_token * (num_media_tokens - 2)
+    replace_token = media_start_token + replace_token + media_end_token
+    
+    text = text.replace(media_token, replace_token)
+    return text
+
+def maybe_process_prompt_and_media(
+        record,
+        image_loader, 
+        image_processor, 
+        image_token, 
+        image_patch_token, 
+        image_start_token, 
+        image_end_token, 
+        image_aspect_ratio, 
+        image_patch_dim, 
+        use_im_start_end, 
+        crop_size,
+        is_multimodal: bool = True
+    ):
+    if "image" in record:
+        if not isinstance(record['image'], list):
+            record['image'] = [record['image']]
+        images = []
+        for image_file in record["image"]:
+            image = image_loader.open_image(image_file)
+            if image is None:
+                logging.warning(f"Image {image} could not be found!")
+            image = process_image(image_processor, image, image_aspect_ratio)
+            images.append(image)
+        media_tensors = torch.tensor([])
+        if images:
+            media_tensors = torch.stack(images)
+            height_num_patches = media_tensors[0].shape[1] // image_patch_dim
+            width_num_patches  = media_tensors[0].shape[2] // image_patch_dim
+            num_image_tokens = height_num_patches * width_num_patches
+            record['prompt'] = process_media_tokens(
+                record['prompt'],
+                image_token,
+                image_patch_token,
+                image_start_token,
+                image_end_token,
+                num_image_tokens,
+                use_im_start_end,
+            )
+
+        # image exist in the data
+        if is_multimodal:
+            # Image does not exist in the data, but the model is multimodal
+            # TODO, if there are different videos on T dimensions.
+            if media_tensors.shape[0] < MAX_NUM_IMAGES:
+                padding_size = MAX_NUM_IMAGES - media_tensors.shape[0]
+                zero_padding = torch.zeros((padding_size, 3, crop_size[0], crop_size[1]), dtype=torch.float)
+                media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
+        
+        record["image"] = media_tensors
+    return record
+
+class MultimodalDPOModelDataset(Dataset):
+    """This class works only with jsonl files. It assumes each line of the json file is a dictionary
+       with the prompt, along with the chosen response (response only, no prompt), and the rejected response
+       (response only, no prompt). This Dataset will combine the prompt with each corresponding chosen and 
+       rejected response, and then tokenize it. It also returns the labels for each, which is the response tokens
+       with -100 for the prompt part.
+       
+       WARNING: This class will tokenize the text, but it will raise an exception on model max seq len violations!
+                Meaning it will not truncate tokens to fit to model max seq len, because of special prefix/suffix
+                strings such as <extra_id_1>, it would not know where it is safe to truncate for each model. Therefore,
+                the user must do all truncation logic in their preprocessing step when generating the jsonl
+                used by this class. Put all special truncation logic there specific to your model.
+    """
+
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, image_processor, drop_last=True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.name = name
+        self.data = data
+        self.drop_last = drop_last
+        self.seq_length = seq_length
+        self.tokenizer = tokenizer
+
+        self.reset_position_ids = cfg.data.get("reset_position_ids", False)
+        self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
+        self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
+        self.eos_id = tokenizer.eos_id
+        self.default_chosen_reward = cfg.data.get("default_chosen_reward", 1.0)
+        self.default_rejected_reward = cfg.data.get("default_rejected_reward", 0.0)
+
+        self.nograd_length = 32
+
+        # Multimodal
+        self.is_multimodal = cfg.data.get("is_multimodal", True)
+        self.media_type = cfg.data.get("media_type", "image") # Only image is supported for now
+        self.image_token = cfg.mm_cfg.get("image_token", "<image>")
+        self.image_patch_token = cfg.mm_cfg.get("image_patch_token", "<extra_id_3>")
+        self.image_folder = cfg.data.get("image_folder", None)        
+        self.image_start_token = cfg.mm_cfg.get("im_start_token", "<extra_id_4>")
+        self.image_end_token = cfg.mm_cfg.get("im_end_token", "<extra_id_5>")
+        self.add_extra_token = cfg.data.get("add_extra_token", 0) 
+        self.image_loader = TarOrFolderImageLoader(self.image_folder) if self.image_folder else None
+        self.image_processor = image_processor
+        self.image_aspect_ratio = cfg.data.image_aspect_ratio
+        self.image_patch_dim = cfg.mm_cfg.vision_encoder.patch_dim
+        self.use_im_start_end = cfg.mm_cfg.use_im_start_end
+        self.crop_size = cfg.mm_cfg.vision_encoder.crop_size
+
+        # Checks
+        assert np.min(documents) >= 0
+        assert np.max(documents) < len(self.data)
+
+        # Replace image tags with
+        img_pattern = r'<img\s+src=[\'"]([^\'"]+)[\'"](?:[^>]*)?/?>'
+        self.data = []
+        for record in data:
+            # This currently supports only a single image
+            # search for <img src="/absolute/path/to/image" in the conversation
+            #   add it as record['image'], remove src tag from the <img> tag
+            record['image'] = []
+            matches = re.finditer(img_pattern, record['prompt'])
+            for match in matches:
+                image_name = match.group(1).split("/")[-1]
+                image_path = os.path.join(self.image_folder, image_name)
+                if self.image_folder.endswith('.tar'):
+                    if image_name not in self.image_loader.tar_index:
+                        logging.warning(f"Image not found in tar: {image_name}")
+                        continue
+                else:
+                    image_path = os.path.join(self.image_folder, image_name)
+                    if not os.path.isfile(image_path):
+                        logging.warning(f"Image not found: {image_path}")
+                        continue
+                record['image'].append(image_name)  # url
+            record['prompt'] = re.sub(img_pattern, self.image_token, record['prompt'])
+            self.data.append(record)
+
+    def __len__(self):
+        return len(self.data)
+
+    def encode(self, text, append_eod=False):
+        if self.cfg.data.get("apply_ftfy", False):
+            import ftfy
+
+            text = ftfy.fix_text(text)
+
+        text_ids = self.tokenizer.text_to_ids(text)
+
+        if len(text_ids) > 0 and append_eod:
+            text_ids.append(self.tokenizer.eos_id)
+
+        return text_ids, len(text_ids)
+
+    def __getitem__(self, idx):
+        """Returns a pair of chosen/rejected pairs, their respective lengths, and labels.
+        """
+        payload = self.data[idx]
+        payload = maybe_process_prompt_and_media(
+                    payload,
+                    self.image_loader,
+                    self.image_processor,
+                    self.image_token,
+                    self.image_patch_token,
+                    self.image_start_token,
+                    self.image_end_token,
+                    self.image_aspect_ratio,
+                    self.image_patch_dim,
+                    self.use_im_start_end,
+                    self.crop_size,
+                    self.is_multimodal,
+                )
+        
+        prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
+        chosen, chosen_len = self.encode(
+            payload["prompt"] + payload["chosen_response"], append_eod=self.cfg.data.get("append_eod", False)
+        )
+        reject, reject_len = self.encode(
+            payload["prompt"] + payload["rejected_response"], append_eod=self.cfg.data.get("append_eod", False)
+        )
+        # chosen_response_only, chosen_response_len = self.encode(payload['chosen_response'])
+        # reject_response_only, reject_response_len = self.encode(payload['rejected_response'])
+        chosen_labels = ([-100] * prompt_len) + chosen[prompt_len:]
+        reject_labels = ([-100] * prompt_len) + reject[prompt_len:]
+
+        assert chosen[0:prompt_len] == prompt, "the tokenizer for DPO has merged tokens between prompt and response"
+        assert reject[0:prompt_len] == prompt, "the tokenizer for DPO has merged tokens between prompt and response"
+
+        max_curr_seq_len = max(chosen_len, reject_len)
+        if max_curr_seq_len > self.seq_length:
+            logging.warning(
+                f"WARNING: Tokenized text exceeds max seq length ({max_curr_seq_len} vs {self.seq_length})."
+                + f"The example will be ignored."
+            )
+
+        chosen_tokens = torch.nn.functional.pad(
+            torch.LongTensor(chosen), (0, max_curr_seq_len - chosen_len), mode="constant", value=self.eos_id
+        )
+        rejected_tokens = torch.nn.functional.pad(
+            torch.LongTensor(reject), (0, max_curr_seq_len - reject_len), mode="constant", value=self.eos_id
+        )
+        labels_chosen_tokens = torch.nn.functional.pad(
+            torch.LongTensor(chosen_labels), (0, max_curr_seq_len - len(chosen_labels)), mode="constant", value=-100
+        )
+        labels_reject_tokens = torch.nn.functional.pad(
+            torch.LongTensor(reject_labels), (0, max_curr_seq_len - len(reject_labels)), mode="constant", value=-100
+        )
+
+        # ignore the example whose tokenized text exceeds max seq length.
+        if max_curr_seq_len > self.seq_length:
+            chosen_tokens = chosen_tokens[: self.nograd_length]
+            rejected_tokens = rejected_tokens[: self.nograd_length]
+            labels_chosen_tokens = torch.ones_like(chosen_tokens) * (-100)
+            labels_reject_tokens = torch.ones_like(rejected_tokens) * (-100)
+            chosen_len = self.nograd_length
+            reject_len = self.nograd_length
+
+        output = {
+            "chosen": chosen_tokens,
+            "rejected": rejected_tokens,
+            "chosen_length": chosen_len,
+            "rejected_length": reject_len,
+            "chosen_labels": labels_chosen_tokens,
+            "rejected_labels": labels_reject_tokens,
+            "chosen_reward": payload.get("chosen_reward", self.default_chosen_reward),
+            "rejected_reward": payload.get("rejected_reward", self.default_rejected_reward),
+            "media": payload.get("image", None),
+        }
+        return output
+
+def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
+    chosen_tokens = [item["chosen"] for item in batch]
+    rejected_tokens = [item["rejected"] for item in batch]
+    chosen_lengths = torch.LongTensor([item["chosen_length"] for item in batch])
+    rejected_lengths = torch.LongTensor([item["rejected_length"] for item in batch])
+    chosen_labels = [item["chosen_labels"] for item in batch]
+    rejected_labels = [item["rejected_labels"] for item in batch]
+    chosen_rewards = torch.FloatTensor([item["chosen_reward"] for item in batch])
+    rejected_rewards = torch.FloatTensor([item["rejected_reward"] for item in batch])
+
+    chosen_tokens = torch.nn.utils.rnn.pad_sequence(chosen_tokens, batch_first=True, padding_value=eos_id)
+    rejected_tokens = torch.nn.utils.rnn.pad_sequence(rejected_tokens, batch_first=True, padding_value=eos_id)
+    chosen_labels = torch.nn.utils.rnn.pad_sequence(chosen_labels, batch_first=True, padding_value=-100)
+    rejected_labels = torch.nn.utils.rnn.pad_sequence(rejected_labels, batch_first=True, padding_value=-100)
+
+    attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+        chosen_tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+    )
+    assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
+    if attention_mask.shape[0] == 1:
+        # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+        # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
+        attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+
+    media = batch.get('image')
+    media = rearrange(media, "b T c h w -> b T 1 c h w")
+    
+    output = {
+        "chosen": chosen_tokens,
+        "rejected": rejected_tokens,
+        "chosen_length": chosen_lengths,
+        "rejected_length": rejected_lengths,
+        "chosen_labels": chosen_labels,
+        "rejected_labels": rejected_labels,
+        "attention_mask": attention_mask,
+        "position_ids": position_ids,
+        "chosen_rewards": chosen_rewards,
+        "rejected_rewards": rejected_rewards,
+        "media": media,
+    }
+    return output
+
 
 class MultimodalChatDataset(NevaDataset):
     def __init__(
