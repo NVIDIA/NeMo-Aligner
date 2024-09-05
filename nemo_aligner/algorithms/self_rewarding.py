@@ -856,6 +856,7 @@ class SelfRewardingTrainer:
         buffer = []
         meta_buffer_pending, meta_buffer_done = [], []
         done = False
+        cnt_tracker = np.array([0 for _ in range(6)])
         while not done:
             try:
                 batches = next(iter_dataloader)
@@ -1019,7 +1020,7 @@ class SelfRewardingTrainer:
                             for a, b in itertools.combinations([self.model.tokenizer.ids_to_text(s[0][s[1]:s[2]].tolist()) for s in reward_tokens_raw], 2):
                                 score_a = self.parse_reward_fn(a)
                                 score_b = self.parse_reward_fn(b)
-                                print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_SAMPLE_REWARDS  A [ {score_a} ]  B [ {score_b} ]")
+                                #print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_SAMPLE_REWARDS  A [ {score_a} ]  B [ {score_b} ]")
                                 if score_a is None or score_b is None or a == b:
                                     continue
                                 a = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", a)
@@ -1036,9 +1037,10 @@ class SelfRewardingTrainer:
                             if len(meta_batch) > 1 and len(meta_buffer_done) < self.model.cfg.global_batch_size * 3:
                                 meta_buffer_pending.append( (reward_tokens_raw, meta_batch) )
                         
-                        if self.use_meta_judge and ((bad_ends > 0 or bad_sample) or (torch.rand((1,)) <= self.meta_judge_pcnt)) and len(meta_buffer_done) > 0:
+                        if self.use_meta_judge and ((bad_ends > 0 or bad_sample) and (torch.rand((1,)) <= self.meta_judge_pcnt)) and len(meta_buffer_done) > 0:
                         #if self.use_meta_judge and (bad_ends > 0 or bad_sample) and len(meta_buffer_done) > 0:
                             final_buffer.append(meta_buffer_done.pop(0))
+                            #final_buffer.append(meta_buffer_done.pop(torch.randint(0, len(meta_buffer_done), (1,)).item()))
                         else:
                             final_buffer.append({
                                 "chosen_tokens": chosen_tokens,
@@ -1137,7 +1139,8 @@ class SelfRewardingTrainer:
 
                 buffer.clear()
                 
-                print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_BATCH_PENDING [ {len(meta_buffer_pending)} ] META_BATCH_ROLLOUT [ {sum([len(x[-1]) for x in meta_buffer_pending])} ] META_BATCH_DONE [ {len(meta_buffer_done)} ] ***")
+                print(f"*** Rank [ {torch.distributed.get_rank()} ] Iteration [ {self.iteration} ] Step [ {self.step} ] META_BATCH_PENDING [ {len(meta_buffer_pending)} ] META_BATCH_ROLLOUT [ {sum([len(x[-1]) for x in meta_buffer_pending])} ] META_BATCH_DONE [ {len(meta_buffer_done)} ]")
+                print(f"*** Rank [ {torch.distributed.get_rank()} ] Iteration [ {self.iteration} ] Step [ {self.step} ] META_CNTR  {cnt_tracker}  META_CNTR_PCNT  {cnt_tracker / sum(cnt_tracker).clip(min=1.0)}")
                 if done:
                     meta_buffer_pending.clear()
                     #meta_buffer_done.clear()
@@ -1234,7 +1237,8 @@ class SelfRewardingTrainer:
                                 bad_meta_sample = True
                                 print("BAD_META_SAMPLE_3")
                             
-                            if meta_bad_ends == 0 and bad_meta_sample == False:
+                            if meta_bad_ends == 0 and bad_meta_sample == False and ((cnt_tracker / sum(cnt_tracker).clip(min=1.0))[int(chosen_score)] < 0.4) and (cnt_tracker[int(chosen_score)] < int(self.num_steps_per_epoch * 0.2 * original_gbs_size / 5)):
+                            #if meta_bad_ends == 0 and bad_meta_sample == False and cnt_tracker[int(chosen_score)] < int(self.num_steps_per_epoch * 0.2 * original_gbs_size / 5):
                                 meta_pairs.append({
                                     "chosen_tokens": chosen_tokens,
                                     "chosen_prompt_len": chosen_prompt_len,
@@ -1248,6 +1252,7 @@ class SelfRewardingTrainer:
                                     "bad_ends": meta_bad_ends,
                                     }
                                 )
+                                cnt_tracker[int(chosen_score)] += 1
                             
                             if N <= len(meta_buffer_pending[tup[0]][-1]):
                                 [meta_buffer_pending[tup[0]][-1].pop(0) for _ in range(N)]
