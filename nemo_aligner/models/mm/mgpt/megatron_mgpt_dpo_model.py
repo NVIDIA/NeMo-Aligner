@@ -16,6 +16,7 @@ import warnings
 from functools import partial
 
 import torch
+from megatron.core import InferenceParams
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
@@ -375,6 +376,65 @@ class MegatronMGPTDPOModel(MultimodalGPTModel, NLPAdapterModelMixin, SupervisedI
 
         return loss_mean.item(), metrics
 
+    def get_forward_output_only_func(self):
+        def fwd_output_only_func(dataloader_iter, model):
+            # If tuple, 1st element in it is the batch since dataloader_iter returns batch, batch_idx, dataloader_idx
+            batch = next(dataloader_iter)
+            if isinstance(batch, tuple):
+                batch = batch[0]
+            extra_arg = {}
+            if len(batch) == 4:
+                batch = [x.cuda() for x in batch]
+                tokens, attention_mask, position_ids, media = batch
+                attention_mask = attention_mask[0:1]
+            else:
+                (
+                    tokens,
+                    attention_mask,
+                    position_ids,
+                    set_inference_key_value_memory,
+                    inference_max_sequence_len,
+                ) = batch
+                tokens = tokens.cuda()
+                position_ids = position_ids.cuda()
+                if attention_mask is not None:
+                    attention_mask = attention_mask.cuda()
+                    attention_mask = attention_mask[0:1]
+                if self.mcore_gpt:
+                    # if first step, then clear KV cache, otherwise reuse inference_paarms
+                    if set_inference_key_value_memory[0].item():
+                        self.inference_params = InferenceParams(
+                            max_batch_size=tokens.size(0), max_sequence_length=inference_max_sequence_len[0].item()
+                        )
+                    extra_arg['inference_params'] = self.inference_params
+                else:
+                    extra_arg['set_inference_key_value_memory'] = set_inference_key_value_memory[0].item()
+                    extra_arg['inference_max_sequence_len'] = inference_max_sequence_len[0].item()
+
+            forward_args = {
+                'input_ids': tokens,
+                'position_ids': position_ids,
+                'attention_mask': attention_mask,
+                'labels': None,
+                'media': media,
+            }
+            output_tensor = model(**forward_args, **extra_arg)
+
+            # Advance inference sequence offset.
+            if self.inference_params:
+                # if last stage, then (final) output is [b, s, h], otherwise it's [s, b, h]
+                if parallel_state.is_pipeline_last_stage():
+                    self.inference_params.sequence_len_offset += output_tensor.size(1)
+                else:
+                    self.inference_params.sequence_len_offset += output_tensor.size(0)
+
+            def id_func(output_tensor):
+                return output_tensor, {'logits': output_tensor}
+
+            return output_tensor, id_func
+
+        return fwd_output_only_func
+    
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
         prepare_for_training_step(self, zero_grad=False)
