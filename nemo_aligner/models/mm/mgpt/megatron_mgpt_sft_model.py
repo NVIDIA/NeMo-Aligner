@@ -45,7 +45,7 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.models.mm.mgpt.megatron_mgpt_model import MultimodalGPTModel
 from nemo_aligner.utils.utils import configure_batch_sizes
 
-class MegatronMGPTSFTModel(NLPAdapterModelMixin, MultimodalGPTModel, SupervisedInterface):
+class MegatronMGPTSFTModel(MultimodalGPTModel, NLPAdapterModelMixin, SupervisedInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
 
