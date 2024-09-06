@@ -13,6 +13,10 @@
 # limitations under the License.
 name: "NeMo Aligner release"
 
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
+
 on:
   workflow_dispatch:
     inputs:
