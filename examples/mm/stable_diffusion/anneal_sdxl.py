@@ -229,7 +229,7 @@ def main(cfg) -> None:
     torch.distributed.barrier()
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run", None) if cfg.exp_manager else None)  
+    timer = Timer(cfg.exp_manager.get("max_time_per_run", None) if cfg.exp_manager else None)
 
     draft_p_trainer = SupervisedTrainer(
         cfg=cfg.trainer.draftp_sd,
@@ -308,7 +308,9 @@ def main(cfg) -> None:
             for i in range(images.shape[0]):
                 i = i + global_idx
                 img_path = os.path.join(exp_dir, f"annealed_outputs_sdxl_{wt_type}/img_{i:05d}_{local_rank:02d}.png")
-                prompt_path = os.path.join(exp_dir, f"annealed_outputs_sdxl_{wt_type}/prompt_{i:05d}_{local_rank:02d}.txt")
+                prompt_path = os.path.join(
+                    exp_dir, f"annealed_outputs_sdxl_{wt_type}/prompt_{i:05d}_{local_rank:02d}.txt"
+                )
                 Image.fromarray(images[i]).save(img_path)
                 with open(prompt_path, "w") as fi:
                     fi.write(batch[i])
