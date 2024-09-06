@@ -228,7 +228,7 @@ def main(cfg) -> None:
     torch.distributed.barrier()
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:03:55:00"))  # save a model just before 4 hours
+    timer = Timer(cfg.exp_manager.get("max_time_per_run", None) if cfg.exp_manager else None)  
 
     draft_p_trainer = SupervisedTrainer(
         cfg=cfg.trainer.draftp_sd,
@@ -263,29 +263,29 @@ def main(cfg) -> None:
     # run for all weight types
     for wt_type in wt_types:
         global_idx = 0
-        if wt_type is None or wt_type == "base":
+        if wt_type == "base":
             # dummy function that assigns a value of 0 all the time
             logging.info("using the base model")
             wt_draft = lambda sigma, sigma_next, i, total: 0
+        elif wt_type == "linear":
+            wt_draft = lambda sigma, sigma_next, i, total: i * 1.0 / total
+        elif wt_type == "draft":
+            wt_draft = lambda sigma, sigma_next, i, total: 1
+        elif wt_type.startswith("power"):  # its of the form power_{power}
+            pow = float(wt_type.split("_")[1])
+            wt_draft = lambda sigma, sigma_next, i, total: (i * 1.0 / total) ** pow
+        elif wt_type.startswith("step"):  # use a step function (step_{p})
+            frac = float(wt_type.split("_")[1])
+            wt_draft = lambda sigma, sigma_next, i, total: float((i * 1.0 / total) >= frac)
         else:
-            if wt_type == "linear":
-                wt_draft = lambda sigma, sigma_next, i, total: i * 1.0 / total
-            elif wt_type == "draft":
-                wt_draft = lambda sigma, sigma_next, i, total: 1
-            elif wt_type.startswith("power"):  # its of the form power_{power}
-                pow = float(wt_type.split("_")[1])
-                wt_draft = lambda sigma, sigma_next, i, total: (i * 1.0 / total) ** pow
-            elif wt_type.startswith("step"):  # use a step function (step_{p})
-                frac = float(wt_type.split("_")[1])
-                wt_draft = lambda sigma, sigma_next, i, total: float((i * 1.0 / total) >= frac)
-            else:
-                raise ValueError(f"invalid weighing type: {wt_type}")
-            logging.info(f"using weighing type for annealed outputs: {wt_type}.")
+            raise ValueError(f"invalid weighing type: {wt_type}")
+        logging.info(f"using weighing type for annealed outputs: {wt_type}.")
 
         # initialize generator
+        exp_dir = cfg.exp_manager.explicit_log_dir
         gen = torch.Generator(device="cpu")
         gen.manual_seed((1243 + 1247837 * local_rank) % (int(2 ** 32 - 1)))
-        os.makedirs(f"./annealed_outputs_sdxl_{wt_type}/", exist_ok=True)
+        os.makedirs(os.path.join(exp_dir, f"annealed_outputs_sdxl_{wt_type}/"), exist_ok=True)
 
         for batch in val_dataloader:
             batch_size = len(batch)
@@ -306,8 +306,8 @@ def main(cfg) -> None:
             # save to pil
             for i in range(images.shape[0]):
                 i = i + global_idx
-                img_path = f"annealed_outputs_sdxl_{wt_type}/img_{i:05d}_{local_rank:02d}.png"
-                prompt_path = f"annealed_outputs_sdxl_{wt_type}/prompt_{i:05d}_{local_rank:02d}.txt"
+                img_path = os.path.join(exp_dir, f"annealed_outputs_sdxl_{wt_type}/img_{i:05d}_{local_rank:02d}.png")
+                prompt_path = os.path.join(exp_dir, f"annealed_outputs_sdxl_{wt_type}/prompt_{i:05d}_{local_rank:02d}.txt")
                 Image.fromarray(images[i]).save(img_path)
                 with open(prompt_path, "w") as fi:
                     fi.write(batch[i])
