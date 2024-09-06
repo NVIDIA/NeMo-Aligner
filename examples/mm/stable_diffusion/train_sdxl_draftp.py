@@ -91,6 +91,8 @@ from nemo_aligner.utils.train_script_utils import (
 mp.set_start_method("spawn", force=True)
 
 
+# TODO: this functionality should go into NeMo
+# Specifically, the NeMo MegatronTrainerBuilder must also accept extra FSDP wrap modules so that it doesnt need to be subclassed
 class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
     """Builder for SD model Trainer with overrides."""
 

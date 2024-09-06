@@ -94,6 +94,8 @@ from nemo_aligner.utils.train_script_utils import (
 mp.set_start_method("spawn", force=True)
 
 
+# TODO: this functionality should go into NeMo
+# Specifically, the NeMo MegatronTrainerBuilder must also accept extra FSDP wrap modules so that it doesnt need to be subclassed
 class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
     """Builder for SD model Trainer with overrides."""
 
@@ -283,10 +285,11 @@ def main(cfg) -> None:
         logging.info(f"using weighing type for annealed outputs: {wt_type}.")
 
         # initialize generator
-        exp_dir = cfg.exp_manager.explicit_log_dir
+        annealed_out_dir = os.path.join(cfg.exp_manager.explicit_log_dir, f"annealed_outputs_sdxl_{wt_type}/")
+        # generate random seed for reproducibility and make output dir
         gen = torch.Generator(device="cpu")
         gen.manual_seed((1243 + 1247837 * local_rank) % (int(2 ** 32 - 1)))
-        os.makedirs(os.path.join(exp_dir, f"annealed_outputs_sdxl_{wt_type}/"), exist_ok=True)
+        os.makedirs(annealed_out_dir, exist_ok=True)
 
         for batch in val_dataloader:
             batch_size = len(batch)
@@ -307,8 +310,8 @@ def main(cfg) -> None:
             # save to pil
             for i in range(images.shape[0]):
                 i = i + global_idx
-                img_path = os.path.join(exp_dir, f"annealed_outputs_sdxl_{wt_type}/img_{i:05d}_{local_rank:02d}.png")
-                prompt_path = os.path.join(exp_dir, f"annealed_outputs_sdxl_{wt_type}/prompt_{i:05d}_{local_rank:02d}.txt")
+                img_path = os.path.join(annealed_out_dir, f"img_{i:05d}_{local_rank:02d}.png")
+                prompt_path = os.path.join(annealed_out_dir, f"prompt_{i:05d}_{local_rank:02d}.txt")
                 Image.fromarray(images[i]).save(img_path)
                 with open(prompt_path, "w") as fi:
                     fi.write(batch[i])
