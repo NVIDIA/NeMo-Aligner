@@ -30,7 +30,7 @@ concurrency:
 jobs:
   build:
     runs-on: self-hosted-builder
-    if: ${{ github.event.label.name == 'Run CICD' }}
+    # if: ${{ github.event.label.name == 'Run CICD' }}
     steps:
       - name: Clean runner cache
         run: | 
@@ -56,7 +56,7 @@ jobs:
           build-args: |
             MAX_JOBS=32
           cache-from: |
-            nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || "buildcache" }}
+            nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }}
             nemoci.azurecr.io/nemo_aligner_container:buildcache
           cache-to: type=inline
           tags: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
