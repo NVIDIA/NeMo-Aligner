@@ -16,12 +16,16 @@ import os
 from copy import deepcopy
 from functools import partial
 
+import numpy as np
 import torch
 import torch.distributed
 import torch.multiprocessing as mp
+from megatron.core import parallel_state
+from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 from packaging.version import Version
+from PIL import Image
 from torch import nn
 
 # checkpointing
@@ -75,7 +79,6 @@ from nemo_aligner.data.mm import text_webdataset
 from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.models.mm.stable_diffusion.image_text_rms import MegatronCLIPRewardModel, get_reward_model
 from nemo_aligner.models.mm.stable_diffusion.megatron_sdxl_draftp_model import MegatronSDXLDRaFTPModel
-from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -130,7 +133,7 @@ class MegatronStableDiffusionTrainerBuilder(MegatronTrainerBuilder):
                     FrozenCLIPEmbedder,
                     ParallelLinearAdapter,
                 },
-                use_orig_params=False,  # self.cfg.model.inductor,
+                use_orig_params=False,
                 set_buffer_dtype=self.cfg.get("fsdp_set_buffer_dtype", None),
             )
 
@@ -150,7 +153,6 @@ def resolve_and_create_trainer(cfg, pop_trainer_key):
         return MegatronStableDiffusionTrainerBuilder(cfg).create_trainer()
 
 
-# TODO(@rohitrango): Merge script with SD train script after models/APIs in Nemo are merged
 @hydra_runner(config_path="conf", config_name="draftp_sdxl")
 def main(cfg) -> None:
 
@@ -160,6 +162,9 @@ def main(cfg) -> None:
     # set cuda device for each process
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     torch.cuda.set_device(local_rank)
+
+    # turn off wandb logging
+    cfg.exp_manager.create_wandb_logger = False
 
     if Version(torch.__version__) >= Version("1.12"):
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -177,11 +182,6 @@ def main(cfg) -> None:
     ptl_model = MegatronSDXLDRaFTPModel(cfg.model, trainer).to(torch.cuda.current_device())
     init_peft(ptl_model, cfg.model)  # init peft
 
-    reward_model = get_reward_model(cfg.rm, mbs=cfg.model.micro_batch_size, gbs=cfg.model.global_batch_size).to(
-        torch.cuda.current_device()
-    )
-    ptl_model.reward_model = reward_model
-
     trainer_restore_path = trainer.ckpt_path
 
     if trainer_restore_path is not None:
@@ -193,20 +193,11 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
+    # use the validation ds if needed
     train_ds, validation_ds = text_webdataset.build_train_valid_datasets(
         cfg.model.data, consumed_samples=consumed_samples
     )
-    train_ds = [d["captions"] for d in list(train_ds)]
     validation_ds = [d["captions"] for d in list(validation_ds)]
-
-    train_dataloader = build_dataloader(
-        cfg,
-        dataset=train_ds,
-        consumed_samples=consumed_samples,
-        mbs=cfg.model.micro_batch_size,
-        gbs=cfg.model.global_batch_size,
-        load_gbs=True,
-    )
 
     val_dataloader = build_dataloader(
         cfg,
@@ -216,8 +207,7 @@ def main(cfg) -> None:
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
     )
-
-    init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
+    init_using_ptl(trainer, ptl_model, val_dataloader, validation_ds)
 
     if cfg.model.get("activation_checkpointing", False):
         # call activation checkpointing here
@@ -238,25 +228,23 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
-    if local_rank == 0:
-        print(ptl_model)
     torch.distributed.barrier()
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:24:00:00"))
+    timer = Timer(cfg.exp_manager.get("max_time_per_run", None) if cfg.exp_manager else None)
 
     draft_p_trainer = SupervisedTrainer(
         cfg=cfg.trainer.draftp_sd,
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
-        train_dataloader=train_dataloader,
+        train_dataloader=val_dataloader,
         val_dataloader=val_dataloader,
         test_dataloader=[],
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
-        run_init_validation=False,
+        run_init_validation=True,
     )
 
     if custom_trainer_state_dict is not None:
@@ -264,7 +252,72 @@ def main(cfg) -> None:
 
     torch.cuda.empty_cache()
 
-    draft_p_trainer.fit()
+    if cfg.get("prompt") is not None:
+        logging.info(f"Override val dataset with custom prompt: {cfg.prompt}")
+        val_dataloader = [[cfg.prompt]]
+
+    wt_types = cfg.get("weight_type", None)
+    if wt_types is None:
+        wt_types = ["base", "draft", "linear", "power_2", "power_4", "step_0.6"]
+    else:
+        wt_types = wt_types.split(",") if isinstance(wt_types, str) else wt_types
+    logging.info(f"Running on types: {wt_types}")
+
+    # run for all weight types
+    for wt_type in wt_types:
+        global_idx = 0
+        if wt_type == "base":
+            # dummy function that assigns a value of 0 all the time
+            logging.info("using the base model")
+            wt_draft = lambda sigma, sigma_next, i, total: 0
+        elif wt_type == "linear":
+            wt_draft = lambda sigma, sigma_next, i, total: i * 1.0 / total
+        elif wt_type == "draft":
+            wt_draft = lambda sigma, sigma_next, i, total: 1
+        elif wt_type.startswith("power"):  # its of the form power_{power}
+            pow = float(wt_type.split("_")[1])
+            wt_draft = lambda sigma, sigma_next, i, total: (i * 1.0 / total) ** pow
+        elif wt_type.startswith("step"):  # use a step function (step_{p})
+            frac = float(wt_type.split("_")[1])
+            wt_draft = lambda sigma, sigma_next, i, total: float((i * 1.0 / total) >= frac)
+        else:
+            raise ValueError(f"invalid weighing type: {wt_type}")
+        logging.info(f"using weighing type for annealed outputs: {wt_type}.")
+
+        # initialize generator
+        annealed_out_dir = os.path.join(cfg.exp_manager.explicit_log_dir, f"annealed_outputs_sdxl_{wt_type}/")
+        # generate random seed for reproducibility and make output dir
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed((1243 + 1247837 * local_rank) % (int(2 ** 32 - 1)))
+        os.makedirs(annealed_out_dir, exist_ok=True)
+
+        for batch in val_dataloader:
+            batch_size = len(batch)
+            with get_cuda_rng_tracker().fork(get_data_parallel_rng_tracker_name()):
+                latents = torch.randn(
+                    [
+                        batch_size,
+                        ptl_model.in_channels,
+                        ptl_model.height // ptl_model.downsampling_factor,
+                        ptl_model.width // ptl_model.downsampling_factor,
+                    ],
+                    generator=gen,
+                ).to(torch.cuda.current_device())
+            images = ptl_model.annealed_guidance(batch, latents, weighing_fn=wt_draft)
+            images = (
+                images.permute(0, 2, 3, 1).detach().cpu().numpy().astype(np.uint8)
+            )  # outputs are already scaled from [0, 255]
+            # save to pil
+            for i in range(images.shape[0]):
+                i = i + global_idx
+                img_path = os.path.join(annealed_out_dir, f"img_{i:05d}_{local_rank:02d}.png")
+                prompt_path = os.path.join(annealed_out_dir, f"prompt_{i:05d}_{local_rank:02d}.txt")
+                Image.fromarray(images[i]).save(img_path)
+                with open(prompt_path, "w") as fi:
+                    fi.write(batch[i])
+            # increment global index
+            global_idx += batch_size
+        logging.info("Saved all images.")
 
 
 if __name__ == "__main__":
