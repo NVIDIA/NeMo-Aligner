@@ -18,7 +18,7 @@ from typing import Any, List, Tuple
 
 import torch
 from megatron.core import parallel_state
-from PIL import Image
+from einops import rearrange
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.collections.nlp.modules.common.text_generation_strategy import GPTModelTextGenerationStrategy, TextGenerationStrategy
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
@@ -212,25 +212,24 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
             raise ValueError(f'{type(prompt)} is not supported for tokenization')
         return self._tokenize_batch(prompt_with_media, max_len, add_BOS, add_EOS=False)
 
-    def _image_processor(self, maybe_image_path):
+    def _image_processor(self, image_list):
         model = self.model
-        if isinstance(maybe_image_path, str):
-            image = Image.open(maybe_image_path).convert('RGB')
-        else:
-            image = maybe_image_path
-
         processor = (
             model.model.module.image_processor if hasattr(model.model, "module") else model.model.image_processor
         )
-        image = process_image(processor, image, model.cfg.data.image_aspect_ratio)
-        if model.cfg.precision in [16, '16', '16-mixed']:
-            media = image.type(torch.float16)
-        elif model.cfg.precision in [32, '32', '32-true']:
-            media = image.type(torch.float32)
-        else:
-            media = image.type(torch.bfloat16)
-
-        return media.unsqueeze(dim=0).unsqueeze(dim=0).unsqueeze(dim=0)
+        images = []
+        for image in image_list:
+            image = process_image(processor, image, model.cfg.data.image_aspect_ratio)
+            if model.cfg.precision in [16, '16', '16-mixed']:
+                media = image.type(torch.float16)
+            elif model.cfg.precision in [32, '32', '32-true']:
+                media = image.type(torch.float32)
+            else:
+                media = image.type(torch.bfloat16)
+            media
+            images.append(media)
+        images = torch.stack(images, dim=0)
+        return images.unsqueeze(dim=1).unsqueeze(dim=1)
     
     def preprocess_media_tokens(self, conversation: str, media_type: str = "image", is_multimodal: bool = True):
         """
@@ -272,7 +271,7 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
         return conversation
     
     def tokenize_batch(self, prompt, max_len, add_BOS, add_EOS=False):
-        context_tokens_tensor, context_length_tensor, _ = self.process_prompt(prompt, max_len, add_BOS, add_EOS=False)
+        context_tokens_tensor, context_length_tensor, _ = self.process_prompt(prompt, max_len, add_BOS, add_EOS=add_EOS)
         return context_tokens_tensor, context_length_tensor
 
     def prepare_batch_at_step(

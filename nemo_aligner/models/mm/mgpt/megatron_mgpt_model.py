@@ -137,7 +137,7 @@ class MultimodalGPTModel(MegatronNevaModel):
             context_tokens_tensor, context_length_tensor = strategy.tokenize_batch(
                 inputs.get('prompt'), length_params['max_length'], sampling_params['add_BOS']
             )
-
+        
         output = generate(
             self.cuda(),
             inputs=(context_tokens_tensor, context_length_tensor),
