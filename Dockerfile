@@ -1,15 +1,7 @@
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
 FROM ${BASE_IMAGE}
-ARG APEX_TAG=59b80ee8df79cec125794949327f29913c328746
-ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
-ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
-ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
-ARG ALIGNER_COMMIT=main
 
-ARG PYTRITON_VERSION=0.5.10
-ARG PROTOBUF_VERSION=4.24.4
-ARG TRTLLM_VERSION=v0.10.0
 
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
@@ -20,6 +12,7 @@ RUN git config --global user.email "worker@nvidia.com"
 WORKDIR /opt
 
 # install TransformerEngine
+ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
 RUN pip uninstall -y transformer-engine && \
     git clone https://github.com/NVIDIA/TransformerEngine.git && \
     cd TransformerEngine && \
@@ -31,6 +24,7 @@ RUN pip uninstall -y transformer-engine && \
     NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
 
 # install latest apex
+ARG APEX_TAG=59b80ee8df79cec125794949327f29913c328746
 RUN pip uninstall -y apex && \
     git clone https://github.com/NVIDIA/apex && \
     cd apex && \
@@ -41,11 +35,14 @@ RUN pip uninstall -y apex && \
     pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
 
 # place any util pkgs here
+ARG PYTRITON_VERSION=0.5.10
 RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==$PYTRITON_VERSION
+ARG PROTOBUF_VERSION=4.24.4
 RUN pip install -U --no-deps protobuf==$PROTOBUF_VERSION
 RUN pip install --upgrade-strategy only-if-needed jsonlines
 
 # NeMo
+ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
 RUN git clone https://github.com/NVIDIA/NeMo.git && \
     cd NeMo && \
     git pull && \
@@ -58,6 +55,7 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     cd nemo/collections/nlp/data/language_modeling/megatron && make
 
 # MLM
+ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
 RUN pip uninstall -y megatron-core && \
     git clone https://github.com/NVIDIA/Megatron-LM.git && \
     cd Megatron-LM && \
@@ -69,6 +67,7 @@ RUN pip uninstall -y megatron-core && \
     pip install -e .
 
 # NeMo Aligner
+ARG ALIGNER_COMMIT=main
 RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
     cd NeMo-Aligner && \
     git pull && \
@@ -84,6 +83,7 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
     git lfs install
 
 # TRTLLM
+ARG TRTLLM_VERSION=v0.10.0
 RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     cd TensorRT-LLM && \
     git checkout ${TRTLLM_VERSION} && \

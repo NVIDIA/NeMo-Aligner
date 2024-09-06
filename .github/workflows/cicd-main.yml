@@ -55,6 +55,7 @@ jobs:
           push: true
           build-args: |
             MAX_JOBS=32
+            ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
           cache-from: |
             nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }}
             nemoci.azurecr.io/nemo_aligner_container:buildcache
