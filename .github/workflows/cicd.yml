@@ -25,8 +25,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  cicd-test-container-setup:
-    needs: [cicd-cluster-clean]
+  build:
     runs-on: self-hosted-builder
     if: ${{ github.event.label.name == 'Run CICD' }}
     steps:
