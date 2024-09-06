@@ -70,7 +70,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         # variants of preference losses, by default RPO.
         self.preference_loss = self.cfg.rpo.get("preference_loss", "rpo")
         self.gt_reward_scale = self.cfg.rpo.get("gt_reward_scale", 1.0)
-        
+
         self.beta = self.cfg.rpo.get("beta", 0.01)
         self.eta = self.cfg.rpo.get("eta", 0.01)
         self.k_len = 4
@@ -91,8 +91,9 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         split_iter = map(self.split_output_tensor, output_list)
         outputs = map(torch.cat, zip(*split_iter))
+        flat_outputs = list(map(torch.flatten, outputs))
 
-        return outputs.flatten()
+        return flat_outputs
 
     def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
@@ -130,7 +131,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
             if batch["labels_1"] is not None:
                 labels = torch.cat(tuple(batch['labels_' + str(i+1)] for i in range(self.k_len)), dim=0)
-            
+
             if batch["rewards_1"] is not None:
                 gt_rewards = torch.cat(tuple(batch['rewards_' + str(i+1)] for i in range(self.k_len)), dim=0)
 
@@ -140,7 +141,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
             # these two lines ensure your position_ids and attn_mask are always B=1
             attention_mask = batch['attention_mask'][0:1]
-        
+
             # Model forward pass
             forward_args = {
                 "input_ids": tokens,
@@ -185,7 +186,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     higher_stability=True,
                 )
 
-                preference_loss = self.loss_func(
+                preference_loss, acc_best_resp = self.loss_func(
                     per_token_logps,
                     ref_logprobs,
                     labels[:, 1:],
@@ -205,7 +206,12 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     reduced_loss,
                     reduced_preference_loss,
                     reduced_sft_loss,
-                ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss])
+                    reduced_acc,
+                ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss, acc_best_resp])
+
+                out_responses = self.gather_and_split_rewards(
+                    per_token_logps, ref_logprobs, labels, average_log_probs=self.preference_avg_log_probs
+                )
 
                 return (
                     loss,
@@ -213,6 +219,8 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                         "avg": reduced_loss,
                         "avg_sft_loss": reduced_sft_loss,
                         "avg_preference_loss": reduced_preference_loss,
+                        "acc": reduced_acc,
+                        "out_responses": out_responses,
                     },
                 )
 
@@ -248,19 +256,22 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             rewards = torch.stack(self.split_output_tensor(self.get_reduced_masked_logps(
                 pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
             )))
-            rewards = torch.nn.functional.softmax(self.beta * rewards, dim=0)
+            rewards_pred = torch.nn.functional.softmax(self.beta * rewards, dim=0)
 
-            
+
             # based on GT rewards
             gt_rewards = torch.stack(self.split_output_tensor(gt_rewards))
             p_star = torch.nn.functional.softmax(self.eta * gt_rewards, dim=0)
-            
+
         else:
             raise ValueError("Unknown RPO Loss")
 
-        loss = (p_star * (torch.log( p_star + 1e-8 ) - torch.log( rewards + 1e-8 ))).sum(0).mean(0)
-        
-        return loss
+        loss = (p_star * (torch.log( p_star + 1e-8 ) - torch.log( rewards_pred + 1e-8 ))).sum(0).mean(0)
+
+        # adding accuracy for the best rewards -> MSE or best accuracy?
+        acc_best_resp = (torch.argmax(rewards, dim=0) == torch.argmax(gt_rewards, dim=0)).float().mean()
+
+        return loss, acc_best_resp
 
     def sft_loss_func(self, pi_logprobs, labels, gt_rewards, average_log_probs=False):
         logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs) # [16]
@@ -273,7 +284,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
     def get_loss_and_metrics(self, batch, forward_only):
         seq_length = batch["response_1"].shape[1]
-        
+
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
 
@@ -292,6 +303,16 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         # only the last stages of the pipeline return losses
         if losses_reduced_per_micro_batch:
             # NOTE: assume that the returned values are already gathered across the DP workers
+            collected_rewards_per_resp = []
+            for i in range(self.k_len):
+                collected_rewards_per_resp.append(
+                    torch.cat([item["out_responses"][i] for item in losses_reduced_per_micro_batch])
+                )
+
+            rewards_all = torch.cat(tuple(collected_rewards_per_resp))
+            rewards_all_mean = rewards_all.mean()
+            rewards_all_std = rewards_all.std()
+
             loss_mean = torch.as_tensor(
                 [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch],
                 device=torch.cuda.current_device(),
@@ -304,20 +325,35 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 [loss_reduced["avg_preference_loss"] for loss_reduced in losses_reduced_per_micro_batch],
                 device=torch.cuda.current_device(),
             ).mean()
+            acc_mean = torch.as_tensor(
+                [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch],
+                device=torch.cuda.current_device(),
+            ).mean()
         else:
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             sft_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             preference_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            acc_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+
+            rewards_all_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+            rewards_all_std = torch.tensor(0.0, device=torch.cuda.current_device())
 
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
         torch.distributed.broadcast(sft_loss_mean, get_last_rank())
         torch.distributed.broadcast(preference_loss_mean, get_last_rank())
+        torch.distributed.broadcast(acc_mean, get_last_rank())
+
+        torch.distributed.broadcast(rewards_all_mean, get_last_rank())
+        torch.distributed.broadcast(rewards_all_std, get_last_rank())
 
         metrics = {
             "loss": loss_mean,
             "sft_loss": sft_loss_mean,
             "preference_loss": preference_loss_mean,
+            "acc": acc_mean,
+            "rewards_all_mean": rewards_all_mean,
+            "rewards_all_std": rewards_all_std,
         }
 
         # move to CPU
@@ -343,7 +379,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         seq_length = batch["response_1"].shape[1]
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
-        
+
         set_sync_funcs(self, forward_only=True)
 
         fwd_bwd_function = get_forward_backward_func()
@@ -358,7 +394,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             micro_batch_size=self.cfg.rpo.log_prob_forward_micro_batch_size,
             collect_non_loss_data=True,
         )
-        
+
         if len(logprobs_list) > 0:
             logprobs_list_cat = []
             for item in logprobs_list:

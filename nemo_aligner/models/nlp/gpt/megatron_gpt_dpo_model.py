@@ -87,7 +87,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         torch.distributed.all_gather(output_list, batch_logs, group=dp_group)
 
         split_iter = map(self.split_output_tensor, output_list)
-
         out_chosen, out_rejected = map(torch.cat, zip(*split_iter))
 
         return out_chosen.flatten(), out_rejected.flatten()
@@ -204,8 +203,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
-                # print('IMP:', loss, preference_loss, sft_loss)
-
                 (
                     reduced_loss,
                     reduced_preference_loss,
@@ -256,7 +253,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
-        
+
         rewards_delta = chosen_rewards - reject_rewards
 
 
@@ -305,13 +302,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return loss, acc_chosen
 
     def sft_loss_func(self, pi_logprobs, labels, average_log_probs=False):
-        print(pi_logprobs.shape)
         logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
         chosen_logprobs, _ = self.split_output_tensor(logprobs)
-        
-        print(chosen_logprobs, chosen_logprobs.shape)
-        exit(0)
-        
+
         return -chosen_logprobs.mean(0)
 
     def get_loss_and_metrics(self, batch, forward_only):
