@@ -127,7 +127,7 @@ def main(cfg) -> None:
         trainer,
         strict=True,  # TODO: change back to True
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
-        # load_base_model_only=True,
+        load_base_model_only=True,
     )
 
     # pull values from checkpoint
@@ -156,12 +156,18 @@ def main(cfg) -> None:
 
         for b in batch:
             prompt = tokenizer.text_to_ids(b["prompt"])
-            response = prompt + b["token_ids"]
+
+            assert b['token_ids'][0] == 128000, "this is just a hack to remove things"
+            response = prompt + b["token_ids"][1:]
             value = torch.empty(len(response), 9, dtype=torch.float32).fill_(-100)
 
+            values = b['values'][1:]
             min_range, max_range = b['range']
-            value[len(prompt) + min_range: len(prompt) + max_range + 1, 4:7] = torch.as_tensor(b['values'], dtype=torch.float32)
-            tokens.append(torch.as_tensor(response, dtype=torch.long))
+            max_range -= 1
+
+            value[len(prompt) + min_range: len(prompt) + max_range + 1, 4:7] = torch.as_tensor(values, dtype=torch.float32)
+
+            tokens.append(response)
             values.append(value)
 
         tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
@@ -193,6 +199,8 @@ def main(cfg) -> None:
         pad_samples_to_global_batch_size=False,
         load_gbs=True,
     )
+
+    next(iter(train_dataloader))
 
     val_dataloader = build_dataloader(
         cfg=cfg,
