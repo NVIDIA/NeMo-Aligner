@@ -42,9 +42,9 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
 
 
-class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
+class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
     """
-    Megatron GPT DPO Model Training.
+    Megatron GPT RPO Model Training.
     """
 
     def __init__(self, cfg: DictConfig, trainer: Trainer):
@@ -58,19 +58,22 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         self.automatic_optimization = False
         self.ref_policy_state_dict = None
 
-        self.ref_policy_kl_penalty = self.cfg.dpo.get("ref_policy_kl_penalty", 0.0)
-        self.preference_avg_log_probs = self.cfg.dpo.get("preference_average_log_probs", False)
-        self.sft_avg_log_probs = self.cfg.dpo.get("sft_average_log_probs", self.preference_avg_log_probs)
+        self.preference_avg_log_probs = self.cfg.rpo.get("preference_average_log_probs", False)
+        self.sft_avg_log_probs = self.cfg.rpo.get("sft_average_log_probs", self.preference_avg_log_probs)
 
-        self.preference_loss_weight = self.cfg.dpo.get("preference_loss_weight", 1)
-        self.sft_loss_weight = self.cfg.dpo.get("sft_loss_weight", 0.7)
+        self.preference_loss_weight = self.cfg.rpo.get("preference_loss_weight", 1)
+        self.sft_loss_weight = self.cfg.rpo.get("sft_loss_weight", 0)
         assert (
             self.preference_loss_weight != 0 or self.sft_loss_weight != 0
         ), "sft loss weight and dpo loss weight cannot both be 0"
 
-        # variants of preference losses, by default DPO.
-        self.preference_loss = self.cfg.dpo.get("preference_loss", "dpo")
-        self.gt_reward_scale = self.cfg.dpo.get("gt_reward_scale", 1.0)
+        # variants of preference losses, by default RPO.
+        self.preference_loss = self.cfg.rpo.get("preference_loss", "rpo")
+        self.gt_reward_scale = self.cfg.rpo.get("gt_reward_scale", 1.0)
+        
+        self.beta = self.cfg.rpo.get("beta", 0.01)
+        self.eta = self.cfg.rpo.get("eta", 0.01)
+        self.k_len = 4
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
@@ -87,15 +90,13 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         torch.distributed.all_gather(output_list, batch_logs, group=dp_group)
 
         split_iter = map(self.split_output_tensor, output_list)
+        outputs = map(torch.cat, zip(*split_iter))
 
-        out_chosen, out_rejected = map(torch.cat, zip(*split_iter))
-
-        return out_chosen.flatten(), out_rejected.flatten()
+        return outputs.flatten()
 
     def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
             batch = next(dataloader_iter)
-
             required_keys = set()
             if parallel_state.get_pipeline_model_parallel_world_size() == 1:
                 required_keys.update(batch.keys())
@@ -105,46 +106,41 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 required_keys.add("attention_mask")
 
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("chosen", "rejected", "position_ids"))
+                    required_keys.update(("response_1", "response_2", "response_3", "response_4", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
                     required_keys.update(
                         (
-                            "ref_policy_log_probs_chosen",
-                            "ref_policy_log_probs_rejected",
-                            "chosen_labels",
-                            "rejected_labels",
-                            "chosen_rewards",
-                            "rejected_rewards",
+                            "ref_policy_log_probs_response_1"
+                            "ref_policy_log_probs_response_2"
+                            "ref_policy_log_probs_response_3"
+                            "ref_policy_log_probs_response_4"
+                            "response_1", "response_2", "response_3", "response_4",
+                            "labels_1", "labels_2", "labels_3", "labels_4",
+                            "rewards_1", "rewards_2", "rewards_3", "rewards_4",
                         )
                     )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
+            # creating tokens and labels tensor batches
             tokens, labels, ref_logprobs, gt_rewards = None, None, None, None
-            if batch["chosen"] is not None and batch["rejected"] is not None:
-                tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
+            if batch["response_1"] is not None:
+                tokens = torch.cat(tuple(batch['response_' + str(i+1)] for i in range(self.k_len)), dim=0)
 
-            if batch["chosen_labels"] is not None and batch["rejected_labels"] is not None:
-                labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
+            if batch["labels_1"] is not None:
+                labels = torch.cat(tuple(batch['labels_' + str(i+1)] for i in range(self.k_len)), dim=0)
+            
+            if batch["rewards_1"] is not None:
+                gt_rewards = torch.cat(tuple(batch['rewards_' + str(i+1)] for i in range(self.k_len)), dim=0)
 
-            if (
-                batch.get("ref_policy_log_probs_chosen") is not None
-                and batch.get("ref_policy_log_probs_rejected") is not None
-            ):
-                ref_logprobs = torch.cat(
-                    (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
-                )
-
-            if batch["chosen_rewards"] is not None and batch["rejected_rewards"] is not None:
-                gt_rewards = torch.cat((batch["chosen_rewards"], batch["rejected_rewards"]), dim=0)
+            if batch.get("ref_policy_log_probs_response_1") is not None:
+                ref_logprobs = torch.cat(tuple(batch['ref_policy_log_probs_response_' + str(i+1)] for i in range(self.k_len)), dim=0)
 
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
             # these two lines ensure your position_ids and attn_mask are always B=1
-            # position_ids = batch["position_ids"][0:1]
-            attention_mask = batch["attention_mask"][0:1]
-
-            print(attention_mask.shape, tokens.shape)
+            attention_mask = batch['attention_mask'][0:1]
+        
             # Model forward pass
             forward_args = {
                 "input_ids": tokens,
@@ -189,7 +185,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     higher_stability=True,
                 )
 
-                preference_loss, acc_chosen = self.loss_func(
+                # print('Before Loss:', per_token_logps.shape)
+                preference_loss = self.loss_func(
                     per_token_logps,
                     ref_logprobs,
                     labels[:, 1:],
@@ -198,23 +195,19 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 )
 
                 sft_loss = torch.zeros_like(preference_loss)
-                self.sft_loss_weight = 0.7
                 if self.sft_loss_weight != 0:
                     sft_loss = self.sft_loss_func(
-                        per_token_logps, labels[:, 1:], average_log_probs=self.sft_avg_log_probs
+                        per_token_logps, labels[:, 1:], gt_rewards, average_log_probs=self.sft_avg_log_probs
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
+
+                print(loss, preference_loss, sft_loss)
 
                 (
                     reduced_loss,
                     reduced_preference_loss,
                     reduced_sft_loss,
-                    reduced_acc,
-                ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss, acc_chosen])
-
-                out_chosen, out_rejected = self.gather_and_split_rewards(
-                    per_token_logps, ref_logprobs, labels, average_log_probs=self.preference_avg_log_probs
-                )
+                ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss])
 
                 return (
                     loss,
@@ -222,9 +215,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                         "avg": reduced_loss,
                         "avg_sft_loss": reduced_sft_loss,
                         "avg_preference_loss": reduced_preference_loss,
-                        "acc": reduced_acc,
-                        "out_chosen": out_chosen,
-                        "out_rejected": out_rejected,
                     },
                 )
 
@@ -236,8 +226,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return fwd_output_and_loss_func
 
     def split_output_tensor(self, output_tensor):
-        chosen_logps, reject_logps = torch.split(output_tensor.float(), len(output_tensor) // 2, dim=0)
-        return chosen_logps, reject_logps
+        responses_logps = torch.split(output_tensor.float(), len(output_tensor) // self.k_len, dim=0)
+        return responses_logps
 
     def get_reduced_masked_logps(self, logps, labels, average_log_probs=False):
         assert logps.shape == labels.shape, "logps and labels shape mismatch"
@@ -250,71 +240,43 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         else:
             return (logps * loss_mask).sum(-1)
 
+    def log_sum_exp(self, x):
+        max_x = torch.max(x)
+        return max_x + torch.log(torch.sum(torch.exp(x - max_x)))
+
     def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, average_log_probs=False):
-        print('REF:', ref_logprobs.shape)
-        rewards = self.get_reduced_masked_logps(
-            pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
-        )
-        chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
-        print('PI:', pi_logprobs.shape, rewards, chosen_rewards)
-        print('======')
-        exit(0)
-        
-        rewards_delta = chosen_rewards - reject_rewards
+        if self.preference_loss == 'rpo_multi_response':
+            # estimated rewards
+            rewards = torch.stack(self.split_output_tensor(self.get_reduced_masked_logps(
+                pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
+            )))
+            rewards = torch.nn.functional.softmax(self.beta * rewards, dim=0)
 
-        if self.preference_loss == "dpo":
-            loss = -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)
-        elif self.preference_loss == "rpo_bwd_kl":
-            logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
-            logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
-
-            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
-            gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
-            logalpha_hat_chosen = torch.nn.functional.logsigmoid(gt_rewards_delta)
-            logalpha_hat_rejected = torch.nn.functional.logsigmoid(-gt_rewards_delta)
-
-            loss = (
-                torch.exp(logalpha_hat_chosen) * (logalpha_hat_chosen - logbeta_hat_chosen)
-                + torch.exp(logalpha_hat_rejected) * (logalpha_hat_rejected - logbeta_hat_rejected)
-            ).mean(0)
-        elif self.preference_loss == "rpo_fwd_kl":
-            logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
-            logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
-
-            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
-            gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
-            logalpha_hat_chosen = torch.nn.functional.logsigmoid(gt_rewards_delta)
-            logalpha_hat_rejected = torch.nn.functional.logsigmoid(-gt_rewards_delta)
-
-            loss = (
-                torch.exp(logbeta_hat_chosen) * (logbeta_hat_chosen - logalpha_hat_chosen)
-                + torch.exp(logbeta_hat_rejected) * (logbeta_hat_rejected - logalpha_hat_rejected)
-            ).mean(0)
-        elif self.preference_loss == "ipo":
-            loss = torch.mean((chosen_rewards - reject_rewards - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2, 0)
-        elif self.preference_loss == "rpo_sq":
-            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
-            gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
-
-            loss = torch.mean((self.ref_policy_kl_penalty * rewards_delta - gt_rewards_delta) ** 2, 0)
+            
+            # based on GT rewards
+            gt_rewards = torch.stack(self.split_output_tensor(gt_rewards))
+            p_star = torch.nn.functional.softmax(self.eta * gt_rewards, dim=0)
+            
+            print(rewards.shape, p_star.shape)
         else:
-            raise NotImplementedError(f"preference_loss {self.preference_loss} is not implemented")
+            raise ValueError("Unknown RPO Loss")
 
-        with torch.no_grad():
-            comp = chosen_rewards > reject_rewards
-            acc_chosen = comp.float().mean()
+        loss = (p_star * (torch.log( p_star + 1e-8 ) - torch.log( rewards + 1e-8 ))).sum(0).unsqueeze(0)
+        print('>>', loss)
+        return loss.mean(0)
 
-        return loss, acc_chosen
-
-    def sft_loss_func(self, pi_logprobs, labels, average_log_probs=False):
+    def sft_loss_func(self, pi_logprobs, labels, gt_rewards, average_log_probs=False):
         logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
-        chosen_logprobs, _ = self.split_output_tensor(logprobs)
-        print(chosen_logprobs)
+        all_log_probs = torch.stack(self.split_output_tensor(logprobs))
+        gt_rewards = torch.stack(self.split_output_tensor(gt_rewards))
+        chosen_best = torch.argmax(gt_rewards, dim=0)
+
+        chosen_logprobs = all_log_probs[chosen_best]
         return -chosen_logprobs.mean(0)
 
     def get_loss_and_metrics(self, batch, forward_only):
-        seq_length = batch["chosen"].shape[1]
-
+        seq_length = batch["response_1"].shape[1]
+        
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
 
@@ -327,22 +289,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.micro_batch_size
-            * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
+            micro_batch_size=self.cfg.micro_batch_size * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
         )
 
         # only the last stages of the pipeline return losses
         if losses_reduced_per_micro_batch:
             # NOTE: assume that the returned values are already gathered across the DP workers
-            rewards_chosen = torch.cat([item["out_chosen"] for item in losses_reduced_per_micro_batch])
-            rewards_rejected = torch.cat([item["out_rejected"] for item in losses_reduced_per_micro_batch])
-
-            rewards_all = torch.cat((rewards_chosen, rewards_rejected))
-            rewards_chosen_mean = rewards_chosen.mean()
-            rewards_rejected_mean = rewards_rejected.mean()
-            rewards_all_mean = rewards_all.mean()
-            rewards_all_std = rewards_all.std()
-
             loss_mean = torch.as_tensor(
                 [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch],
                 device=torch.cuda.current_device(),
@@ -355,41 +307,20 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 [loss_reduced["avg_preference_loss"] for loss_reduced in losses_reduced_per_micro_batch],
                 device=torch.cuda.current_device(),
             ).mean()
-            acc_mean = torch.as_tensor(
-                [loss_reduced["acc"] for loss_reduced in losses_reduced_per_micro_batch],
-                device=torch.cuda.current_device(),
-            ).mean()
         else:
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             sft_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             preference_loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            acc_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-
-            rewards_chosen_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            rewards_rejected_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            rewards_all_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            rewards_all_std = torch.tensor(0.0, device=torch.cuda.current_device())
 
         # we can only log on one rank if it is rank zero so we broadcast from last rank
         torch.distributed.broadcast(loss_mean, get_last_rank())
         torch.distributed.broadcast(sft_loss_mean, get_last_rank())
         torch.distributed.broadcast(preference_loss_mean, get_last_rank())
-        torch.distributed.broadcast(acc_mean, get_last_rank())
-
-        torch.distributed.broadcast(rewards_chosen_mean, get_last_rank())
-        torch.distributed.broadcast(rewards_rejected_mean, get_last_rank())
-        torch.distributed.broadcast(rewards_all_mean, get_last_rank())
-        torch.distributed.broadcast(rewards_all_std, get_last_rank())
 
         metrics = {
             "loss": loss_mean,
             "sft_loss": sft_loss_mean,
             "preference_loss": preference_loss_mean,
-            "acc": acc_mean,
-            "rewards_chosen_mean": rewards_chosen_mean,
-            "rewards_rejected_mean": rewards_rejected_mean,
-            "rewards_all_mean": rewards_all_mean,
-            "rewards_all_std": rewards_all_std,
         }
 
         # move to CPU
@@ -412,9 +343,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
     @torch.no_grad()
     def get_logprob_batch(self, batch):
-        seq_length = batch["chosen"].shape[1]
+        seq_length = batch["response_1"].shape[1]
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
+        
         set_sync_funcs(self, forward_only=True)
 
         fwd_bwd_function = get_forward_backward_func()
@@ -426,19 +358,16 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             num_microbatches=get_num_microbatches(),
             forward_only=True,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.dpo.log_prob_forward_micro_batch_size,
+            micro_batch_size=self.cfg.rpo.log_prob_forward_micro_batch_size,
             collect_non_loss_data=True,
         )
-
+        
         if len(logprobs_list) > 0:
-            chosen_logprobs_list = []
-            rejected_logprobs_list = []
+            logprobs_list_cat = []
             for item in logprobs_list:
-                chosen_logprobs, rejected_logprobs = self.split_output_tensor(item["logprobs"])
-                chosen_logprobs_list.append(chosen_logprobs)
-                rejected_logprobs_list.append(rejected_logprobs)
-
-            logprobs = torch.cat([torch.cat(chosen_logprobs_list), torch.cat(rejected_logprobs_list)], dim=0)
+                all_log_probs = self.split_output_tensor(item["logprobs"])
+                logprobs_list_cat.extend(all_log_probs)
+            logprobs = torch.cat(logprobs_list_cat)
         else:
             logprobs = None
 

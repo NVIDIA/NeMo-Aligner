@@ -44,6 +44,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
     DPOModelDataset,
+    RPOModelDataset,
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
@@ -261,6 +262,7 @@ def _build_train_valid_test_datasets(
 build_train_valid_test_rlhf_datasets = partial(build_train_valid_test_datasets, RLHFDataset)
 build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, RewardModelDataset)
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
+build_train_valid_test_rpo_datasets = partial(build_train_valid_test_datasets, RPOModelDataset)
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
 
 
@@ -336,14 +338,14 @@ def build_dataloader(
         "data_parallel_size": parallel_state.get_data_parallel_world_size(),
         "drop_last": drop_last,
         "global_batch_size": gbs,
-        "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
+        # "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
 
     # Megatron sampler
     if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type == "single":
         if use_random_sampler:
             cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
-            common_params["seed"] = cfg.model.seed
+            # common_params["seed"] = cfg.model.seed
         else:
             cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
         batch_sampler = cls(**common_params)

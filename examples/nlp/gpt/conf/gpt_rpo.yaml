@@ -3,16 +3,16 @@ defaults:
 
 trainer:
   num_nodes: 1
-  devices: 4
+  devices: 8
   accelerator: gpu
   precision: bf16
   
-  # dpo specific args
-  dpo:
-    max_epochs: 1
+  # rpo specific args
+  rpo:
+    max_epochs: 100
     max_steps: -1
     val_check_interval: 0.1
-    save_interval: 5
+    save_interval: 100
     limit_train_batches: 1.0
 
     # how many GBS we loop over
@@ -24,8 +24,8 @@ trainer:
   enable_checkpointing: False
   use_distributed_sampler: False
   max_time: null
-  max_epochs: ${.dpo.max_epochs}
-  max_steps: ${.dpo.max_steps}
+  max_epochs: ${.rpo.max_epochs}
+  max_steps: ${.rpo.max_steps}
 
 exp_manager:
   explicit_log_dir: /results
@@ -34,8 +34,8 @@ exp_manager:
   max_time_per_run: ${trainer.max_time}
   create_wandb_logger: False
   wandb_logger_kwargs:
-    project: nemo_aligner_dpo
-    name: rlhf_gpt3_dpo
+    project: nemo_aligner_rpo
+    name: rlhf_gpt3_rpo
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   resume_if_exists: True
   resume_ignore_no_checkpoint: True
@@ -47,28 +47,29 @@ exp_manager:
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
     filename: 'megatron_gpt--{${.monitor}:.3f}-{step}-{consumed_samples}-{epoch}'
-    model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
+    model_parallel_size: 4
 
 pretrained_checkpoint:
-  restore_from_path: /data/GPT-2B-001_bf16_tp1.nemo
+  restore_from_path: /models/llama3_8b_sft_alpha_nodes8_tp4_3e-6_bs384_rerun_1200.nemo
 
 model:  
-  mcore_gpt: False
-  micro_batch_size: 4
-  global_batch_size: 32
+  mcore_gpt: True
+  micro_batch_size: 1
+  global_batch_size: 16
   megatron_amp_O2: True
 
-  dpo:
+  rpo:
     # This default value ensures there are no numeric differences beween trained and reference policies when computing log probs.
     # A higher value can be used to speed-up log probs computations, but may cause numeric differences.
     log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, 2}
-    ref_policy_kl_penalty: 0.2
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
     gt_reward_scale: 1. # the scale of the rewards in RPO
-    preference_loss: dpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
+    preference_loss: rpo_multi_response # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
     preference_loss_weight: 1 # the coefficient of the preference loss
-    sft_loss_weight: 0 # the coefficient of the SFT loss
+    sft_loss_weight: 0.05 # the coefficient of the SFT loss
+    beta: 0.2
+    eta: 0.2
   
   #encoder_seq_length: 4096
   #max_position_embeddings: ${model.encoder_seq_length}
@@ -123,11 +124,11 @@ model:
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: 
       train:
-        - /data/sample_dpo_dataset.jsonl
+        - /data/responses_general.rm.formatted.jsonl
       test:
-        - /data/sample_dpo_dataset.jsonl
+        - /data/small_test_formatted.jsonl
       validation:
-        - /data/sample_dpo_dataset.jsonl
+        - /data/small_test_formatted.jsonl
     default_chosen_reward: 1. # the default reward for the chosen response in RPO
     default_rejected_reward: 0. # the default reward for the rejected response in RPO
     
