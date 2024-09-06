@@ -144,7 +144,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             # position_ids = batch["position_ids"][0:1]
             attention_mask = batch["attention_mask"][0:1]
 
-            print(attention_mask.shape, tokens.shape)
             # Model forward pass
             forward_args = {
                 "input_ids": tokens,
@@ -205,6 +204,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
+                # print('IMP:', loss, preference_loss, sft_loss)
+
                 (
                     reduced_loss,
                     reduced_preference_loss,
@@ -251,16 +252,13 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             return (logps * loss_mask).sum(-1)
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, average_log_probs=False):
-        print('REF:', ref_logprobs.shape)
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
-        print('PI:', pi_logprobs.shape, rewards, chosen_rewards)
-        print('======')
-        exit(0)
         
         rewards_delta = chosen_rewards - reject_rewards
+
 
         if self.preference_loss == "dpo":
             loss = -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)
@@ -307,9 +305,13 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return loss, acc_chosen
 
     def sft_loss_func(self, pi_logprobs, labels, average_log_probs=False):
+        print(pi_logprobs.shape)
         logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
         chosen_logprobs, _ = self.split_output_tensor(logprobs)
-        print(chosen_logprobs)
+        
+        print(chosen_logprobs, chosen_logprobs.shape)
+        exit(0)
+        
         return -chosen_logprobs.mean(0)
 
     def get_loss_and_metrics(self, batch, forward_only):

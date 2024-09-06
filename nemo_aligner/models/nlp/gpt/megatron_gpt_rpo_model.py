@@ -185,7 +185,6 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     higher_stability=True,
                 )
 
-                # print('Before Loss:', per_token_logps.shape)
                 preference_loss = self.loss_func(
                     per_token_logps,
                     ref_logprobs,
@@ -201,7 +200,6 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
-                print(loss, preference_loss, sft_loss)
 
                 (
                     reduced_loss,
@@ -257,21 +255,20 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             gt_rewards = torch.stack(self.split_output_tensor(gt_rewards))
             p_star = torch.nn.functional.softmax(self.eta * gt_rewards, dim=0)
             
-            print(rewards.shape, p_star.shape)
         else:
             raise ValueError("Unknown RPO Loss")
 
-        loss = (p_star * (torch.log( p_star + 1e-8 ) - torch.log( rewards + 1e-8 ))).sum(0).unsqueeze(0)
-        print('>>', loss)
-        return loss.mean(0)
+        loss = (p_star * (torch.log( p_star + 1e-8 ) - torch.log( rewards + 1e-8 ))).sum(0).mean(0)
+        
+        return loss
 
     def sft_loss_func(self, pi_logprobs, labels, gt_rewards, average_log_probs=False):
-        logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
-        all_log_probs = torch.stack(self.split_output_tensor(logprobs))
-        gt_rewards = torch.stack(self.split_output_tensor(gt_rewards))
+        logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs) # [16]
+        all_log_probs = torch.stack(self.split_output_tensor(logprobs)) # [4, 4] -> each has several responses which we select the best?
+        gt_rewards = torch.stack(self.split_output_tensor(gt_rewards)) # same, we split the rewards
         chosen_best = torch.argmax(gt_rewards, dim=0)
 
-        chosen_logprobs = all_log_probs[chosen_best]
+        chosen_logprobs = all_log_probs[chosen_best, torch.arange(all_log_probs.size(1))]
         return -chosen_logprobs.mean(0)
 
     def get_loss_and_metrics(self, batch, forward_only):

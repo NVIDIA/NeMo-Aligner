@@ -3,7 +3,7 @@ defaults:
 
 trainer:
   num_nodes: 1
-  devices: 4
+  devices: 8
   accelerator: gpu
   precision: bf16
   
@@ -50,12 +50,12 @@ exp_manager:
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
 
 pretrained_checkpoint:
-  restore_from_path: /data/GPT-2B-001_bf16_tp1.nemo
+  restore_from_path: /models/llama3_8b_sft_alpha_nodes8_tp4_3e-6_bs384_rerun_1200.nemo
 
 model:  
-  mcore_gpt: False
-  micro_batch_size: 4
-  global_batch_size: 32
+  mcore_gpt: True
+  micro_batch_size: 16
+  global_batch_size: 64
   megatron_amp_O2: True
 
   dpo:

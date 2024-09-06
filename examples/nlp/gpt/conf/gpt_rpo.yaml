@@ -9,9 +9,9 @@ trainer:
   
   # rpo specific args
   rpo:
-    max_epochs: 100
+    max_epochs: 1000
     max_steps: -1
-    val_check_interval: 0.1
+    val_check_interval: 100
     save_interval: 100
     limit_train_batches: 1.0
 
@@ -54,8 +54,8 @@ pretrained_checkpoint:
 
 model:  
   mcore_gpt: True
-  micro_batch_size: 1
-  global_batch_size: 16
+  micro_batch_size: 4
+  global_batch_size: 8
   megatron_amp_O2: True
 
   rpo:
