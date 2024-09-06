@@ -231,7 +231,7 @@ def main(cfg) -> None:
     torch.distributed.barrier()
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run", None) if cfg.exp_manager else None)  
+    timer = Timer(cfg.exp_manager.get("max_time_per_run", None) if cfg.exp_manager else None)
 
     draft_p_trainer = SupervisedTrainer(
         cfg=cfg.trainer.draftp_sd,
