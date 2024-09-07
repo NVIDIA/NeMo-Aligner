@@ -127,7 +127,7 @@ def main(cfg) -> None:
         trainer,
         strict=True,  # TODO: change back to True
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
-        load_base_model_only=True,
+        load_base_model_only=True, # hack because we start from pretrained 8b model
     )
 
     # pull values from checkpoint
@@ -158,13 +158,11 @@ def main(cfg) -> None:
             prompt = tokenizer.text_to_ids(b["prompt"])
 
             assert b['token_ids'][0] == 128000, "this is just a hack to remove things"
-            response = prompt + b["token_ids"][1:]
+            response = prompt + b["token_ids"][1:] + [tokenizer.eos_id]
             value = torch.empty(len(response), 9, dtype=torch.float32).fill_(-100)
+            values = b['values'][1:] + [b['values'][-1]]
 
-            values = b['values'][1:]
             min_range, max_range = b['range']
-            max_range -= 1
-
             value[len(prompt) + min_range: len(prompt) + max_range + 1, 4:7] = torch.as_tensor(values, dtype=torch.float32)
 
             tokens.append(response)
