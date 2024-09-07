@@ -160,10 +160,10 @@ def main(cfg) -> None:
             assert b['token_ids'][0] == 128000, "this is just a hack to remove things"
             response = prompt + b["token_ids"][1:] + [tokenizer.eos_id]
             value = torch.empty(len(response), 9, dtype=torch.float32).fill_(-100)
-            values = b['values'][1:] + [b['values'][-1]]
+            true_values = b['values'][1:] + [b['values'][-1]]
 
             min_range, max_range = b['range']
-            value[len(prompt) + min_range: len(prompt) + max_range + 1, 4:7] = torch.as_tensor(values, dtype=torch.float32)
+            value[len(prompt) + min_range: len(prompt) + max_range + 1, 4:7] = torch.as_tensor(true_values, dtype=torch.float32)
 
             tokens.append(torch.as_tensor(response, dtype=torch.long))
             values.append(torch.as_tensor(value, dtype=torch.float32))
@@ -197,8 +197,6 @@ def main(cfg) -> None:
         pad_samples_to_global_batch_size=False,
         load_gbs=True,
     )
-
-    next(iter(train_dataloader))
 
     val_dataloader = build_dataloader(
         cfg=cfg,
