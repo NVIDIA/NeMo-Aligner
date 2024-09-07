@@ -166,7 +166,7 @@ def main(cfg) -> None:
             value[len(prompt) + min_range: len(prompt) + max_range + 1, 4:7] = torch.as_tensor(values, dtype=torch.float32)
 
             tokens.append(torch.as_tensor(response, dtype=torch.long))
-            values.append(value)
+            values.append(torch.as_tensor(value, dtype=torch.float32))
 
         tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
         scores = torch.nn.utils.rnn.pad_sequence(values, batch_first=True, padding_value=-100)
