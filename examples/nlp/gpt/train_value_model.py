@@ -165,7 +165,7 @@ def main(cfg) -> None:
             min_range, max_range = b['range']
             value[len(prompt) + min_range: len(prompt) + max_range + 1, 4:7] = torch.as_tensor(values, dtype=torch.float32)
 
-            tokens.append(response)
+            tokens.append(torch.as_tensor(response, dtype=torch.long))
             values.append(value)
 
         tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
