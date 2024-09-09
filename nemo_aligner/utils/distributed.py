@@ -425,146 +425,161 @@ def compute_topk_logits_in_batched_sequence(
     return topk_logits, topk_token_ids, log_sum_exp_logits
 
 
-# class _TopKLogitsCrossEntropy(torch.autograd.Function):
-#     @staticmethod
-#     def forward(ctx, vocab_parallel_logits, target_logits, target_token_ids, target_log_sum_exp_logits):
-#         # vocab_parallel_logits: logits
-#         # target_logits: Tensor of [B, seq_len, K]. Logits values of the target tokens.
-#         # target_token_ids: Tensor of [B, seq_len, K]. Token ids of the target tokens.
-#         # target_log_sum_exp_logits: Union[None, Tensor[B, seq_len], 1]. If not None, logsumexp of target logits over the whole vocab.
+class _TopKLogitsCrossEntropy(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, vocab_parallel_logits, target_logits, target_token_ids, target_log_sum_exp_logits):
+        # vocab_parallel_logits: logits
+        # target_logits: Tensor of [B, seq_len, K]. Logits values of the target tokens.
+        # target_token_ids: Tensor of [B, seq_len, K]. Token ids of the target tokens.
+        # target_log_sum_exp_logits: Union[None, Tensor[B, seq_len], 1]. If not None, logsumexp of target logits over the whole vocab.
         
-#         # Maximum value along vocab dimension across all GPUs.
-#         logits_max = torch.max(vocab_parallel_logits, dim=-1)[0]
-#         torch.distributed.all_reduce(
-#             logits_max, op=torch.distributed.ReduceOp.MAX, group=get_tensor_model_parallel_group()
-#         )
-#         # Subtract the maximum value.
-#         vocab_parallel_logits = vocab_parallel_logits - logits_max.unsqueeze(dim=-1)
+        # Maximum value along vocab dimension across all GPUs.
+        logits_max = torch.max(vocab_parallel_logits, dim=-1)[0]
+        torch.distributed.all_reduce(
+            logits_max, op=torch.distributed.ReduceOp.MAX, group=get_tensor_model_parallel_group()
+        )
+        # Subtract the maximum value.
+        vocab_parallel_logits = vocab_parallel_logits - logits_max.unsqueeze(dim=-1)
         
-#         # Get the partition's vocab indecies
-#         get_vocab_range = VocabUtility.vocab_range_from_per_partition_vocab_size
-#         partition_vocab_size = vocab_parallel_logits.size()[-1]
-#         rank = get_tensor_model_parallel_rank()
-#         world_size = get_tensor_model_parallel_world_size()
-#         vocab_start_index, vocab_end_index = get_vocab_range(partition_vocab_size, rank, world_size)
+        # Get the partition's vocab indecies
+        get_vocab_range = VocabUtility.vocab_range_from_per_partition_vocab_size
+        partition_vocab_size = vocab_parallel_logits.size()[-1]
+        rank = get_tensor_model_parallel_rank()
+        world_size = get_tensor_model_parallel_world_size()
+        vocab_start_index, vocab_end_index = get_vocab_range(partition_vocab_size, rank, world_size)
 
-#         # Create a mask of valid vocab ids (1 means it needs to be masked).
-#         target_mask = (target_token_ids < vocab_start_index) | (target_token_ids >= vocab_end_index)
-#         masked_target_token_ids = target_token_ids.clone() - vocab_start_index
-#         masked_target_token_ids[target_mask] = 0
+        # Create a mask of valid vocab ids (1 means it needs to be masked).
+        target_mask = (target_token_ids < vocab_start_index) | (target_token_ids >= vocab_end_index)
+        masked_target_token_ids = target_token_ids.clone() - vocab_start_index
+        masked_target_token_ids[target_mask] = 0
 
-#         # Get predicted-logits = logits[target]. Shape is [B, seq_len, K]. 
-#         # Some of them (based on target_mask) needs to be masked.
-#         predicted_logits = torch.gather(vocab_parallel_logits, dim=-1, index=masked_target_token_ids)
-        
-#         # When target_log_sum_exp_logits is None. The objective is 
-#         # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
-#         # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
-#         # neg_loss = sum_{k=1}^{K} target_prob_k * log prob_{k} 
-#         #          = sum_{k=1}^{K} target_prob_k * logits_k - sum_{k=1}^{K} target_prob_k * log sum_{k=1}^K exp(logits_k)
-#         #          = sum_{k=1}^{K} target_prob_k * logits_k - log sum_{k=1}^K exp(logits_k)
-#         # neg_loss will be Tensor of shape [B, seq_len]
-#         if target_log_sum_exp_logits is None:
-#             target_probs = target_logits.exp()
-#             target_probs = target_probs / target_probs.sum(-1, keepdims=True)
-#             neg_loss = (target_probs * predicted_logits).sum(-1, keepdims=False)
-#             neg_loss[target_mask] = 0.0
+        # Get predicted-logits = logits[target]. Shape is [B, seq_len, K]. 
+        # Some of them (based on target_mask) needs to be masked.
+        #predicted_logits = torch.gather(vocab_parallel_logits, dim=-1, index=masked_target_token_ids)
+
+        logits_2d = vocab_parallel_logits.view(-1, partition_vocab_size)
+        masked_target_1d = masked_target.view(-1)
+        K = target_logits.size()[-1]
+        ## we want to select K tokens per example
+        arange_1d = torch.arange(start=0, end=logits_2d.size()[0], device=logits_2d.device).repeat_interleave(K)
+        target_token_ids_1d = masked_target_token_ids.view(-1) ## B * seq_length * K
+        predicted_logits_1d = logits_2d[arange_1d, target_token_ids_1d]
+        predicted_logits_1d = predicted_logits_1d.clone().contiguous()
+        predicted_logits = predicted_logits_1d.view_as(target_logits)
+        predicted_logits[target_mask] = 0.0
+        # All reduce is needed to get the chunks from other GPUs.
+        torch.distributed.all_reduce(
+            predicted_logits, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
+        )
+
+        # When target_log_sum_exp_logits is None. The objective is 
+        # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
+        # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
+        # neg_loss = sum_{k=1}^{K} target_prob_k * log prob_{k} 
+        #          = sum_{k=1}^{K} target_prob_k * logits_k - sum_{k=1}^{K} target_prob_k * log sum_{k=1}^K exp(logits_k)
+        #          = sum_{k=1}^{K} target_prob_k * logits_k - log sum_{k=1}^K exp(logits_k)
+        # neg_loss will be Tensor of shape [B, seq_len]
+        if target_log_sum_exp_logits is None:
+            target_probs = target_logits.exp()
+            target_probs = target_probs / target_probs.sum(-1, keepdims=True)
+            neg_loss = (target_probs * predicted_logits).sum(-1, keepdims=False)
+            neg_loss[target_mask] = 0.0
             
             
-#             # All reduce is needed to get the chunks from other GPUs.
-#             torch.distributed.all_reduce(
-#                 neg_loss, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
-#             )
+            # All reduce is needed to get the chunks from other GPUs.
+            torch.distributed.all_reduce(
+                neg_loss, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
+            )
         
-#             # compute the logsumexp of all K logits
-#             exp_logits = predicted_logits.exp()
-#             exp_logits[target_mask] = 0.0
-#             sum_exp_logits = exp_logits.sum(dim=-1, keepdims=False)
-#             torch.distributed.all_reduce(
-#                 sum_exp_logits, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
-#             )
-#             log_sum_exp_logits = sum_exp_logits.log()
+            # compute the logsumexp of all K logits
+            exp_logits = predicted_logits.exp()
+            exp_logits[target_mask] = 0.0
+            sum_exp_logits = exp_logits.sum(dim=-1, keepdims=False)
+            torch.distributed.all_reduce(
+                sum_exp_logits, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
+            )
+            log_sum_exp_logits = sum_exp_logits.log()
             
-#             loss = - neg_loss + log_sum_exp_logits
+            loss = - neg_loss + log_sum_exp_logits
         
-#             # Store softmax, target-softmax, target-mask and masked-target for backward pass.
-#             probs = exp_logits / sum_exp_logits.unsqueeze(dim=-1)
-#             vocab_size = exp_logits.size(-1)
-#             ctx.save_for_backward(
-#                 probs, None, target_probs, None, target_mask, masked_target_token_ids, torch.LongTensor([vocab_size])
-#             )
+            # Store softmax, target-softmax, target-mask and masked-target for backward pass.
+            probs = exp_logits / sum_exp_logits.unsqueeze(dim=-1)
+            vocab_size = exp_logits.size(-1)
+            ctx.save_for_backward(
+                probs, None, target_probs, None, target_mask, masked_target_token_ids, torch.LongTensor([vocab_size])
+            )
         
-#         # When target_log_sum_exp_logits is not None. The objective is
-#         # target_prob_k = exp(target_logits_k) / exp(target_log_sum_exp_logits), k=1,..., K
-#         # target_prob_{K+1} = 1 - sum_{k=1}^K target_prob_k
-#         # prob_k = exp(logits_k) / sum_{v=1}^V exp(logits_v), k=1,..., K
-#         # prob_{K+1} = 1 - sum_{k=1}^K prob_k
-#         # neg_loss = sum_{k=1}^{K+1} target_prob_k * log prob_{k}
-#         # neg_loss will be Tensor of shape [B, seq_len]
-#         else:
-#             raise NotImplementedError
-#             target_probs = (target_logits - target_log_sum_exp_logits).exp()
-#             target_prob_K_add_1 = 1 - target_probs.sum(-1, keepdims=False)
+        # When target_log_sum_exp_logits is not None. The objective is
+        # target_prob_k = exp(target_logits_k) / exp(target_log_sum_exp_logits), k=1,..., K
+        # target_prob_{K+1} = 1 - sum_{k=1}^K target_prob_k
+        # prob_k = exp(logits_k) / sum_{v=1}^V exp(logits_v), k=1,..., K
+        # prob_{K+1} = 1 - sum_{k=1}^K prob_k
+        # neg_loss = sum_{k=1}^{K+1} target_prob_k * log prob_{k}
+        # neg_loss will be Tensor of shape [B, seq_len]
+        else:
+            raise NotImplementedError
+            target_probs = (target_logits - target_log_sum_exp_logits).exp()
+            target_prob_K_add_1 = 1 - target_probs.sum(-1, keepdims=False)
             
-#             # compute the logsumexp of the logits over the whole Vocab. Tensor of shape [B, seq_len, 1]
-#             log_sum_exp_logits = compute_distributed_log_sum_exp_logits(vocab_parallel_logits).unsqueeze(-1)
-#             predicted_logprobs = predicted_logits - log_sum_exp_logits
+            # compute the logsumexp of the logits over the whole Vocab. Tensor of shape [B, seq_len, 1]
+            log_sum_exp_logits = compute_distributed_log_sum_exp_logits(vocab_parallel_logits).unsqueeze(-1)
+            predicted_logprobs = predicted_logits - log_sum_exp_logits
             
-#             neg_loss = (target_probs * predicted_logprobs).sum(-1, keepdims=False)
-#             neg_loss[target_mask] = 0.0
+            neg_loss = (target_probs * predicted_logprobs).sum(-1, keepdims=False)
+            neg_loss[target_mask] = 0.0
         
-#             # All reduce is needed to get the chunks from other GPUs.
-#             torch.distributed.all_reduce(
-#                 neg_loss, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
-#             )
+            # All reduce is needed to get the chunks from other GPUs.
+            torch.distributed.all_reduce(
+                neg_loss, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
+            )
         
-#             # this should be computed on one TP only. We do this in rank=0
-#             sum_predicted_probs = predicted_logprobs.exp().sum(dim=-1, keepdims=False)
-#             torch.distributed.all_reduce(
-#                 sum_predicted_probs, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
-#             )
-#             logprob_K_add_1 = (1 - sum_predicted_probs).log()
-#             loss = - neg_loss - target_prob_K_add_1 * logprob_K_add_1
+            # this should be computed on one TP only. We do this in rank=0
+            sum_predicted_probs = predicted_logprobs.exp().sum(dim=-1, keepdims=False)
+            torch.distributed.all_reduce(
+                sum_predicted_probs, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
+            )
+            logprob_K_add_1 = (1 - sum_predicted_probs).log()
+            loss = - neg_loss - target_prob_K_add_1 * logprob_K_add_1
     
-#             # Store softmax, target-mask and masked-target for backward pass.
-#             probs = predicted_logprobs.exp()
-#             prob_K_add_1 = logprob_K_add_1.exp()
-#             vocab_size = exp_logits.size(-1)
-#             ctx.save_for_backward(
-#                 probs, prob_K_add_1, target_probs, target_prob_K_add_1,
-#                 target_mask, masked_target_token_ids, torch.LongTensor([vocab_size])
-#             )
+            # Store softmax, target-mask and masked-target for backward pass.
+            probs = predicted_logprobs.exp()
+            prob_K_add_1 = logprob_K_add_1.exp()
+            vocab_size = exp_logits.size(-1)
+            ctx.save_for_backward(
+                probs, prob_K_add_1, target_probs, target_prob_K_add_1,
+                target_mask, masked_target_token_ids, torch.LongTensor([vocab_size])
+            )
 
-#         return loss
+        return loss
 
-#     @staticmethod
-#     def backward(ctx, grad_output):
+    @staticmethod
+    def backward(ctx, grad_output):
 
-#         # Retreive tensors from the forward path.
-#         (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
-#          masked_target_token_ids, vocab_size) = ctx.saved_tensors
+        # Retreive tensors from the forward path.
+        (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
+         masked_target_token_ids, vocab_size) = ctx.saved_tensors
 
-#         probs = probs * (2 * probs - 1)
+        probs = probs * (2 * probs - 1)
 
-#         vocab_size = vocab_size.item()
+        vocab_size = vocab_size.item()
 
-#         # All the inputs have softmax as thier gradient.
-#         grad_input = probs
-#         # For simplicity, work with the 2D gradient.
-#         partition_vocab_size = probs.size()[-1]
-#         grad_2d = grad_input.view(-1, partition_vocab_size)
+        # All the inputs have softmax as thier gradient.
+        grad_input = probs
+        # For simplicity, work with the 2D gradient.
+        partition_vocab_size = probs.size()[-1]
+        grad_2d = grad_input.view(-1, partition_vocab_size)
 
-#         # Add the gradient from matching classes.
-#         arange_1d = torch.arange(start=0, end=grad_2d.size()[0], device=grad_2d.device)
+        # Add the gradient from matching classes.
+        arange_1d = torch.arange(start=0, end=grad_2d.size()[0], device=grad_2d.device)
 
-#         softmax_update = 1.0 - target_mask.view(-1).float()
+        softmax_update = 1.0 - target_mask.view(-1).float()
   
-#         grad_2d[arange_1d, masked_target_token_ids.view(-1)] -= softmax_update
+        grad_2d[arange_1d, masked_target_token_ids.view(-1)] -= softmax_update
 
-#         # Finally elementwise multiplication with the output gradients.
-#         grad_input.mul_(grad_output.unsqueeze(dim=-1))
+        # Finally elementwise multiplication with the output gradients.
+        grad_input.mul_(grad_output.unsqueeze(dim=-1))
 
-#         return grad_input, None, None, None
+        return grad_input, None, None, None
     
 
 class SyncTimer(NamedTimer):
