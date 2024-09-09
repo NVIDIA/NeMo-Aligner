@@ -81,6 +81,7 @@ class RewardModelServer:
             pad_to_multiple=pad_batch_to_multiple,
             strip_sequence_length_to_multiple=self.strip_sequence_length_to_multiple,
         )
+
         rewards = run_distributed_inference(inputs=inputs, infer_fn=self.infer_fn)
 
         rewards = rewards[: rewards.shape[0] - extra]

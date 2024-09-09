@@ -18,7 +18,9 @@ from pytorch_lightning.trainer.trainer import Trainer
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo.core.config import hydra_runner
 from nemo_aligner.algorithms.reward_server import RewardModelServer
-from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
+from nemo_aligner.models.nlp.gpt.megatron_gpt_critic import MegatronGPTCriticModel
+
+# from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_script_utils import init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, set_autocast_gpu_dtype
@@ -40,8 +42,8 @@ def main(cfg) -> None:
     elif trainer.precision in ["bf16", "bf16-mixed"] and cfg.get("megatron_amp_O2", False):
         cfg.model.megatron_amp_O2 = True
 
-    reward_model_type = RewardModelType(cfg.model.get("reward_model_type", "binary_ranking"))
-    reward_model_cls = REWARD_MODEL_CLASS_DICT[reward_model_type]
+    # reward_model_type = RewardModelType(cfg.model.get("reward_model_type", "binary_ranking"))
+    reward_model_cls = MegatronGPTCriticModel
 
     ptl_model = load_from_nemo(reward_model_cls, cfg.model, trainer, strict=True, restore_path=cfg.rm_model_file,)
     ptl_model.freeze()
