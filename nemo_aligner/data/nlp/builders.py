@@ -43,6 +43,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
     DPOModelDataset,
+    KTOModelDataset,
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
@@ -261,6 +262,7 @@ def _build_train_valid_test_datasets(
 build_train_valid_test_rlhf_datasets = partial(build_train_valid_test_datasets, RLHFDataset)
 build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, RewardModelDataset)
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
+build_train_valid_test_kto_datasets = partial(build_train_valid_test_datasets, KTOModelDataset)
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
 
 

@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - PPO algorithm will now double check that generated samples ended with one of the stop words from `sampling_params.end_strings`, and zero out their gradients if this is not the case (which happens when reaching the maximum generation length)
 - Added critic warmup to the PPO with the flag trainer.ppo.critic_warmup_steps.
 - PPO log probs are now computed with `higher_stability=True`. This can change results for some models, but should result in overall greater stability.
+- Implement Kahneman-Tversky Optimization (KTO).
   
 ### New Features and Optimizations
 - Critic and Reward Model server refactored. Now the reward model will have a flag called `model.forward_micro_batch_size` which determines the micro batch size on which it runs inferences. This can be higher than the training micro batch size since during inference, we have less memory pressure.
