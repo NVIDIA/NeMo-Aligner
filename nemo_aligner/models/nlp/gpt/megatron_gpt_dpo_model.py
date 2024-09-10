@@ -63,7 +63,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         self.sft_avg_log_probs = self.cfg.dpo.get("sft_average_log_probs", self.preference_avg_log_probs)
 
         self.preference_loss_weight = self.cfg.dpo.get("preference_loss_weight", 1)
-        self.sft_loss_weight = self.cfg.dpo.get("sft_loss_weight", 0.7)
+        self.sft_loss_weight = self.cfg.dpo.get("sft_loss_weight", 0)
         assert (
             self.preference_loss_weight != 0 or self.sft_loss_weight != 0
         ), "sft loss weight and dpo loss weight cannot both be 0"
@@ -196,7 +196,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 )
 
                 sft_loss = torch.zeros_like(preference_loss)
-                self.sft_loss_weight = 0.7
                 if self.sft_loss_weight != 0:
                     sft_loss = self.sft_loss_func(
                         per_token_logps, labels[:, 1:], average_log_probs=self.sft_avg_log_probs

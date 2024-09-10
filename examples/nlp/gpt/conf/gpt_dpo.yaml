@@ -55,7 +55,7 @@ pretrained_checkpoint:
 model:  
   mcore_gpt: True
   micro_batch_size: 16
-  global_batch_size: 64
+  global_batch_size: 128
   megatron_amp_O2: True
 
   dpo:
@@ -123,11 +123,11 @@ model:
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: 
       train:
-        - /data/sample_dpo_dataset.jsonl
+        - /data/responses_general.rm.formatted.dpo.jsonl
       test:
-        - /data/sample_dpo_dataset.jsonl
+        - /data/dpo_test_set.jsonl
       validation:
-        - /data/sample_dpo_dataset.jsonl
+        - /data/dpo_test_set.jsonl
     default_chosen_reward: 1. # the default reward for the chosen response in RPO
     default_rejected_reward: 0. # the default reward for the rejected response in RPO
     

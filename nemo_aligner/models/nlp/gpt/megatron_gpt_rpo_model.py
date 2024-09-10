@@ -61,18 +61,18 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         self.preference_avg_log_probs = self.cfg.rpo.get("preference_average_log_probs", False)
         self.sft_avg_log_probs = self.cfg.rpo.get("sft_average_log_probs", self.preference_avg_log_probs)
 
-        self.preference_loss_weight = self.cfg.rpo.get("preference_loss_weight", 1)
-        self.sft_loss_weight = self.cfg.rpo.get("sft_loss_weight", 0)
+        self.preference_loss_weight = float(self.cfg.rpo.get("preference_loss_weight", 1))
+        self.sft_loss_weight = float(self.cfg.rpo.get("sft_loss_weight", 0))
         assert (
             self.preference_loss_weight != 0 or self.sft_loss_weight != 0
         ), "sft loss weight and dpo loss weight cannot both be 0"
 
         # variants of preference losses, by default RPO.
         self.preference_loss = self.cfg.rpo.get("preference_loss", "rpo")
-        self.gt_reward_scale = self.cfg.rpo.get("gt_reward_scale", 1.0)
+        self.gt_reward_scale = float(self.cfg.rpo.get("gt_reward_scale", 1.0))
 
-        self.beta = self.cfg.rpo.get("beta", 0.01)
-        self.eta = self.cfg.rpo.get("eta", 0.01)
+        self.beta = float(self.cfg.rpo.get("beta", 0.01))
+        self.eta = float(self.cfg.rpo.get("eta", 0.01))
         self.k_len = 4
 
     @torch.no_grad()
@@ -297,7 +297,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.micro_batch_size * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
+            micro_batch_size=self.cfg.micro_batch_size * self.k_len,  # each minibatch has K comparisons so tensor shape will be mbs * num_responses
         )
 
         # only the last stages of the pipeline return losses
