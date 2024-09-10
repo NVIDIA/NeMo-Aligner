@@ -33,6 +33,8 @@ trainer:
 pretrained_checkpoint:
   restore_from_path: null
 
+load_base_model_only: False
+
 exp_manager:
   explicit_log_dir: /results
   exp_dir: null

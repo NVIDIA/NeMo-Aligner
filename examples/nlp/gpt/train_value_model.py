@@ -129,7 +129,7 @@ def main(cfg) -> None:
         trainer,
         strict=True,  # TODO: change back to True
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
-        load_base_model_only=True,  # hack because we start from pretrained 8b model
+        load_base_model_only=cfg.load_base_model_only,  # hack because we start from pretrained 8b model
     )
 
     # pull values from checkpoint
