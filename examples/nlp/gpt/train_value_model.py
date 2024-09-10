@@ -159,14 +159,11 @@ def main(cfg) -> None:
         for b in batch:
             prompt = tokenizer.text_to_ids(b["prompt"])
 
-            assert b["token_ids"][0] == 128000, "this is just a hack to remove things"
-            response = prompt + b["token_ids"][1:] + [tokenizer.eos_id]
+            response = prompt + b["token_ids"]
             value = torch.empty(len(response), 9, dtype=torch.float32).fill_(-100)
-            true_values = b["values"][1:] + [b["values"][-1]]
-
             min_range, max_range = b["range"]
             value[len(prompt) + min_range : len(prompt) + max_range + 1, 4:7] = torch.as_tensor(
-                true_values, dtype=torch.float32
+                b["values"], dtype=torch.float32
             )
 
             tokens.append(torch.as_tensor(response, dtype=torch.long))
