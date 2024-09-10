@@ -15,10 +15,12 @@
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import jsonlines
 import torch
 import torch.multiprocessing as mp
+from datasets import load_dataset
 from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
@@ -29,7 +31,6 @@ from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader
 from nemo_aligner.models.nlp.gpt.megatron_gpt_critic import MegatronGPTCriticModel
 from nemo_aligner.utils.distributed import Timer
-from pathlib import Path
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -40,7 +41,6 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
-from datasets import load_dataset
 
 """Script to start SFT training"""
 
@@ -88,7 +88,9 @@ class ValueDataset:
 
     def __post_init__(self):
         assert os.path.exists(self.path_to_jsonl), f"{self.path_to_jsonl=} needs to exist"
-        self.data = load_dataset("json", data_files=[self.path_to_jsonl], cache_dir=self.cache_dir, num_proc=None)['train']
+        self.data = load_dataset("json", data_files=[self.path_to_jsonl], cache_dir=self.cache_dir, num_proc=None)[
+            "train"
+        ]
 
         with jsonlines.open(self.path_to_prompts) as reader:
             self.prompts = list(iter(reader))
@@ -127,7 +129,7 @@ def main(cfg) -> None:
         trainer,
         strict=True,  # TODO: change back to True
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
-        load_base_model_only=True, # hack because we start from pretrained 8b model
+        load_base_model_only=True,  # hack because we start from pretrained 8b model
     )
 
     # pull values from checkpoint
@@ -157,13 +159,15 @@ def main(cfg) -> None:
         for b in batch:
             prompt = tokenizer.text_to_ids(b["prompt"])
 
-            assert b['token_ids'][0] == 128000, "this is just a hack to remove things"
+            assert b["token_ids"][0] == 128000, "this is just a hack to remove things"
             response = prompt + b["token_ids"][1:] + [tokenizer.eos_id]
             value = torch.empty(len(response), 9, dtype=torch.float32).fill_(-100)
-            true_values = b['values'][1:] + [b['values'][-1]]
+            true_values = b["values"][1:] + [b["values"][-1]]
 
-            min_range, max_range = b['range']
-            value[len(prompt) + min_range: len(prompt) + max_range + 1, 4:7] = torch.as_tensor(true_values, dtype=torch.float32)
+            min_range, max_range = b["range"]
+            value[len(prompt) + min_range : len(prompt) + max_range + 1, 4:7] = torch.as_tensor(
+                true_values, dtype=torch.float32
+            )
 
             tokens.append(torch.as_tensor(response, dtype=torch.long))
             values.append(torch.as_tensor(value, dtype=torch.float32))
