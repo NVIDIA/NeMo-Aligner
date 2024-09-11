@@ -32,7 +32,7 @@ from nemo.utils import AppState, logging
 from nemo.utils.model_utils import inject_model_parallel_rank
 from nemo_aligner.models.mm.mgpt.megatron_mgpt_model import MultimodalGPTModel
 from nemo_aligner.utils.text_generation_utils import MGPTModelTextGenerationStrategy
-from mgpt_generation_server import MegatronMultimodalServer
+from nemo_aligner.servers.mgpt_generation_server import MegatronMultimodalServer
 
 try:
     from megatron.core import parallel_state
