@@ -40,6 +40,7 @@ from nemo_aligner.utils.train_script_utils import (
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
 )
+from pathlib import Path
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
 """Script to start SFT training"""
@@ -88,7 +89,13 @@ class ValueDataset:
 
     def __post_init__(self):
         assert os.path.exists(self.path_to_jsonl), f"{self.path_to_jsonl=} needs to exist"
-        self.data = load_dataset("json", data_files=[self.path_to_jsonl], cache_dir=self.cache_dir, num_proc=None)[
+
+        if os.is_dir(self.path_to_jsonl):
+            data_files = list(sorted(Path(self.path_to_jsonl).glob("*.jsonl")))
+        else:
+            data_files = [self.path_to_jsonl]
+
+        self.data = load_dataset("json", data_files=data_files, cache_dir=self.cache_dir, num_proc=None)[
             "train"
         ]
 
