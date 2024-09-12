@@ -25,7 +25,7 @@ from nemo.collections.nlp.modules.common.text_generation_utils import (
     get_default_length_params,
     get_default_sampling_params,
 )
-
+from nemo.collections.nlp.models.nlp_model import NLPModel
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import get_specs
 from nemo.utils import logging
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
@@ -167,5 +167,13 @@ class MultimodalGPTModel(MegatronNevaModel):
 
         return output
 
+    def load_state_dict(self, state_dict, strict=False):
+        logging.warning('Loading state dict for MegatronNevaModel...')
+        results = NLPModel.load_state_dict(self, state_dict, strict=False)
+        missing_keys, unexpected_keys = results
 
+        if len(unexpected_keys) > 0:
+            logging.critical('Unexpected keys were detected during the load. Please double check.')
+            logging.critical(f'Unexpected keys: \n{unexpected_keys}')
+        return results
 
