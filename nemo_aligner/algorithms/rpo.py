@@ -32,6 +32,7 @@ from nemo_aligner.utils.utils import clear_memory
 
 def rpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
     resp_outputs = {}
+    
     ## assume len 4 for responses
     for k in batch[0].keys():
         if k.startswith('response_'):
@@ -117,6 +118,7 @@ class RPOTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
+        self.k_len = int(self.cfg.num_responses)
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -318,7 +320,7 @@ class RPOTrainer:
                 logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
                 ind = 1
                 
-                for logps in torch.split(logprobs, len(logprobs) // 4, dim=0):                
+                for logps in torch.split(logprobs, len(logprobs) // self.k_len, dim=0):                
                     batch["ref_policy_log_probs_response_" + str(ind)] = logps
                     ind += 1
 

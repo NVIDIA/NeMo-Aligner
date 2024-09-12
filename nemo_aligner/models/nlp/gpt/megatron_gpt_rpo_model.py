@@ -73,7 +73,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         self.beta = float(self.cfg.rpo.get("beta", 0.01))
         self.eta = float(self.cfg.rpo.get("eta", 0.01))
-        self.k_len = 4
+        self.k_len = int(self.cfg.rpo.get("num_responses", 2))
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels, average_log_probs=False):
@@ -107,20 +107,14 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 required_keys.add("attention_mask")
 
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("response_1", "response_2", "response_3", "response_4", "position_ids"))
+                    required_keys.update(["response_" + str(i) for i in range(1, self.k_len + 1)])
+                    required_keys.update(("position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(
-                        (
-                            "ref_policy_log_probs_response_1"
-                            "ref_policy_log_probs_response_2"
-                            "ref_policy_log_probs_response_3"
-                            "ref_policy_log_probs_response_4"
-                            "response_1", "response_2", "response_3", "response_4",
-                            "labels_1", "labels_2", "labels_3", "labels_4",
-                            "rewards_1", "rewards_2", "rewards_3", "rewards_4",
-                        )
-                    )
+                    required_keys.update(["response_" + str(i) for i in range(1, self.k_len + 1)])
+                    required_keys.update(["ref_policy_log_probs_response_" + str(i) for i in range(1, self.k_len + 1)])
+                    required_keys.update(["labels_" + str(i) for i in range(1, self.k_len + 1)])
+                    required_keys.update(["rewards_" + str(i) for i in range(1, self.k_len + 1)])
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
@@ -177,7 +171,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
             def loss_func(output_tensor):
                 if validation_step and not self.cfg.data.get("validation_drop_last", True):
-                    raise NotImplementedError("DPO does not support validation when cfg.data.drop_last=False")
+                    raise NotImplementedError("RPO does not support validation when cfg.data.drop_last=False")
 
                 per_token_logps = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=output_tensor,
@@ -256,18 +250,16 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             rewards = torch.stack(self.split_output_tensor(self.get_reduced_masked_logps(
                 pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
             )))
-            rewards_pred = torch.nn.functional.softmax(self.beta * rewards, dim=0)
-
+            rewards_pred = self.beta * rewards
 
             # based on GT rewards
             gt_rewards = torch.stack(self.split_output_tensor(gt_rewards))
-            p_star = torch.nn.functional.softmax(self.eta * gt_rewards, dim=0)
-
+            p_star = self.eta * gt_rewards
         else:
             raise ValueError("Unknown RPO Loss")
 
-        loss = (p_star * (torch.log( p_star + 1e-8 ) - torch.log( rewards_pred + 1e-8 ))).sum(0).mean(0)
-
+        loss = ( p_star * (torch.nn.functional.log_softmax( p_star, dim=0 ) - torch.nn.functional.log_softmax( rewards_pred, dim=0 )) ).sum(0).mean(0)
+        
         # adding accuracy for the best rewards -> MSE or best accuracy?
         acc_best_resp = (torch.argmax(rewards, dim=0) == torch.argmax(gt_rewards, dim=0)).float().mean()
 
