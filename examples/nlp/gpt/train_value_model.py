@@ -63,6 +63,9 @@ LABEL_PREFIX = "<extra_id_2>"
 
 
 def process_sample(conversations):
+    if len(conversations) % 2 == 0 and conversations[-1]["from"].lower() == "assistant":
+        conversations = [conversations[0]]
+
     text = SYSTEM_PROMPT_TEMPLATE.format(value=SYSTEM_PROMPT)
 
     last_turn_is_user = False
