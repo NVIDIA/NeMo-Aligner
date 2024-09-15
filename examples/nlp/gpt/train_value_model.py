@@ -99,7 +99,7 @@ class ValueDataset:
         with jsonlines.open(self.path_to_prompts) as reader:
             self.prompts = list(iter(reader))
 
-        self.prompts = {int(k): v for dictionary in self.prompts for k, v in dictionary.items()}
+        self.prompts = {k: v for dictionary in self.prompts for k, v in dictionary.items()}
 
     def __len__(self):
         return len(self.data)
