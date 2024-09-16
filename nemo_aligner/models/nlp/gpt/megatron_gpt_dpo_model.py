@@ -253,6 +253,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         )
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
 
+        print('Rewards:', rewards, gt_rewards)
+
         rewards_delta = chosen_rewards - reject_rewards
 
 

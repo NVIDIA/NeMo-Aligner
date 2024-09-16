@@ -245,7 +245,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return max_x + torch.log(torch.sum(torch.exp(x - max_x)))
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, average_log_probs=False):
-        if self.preference_loss == 'rpo_multi_response':
+        if self.preference_loss == 'rpo':
             # estimated rewards
             rewards = torch.stack(self.split_output_tensor(self.get_reduced_masked_logps(
                 pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
@@ -258,7 +258,7 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         else:
             raise ValueError("Unknown RPO Loss")
 
-        loss = ( p_star * (torch.nn.functional.log_softmax( p_star, dim=0 ) - torch.nn.functional.log_softmax( rewards_pred, dim=0 )) ).sum(0).mean(0)
+        loss = ( torch.nn.functional.softmax(p_star, dim=0) * (torch.nn.functional.log_softmax( p_star, dim=0 ) - torch.nn.functional.log_softmax( rewards_pred, dim=0 )) ).sum(0).mean(0)
         
         # adding accuracy for the best rewards -> MSE or best accuracy?
         acc_best_resp = (torch.argmax(rewards, dim=0) == torch.argmax(gt_rewards, dim=0)).float().mean()

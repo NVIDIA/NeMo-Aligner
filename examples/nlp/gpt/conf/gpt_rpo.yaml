@@ -18,7 +18,7 @@ trainer:
     # how many GBS we loop over
     limit_val_batches: 10
     gradient_clip_val: 1.0
-    num_responses: 2
+    num_responses: 4
 
   # do not change these
   logger: False # logger provided by exp_manager
@@ -62,16 +62,16 @@ model:
   rpo:
     # This default value ensures there are no numeric differences beween trained and reference policies when computing log probs.
     # A higher value can be used to speed-up log probs computations, but may cause numeric differences.
-    log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, 2}
+    log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, trainer.rpo.num_responses}
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
     gt_reward_scale: 1. # the scale of the rewards in RPO
-    preference_loss: rpo_multi_response # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
+    preference_loss: rpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
     preference_loss_weight: 1 # the coefficient of the preference loss
     sft_loss_weight: 0.05 # the coefficient of the SFT loss
     beta: 0.2
     eta: 0.2
-    num_responses: 2
+    num_responses:  ${trainer.rpo.num_responses}
 
   #encoder_seq_length: 4096
   #max_position_embeddings: ${model.encoder_seq_length}
@@ -126,11 +126,11 @@ model:
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix:
       train:
-        - /data/responses_general.rm.formatted.2resp.jsonl
+        - /data/train_rpo_4resps.jsonl
       test:
-        - /data/small_test_formatted_2resp.jsonl
+        - /data/val_rpo_4resps.jsonl
       validation:
-        - /data/small_test_formatted_2resp.jsonl
+        - /data/val_rpo_4resps.jsonl
 
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
