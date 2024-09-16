@@ -24,9 +24,13 @@ from io import BytesIO
 from PIL import Image
 
 from nemo.collections.nlp.modules.common.text_generation_utils import generate
-from nemo.collections.nlp.modules.common.text_generation_server import MegatronGenerate, GENERATE_NUM, API_ALLOWED_KEYS, lock
+from nemo.collections.nlp.modules.common.text_generation_server import MegatronGenerate, GENERATE_NUM, lock
 from nemo.utils import logging
 
+from nemo.collections.nlp.modules.common.text_generation_server import API_ALLOWED_KEYS as imported_keys
+
+API_ALLOWED_KEYS = set(imported_keys)
+API_ALLOWED_KEYS.add("images")
 
 class MegatronMultimodalGenerate(MegatronGenerate):
     def __init__(self, model, inference_strategy=None):
