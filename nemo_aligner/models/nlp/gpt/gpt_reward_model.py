@@ -134,7 +134,9 @@ class RewardModelHead(RowParallelLinear):
             assert attributes.dim() == 3, "for critic, attributes should have shape [B x S x self.output_size]"
             if not self.merge_attributes:
                 # return the last token's attributes
-                return attributes.permute((1, 0, 2))[lengths - 1, torch.arange(attributes.shape[0], device=hidden_states.device), :]
+                return attributes.permute((1, 0, 2))[
+                    lengths - 1, torch.arange(attributes.shape[0], device=hidden_states.device), :
+                ]
             else:
                 return attributes @ self.attributes_weights
 

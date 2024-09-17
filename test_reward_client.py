@@ -29,7 +29,6 @@ HELPSTEER_ATTRIBUTES = ["helpfulness", "correctness", "coherence", "complexity",
 ALL_STEERLM_ATTRIBUTES = OPEN_ASSISTANT_ATTRIBUTES + HELPSTEER_ATTRIBUTES
 
 
-
 def process_sample(record):
     conversations = record["conversations"]
     text = SYSTEM_PROMPT_TEMPLATE.format(value=SYSTEM_PROMPT)
@@ -82,7 +81,7 @@ def get_reward(
 
 
 # data_record = {"conversations": [{"from": "User", "text": "how are you?"}], "response": ".asdf asf23r asdf"}
-# 
+#
 # text = process_sample(data_record)
 # print(text)
 # x = get_reward([text], port=1424)

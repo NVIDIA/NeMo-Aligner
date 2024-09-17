@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import threading
 
 import torch
@@ -28,7 +29,6 @@ from nemo_aligner.servers.constants import ServerSignal
 from nemo_aligner.servers.server_callables import RewardModelCallable
 from nemo_aligner.utils.train_script_utils import init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, set_autocast_gpu_dtype
-import datetime
 
 """PyTriton Based Inference Server for the Reward Model"""
 

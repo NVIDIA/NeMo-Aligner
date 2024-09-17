@@ -528,7 +528,7 @@ class TensorRTLLMModelClient(TensorRTLLMModel):
             for i, prompt in enumerate(prompts):
                 request["prompt"] = prompt
                 modified_random = hash(str(random_seed) + str(i)) % large_prime
-                request['random_seed'] = modified_random
+                request["random_seed"] = modified_random
                 generation_ids.append(
                     self.requests_lib.put(
                         url="http://{}:{}/start_generation".format(self.server_host, self.server_port),
@@ -541,7 +541,7 @@ class TensorRTLLMModelClient(TensorRTLLMModel):
                 request["input_ids"] = input_ids
                 request["input_length"] = lengths
                 modified_random = hash(str(random_seed) + str(i)) % large_prime
-                request['random_seed'] = modified_random
+                request["random_seed"] = modified_random
                 generation_ids.append(
                     self.requests_lib.put(
                         url="http://{}:{}/start_generation".format(self.server_host, self.server_port),

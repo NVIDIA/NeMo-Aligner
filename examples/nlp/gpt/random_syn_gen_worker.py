@@ -437,7 +437,15 @@ def main(cfg) -> None:
     # syn_gen = SynGen(score_fn, tokenizer, pad_id, cfg.model.mcts.max_wall_time, cfg.model.mcts)
 
     # start the worker on the rank
-    start_worker((score_fn, tokenizer, pad_id, cfg.model.mcts.max_wall_time, cfg.model.mcts), collate_func, save_dir, ds, cfg, cfg.server_url, cfg.backend_url)
+    start_worker(
+        (score_fn, tokenizer, pad_id, cfg.model.mcts.max_wall_time, cfg.model.mcts),
+        collate_func,
+        save_dir,
+        ds,
+        cfg,
+        cfg.server_url,
+        cfg.backend_url,
+    )
 
 
 def start_worker(search_func_args, collate_func, save_path, ds, cfg, url, backend_url):
