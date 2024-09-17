@@ -203,6 +203,14 @@ class MegatronMultimodalGenerate(MegatronGenerate):
             for k in output:
                 if isinstance(output[k], torch.Tensor):
                     output[k] = output[k].tolist()
+
+            if output is not None:  # may be `None` for intermediate PP ranks when PP>2
+                # adding predictions key which contains only model predictions without the prompt
+                output["predictions"] = [
+                    self.model.tokenizer.ids_to_text(tokens[length.item() :][:tokens_to_generate])
+                    for tokens, length in zip(output["token_ids"], context_length_tensor)
+                ]
+                
         if not all_probs:
             del output['full_logprob']
 
