@@ -56,11 +56,9 @@ class GPTGenerateTRTLLM:
         # If this assert turns out to be a blocker with some tokenizers, potential workarounds could be to:
         #   - add a config option to allow specifying which token we pass as `end_id` to TRT-LLM (should
         #     be a token that the model is guaranteed to never generate)
-        #   - pass `end_id=-1` (and possibly also `pad_id=-1`) to TRT-LLM (would require making sure
-        #     this works as intended)
         assert (
             tokenizer.pad_id != tokenizer.eos_id
-        ), "We require tokenizers to have a different pad_id than eos_id when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
+        ), f"We require tokenizers to have a different {tokenizer.pad_id=} than {tokenizer.eos_id=} when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
 
         if use_greedy and sample_top_k != 1:
             logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
@@ -83,7 +81,15 @@ class GPTGenerateTRTLLM:
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        self.pad_id = tokenizer.pad_id
+        # Some tokenizers like meta-llama/Meta-Llama-3-70B do not have a pad_id
+        if tokenizer.pad_id is None:
+            assert (
+                tokenizer.eos_id != -1
+            ), f"If tokenizer.pad_id=None, we require the eos_id != pad_id and eos_id != -1 since we assume pad_id = -1 when not defined"
+            logging.warning(f"{tokenizer=} does not contain a pad_id. TRT-LLM will use -1 for the pad_id")
+            self.pad_id = -1
+        else:
+            self.pad_id = tokenizer.pad_id
         end_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
