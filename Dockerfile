@@ -1,7 +1,33 @@
+# To build NeMo-Aligner from a base PyTorch container:
+#
+#   docker buildx build -t aligner:latest .
+#
+# To update NeMo-Aligner from a pre-built NeMo-Framework container:
+#
+#   docker buildx build --target=aligner-bump --build-arg=BASE_IMAGE=nvcr.io/nvidia/nemo:24.07 -t aligner:latest .
+#
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS aligner-bump
+WORKDIR /opt
 
+ARG ALIGNER_COMMIT=main
+# NeMo Aligner
+RUN <<"EOF" bash -exu
+if [[ ! -d NeMo-Aligner ]]; then
+    git clone https://github.com/NVIDIA/NeMo-Aligner.git
+    cd NeMo-Aligner
+    git checkout $ALIGNER_COMMIT
+    pip install --no-deps -e .
+    cd -
+fi
+cd NeMo-Aligner
+git fetch -a
+git checkout -f ${ALIGNER_COMMIT}
+git pull
+EOF
+
+FROM aligner-bump as final
 
 # Number of parallel threads for compute heavy build jobs
 # if you get errors building TE or Apex, decrease this to 4
@@ -12,15 +38,11 @@ ARG APEX_TAG=59b80ee8df79cec125794949327f29913c328746
 ARG PYTRITON_VERSION=0.5.10
 ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
 ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
-ARG ALIGNER_COMMIT=main
 ARG TRTLLM_VERSION=v0.10.0
 ARG PROTOBUF_VERSION=4.24.4
 
 # needed in case git complains that it can't detect a valid email, this email is fake but works
 RUN git config --global user.email "worker@nvidia.com"
-
-WORKDIR /opt
-
 # install TransformerEngine
 RUN pip uninstall -y transformer-engine && \
     git clone https://github.com/NVIDIA/TransformerEngine.git && \
@@ -69,16 +91,6 @@ RUN pip uninstall -y megatron-core && \
         git checkout FETCH_HEAD; \
     fi && \
     pip install -e .
-
-# NeMo Aligner
-RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
-    cd NeMo-Aligner && \
-    git pull && \
-    if [ ! -z $ALIGNER_COMMIT ]; then \
-        git fetch origin $ALIGNER_COMMIT && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    pip install --no-deps -e .
 
 # Git LFS
 RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
