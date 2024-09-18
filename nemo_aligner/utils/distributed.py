@@ -552,6 +552,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         return loss
 
+    ## TODO support K+1-class softmax
     @staticmethod
     def backward(ctx, grad_output):
 
@@ -559,9 +560,8 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
          masked_target_token_ids, vocab_size) = ctx.saved_tensors
 
-        probs = probs * (2 * probs - 1)
-
         vocab_size = vocab_size.item()
+        K = probs.size()[-1]  ## TODO: make sure this has the right shape!
 
         # All the inputs have softmax as thier gradient.
         grad_input = probs
@@ -570,11 +570,22 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         grad_2d = grad_input.view(-1, partition_vocab_size)
 
         # Add the gradient from matching classes.
-        arange_1d = torch.arange(start=0, end=grad_2d.size()[0], device=grad_2d.device)
+        #arange_1d = torch.arange(start=0, end=grad_2d.size()[0], device=grad_2d.device)
+        arange_1d = torch.arange(start=0, end=logits_2d.size()[0], device=grad_2d.device).repeat_interleave(K)
 
-        softmax_update = 1.0 - target_mask.view(-1).float()
-  
-        grad_2d[arange_1d, masked_target_token_ids.view(-1)] -= softmax_update
+        #softmax_update = 1.0 - target_mask.view(-1).float()
+        ### shape should be (..., V / tp_size)
+        ### NOT (..., K)!!!
+        softmax_update = torch.zeros_like(probs) ## todo: should be full softmax
+
+        ## TODO: we should probably save target_token_ids_1d for bwd
+        target_token_ids_1d = masked_target_token_ids.view(-1) ## B * seq_length * K
+
+        ## TODO: make sure the shapes match up here
+        ## might have to reshape target_probs
+        softmax_update[arange_1d, target_token_ids_1d] = target_probs ## should be the actual probs
+
+        grad_2d[arange_1d, masked_target_1d] -= softmax_update
 
         # Finally elementwise multiplication with the output gradients.
         grad_input.mul_(grad_output.unsqueeze(dim=-1))
