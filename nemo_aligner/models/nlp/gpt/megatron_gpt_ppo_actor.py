@@ -50,7 +50,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.trt_llm import HAVE_TRTLLM, GPTGenerateTRTLLM
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import (
     adapter_control,
     clear_memory,
@@ -81,7 +81,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         self.use_trtllm_generation = "trt_llm" in self.cfg.ppo and self.cfg.ppo.trt_llm.enable
         if self.use_trtllm_generation:
-            assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM was not able to be imported"
             self.trtllm_generate = GPTGenerateTRTLLM(
                 model_cfg=self.cfg,
                 max_generation_length=self.cfg.ppo.length_params.get("max_length", 1024),

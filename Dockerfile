@@ -1,3 +1,12 @@
+# To build NeMo-Aligner from a base PyTorch container:
+#
+#   docker buildx build -t aligner:latest .
+#
+# To update NeMo-Aligner from a pre-built NeMo-Framework container:
+#
+#   docker buildx build --target=aligner-bump --build-arg=BASE_IMAGE=nvcr.io/nvidia/nemo:24.07 -t aligner:latest .
+#
+
 # Number of parallel threads for compute heavy build jobs
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
@@ -12,16 +21,33 @@ ARG PROTOBUF_VERSION=4.24.4
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
-FROM ${BASE_IMAGE}
+FROM ${BASE_IMAGE} AS aligner-bump
 
-ARG MAX_JOBS
-
-# needed in case git complains that it can't detect a valid email, this email is fake but works
-RUN git config --global user.email "worker@nvidia.com"
+ARG ALIGNER_COMMIT
 
 WORKDIR /opt
 
+# NeMo Aligner
+RUN <<"EOF" bash -exu
+if [[ ! -d NeMo-Aligner ]]; then
+    git clone https://github.com/NVIDIA/NeMo-Aligner.git
+    cd NeMo-Aligner
+    git checkout $ALIGNER_COMMIT
+    pip install --no-deps -e .
+    cd -
+fi
+cd NeMo-Aligner
+git fetch -a
+git checkout -f ${ALIGNER_COMMIT}
+git pull
+EOF
+
+FROM aligner-bump as final
+
+# needed in case git complains that it can't detect a valid email, this email is fake but works
+RUN git config --global user.email "worker@nvidia.com"
 # install TransformerEngine
+ARG MAX_JOBS
 ARG TE_TAG
 RUN pip uninstall -y transformer-engine && \
     git clone https://github.com/NVIDIA/TransformerEngine.git && \
@@ -75,17 +101,6 @@ RUN pip uninstall -y megatron-core && \
         git checkout FETCH_HEAD; \
     fi && \
     pip install -e .
-
-# NeMo Aligner
-ARG ALIGNER_COMMIT
-RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
-    cd NeMo-Aligner && \
-    git pull && \
-    if [ ! -z $ALIGNER_COMMIT ]; then \
-        git fetch origin $ALIGNER_COMMIT && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    pip install --no-deps -e .
 
 # Git LFS
 RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
