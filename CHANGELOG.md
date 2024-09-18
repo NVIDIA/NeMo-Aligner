@@ -31,6 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Bug Fixes
 - Change `log_prob_forward_micro_batch_size` in DPO to mean the same as the `micro_batch_size`, which is how many samples(chosen and rejected included) that we process at once.
+- PPO w/ TRTLLM no longer errors if tokenizer.pad_id=None
 
 ## [0.4.0] - 2024-07
 - Implement reward-aware preference optimization.
