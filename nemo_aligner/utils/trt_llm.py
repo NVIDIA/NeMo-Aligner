@@ -3,6 +3,7 @@ import secrets
 import tensorrt_llm
 import torch
 
+from nemo.collections.common.tokenizers.huggingface.auto_tokenizer import AutoTokenizer as NemoAutoTokenizer
 from nemo.export.tensorrt_llm import TensorRTLLM
 from nemo.export.trt_llm import tensorrt_llm_run
 from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
@@ -84,15 +85,20 @@ class GPTGenerateTRTLLM:
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        # Some tokenizers like meta-llama/Meta-Llama-3-70B do not have a pad_id
-        if tokenizer.pad_id is None:
-            assert (
-                tokenizer.eos_id != -1
-            ), f"If tokenizer.pad_id=None, we require the eos_id != pad_id and eos_id != -1 since we assume pad_id = -1 when not defined"
-            logging.warning(f"{tokenizer=} does not contain a pad_id. TRT-LLM will use -1 for the pad_id")
-            self.pad_id = -1
-        else:
+        # TODO(terryk): Devise more robust pad_id handling. Adding pad_id to tokenizer
+        #   may work, but careful handling of vocab_size is needed.
+        if tokenizer.pad_id is not None:
             self.pad_id = tokenizer.pad_id
+        elif tokenizer.pad_id is None and isinstance(tokenizer, NemoAutoTokenizer) and \
+                tokenizer.tokenizer.name_or_path.startswith('meta-llama/Meta-Llama-3'):
+            # Some tokenizers like meta-llama/Meta-Llama-3-70B do not have a pad_id
+            self.pad_id = tokenizer.vocab_size - 1
+            pad_token = tokenizer.ids_to_tokens(self.pad_id)
+            assert pad_token.startswith('<|reserved_special_token'), f"tokenizer={tokenizer.tokenizer.name_or_path} does not contain a pad_id, and automatically chosen {pad_token=} is not a reserved token"
+            logging.warning(f"tokenizer={tokenizer.tokenizer.name_or_path} does not have a pad_id. TRTLLM generation will use (id,token)={(self.pad_id, pad_token)}")
+            assert tokenizer.eos_id != self.pad_id
+        else:
+            raise ValueError(f"Tokenizer does not contain a pad_id and we cannot automatically determine a pad_id. Consider using a different tokenizer")
         end_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
