@@ -3,6 +3,7 @@ import secrets
 import tensorrt_llm
 import torch
 
+from nemo.collections.common.tokenizers.huggingface.auto_tokenizer import AutoTokenizer as NemoAutoTokenizer
 from nemo.export.tensorrt_llm import TensorRTLLM
 from nemo.export.trt_llm import tensorrt_llm_run
 from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
@@ -56,11 +57,9 @@ class GPTGenerateTRTLLM:
         # If this assert turns out to be a blocker with some tokenizers, potential workarounds could be to:
         #   - add a config option to allow specifying which token we pass as `end_id` to TRT-LLM (should
         #     be a token that the model is guaranteed to never generate)
-        #   - pass `end_id=-1` (and possibly also `pad_id=-1`) to TRT-LLM (would require making sure
-        #     this works as intended)
         assert (
             tokenizer.pad_id != tokenizer.eos_id
-        ), "We require tokenizers to have a different pad_id than eos_id when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
+        ), f"We require tokenizers to have a different {tokenizer.pad_id=} than {tokenizer.eos_id=} when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
 
         if use_greedy and sample_top_k != 1:
             logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
@@ -83,7 +82,29 @@ class GPTGenerateTRTLLM:
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        self.pad_id = tokenizer.pad_id
+        # TODO(terryk): Devise more robust pad_id handling. Adding pad_id to tokenizer
+        #   may work, but careful handling of vocab_size is needed.
+        if tokenizer.pad_id is not None:
+            self.pad_id = tokenizer.pad_id
+        elif (
+            tokenizer.pad_id is None
+            and isinstance(tokenizer, NemoAutoTokenizer)
+            and tokenizer.tokenizer.name_or_path.startswith("meta-llama/Meta-Llama-3")
+        ):
+            # Some tokenizers like meta-llama/Meta-Llama-3-70B do not have a pad_id
+            self.pad_id = tokenizer.vocab_size - 1
+            pad_token = tokenizer.ids_to_tokens(self.pad_id)
+            assert pad_token.startswith(
+                "<|reserved_special_token"
+            ), f"tokenizer={tokenizer.tokenizer.name_or_path} does not contain a pad_id, and automatically chosen {pad_token=} is not a reserved token"
+            logging.warning(
+                f"tokenizer={tokenizer.tokenizer.name_or_path} does not have a pad_id. TRTLLM generation will use (id,token)={(self.pad_id, pad_token)}"
+            )
+            assert tokenizer.eos_id != self.pad_id
+        else:
+            raise ValueError(
+                f"Tokenizer does not contain a pad_id and we cannot automatically determine a pad_id. Consider using a different tokenizer"
+            )
         end_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
