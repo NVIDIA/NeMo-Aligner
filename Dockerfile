@@ -1,18 +1,20 @@
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
 FROM ${BASE_IMAGE}
-ARG APEX_TAG=59b80ee8df79cec125794949327f29913c328746
-ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
-ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
-ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
-ARG ALIGNER_COMMIT=main
 
-ARG PYTRITON_VERSION=0.5.10
-ARG PROTOBUF_VERSION=4.24.4
-ARG TRTLLM_VERSION=v0.10.0
 
+# Number of parallel threads for compute heavy build jobs
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
+# Git refs for dependencies
+ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
+ARG APEX_TAG=59b80ee8df79cec125794949327f29913c328746
+ARG PYTRITON_VERSION=0.5.10
+ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
+ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
+ARG ALIGNER_COMMIT=main
+ARG TRTLLM_VERSION=v0.10.0
+ARG PROTOBUF_VERSION=4.24.4
 
 # needed in case git complains that it can't detect a valid email, this email is fake but works
 RUN git config --global user.email "worker@nvidia.com"
