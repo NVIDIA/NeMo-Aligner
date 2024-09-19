@@ -30,7 +30,7 @@ concurrency:
 jobs:
   build:
     runs-on: self-hosted-builder
-    if: ${{ github.event.label.name == 'Run CICD' }}
+    if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
     steps:
       - name: Clean runner cache
         run: | 
