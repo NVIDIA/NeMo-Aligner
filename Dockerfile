@@ -6,6 +6,7 @@ FROM ${BASE_IMAGE}
 # Number of parallel threads for compute heavy build jobs
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
+# Git refs for dependencies
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
 ARG APEX_TAG=59b80ee8df79cec125794949327f29913c328746
 ARG PYTRITON_VERSION=0.5.10
