@@ -86,16 +86,25 @@ class GPTGenerateTRTLLM:
         #   may work, but careful handling of vocab_size is needed.
         if tokenizer.pad_id is not None:
             self.pad_id = tokenizer.pad_id
-        elif tokenizer.pad_id is None and isinstance(tokenizer, NemoAutoTokenizer) and \
-                tokenizer.tokenizer.name_or_path.startswith('meta-llama/Meta-Llama-3'):
+        elif (
+            tokenizer.pad_id is None
+            and isinstance(tokenizer, NemoAutoTokenizer)
+            and tokenizer.tokenizer.name_or_path.startswith("meta-llama/Meta-Llama-3")
+        ):
             # Some tokenizers like meta-llama/Meta-Llama-3-70B do not have a pad_id
             self.pad_id = tokenizer.vocab_size - 1
             pad_token = tokenizer.ids_to_tokens(self.pad_id)
-            assert pad_token.startswith('<|reserved_special_token'), f"tokenizer={tokenizer.tokenizer.name_or_path} does not contain a pad_id, and automatically chosen {pad_token=} is not a reserved token"
-            logging.warning(f"tokenizer={tokenizer.tokenizer.name_or_path} does not have a pad_id. TRTLLM generation will use (id,token)={(self.pad_id, pad_token)}")
+            assert pad_token.startswith(
+                "<|reserved_special_token"
+            ), f"tokenizer={tokenizer.tokenizer.name_or_path} does not contain a pad_id, and automatically chosen {pad_token=} is not a reserved token"
+            logging.warning(
+                f"tokenizer={tokenizer.tokenizer.name_or_path} does not have a pad_id. TRTLLM generation will use (id,token)={(self.pad_id, pad_token)}"
+            )
             assert tokenizer.eos_id != self.pad_id
         else:
-            raise ValueError(f"Tokenizer does not contain a pad_id and we cannot automatically determine a pad_id. Consider using a different tokenizer")
+            raise ValueError(
+                f"Tokenizer does not contain a pad_id and we cannot automatically determine a pad_id. Consider using a different tokenizer"
+            )
         end_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
