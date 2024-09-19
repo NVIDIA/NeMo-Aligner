@@ -98,6 +98,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 use_greedy=self.cfg.ppo.sampling_params.get("use_greedy", False),
                 tokenizer=self.tokenizer,
                 seed=self.cfg.ppo.trt_llm.get("seed", self.cfg.seed),
+                trt_model_dir=self.cfg.ppo.get("trt_model_dir", "/tmp/trt_llm_model"),
             )
 
     # training calls

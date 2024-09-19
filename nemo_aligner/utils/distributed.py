@@ -23,10 +23,12 @@ from datetime import timedelta
 from typing import Optional
 
 import torch
+import torch.distributed
 from megatron.core import tensor_parallel
 
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.utils import deprecated_in_version
 from nemo_aligner.utils.parallel_state import get_model_parallel_group, get_model_parallel_src_rank
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 
@@ -55,6 +57,7 @@ def rebalance_nd_tensor(tensor, group):
     return output_tensor
 
 
+@deprecated_in_version("0.6.0", "Please use broadcast_tensor(tensor, src, group, dtype)")
 def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
     """Broadcast any 2d tensor from the src rank to every other rank in the given group.
     All the ranks that send or receive data must call this function."""
@@ -81,6 +84,50 @@ def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
         torch.distributed.broadcast(tensor, src, group)
     return tensor
 
+_DTYPE_TO_ENUM = {
+    torch.float32: 0,
+    torch.float16: 1,
+    torch.bfloat16: 2,
+    torch.int32: 3,
+    torch.int64: 4,
+}
+
+_ENUM_TO_DTYPE = {enum: dtype for dtype, enum in _DTYPE_TO_ENUM.items()}
+
+def broadcast_tensor(tensor, src, group, dtype: torch.dtype | None = None):
+    f"""
+    Broadcast any tensor from the src rank to every other rank in the given group.
+    All the ranks that send or receive data must call this function.
+    
+    dtype: Optional dtype, {dir(torch)}
+    """
+    if torch.distributed.get_rank() == src:
+        tensor = tensor.cuda()
+        if dtype:
+            tensor = tensor.to(dtype)
+        
+        input_dtype_enum = torch.tensor(_DTYPE_TO_ENUM.get(tensor.dtype, 0), device='cuda', dtype=torch.int32)
+        input_ndim = torch.tensor(tensor.ndim, device='cuda', dtype=torch.int32)
+        input_shape = torch.tensor(tensor.shape, device='cuda', dtype=torch.int32)
+
+        torch.distributed.broadcast(input_dtype_enum, src, group)
+        torch.distributed.broadcast(input_ndim, src, group)
+        torch.distributed.broadcast(input_shape, src, group)
+        torch.distributed.broadcast(tensor, src, group)
+    else:
+        input_dtype_enum = torch.empty((), dtype=torch.int32, device='cuda')
+        torch.distributed.broadcast(input_dtype_enum, src, group)
+        dtype = _ENUM_TO_DTYPE[input_dtype_enum.item()]
+        
+        input_ndim = torch.empty((), dtype=torch.int32, device='cuda')
+        torch.distributed.broadcast(input_ndim, src, group)
+
+        input_shape = torch.empty(input_ndim, dtype=torch.int32, device='cuda')
+        torch.distributed.broadcast(input_shape, src, group)
+
+        tensor = torch.empty(input_shape.tolist(), dtype=dtype, device='cuda')
+        torch.distributed.broadcast(tensor, src, group)
+    return tensor
 
 def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     """helper function to broadcast within the model parallel group
@@ -93,11 +140,32 @@ def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     return tensor
 
 
-def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32):
+@deprecated_in_version("0.6.0", "Please use broadcast_tensor_within_pp(tensor, dtype)")
+def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32, from_last: bool = True):
+    '''
+    from_last: True=broadcast from the last PP rank and False=broadcast from first PP rank (default=True)
+    '''
     if parallel_state.get_pipeline_model_parallel_world_size() > 1:
         return broadcast_2d_tensor(
             tensor,
-            parallel_state.get_pipeline_model_parallel_last_rank(),
+            parallel_state.get_pipeline_model_parallel_last_rank() if from_last else parallel_state.get_pipeline_model_parallel_first_rank(),
+            parallel_state.get_pipeline_model_parallel_group(),
+            dtype=dtype,
+        )
+
+    return tensor
+
+
+def broadcast_tensor_within_pp(tensor: torch.Tensor | None, dtype: torch.dtype = None, from_last: bool = True):
+    '''
+    tensor: Should be a valid tensor on src rank and None elsewhere
+    dtype: no dtype means that the dtype is inferred
+    from_last: True=broadcast from the last PP rank and False=broadcast from first PP rank (default=True)
+    '''
+    if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        return broadcast_tensor(
+            tensor,
+            parallel_state.get_pipeline_model_parallel_last_rank() if from_last else parallel_state.get_pipeline_model_parallel_first_rank(),
             parallel_state.get_pipeline_model_parallel_group(),
             dtype=dtype,
         )
