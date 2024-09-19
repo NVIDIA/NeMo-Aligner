@@ -48,6 +48,11 @@ jobs:
           # trivial (non-multi-stage) builds.
           driver: docker
 
+      - name: Pull cache images
+        run: |
+          docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }}
+          docker pull nemoci.azurecr.io/nemo_aligner_container:buildcache
+
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
