@@ -561,29 +561,26 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
          masked_target_token_ids, vocab_size) = ctx.saved_tensors
 
         vocab_size = vocab_size.item()
-        K = probs.size()[-1]  ## TODO: make sure this has the right shape!
-
-        # All the inputs have softmax as thier gradient.
-        grad_input = probs
-        # For simplicity, work with the 2D gradient.
         partition_vocab_size = probs.size()[-1]
-        grad_2d = grad_input.view(-1, partition_vocab_size)
+        K = probs.size()[-1]
 
-        # Add the gradient from matching classes.
-        #arange_1d = torch.arange(start=0, end=grad_2d.size()[0], device=grad_2d.device)
-        arange_1d = torch.arange(start=0, end=logits_2d.size()[0], device=grad_2d.device).repeat_interleave(K)
-
-        #softmax_update = 1.0 - target_mask.view(-1).float()
-        ### shape should be (..., V / tp_size)
-        ### NOT (..., K)!!!
-        softmax_update = torch.zeros_like(probs) ## todo: should be full softmax
+        grad_input = torch.zeros((*probs.shape()[:-1], partition_vocab_size))
 
         ## TODO: we should probably save target_token_ids_1d for bwd
         target_token_ids_1d = masked_target_token_ids.view(-1) ## B * seq_length * K
+        # Add the gradient from matching classes.
+        arange_1d = torch.arange(start=0, end=logits_2d.size()[0], device=grad_2d.device).repeat_interleave(K)
+        
+        # For simplicity, work with the 2D gradient.
+        grad_2d = grad_input.view(-1, partition_vocab_size)
+
+        ## slot in the non-zero gradients
+        grad_2d[arange_1d, target_token_ids_1d] = probs
+
+        softmax_update = torch.zeros_like(grad_2d) ## todo: should be full softmax
 
         ## TODO: make sure the shapes match up here
-        ## might have to reshape target_probs
-        softmax_update[arange_1d, target_token_ids_1d] = target_probs ## should be the actual probs
+        softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1)
 
         grad_2d[arange_1d, masked_target_1d] -= softmax_update
 
