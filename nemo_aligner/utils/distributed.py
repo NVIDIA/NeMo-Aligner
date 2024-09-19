@@ -547,7 +547,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             vocab_size = exp_logits.size(-1)
             ctx.save_for_backward(
                 probs, prob_K_add_1, target_probs, target_prob_K_add_1,
-                target_mask, masked_target_token_ids, torch.LongTensor([vocab_size])
+                target_mask, masked_target_token_ids, torch.LongTensor([partition_vocab_size])
             )
 
         return loss
@@ -558,31 +558,34 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         # Retreive tensors from the forward path.
         (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
-         masked_target_token_ids, vocab_size) = ctx.saved_tensors
+         masked_target_token_ids, partition_vocab_size) = ctx.saved_tensors
 
         vocab_size = vocab_size.item()
-        partition_vocab_size = probs.size()[-1]
         K = probs.size()[-1]
 
-        grad_input = torch.zeros((*probs.shape()[:-1], partition_vocab_size))
+        grad_input = torch.zeros((*probs.size()[:-1], partition_vocab_size))
 
         ## TODO: we should probably save target_token_ids_1d for bwd
         target_token_ids_1d = masked_target_token_ids.view(-1) ## B * seq_length * K
         # Add the gradient from matching classes.
-        arange_1d = torch.arange(start=0, end=logits_2d.size()[0], device=grad_2d.device).repeat_interleave(K)
+        arange_1d = torch.arange(start=0, end=probs.size()[0], device=grad_input.device).repeat_interleave(K)
         
         # For simplicity, work with the 2D gradient.
         grad_2d = grad_input.view(-1, partition_vocab_size)
 
+        ## TODO: we should probably save target_token_ids_1d for bwd
+        target_token_ids_1d = masked_target_token_ids.view(-1) ## B * seq_length * K
+        # Add the gradient from matching classes.
+        arange_1d = torch.arange(start=0, end=grad_2d.size()[0], device=grad_2d.device).repeat_interleave(K)
+
         ## slot in the non-zero gradients
-        grad_2d[arange_1d, target_token_ids_1d] = probs
+        grad_2d[arange_1d, target_token_ids_1d] = probs.view(-1)
 
         softmax_update = torch.zeros_like(grad_2d) ## todo: should be full softmax
 
-        ## TODO: make sure the shapes match up here
         softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1)
 
-        grad_2d[arange_1d, masked_target_1d] -= softmax_update
+        grad_2d -= softmax_update
 
         # Finally elementwise multiplication with the output gradients.
         grad_input.mul_(grad_output.unsqueeze(dim=-1))
