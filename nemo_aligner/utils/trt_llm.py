@@ -1,3 +1,4 @@
+import os
 import secrets
 
 import tensorrt_llm
@@ -21,6 +22,8 @@ except (ImportError, ModuleNotFoundError) as e:
     logging.info(f"got error message {e} when importing trt-llm dependencies, disabling")
     HAVE_TRTLLM = False
 
+# Environment variable specifying the container is build from NeMo-Aligner's Dockerfile
+NEMO_ALIGNER_BUILD = bool(os.environ.get('NEMO_ALIGNER_BUILD', False))
 
 def append_and_repad_list(list_of_items, item_to_append, pad_id):
     items = [item for item in list_of_items if item != pad_id]
@@ -54,6 +57,9 @@ class GPTGenerateTRTLLM:
         reshard_model=False,
         trt_model_dir="/tmp/trt_llm_model",
     ):
+        if not NEMO_ALIGNER_BUILD:
+            raise RuntimeError(f"You are trying to use NeMo-Aligner's TensorRT-LLM acceleration for LLM generation. Please build the dockerfile to enable this feature: https://github.com/NVIDIA/NeMo-Aligner/blob/main/Dockerfile")
+
         # If this assert turns out to be a blocker with some tokenizers, potential workarounds could be to:
         #   - add a config option to allow specifying which token we pass as `end_id` to TRT-LLM (should
         #     be a token that the model is guaranteed to never generate)

@@ -12,3 +12,5 @@ git fetch -a
 git checkout -f ${ALIGNER_COMMIT}
 cd -
 EOF
+
+ENV NEMO_ALIGNER_BUILD=true
