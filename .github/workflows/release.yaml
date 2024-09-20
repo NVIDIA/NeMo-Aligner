@@ -29,7 +29,6 @@ on:
 
 jobs: 
   build-container:
-    if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
     uses: ./.github/workflows/_build_container.yml
     with: 
       ref: ${{ inputs.branch || github.sha }}
