@@ -85,10 +85,7 @@ class GPTGenerateTRTLLM:
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        if tokenizer.pad_id is not None:
-            self.pad_id = tokenizer.pad_id
-        else:
-            self.pad_id = GPTGenerateTRTLLM.DEFAULT_PAD_ID
+        self.pad_id = tokenizer.pad_id if tokenizer.pad_id is not None else GPTGenerateTRTLLM.DEFAULT_PAD_ID
         end_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
