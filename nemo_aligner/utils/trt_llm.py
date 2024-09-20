@@ -80,77 +80,22 @@ class GPTGenerateTRTLLM:
         self.unload_engine_train = unload_engine_train
         self.trt_model_type = trt_model_type
         self.reshard_model = reshard_model
+        self.pad_id = tokenizer.eos_id
+
         self.trt_llm_exporter = TensorRTLLM(trt_model_dir, load_model=False)
         self._trtllm_model_compiled = False
 
-        rng_generator = torch.Generator(device="cpu")
-        seed = secrets.randbits(32) if seed is None else seed
-        rng_generator.manual_seed(seed)
-        self.rng_generator = rng_generator
-
-        # TODO(terryk): Devise more robust pad_id handling. Adding pad_id to tokenizer
-        #   may work, but careful handling of vocab_size is needed.
-        if tokenizer.pad_id is not None:
-            self.pad_id = tokenizer.pad_id
-        elif (
-            tokenizer.pad_id is None
-            and isinstance(tokenizer, NemoAutoTokenizer)
-            and tokenizer.tokenizer.name_or_path.startswith("meta-llama/Meta-Llama-3")
-        ):
-            # Some tokenizers like meta-llama/Meta-Llama-3-70B do not have a pad_id
-            self.pad_id = tokenizer.vocab_size - 1
-            pad_token = tokenizer.ids_to_tokens(self.pad_id)
-            assert pad_token.startswith(
-                "<|reserved_special_token"
-            ), f"tokenizer={tokenizer.tokenizer.name_or_path} does not contain a pad_id, and automatically chosen {pad_token=} is not a reserved token"
-            logging.warning(
-                f"tokenizer={tokenizer.tokenizer.name_or_path} does not have a pad_id. TRTLLM generation will use (id,token)={(self.pad_id, pad_token)}"
-            )
-            assert tokenizer.eos_id != self.pad_id
-        else:
-            raise ValueError(
-                f"Tokenizer does not contain a pad_id and we cannot automatically determine a pad_id. Consider using a different tokenizer"
-            )
-        end_id = tokenizer.eos_id
         end_strings = list(end_strings)
-
-        # TRT-LLM uses different logic to compute the response length depending on if we specify stop_list or end_id
-        # we want to use the same logic (which is to include the stop token in response length) so we put end_id into the stop_list
-        # manually
-        if len(end_strings) == 0:
-            ids, offsets = [end_id], [1]
-        else:
-            assert all(
-                "," not in end_string for end_string in end_strings
-            ), "detected `,` in a specified end_string. This is will cause an error when converting it into ids for TRT-LLM"
-
-            end_strings = [[",".join(end_strings)]]
-            # use an arbitary ref string to obtain end_string ids
-            stop_list = tensorrt_llm_run.to_word_list_format(
-                end_strings, build_tokenizer(self.tokenizer), ref_str="green tea icecream"
-            )
-            ids, offsets = stop_list[0].tolist()
-            # add the end_id if it doesn't exist
-            if end_id not in ids:
-                ids = append_and_repad_list(ids, end_id, pad_id=0)
-                offsets = append_and_repad_list(offsets, max(offsets) + 1, pad_id=-1)
-
-        assert max(offsets) == len(ids), "offset and stop token length are mismatched"
-        stop_list = torch.as_tensor([ids, offsets], dtype=torch.int32, device=torch.cuda.current_device()).repeat(
-            self.generation_batch_size, 1, 1
-        )
+        end_strings = [[",".join(end_strings)] for _ in range(self.generation_batch_size)]
+        stop_list = to_word_list_format(end_strings, build_tokenizer(self.tokenizer), ref_str="green tea icecream")
+        stop_list = torch.from_numpy(stop_list).cuda().contiguous()
 
         self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
-            # We use `pad_id` as end token instead of `eos_id` to actually "disable" this end token
-            # mechanism. Otherwise, the response length returned by TRT-LLM would *not* count `eos_id`
-            # when the model would end its generation with this token. Instead, `stop_words_list` is
-            # augmented with `eos_id` which ensures it is counted in the response length (see above).
-            end_id=self.pad_id,
+            end_id=tokenizer.eos_id,
             pad_id=self.pad_id,
             temperature=sample_temperature,
             top_k=sample_top_k,
             top_p=sample_top_p,
-            repetition_penalty=repetition_penalty,
             max_new_tokens=self.max_generation_length,
             stop_words_list=stop_list,
             return_dict=True,
@@ -190,12 +135,7 @@ class GPTGenerateTRTLLM:
         for idx in range(prompt_tokens.shape[0]):
             batch_input_ids.append(prompt_tokens[idx][0 : prompt_lengths[idx]].cpu())
 
-        random_seeds = torch.randint(
-            0, 2 ** 32, size=(prompt_tokens.shape[0],), dtype=torch.long, generator=self.rng_generator
-        )
-        self.sampling_config.update(random_seed=random_seeds)
-
-        output_dict = tensorrt_llm_run.tensorrt_llm_worker_context.decoder.generate(
+        output_dict = tensorrt_llm_worker_context.decoder.generate(
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
         )
 
@@ -224,10 +164,6 @@ class GPTGenerateTRTLLM:
             # be slightly inefficient and then remove the excess later on
             valid_token_lengths = valid_tokens.sum(-1, keepdims=True)
             max_unpadded_length = valid_token_lengths.max()
-            assert max_length <= max_unpadded_length, (
-                "max unpadded length should be more or equal to max length. This assertion is probably happening because TRT-LLM considered a "
-                "pad tokens in the response length"
-            )
 
             _output_ids = torch.full(
                 (response_lengths.size(0), max_unpadded_length),
