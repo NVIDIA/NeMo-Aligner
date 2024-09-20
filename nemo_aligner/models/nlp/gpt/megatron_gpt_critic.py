@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import re
 from contextlib import nullcontext
 from enum import Enum
 
@@ -33,6 +34,45 @@ from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRew
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import set_sync_funcs
 from nemo_aligner.utils.utils import copy_model_states_to_cpu, masked_mean, offload_distributed_adam
+
+
+def extract_dialogue_llama(text):
+    user_pattern = r"<\|start_header_id\|>user<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+    assistant_pattern = r"<\|start_header_id\|>assistant<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+
+    user_text = re.findall(user_pattern, text, re.DOTALL)
+    assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
+
+    return user_text, assistant_text
+
+
+class HelpsteerTemplate:
+    def get_first_turn_template(self, text):
+        return f"""<extra_id_0>System\nA chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
+<extra_id_1>User\n{text}"""
+
+    def get_assistant_turn_template(self, text):
+        return f"""\n<extra_id_1>Assistant\n{text}"""
+
+    def get_user_turn_template(self, text):
+        return f"""\n<extra_id_1>User\n{text}"""
+
+    def add_ending(self, text):
+        return f"""{text}\n<extra_id_2>"""
+
+
+def chat_template(user_text, assistant_text, template):
+    formatter = HelpsteerTemplate()
+
+    text = ""
+    for i in range(len(user_text)):
+        if i == 0:
+            text += formatter.get_first_turn_template(user_text[i])
+        else:
+            text += formatter.get_user_turn_template(user_text[i])
+        text += formatter.get_assistant_turn_template(assistant_text[i])
+    text = formatter.add_ending(text)
+    return text
 
 
 class StateDictState(Enum):
@@ -253,7 +293,19 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def _infer_rm(self, *args, **kwargs):
         self._load_rm()
-        return self.infer(*args, **kwargs)
+        context_tokens_tensor, _ = args[0]
+
+        all_texts = self.tokenier.ids_to_text(context_tokens_tensor)
+
+        texts = []
+
+        for text in all_texts:
+            user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
+            text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
+            texts.append(text)
+
+        print("### DEBUG", texts[0])
+        return self.infer(texts)
 
     def finish_training(self):
         self.critic_state_dict_cpu = copy_model_states_to_cpu(

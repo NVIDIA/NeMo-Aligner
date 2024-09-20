@@ -387,8 +387,10 @@ class PPOTrainer:
         response_token = response_tokens[0]
 
         table["reward"] = reward.item()
-        table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
-        table["response"] = self.model.tokenizer.ids_to_text(response_token[prompt_length:response_length].tolist())
+        table["prompt"] = self.model.tokenizer.tokenizer.decode(response_token[:prompt_length].tolist())
+        table["response"] = self.model.tokenizer.tokenizer.decode(
+            response_token[prompt_length:response_length].tolist()
+        )
 
         metrics = {
             "table": table,
