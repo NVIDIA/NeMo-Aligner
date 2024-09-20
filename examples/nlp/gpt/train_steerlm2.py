@@ -41,7 +41,7 @@ from nemo_aligner.utils.train_script_utils import (
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
 )
-from nemo_aligner.utils.utils import load_from_nemo
+from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
 
 """Script to start SFT training"""
 
@@ -153,6 +153,8 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
 
 @hydra_runner(config_path="conf", config_name="gpt_sft")
 def main(cfg) -> None:
+    cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
+
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
