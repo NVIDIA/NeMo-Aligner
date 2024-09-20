@@ -3,7 +3,6 @@ import secrets
 import tensorrt_llm
 import torch
 
-from nemo.collections.common.tokenizers.huggingface.auto_tokenizer import AutoTokenizer as NemoAutoTokenizer
 from nemo.export.tensorrt_llm import TensorRTLLM
 from nemo.export.trt_llm import tensorrt_llm_run
 from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
@@ -34,6 +33,10 @@ def append_and_repad_list(list_of_items, item_to_append, pad_id):
 
 
 class GPTGenerateTRTLLM:
+    # If a tokenizer does not have a pad_id, we use a large negative number and replace
+    # with self.eos_id after generation.
+    DEFAULT_PAD_ID = -42
+
     def __init__(
         self,
         model_cfg,
@@ -85,29 +88,10 @@ class GPTGenerateTRTLLM:
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        # TODO(terryk): Devise more robust pad_id handling. Adding pad_id to tokenizer
-        #   may work, but careful handling of vocab_size is needed.
         if tokenizer.pad_id is not None:
             self.pad_id = tokenizer.pad_id
-        elif (
-            tokenizer.pad_id is None
-            and isinstance(tokenizer, NemoAutoTokenizer)
-            and tokenizer.tokenizer.name_or_path.startswith("meta-llama/Meta-Llama-3")
-        ):
-            # Some tokenizers like meta-llama/Meta-Llama-3-70B do not have a pad_id
-            self.pad_id = tokenizer.vocab_size - 1
-            pad_token = tokenizer.ids_to_tokens(self.pad_id)
-            assert pad_token.startswith(
-                "<|reserved_special_token"
-            ), f"tokenizer={tokenizer.tokenizer.name_or_path} does not contain a pad_id, and automatically chosen {pad_token=} is not a reserved token"
-            logging.warning(
-                f"tokenizer={tokenizer.tokenizer.name_or_path} does not have a pad_id. TRTLLM generation will use (id,token)={(self.pad_id, pad_token)}"
-            )
-            assert tokenizer.eos_id != self.pad_id
         else:
-            raise ValueError(
-                f"Tokenizer does not contain a pad_id and we cannot automatically determine a pad_id. Consider using a different tokenizer"
-            )
+            self.pad_id = GPTGenerateTRTLLM.DEFAULT_PAD_ID
         end_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
@@ -247,6 +231,8 @@ class GPTGenerateTRTLLM:
 
             output_ids = _output_ids
 
+        # Map pad_id to eos_id in case tokenizer does not have a pad_id
+        output_ids[output_ids == self.pad_id] = self.eos_id
         output_ids = output_ids[..., :max_length].contiguous()
         output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
 
