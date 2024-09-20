@@ -14,19 +14,26 @@
 name: Build NeMo Aligner container
 on: 
   workflow_call:
+    inputs:
+      ref: 
+        description: Git ref to checkout
+        default: ${{ github.sha }}
+        required: false
+        type: string
 
 defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
 
 jobs:
-  build:
+  main:
     runs-on: self-hosted-builder
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           path: ${{ github.run_id }}
+          ref: ${{ inputs.sha }}
 
       - name: Clean runner cache
         run: | 
