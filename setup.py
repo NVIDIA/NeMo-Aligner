@@ -63,7 +63,7 @@ else:
 # %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%% #
 
 
-def req_file(filename, folder="requirements"):
+def req_file(filename, folder="."):
     with open(os.path.join(folder, filename), encoding="utf-8") as f:
         content = f.readlines()
     # you may also want to remove whitespace characters
