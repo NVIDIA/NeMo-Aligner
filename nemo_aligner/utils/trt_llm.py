@@ -8,6 +8,7 @@ from nemo.collections.common.tokenizers.huggingface.auto_tokenizer import AutoTo
 from nemo.export.tensorrt_llm import TensorRTLLM
 from nemo.export.trt_llm import tensorrt_llm_run
 from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
+from nemo.export.trt_llm.tensorrt_llm_run import tensorrt_llm_worker_context, to_word_list_format
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
@@ -135,7 +136,7 @@ class GPTGenerateTRTLLM:
         for idx in range(prompt_tokens.shape[0]):
             batch_input_ids.append(prompt_tokens[idx][0 : prompt_lengths[idx]].cpu())
 
-        output_dict = tensorrt_llm_worker_context.decoder.generate(
+        output_dict = tensorrt_llm_run.tensorrt_llm_worker_context.decoder.generate(
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
         )
 
