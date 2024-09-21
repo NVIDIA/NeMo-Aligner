@@ -304,7 +304,6 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
             texts.append(text)
 
-        print("### DEBUG", texts[0])
         return self.infer(texts)
 
     def finish_training(self):
