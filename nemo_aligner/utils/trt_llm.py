@@ -86,14 +86,14 @@ class GPTGenerateTRTLLM:
         self.rng_generator = rng_generator
 
         self.pad_id = tokenizer.pad_id if tokenizer.pad_id is not None else GPTGenerateTRTLLM.DEFAULT_PAD_ID
-        end_id = tokenizer.eos_id
+        self.eos_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
         # TRT-LLM uses different logic to compute the response length depending on if we specify stop_list or end_id
-        # we want to use the same logic (which is to include the stop token in response length) so we put end_id into the stop_list
+        # we want to use the same logic (which is to include the stop token in response length) so we put eos_id into the stop_list
         # manually
         if len(end_strings) == 0:
-            ids, offsets = [end_id], [1]
+            ids, offsets = [self.eos_id], [1]
         else:
             assert all(
                 "," not in end_string for end_string in end_strings
@@ -105,9 +105,9 @@ class GPTGenerateTRTLLM:
                 end_strings, build_tokenizer(self.tokenizer), ref_str="green tea icecream"
             )
             ids, offsets = stop_list[0].tolist()
-            # add the end_id if it doesn't exist
-            if end_id not in ids:
-                ids = append_and_repad_list(ids, end_id, pad_id=0)
+            # add the eos_id if it doesn't exist
+            if self.eos_id not in ids:
+                ids = append_and_repad_list(ids, self.eos_id, pad_id=0)
                 offsets = append_and_repad_list(offsets, max(offsets) + 1, pad_id=-1)
 
         assert max(offsets) == len(ids), "offset and stop token length are mismatched"
