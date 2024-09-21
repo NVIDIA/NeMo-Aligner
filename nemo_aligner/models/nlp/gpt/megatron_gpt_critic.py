@@ -293,12 +293,13 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def _infer_rm(self, *args, **kwargs):
         self._load_rm()
-        context_tokens_tensor = kwargs["inputs"][0]
-        all_texts = self.tokenizer.ids_to_text(context_tokens_tensor.tolist())
+        context_tokens_tensor, lengths = kwargs["inputs"][0]
 
         texts = []
 
-        for text in all_texts:
+        for text, length in zip(context_tokens_tensor.tolist(), lengths.tolist()):
+            text = self.tokenizer.ids_to_text(text[:length])
+
             user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
             text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
             texts.append(text)
