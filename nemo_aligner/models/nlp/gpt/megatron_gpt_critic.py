@@ -293,7 +293,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
     def _infer_rm(self, *args, **kwargs):
         self._load_rm()
-        context_tokens_tensor, lengths = kwargs["inputs"][0]
+        context_tokens_tensor, lengths = kwargs["inputs"]
 
         texts = []
 
