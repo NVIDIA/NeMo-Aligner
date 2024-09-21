@@ -33,7 +33,7 @@ jobs:
     
   build-and-test-wheel:
     needs: build-container
-    runs-on: ubuntu-latest
+    runs-on: self-hosted-builder
     container: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
     steps:
       - name: Checkout repository
