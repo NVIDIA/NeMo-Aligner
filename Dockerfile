@@ -8,7 +8,6 @@ FROM ${BASE_IMAGE}
 ARG MAX_JOBS=8
 # Git refs for dependencies
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
-ARG APEX_TAG=59b80ee8df79cec125794949327f29913c328746
 ARG PYTRITON_VERSION=0.5.10
 ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
 ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
@@ -71,6 +70,7 @@ RUN pip uninstall -y megatron-core && \
     pip install -e .
 
 # NeMo Aligner
+ARG APEX_TAG=59b80ee8df79cec125794949327f29913c328746
 RUN git clone https://github.com/NVIDIA/NeMo-Aligner.git && \
     cd NeMo-Aligner && \
     git pull && \
