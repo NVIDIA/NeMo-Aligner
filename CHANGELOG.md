@@ -3,7 +3,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0]
+## NVIDIA NeMo-Aligner 0.4.0
 - Implement reward-aware preference optimization.
 - Added TRT-LLM support in PPO. This can be enabled by doing `trainer.ppo.trt_llm.enable=True`. There is also a reshard option to reshard out pipeline parallelism during inference for further speedup via `trainer.ppo.trt_llm.reshard=True`.
 - PPO algorithm will now detect if the sample sequence is ended, and if so zero out the gradient of the samples that did not stop properly.
@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Bug Fixes
 - Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.
 
-## [0.3.1] - 2024-05
+## NVIDIA NeMo-Aligner 0.3.1
 - SPIN: added `rollout_micro_batch_size` parameter which allows users to set the batch size for doing generation during SPIN training. Previously, the generation batch size was automatically set to the data parallel size (DP) of the model.
 - SPIN: added wandb logging of average generation length and a small sample of generated responses (in plaintext) along with their corresponding prompts.
 
@@ -49,12 +49,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Delete MegatronPretrainingRandomSampler from NeMo-Aligner since it has been upstreamed into NeMo.
 - Fixed SPIN not correctly using its `val_check_interval` parameter.
 
-## [0.3.0] - 2024-05
+## NVIDIA NeMo-Aligner 0.3.0
 
 ### New Features and Optimizations
 - Special TRT-LLM release. See [Accelerated-RLHF](https://github.com/NVIDIA/NeMo-Aligner/blob/v0.3.0.trtllm/Accelerated-RLHF.md) and [Accelerated-RLHF-Release](https://github.com/NVIDIA/NeMo-Aligner/releases/tag/v0.3.0.trtllm) for more details.
 
-## [0.2.0] - 2024-02
+## NVIDIA NeMo-Aligner 0.2.0
 ### New Features and Optimizations
 - Added public-facing official Dockerfile for NeMo-Aligner.
 - PPO: memory optimization to help avoid OOM in the actor when sending training data to the critic.
@@ -74,6 +74,6 @@ a dictionary from the training configuration.
 - Fixed crash in PPO when using a separate reward model server (i.e., with `combine_rm_and_critic_server=False`).
 - Fixed crash when LR scheduler is not specified.
 
-## [0.1.0] - 2023-12-04
+## NVIDIA NeMo-Aligner 0.1.0
 ### Added
 - First open source release.
