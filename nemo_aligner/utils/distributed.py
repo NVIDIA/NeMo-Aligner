@@ -458,7 +458,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         #predicted_logits = torch.gather(vocab_parallel_logits, dim=-1, index=masked_target_token_ids)
 
         logits_2d = vocab_parallel_logits.view(-1, partition_vocab_size)
-        masked_target_1d = masked_target.view(-1)
+        masked_target_1d = masked_target_token_ids.view(-1)
         K = target_logits.size()[-1]
         ## we want to select K tokens per example
         arange_1d = torch.arange(start=0, end=logits_2d.size()[0], device=logits_2d.device).repeat_interleave(K)
