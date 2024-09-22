@@ -91,6 +91,8 @@ jobs:
     needs: publish-wheel
     runs-on: ubuntu-latest
     if: contains(fromJSON('["terryk", "gshennvm", "ko3n1g"]'), github.actor)
+    environment: 
+      name: main
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
