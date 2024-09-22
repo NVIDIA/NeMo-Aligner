@@ -60,30 +60,6 @@ jobs:
           git switch --force-create r$VERSION origin/main
           git push -u origin r$VERSION --force
 
-      - name: Create Release PR
-        uses: peter-evans/create-pull-request@v6
-        id: create-pull-request
-        with:
-          path: ${{ github.run_id }}
-          base: r${{ steps.release-branch.outputs.version }}
-          branch: ci/release-r${{ steps.release-branch.outputs.version }}
-          title: 'Release `${{ steps.release-branch.outputs.version }}`'
-          body: |
-            🚀 PR to release NeMo `${{ steps.release-branch.outputs.version }}`.
-
-            📝 Please remember the following to-do's before merge:
-            - [ ] Fill-in the comment `Highlights`
-            - [ ] Review the comment `Detailed Changelogs`
-
-            🚨 Please also keep in mind to _not_ delete the headings of the task commits. They are required by the post-merge automation.
-
-            🙏 Please merge this PR only if the CI workflow completed successfully.
-
-          commit-message: "[🤠]: Howdy folks, let's release NeMo `${{ steps.release-branch.outputs.version }}` !"
-          signoff: true
-          assignees: okoenig
-          labels: 'Run CICD'
-
   bump-next-version:
     runs-on: ubuntu-latest
     needs: [create-release-branch]
@@ -134,7 +110,7 @@ jobs:
           branch: bot/chore/version-bump-${{ steps.bump-version.outputs.version }}
           title: 'Version bump to `${{ steps.bump-version.outputs.version }}`'
           body: |
-            🚀 Version bump NeMo toolkit to `${{ steps.bump-version.outputs.version }}`
+            🚀 Version bump NeMo-Aligner to `${{ steps.bump-version.outputs.version }}`
 
           commit-message: "[🤠]: Howdy folks, let's bump NeMo-Aligner `${{ steps.bump-version.outputs.version }}` !"
           signoff: true
