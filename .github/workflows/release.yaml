@@ -93,6 +93,8 @@ jobs:
     if: contains(fromJSON('["terryk", "gshennvm", "ko3n1g"]'), github.actor)
     environment: 
       name: main
+    outputs:
+      version-number: ${{ steps.version-number.outputs.version }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -104,6 +106,7 @@ jobs:
         run: |
           cd ${{ github.run_id }}
           VERSION=$(python -c "import nemo_aligner; print(nemo_aligner.__version__)")
+          echo "version=$VERSION" | tee -a "$GITHUB_OUTPUT"
           
           NAME="NVIDIA NeMo-Aligner ${VERSION}"
           CHANGELOG=$(awk '/^## '"$NAME"'/{flag=1; next} /^## /{flag=0} flag' CHANGELOG.md)
@@ -135,25 +138,25 @@ jobs:
             https://api.github.com/repos/NVIDIA/NeMo-Aligner/releases \
             -d "$PAYLOAD"
 
-  # notify:
-  #   needs: publish-wheel
-  #   runs-on: ubuntu-latest
-  #   if: contains(fromJSON('["terryk", "gshennvm", "ko3n1g"]'), github.actor)
-  #   steps:
-  #     - name: notify
-  #       run: |
+  notify:
+    needs: create-gh-release
+    runs-on: ubuntu-latest
+    if: contains(fromJSON('["terryk", "gshennvm", "ko3n1g"]'), github.actor)
+    steps:
+      - name: notify
+        run: |
+          VERSION=${{ needs.create-gh-release.outputs.version-number }}
+          URL="https://github.com/NVIDIA/NeMo-Aligner/releases/tag/v$VERSION"
+          MESSAGE='{
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Releasebot 🤖: NeMo-Aligner released <'$URL'|`'$VERSION'`> 🚀"
+                }
+              }
+            ]
+          }'
 
-  #         URL="https://github.com/NVIDIA/NeMo-Aligner/releases/tag/v${{ steps.version-number.outputs.VERSION }}"
-  #         MESSAGE='{
-  #           "blocks": [
-  #             {
-  #               "type": "section",
-  #               "text": {
-  #                 "type": "mrkdwn",
-  #                 "text": "Releasebot 🤖: NeMo-Aligner released <'$URL'|`${{ steps.version-number.outputs.VERSION }}>` 🚀"
-  #               }
-  #             }
-  #           ]
-  #         }'
-
-  #         curl -X POST -H "Content-type: application/json" --data "$MESSAGE" ${{ secrets.SLACK_RELEASE_ENDPOINT }}
+          curl -X POST -H "Content-type: application/json" --data "$MESSAGE" ${{ secrets.SLACK_WEBHOOK }}
