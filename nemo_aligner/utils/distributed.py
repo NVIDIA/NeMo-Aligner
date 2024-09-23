@@ -436,16 +436,16 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # Maximum value along vocab dimension across all GPUs.
         logits_max = torch.max(vocab_parallel_logits, dim=-1)[0]
         torch.distributed.all_reduce(
-            logits_max, op=torch.distributed.ReduceOp.MAX, group=get_tensor_model_parallel_group()
+            logits_max, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_tensor_model_parallel_group()
         )
         # Subtract the maximum value.
         vocab_parallel_logits = vocab_parallel_logits - logits_max.unsqueeze(dim=-1)
         
-        # Get the partition's vocab indecies
-        get_vocab_range = VocabUtility.vocab_range_from_per_partition_vocab_size
+        # Get the partition's vocab indices
+        get_vocab_range = tensor_parallel.utils.VocabUtility.vocab_range_from_per_partition_vocab_size
         partition_vocab_size = vocab_parallel_logits.size()[-1]
-        rank = get_tensor_model_parallel_rank()
-        world_size = get_tensor_model_parallel_world_size()
+        rank = parallel_state.get_tensor_model_parallel_rank()
+        world_size = parallel_state.get_tensor_model_parallel_world_size()
         vocab_start_index, vocab_end_index = get_vocab_range(partition_vocab_size, rank, world_size)
 
         # Create a mask of valid vocab ids (1 means it needs to be masked).
@@ -469,7 +469,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         predicted_logits[target_mask] = 0.0
         # All reduce is needed to get the chunks from other GPUs.
         torch.distributed.all_reduce(
-            predicted_logits, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
+            predicted_logits, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
         )
 
         # When target_log_sum_exp_logits is None. The objective is 
@@ -483,20 +483,22 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             target_probs = target_logits.exp()
             target_probs = target_probs / target_probs.sum(-1, keepdims=True)
             neg_loss = (target_probs * predicted_logits).sum(-1, keepdims=False)
-            neg_loss[target_mask] = 0.0
+
+            ## TODO: fix. Is this support to be loss_mask?
+            #neg_loss[target_mask] = 0.0
             
             
             # All reduce is needed to get the chunks from other GPUs.
             torch.distributed.all_reduce(
-                neg_loss, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
+                neg_loss, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
             )
-        
+
             # compute the logsumexp of all K logits
             exp_logits = predicted_logits.exp()
             exp_logits[target_mask] = 0.0
             sum_exp_logits = exp_logits.sum(dim=-1, keepdims=False)
             torch.distributed.all_reduce(
-                sum_exp_logits, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
+                sum_exp_logits, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
             )
             log_sum_exp_logits = sum_exp_logits.log()
             
@@ -506,7 +508,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             probs = exp_logits / sum_exp_logits.unsqueeze(dim=-1)
             vocab_size = exp_logits.size(-1)
             ctx.save_for_backward(
-                probs, None, target_probs, None, target_mask, masked_target_token_ids, torch.LongTensor([vocab_size])
+                probs, None, target_probs, None, target_mask,target_token_ids_1d, torch.LongTensor([partition_vocab_size])
             )
         
         # When target_log_sum_exp_logits is not None. The objective is
@@ -560,10 +562,9 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
          target_token_ids_1d, partition_vocab_size) = ctx.saved_tensors
 
-        vocab_size = vocab_size.item()
         K = probs.size()[-1]
 
-        grad_input = torch.zeros((*probs.size()[:-1], partition_vocab_size))
+        grad_input = torch.zeros((*probs.size()[:-1], partition_vocab_size), device=probs.device)
         # For simplicity, work with the 2D gradient.
         grad_2d = grad_input.view(-1, partition_vocab_size)
 
