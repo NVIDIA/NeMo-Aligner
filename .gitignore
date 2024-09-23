@@ -10,6 +10,7 @@ analyze/*
 code_eval/*
 exp/*
 instruction_following_eval/*
+scripts/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
