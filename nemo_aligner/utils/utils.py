@@ -123,7 +123,7 @@ def load_checkpoint_model_config(restore_path):
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Extracts only model config
-        members = NLPSaveRestoreConnector._filtered_tar_info(restore_path, filter_fn=lambda name: '.yaml' in name)
+        members = NLPSaveRestoreConnector._filtered_tar_info(restore_path, filter_fn=lambda name: ".yaml" in name)
         NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, members=members)
         cfg = OmegaConf.load(os.path.join(tmpdir, config_name_in_ckpt))
 
