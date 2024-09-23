@@ -139,7 +139,7 @@ class MegatronGPTReinforceModel(NLPAdapterModelMixin, MegatronGPTModel, Alignabl
                 reinforce_loss = -1 * curr_log_probs * (rewards_with_kl - baseline)
 
                 if is_end_mask.sum() > 0:
-                    actor_loss = masked_mean(reinforce_loss, is_end_mask)
+                    loss = masked_mean(reinforce_loss, is_end_mask)
                 else:
                     # hack to disable this update since there are no valid tokens
                     loss = masked_mean(reinforce_loss, is_end_mask) * 0
