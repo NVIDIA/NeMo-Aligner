@@ -128,6 +128,7 @@ class MegatronGPTReinforceModel(NLPAdapterModelMixin, MegatronGPTModel, Alignabl
                 baseline = batch["baseline"]
                 rewards_with_kl = batch["rewards_with_kl"]
                 is_end = batch["is_end"]
+                tokens = batch["response_tokens"]
 
                 is_end_mask = mask * is_end.view(-1, 1)
 
