@@ -372,7 +372,7 @@ class ReinforceDebugger:
             baseline = calculate_rloo_baseline(
                 prompts=balanced_local_batch["prompt_tokens"],
                 reward=rewards_with_kl,
-                mask=balanced_local_batch["is_end"].float()
+                # mask=balanced_local_batch["is_end"].float()
             )
 
             balanced_local_batch["rewards_with_kl"] = rewards_with_kl
