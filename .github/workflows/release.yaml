@@ -111,12 +111,13 @@ jobs:
           NAME="NVIDIA NeMo-Aligner ${VERSION}"
           CHANGELOG=$(awk '/^## '"$NAME"'/{flag=1; next} /^## /{flag=0} flag' CHANGELOG.md)
           CHANGELOG=$(echo "$CHANGELOG" | sed '/./,$!d' | sed ':a;N;$!ba;s/\n$//')
+          SHA=${{ github.sha }}
 
           PAYLOAD=$(jq \
                       -n \
                       -c \
                       --arg TAG_NAME "v${VERSION}" \
-                      --arg CI_COMMIT_BRANCH "${{ github.sha }}" \
+                      --arg CI_COMMIT_BRANCH "$SHA" \
                       --arg NAME "$NAME" \
                       --arg BODY "$CHANGELOG" \
                       '{
@@ -129,11 +130,11 @@ jobs:
                         "generate_release_notes": false
                       }'
                   )
-
+          GH_TOKEN=${{ secrets.PAT }}
           curl -L \
             -X POST \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.PAT }}" \
+            -H "Authorization: Bearer $GH_TOKEN" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/NVIDIA/NeMo-Aligner/releases \
             -d "$PAYLOAD"
@@ -147,16 +148,17 @@ jobs:
         run: |
           VERSION=${{ needs.create-gh-release.outputs.version-number }}
           URL="https://github.com/NVIDIA/NeMo-Aligner/releases/tag/v$VERSION"
+          WEBHOOK=${{ secrets.SLACK_WEBHOOK }}
           MESSAGE='{
             "blocks": [
               {
                 "type": "section",
                 "text": {
                   "type": "mrkdwn",
-                  "text": "Releasebot 🤖: NeMo-Aligner released <'$URL'|`'$VERSION'`> 🚀"
+                  "text": "Releasebot 🤖: NeMo-Aligner released <'$URL'|v'$VERSION'> 🚀"
                 }
               }
             ]
           }'
 
-          curl -X POST -H "Content-type: application/json" --data "$MESSAGE" ${{ secrets.SLACK_WEBHOOK }}
+          curl -X POST -H "Content-type: application/json" --data "$MESSAGE" $WEBHOOK
