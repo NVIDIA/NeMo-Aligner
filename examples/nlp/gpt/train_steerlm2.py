@@ -140,6 +140,9 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
         if cfg.model.get("seq_len_interpolation_factor", None) is not None:
             gpt_cfg.seq_len_interpolation_factor = cfg.model.seq_len_interpolation_factor
 
+        if cfg.model.get("dist_ckpt_load_strictness", None) is not None:
+            gpt_cfg.dist_ckpt_load_strictness = cfg.model.dist_ckpt_load_strictness
+
         gpt_cfg.inference = cfg.model.get("inference", {})
 
         # This is needed when modifying a hparam file directly to load `.ckpt` files.
