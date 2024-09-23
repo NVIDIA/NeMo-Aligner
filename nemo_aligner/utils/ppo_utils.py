@@ -89,3 +89,20 @@ def create_mask(values, prompt_lengths, response_lengths):
         # as it is because we want to include one EOS token.
         mask[i, prompt_lengths[i] - 1 : response_lengths[i] - 1] = 1.0
     return mask
+
+def calculate_rloo_baseline(prompts, reward):
+    '''
+    Function to select the RLOO baseline for each (prompt, response) pair in the batch
+    '''
+    unique_prompts = torch.unique(prompts, dim=0)
+    # regularized_reward = batch["rewards"] - self.cfg.initial_policy_kl_penalty * batch["init_policy_kl"]
+
+    baseline = torch.zeros_like(reward)
+    reward_device = reward.get_device()
+    for i in range(len(unique_prompts)):
+        prompt_idx = torch.arange(len(prompts), device=reward_device)[(prompts == unique_prompts[i]).all(1)]
+        rloo_mat = (1 - torch.eye(len(prompt_idx))).to(reward_device)
+        print((len(prompt_idx) - 1))
+        rloo = torch.matmul(rloo_mat, reward[prompt_idx]) / (len(prompt_idx) - 1)
+        baseline[prompt_idx] = rloo
+    return baseline
