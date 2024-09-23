@@ -278,7 +278,7 @@ class ReinforceDebugger:
 
                 # futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
                 if not is_validation:
-                    for _ in range(self.num_rollout_per_prompt):
+                    for _ in range(self.num_rollouts_per_prompt):
                         rollout_batch = self.model.infer(batch)
                         print("FINISHED ONE ROLLOUT")
                         rollout_batch["prompt_tokens"] = batch["text"] # Save prompt tokens for rloo
