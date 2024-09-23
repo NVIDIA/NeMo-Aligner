@@ -523,10 +523,6 @@ class ReinforceDebugger:
                 ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
                 timing_metrics["rollout_time"] = self.timer.stop_and_get_time("rollout_time")
 
-                # send critic train
-                clear_memory()
-                self.rm_critic.train(ppo_rollout_data)
-
                 timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
                 timing_metrics.update(timer_metrics)
 
@@ -643,11 +639,8 @@ class ReinforceDebugger:
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
-        future = self.rm_critic.save()
-
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
-        future.result()
 
         self.model.finish_training()
 
