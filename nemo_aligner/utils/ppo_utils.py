@@ -90,7 +90,7 @@ def create_mask(values, prompt_lengths, response_lengths):
         mask[i, prompt_lengths[i] - 1 : response_lengths[i] - 1] = 1.0
     return mask
 
-def calculate_rloo_baseline(prompts, reward, mask):
+def calculate_rloo_baseline(prompts, reward):
     '''
     Function to select the RLOO baseline for each (prompt, response) pair in the batch
     '''
