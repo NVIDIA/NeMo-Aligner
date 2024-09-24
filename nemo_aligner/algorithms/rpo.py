@@ -32,28 +32,28 @@ from nemo_aligner.utils.utils import clear_memory
 
 def rpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
     resp_outputs = {}
-    
+
     ## assume len 4 for responses
     for k in batch[0].keys():
-        if k.startswith('response_'):
+        if k.startswith("response_"):
             # get response_i
             resp_outputs[k] = torch.nn.utils.rnn.pad_sequence(
-                [item[k] for item in batch],
-                batch_first=True, padding_value=eos_id)
-        elif k.startswith('labels_'):
+                [item[k] for item in batch], batch_first=True, padding_value=eos_id
+            )
+        elif k.startswith("labels_"):
             # get labels_i
             resp_outputs[k] = torch.nn.utils.rnn.pad_sequence(
-                [item[k] for item in batch],
-                batch_first=True, padding_value=-100)
-        elif k.startswith('lengths_'):
+                [item[k] for item in batch], batch_first=True, padding_value=-100
+            )
+        elif k.startswith("lengths_"):
             # get lens_i
             resp_outputs[k] = torch.LongTensor([item[k] for item in batch])
-        elif k.startswith('rewards_'):
+        elif k.startswith("rewards_"):
             # get r_i
             resp_outputs[k] = torch.FloatTensor([item[k] for item in batch])
-    
+
     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-        resp_outputs['response_1'], eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+        resp_outputs["response_1"], eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
     )
     assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
     if attention_mask.shape[0] == 1:
@@ -61,10 +61,9 @@ def rpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
         attention_mask = attention_mask.repeat(4, *((1,) * (len(attention_mask.shape) - 1)))
 
-    
     resp_outputs["attention_mask"] = attention_mask
     resp_outputs["position_ids"] = position_ids
-    
+
     return resp_outputs
 
 
@@ -319,8 +318,8 @@ class RPOTrainer:
                 batch = next(iter_dataloader)
                 logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
                 ind = 1
-                
-                for logps in torch.split(logprobs, len(logprobs) // self.k_len, dim=0):                
+
+                for logps in torch.split(logprobs, len(logprobs) // self.k_len, dim=0):
                     batch["ref_policy_log_probs_response_" + str(ind)] = logps
                     ind += 1
 

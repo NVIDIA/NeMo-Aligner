@@ -43,11 +43,11 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
     DPOModelDataset,
-    RPOModelDataset,
     KTOModelDataset,
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
+    RPOModelDataset,
 )
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length

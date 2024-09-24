@@ -121,20 +121,22 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             # creating tokens and labels tensor batches
             tokens, labels, ref_logprobs, gt_rewards = None, None, None, None
             if batch["response_1"] is not None:
-                tokens = torch.cat(tuple(batch['response_' + str(i+1)] for i in range(self.k_len)), dim=0)
+                tokens = torch.cat(tuple(batch["response_" + str(i + 1)] for i in range(self.k_len)), dim=0)
 
             if batch["labels_1"] is not None:
-                labels = torch.cat(tuple(batch['labels_' + str(i+1)] for i in range(self.k_len)), dim=0)
+                labels = torch.cat(tuple(batch["labels_" + str(i + 1)] for i in range(self.k_len)), dim=0)
 
             if batch["rewards_1"] is not None:
-                gt_rewards = torch.cat(tuple(batch['rewards_' + str(i+1)] for i in range(self.k_len)), dim=0)
+                gt_rewards = torch.cat(tuple(batch["rewards_" + str(i + 1)] for i in range(self.k_len)), dim=0)
 
             if batch.get("ref_policy_log_probs_response_1") is not None:
-                ref_logprobs = torch.cat(tuple(batch['ref_policy_log_probs_response_' + str(i+1)] for i in range(self.k_len)), dim=0)
+                ref_logprobs = torch.cat(
+                    tuple(batch["ref_policy_log_probs_response_" + str(i + 1)] for i in range(self.k_len)), dim=0
+                )
 
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
             # these two lines ensure your position_ids and attn_mask are always B=1
-            attention_mask = batch['attention_mask'][0:1]
+            attention_mask = batch["attention_mask"][0:1]
 
             # Model forward pass
             forward_args = {
@@ -195,7 +197,6 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
-
                 (
                     reduced_loss,
                     reduced_preference_loss,
@@ -245,11 +246,15 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return max_x + torch.log(torch.sum(torch.exp(x - max_x)))
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, average_log_probs=False):
-        if self.preference_loss == 'rpo':
+        if self.preference_loss == "rpo":
             # estimated rewards
-            rewards_pred = torch.stack(self.split_output_tensor(self.get_reduced_masked_logps(
-                self.beta * (pi_logprobs - ref_logprobs), labels, average_log_probs=average_log_probs
-            )))
+            rewards_pred = torch.stack(
+                self.split_output_tensor(
+                    self.get_reduced_masked_logps(
+                        self.beta * (pi_logprobs - ref_logprobs), labels, average_log_probs=average_log_probs
+                    )
+                )
+            )
 
             # based on GT rewards
             gt_rewards = torch.stack(self.split_output_tensor(gt_rewards))
@@ -257,17 +262,29 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         else:
             raise ValueError("Unknown RPO Loss")
 
-        loss = ( torch.nn.functional.softmax(p_star, dim=0) * (torch.nn.functional.log_softmax( p_star, dim=0 ) - torch.nn.functional.log_softmax( rewards_pred, dim=0 )) ).sum(0).mean(0)
-        
+        loss = (
+            (
+                torch.nn.functional.softmax(p_star, dim=0)
+                * (
+                    torch.nn.functional.log_softmax(p_star, dim=0)
+                    - torch.nn.functional.log_softmax(rewards_pred, dim=0)
+                )
+            )
+            .sum(0)
+            .mean(0)
+        )
+
         # adding accuracy for the best rewards -> MSE or best accuracy?
         acc_best_resp = (torch.argmax(rewards_pred, dim=0) == torch.argmax(gt_rewards, dim=0)).float().mean()
 
         return loss, acc_best_resp
 
     def sft_loss_func(self, pi_logprobs, labels, gt_rewards, average_log_probs=False):
-        logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs) # [16]
-        all_log_probs = torch.stack(self.split_output_tensor(logprobs)) # [4, 4] -> each has several responses which we select the best?
-        gt_rewards = torch.stack(self.split_output_tensor(gt_rewards)) # same, we split the rewards
+        logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)  # [16]
+        all_log_probs = torch.stack(
+            self.split_output_tensor(logprobs)
+        )  # [4, 4] -> each has several responses which we select the best?
+        gt_rewards = torch.stack(self.split_output_tensor(gt_rewards))  # same, we split the rewards
         chosen_best = torch.argmax(gt_rewards, dim=0)
 
         chosen_logprobs = all_log_probs[chosen_best, torch.arange(all_log_probs.size(1))]
@@ -288,7 +305,8 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.micro_batch_size * self.k_len,  # each minibatch has K comparisons so tensor shape will be mbs * num_responses
+            micro_batch_size=self.cfg.micro_batch_size
+            * self.k_len,  # each minibatch has K comparisons so tensor shape will be mbs * num_responses
         )
 
         # only the last stages of the pipeline return losses
@@ -385,16 +403,16 @@ class MegatronGPTRPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             collect_non_loss_data=True,
         )
 
-        each_response_list = [ [] for _ in range(self.k_len) ]
+        each_response_list = [[] for _ in range(self.k_len)]
 
         if len(logprobs_list) > 0:
             for item in logprobs_list:
                 all_log_probs = self.split_output_tensor(item["logprobs"])
                 for ind in range(self.k_len):
                     each_response_list[ind].extend(all_log_probs[ind])
-            each_response_list = [ torch.stack(b, dim=0) for b in each_response_list ]
+            each_response_list = [torch.stack(b, dim=0) for b in each_response_list]
             logprobs = torch.cat(each_response_list, dim=0)
-            
+
         else:
             logprobs = None
 

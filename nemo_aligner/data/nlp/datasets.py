@@ -15,11 +15,11 @@
 """Custom datasets for RLHF training"""
 
 import os
+import random
 
 import numpy as np
 import scipy
 import torch
-import random
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
@@ -413,20 +413,20 @@ class RPOModelDataset(Dataset):
         prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
         responses = []
         labels = []
-    
+
         # loop on responses of the given prompt to encode them
-        for resp in payload['responses']:
-            resp_tokens, resp_len = self.encode(
-                resp, append_eod=self.cfg.data.get("append_eod", False)
-            )
-            
+        for resp in payload["responses"]:
+            resp_tokens, resp_len = self.encode(resp, append_eod=self.cfg.data.get("append_eod", False))
+
             resp_tokens = prompt + resp_tokens
             resp_len = len(resp_tokens)
-            
+
             responses.append((resp_tokens, resp_len))
             labels.append(([-100] * prompt_len) + resp_tokens[prompt_len:])
 
-            assert resp_tokens[0:prompt_len] == prompt, "the tokenizer for DPO has merged tokens between prompt and response"
+            assert (
+                resp_tokens[0:prompt_len] == prompt
+            ), "the tokenizer for DPO has merged tokens between prompt and response"
 
         max_curr_seq_len = max([i[1] for i in responses])
         if max_curr_seq_len > self.seq_length:
@@ -437,7 +437,7 @@ class RPOModelDataset(Dataset):
 
         rewards = payload.get("rewards", [random.random() for _ in range(len(responses))])
         resp_dict = {}
-        
+
         for ind, (resp, resp_len) in enumerate(responses):
             resp_tokens = torch.nn.functional.pad(
                 torch.LongTensor(resp), (0, max_curr_seq_len - resp_len), mode="constant", value=self.eos_id
@@ -446,20 +446,19 @@ class RPOModelDataset(Dataset):
             label_tokens = torch.nn.functional.pad(
                 torch.LongTensor(label), (0, max_curr_seq_len - len(label)), mode="constant", value=-100
             )
-            
+
             # slice if necessary
             if max_curr_seq_len > self.seq_length:
                 resp_tokens = resp_tokens[: self.nograd_length]
                 label_tokens = torch.ones_like(resp_tokens) * (-100)
                 resp_len = self.nograd_length
-            
-            resp_dict['response_' + str(ind+1)] = resp_tokens
-            resp_dict['labels_' + str(ind+1)] = label_tokens
-            resp_dict['lengths_' + str(ind+1)] = resp_len
-            resp_dict['rewards_' + str(ind+1)] = rewards[ind]
-        
-        return resp_dict
 
+            resp_dict["response_" + str(ind + 1)] = resp_tokens
+            resp_dict["labels_" + str(ind + 1)] = label_tokens
+            resp_dict["lengths_" + str(ind + 1)] = resp_len
+            resp_dict["rewards_" + str(ind + 1)] = rewards[ind]
+
+        return resp_dict
 
 
 class KTOModelDataset(Dataset):
