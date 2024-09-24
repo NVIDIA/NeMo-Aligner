@@ -54,7 +54,9 @@ class GPTGenerateTRTLLM:
         trt_model_dir="/tmp/trt_llm_model",
     ):
         if not HAVE_TRTLLM:
-            raise RuntimeError("You are trying to use NeMo-Aligner's TensorRT-LLM acceleration for LLM generation. Please build the dockerfile to enable this feature: https://github.com/NVIDIA/NeMo-Aligner/blob/main/Dockerfile")
+            raise RuntimeError(
+                "You are trying to use NeMo-Aligner's TensorRT-LLM acceleration for LLM generation. Please build the dockerfile to enable this feature: https://github.com/NVIDIA/NeMo-Aligner/blob/main/Dockerfile"
+            )
 
         # If this assert turns out to be a blocker with some tokenizers, potential workarounds could be to:
         #   - add a config option to allow specifying which token we pass as `end_id` to TRT-LLM (should
