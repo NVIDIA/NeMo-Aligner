@@ -39,7 +39,6 @@ def set_sync_funcs(ptl_model, forward_only):
 
     # pipeline schedules will get these from ptl_model.model.config
     for module in ptl_model.get_model_module_list():
-    # for module in ptl_model.get_gpt_module_list():
         module.config.no_sync_func = no_sync_func
         module.config.grad_sync_func = grad_sync_func
         module.config.param_sync_func = param_sync_func
