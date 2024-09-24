@@ -208,7 +208,6 @@ class ReinforceTrainer:
         prompt_lengths = rollout_batch["prompt_lengths"]
         response_lengths = rollout_batch["response_lengths"]
         response_tokens = rollout_batch["response_tokens"]
-        values = rollout_batch["values"]
         rewards = rollout_batch["rewards"]
         rewards_with_kl = rollout_batch["rewards_with_kl"]
         logprobs = rollout_batch["logprobs"]
@@ -282,13 +281,12 @@ class ReinforceTrainer:
                         rollout_batch = self.model.infer(batch)
                         rollout_batch["prompt_tokens"] = batch["text"] # Save prompt tokens for rloo
                         rollout_batches.append(rollout_batch)
-                        futures.append((1 / rollout_batch["response_lengths"].float() * 100, torch.zeros([rollout_batch["response_tokens"].shape[0], rollout_batch["response_tokens"].shape[1]-1])))
+                        futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model))
                 else:
                     rollout_batch = self.model.infer(batch)
                     rollout_batch["prompt_tokens"] = batch["text"] # Save prompt tokens for rloo
                     rollout_batches.append(rollout_batch)
-                    futures.append((rollout_batch["response_lengths"].float(), torch.zeros([rollout_batch["response_tokens"].shape[0], rollout_batch["response_tokens"].shape[1]-1])))
-
+                    futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model))
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -327,8 +325,8 @@ class ReinforceTrainer:
             self.timer.start("critic_wait")
             rm_value_rollout_batches = []
             for future in futures:
-                rewards, values = future.result() if isinstance(future, FutureResult) else future
-                rm_value_rollout_batches.append({"rewards": rewards, "values": values})
+                rewards = future.result()
+                rm_value_rollout_batches.append({"rewards": rewards})
             timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
 
             unbalanced_rm_value_batch = PPORolloutBatch.from_rollout_batches(
