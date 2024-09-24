@@ -92,7 +92,7 @@ jobs:
             NEXT_PRE_RELEASE=rc$(( $(echo $PRE_RELEASE | awk -F"rc" '{print $2}') + 1))
           elif [[ "${{ inputs.is_major }}" == "true" ]]; then
             NEXT_MAJOR=$(( MAJOR + 1))
-            NEXT_MINOR='0'
+            NEXT_MINOR=0
             NEXT_PRE_RELEASE=rc0
           else
             NEXT_MAJOR=$MAJOR
