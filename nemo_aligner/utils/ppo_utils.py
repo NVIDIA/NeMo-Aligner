@@ -90,7 +90,7 @@ def create_mask(values, prompt_lengths, response_lengths):
         mask[i, prompt_lengths[i] - 1 : response_lengths[i] - 1] = 1.0
     return mask
 
-def calculate_rloo_baseline(prompts, reward):
+def calculate_rloo_baseline(prompts, reward, mask):
     '''
     Function to select the RLOO baseline for each (prompt, response) pair in the batch
     '''
@@ -103,7 +103,13 @@ def calculate_rloo_baseline(prompts, reward):
         is_matching_prompt = (prompts == unique_prompts[i]).all(1)
         prompt_idx = torch.arange(len(prompts), device=reward_device)[is_matching_prompt]
         rloo_mat = (1 - torch.eye(len(prompt_idx))).to(reward_device)
-        print((len(prompt_idx) - 1))
-        rloo = torch.matmul(rloo_mat, reward[prompt_idx]) / (len(prompt_idx) - 1)
+        print((len(prompt_idx) - 1), mask[prompt_idx].sum() - 1)
+        # rloo = torch.matmul(rloo_mat, reward[prompt_idx]) / (len(prompt_idx) - 1)
+
+        if mask[prompt_idx].sum() <= 1:
+            baseline[prompt_idx] = reward[prompt_idx]
+        else:
+            rloo = torch.matmul(rloo_mat, reward[prompt_idx] * mask[prompt_idx]) / (mask[prompt_idx].sum() - 1)
+
         baseline[prompt_idx] = rloo
     return baseline

@@ -126,7 +126,7 @@ def compute_num_rollout_microbatches(dataloader):
     )
 
 
-class ReinforceDebugger:
+class ReinforceTrainer:
     """Trainer to coordinate PPO training
     """
 
@@ -280,7 +280,6 @@ class ReinforceDebugger:
                 if not is_validation:
                     for _ in range(self.num_rollouts_per_prompt):
                         rollout_batch = self.model.infer(batch)
-                        print("FINISHED ONE ROLLOUT")
                         rollout_batch["prompt_tokens"] = batch["text"] # Save prompt tokens for rloo
                         rollout_batches.append(rollout_batch)
                         futures.append((1 / rollout_batch["response_lengths"].float() * 100, torch.zeros([rollout_batch["response_tokens"].shape[0], rollout_batch["response_tokens"].shape[1]-1])))
@@ -352,8 +351,6 @@ class ReinforceDebugger:
         global_rollout_batch.update(global_rm_value_batch)
 
         if not is_validation:
-            print("prompt_tokens", balanced_local_batch["prompt_tokens"].shape)
-            print("unique prompt_tokens", torch.unique(balanced_local_batch["prompt_tokens"], dim=0).shape)
             if self.compute_init_policy_kl:
                 init_policy_kl = calculate_kl_penalty(
                     log_probs_a=balanced_local_batch["logprobs"],
@@ -368,7 +365,6 @@ class ReinforceDebugger:
 
             # Calculate RLOO baseline
             rewards_with_kl = balanced_local_batch["rewards"] - self.cfg.initial_policy_kl_penalty * init_policy_kl
-            print("IS END", balanced_local_batch["is_end"])
             baseline = calculate_rloo_baseline(
                 prompts=balanced_local_batch["prompt_tokens"],
                 reward=rewards_with_kl,
