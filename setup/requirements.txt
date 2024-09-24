@@ -1,3 +1,4 @@
 jsonlines
+megatron_core==0.8
 nemo_toolkit[nlp]
 nvidia-pytriton

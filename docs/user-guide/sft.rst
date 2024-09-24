@@ -16,7 +16,7 @@ To get started, you need to obtain a pretrained model to align. Three models are
 
         1. Get the 2B checkpoint at ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``.
         2. Extract the NeMo file to a folder with ``mkdir model_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C model_checkpoint``.
-        3. Run the script to convert from the old NeMo checkpoint to the Megatron Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/468d5b6d369733909524d42b80a514f33bc19263/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
+        3. Run the script to convert from the old NeMo checkpoint to the Megatron Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/0ec7e9090d3261b8ce81818b0555a204e50d814d/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             .. code-block:: bash 
 
                python convert_gpt_nemo_to_mcore.py \
@@ -26,7 +26,7 @@ To get started, you need to obtain a pretrained model to align. Three models are
     .. tab-item:: LLaMa2-7B
         :sync: key2
 
-        1. Download the `Llama2-7B LLM model and tokenizer <https://huggingface.co/meta-llama/Llama-2-7b>`__ into the model's folder.
+        1. Download the `Llama2-7B LLM model and tokenizer <https://huggingface.co/meta-llama/Llama-2-7b-hf>`__ into the model's folder.
         2. Convert the LLaMa2 LLM into ``.nemo`` format.
             .. code-block:: bash 
 
@@ -99,6 +99,11 @@ This script converts the *Instruction*, *Context*, and *Response* fields into *I
       "output": "Virgin Australia commenced services on 31 August 2000 as Virgin Blue, with two aircraft on a single route.",
       "category": "closed_qa"
    }
+
+Sequence packing is also supported with prompt-response datasets. Sequence packing is a training technique in which multiple training examples are concatenated to create one longer sequence.
+This approach eliminates the need for padding and improves GPU utilization. Refer to the `sequence packing documentation <https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#>`_ for a detailed overview of sequence packing and its advantages.
+
+NeMo provides a script to pack your SFT prompt-response dataset. Refer to the `prepare dataset <https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#prepare-dataset>`_ section of the documentation for details on how to use this script.
 
 Step 2: Run SFT training
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -217,6 +222,14 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
 
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
+
+If using sequence packing, replace the data paths with the paths to your packed datasets. For each packed dataset, you should also set ``packed_sequence=True`` in the config:
+
+.. code-block:: python
+   +model.data.train_ds.packed_sequence=True \
+   +model.data.validation_ds.packed_sequence=True
+
+It is not required to pack both the train and validation datasets. If packing only the train dataset, exclude ``+model.data.validation_ds.packed_sequence=True``.
 
 To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
 

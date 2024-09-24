@@ -1,0 +1,56 @@
+{
+  "samples": [
+    [
+      {
+        "role": "User",
+        "content": "prompt"
+      },
+      {
+        "role": "Assistant",
+        "content": "response"
+      },
+      {
+        "role": "User",
+        "content": "critique request"
+      },
+      {
+        "role": "Assistant",
+        "content": "critique response"
+      },
+      {
+        "role": "User",
+        "content": "revision request"
+      },
+      {
+        "role": "Assistant",
+        "content": "revision response"
+      }
+    ],
+    [
+      {
+        "role": "User",
+        "content": "prompt"
+      },
+      {
+        "role": "Assistant",
+        "content": "response"
+      },
+      {
+        "role": "User",
+        "content": "critique request"
+      },
+      {
+        "role": "Assistant",
+        "content": "critique response"
+      },
+      {
+        "role": "User",
+        "content": "revision request"
+      },
+      {
+        "role": "Assistant",
+        "content": "revision response"
+      }
+    ]
+  ]
+}

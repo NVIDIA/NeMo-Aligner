@@ -18,16 +18,19 @@ import itertools
 import os
 import re
 import tempfile
+import warnings
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import replace
-from functools import partial
+from functools import partial, wraps
 from typing import Iterator, List
 from unittest.mock import patch
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
+from megatron.core.num_microbatches_calculator import reconfigure_microbatch_calculator
 from omegaconf import DictConfig, OmegaConf
+from torch.masked import as_masked_tensor
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
@@ -59,6 +62,7 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
 def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train_end=False, save_top_only=False):
     """work around used so we can save models manually"""
     super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
+
     if save_top_only:
         return
 
@@ -161,18 +165,37 @@ def remove_overwritten_fields(base_config, overwrite_config):
                 base_config.pop(key)
 
 
+def surpress_user_warnings(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            output = f(*args, **kwargs)
+        return output
+
+    return wrapper
+
+
+# need to surpress the masked tensor warnings from pytorch
+@surpress_user_warnings
 def masked_mean(values, mask, dim=None):
     """
     Masks values with mask, and computes the mean of the values using the masked values.
     """
-    return values[mask.bool()].mean(dim=dim)
+    if dim is None:
+        return values[mask.bool()].mean()
+    return as_masked_tensor(values, mask.bool()).mean(dim=dim).to_tensor(torch.nan)
 
 
+# need to surpress the masked tensor warnings from pytorch
+@surpress_user_warnings
 def masked_std(values, mask, dim=None):
     """
     Masks values with mask, and computes the std of the values using the masked values.
     """
-    return values[mask.bool()].std(dim=dim)
+    if dim is None:
+        return values[mask.bool()].std()
+    return as_masked_tensor(values, mask.bool()).std(dim=dim).to_tensor(torch.nan)
 
 
 def extract_value_from_ckpt(key, ckpt_path):
@@ -191,6 +214,14 @@ def set_autocast_gpu_dtype(precision):
         torch.set_autocast_gpu_dtype(torch.bfloat16)
 
 
+def get_global_set(local_data_ids: set):
+    output = [None for _ in range(torch.distributed.get_world_size())]
+    torch.distributed.all_gather_object(output, local_data_ids)
+    global_set = set().union(*output)
+
+    return global_set
+
+
 def calculate_response_lengths(tokens, eos_id):
     """calculates the response length of the tokens after padding"""
     return (tokens != eos_id).sum(-1)
@@ -198,7 +229,7 @@ def calculate_response_lengths(tokens, eos_id):
 
 def configure_batch_sizes(mbs, gbs, dp=1):
     app_state = AppState()
-    _reconfigure_microbatch_calculator(
+    reconfigure_microbatch_calculator(
         rank=app_state.global_rank,
         rampup_batch_size=None,
         global_batch_size=gbs,
@@ -241,7 +272,7 @@ def dist_adam_load_state_bucket_into_device(state_bucket, device):
 
 
 @contextmanager
-def offload_distributed_adam(state_dict):
+def offload_distributed_adam(state_dict, force_clear_memory=False):
     """context manager to offload distributed adam states
     """
     # off load onto cpu
@@ -250,6 +281,9 @@ def offload_distributed_adam(state_dict):
 
     # make sure the offloading is finished before returning
     torch.cuda.synchronize()
+
+    if force_clear_memory:
+        clear_memory()
 
     try:
         yield
@@ -272,7 +306,13 @@ def batch_pad_to_fixed_len(batch, max_batch_len, pad_token):
 
 
 def collate_with_batch_max_sequence_length(
-    data_batch, response_token_length, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
+    data_batch,
+    response_token_length,
+    eos_id,
+    reset_position_ids,
+    reset_attention_mask,
+    eod_mask_loss,
+    generate_masks_and_position_ids,
 ):
     """collate function that batches by max sequence length
     """
@@ -283,19 +323,25 @@ def collate_with_batch_max_sequence_length(
 
     texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
-    # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
-    attention_masks, loss_masks, position_ids = get_ltor_masks_and_position_ids(
-        texts, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
-    )
-
-    return {
+    output = {
         "text": texts,
         "length": lengths,
-        "attention_mask": attention_masks,
-        # to preserve the loss mask from the dataset
-        "loss_mask": loss_masks * loss_multipliers,
-        "position_ids": position_ids,
     }
+
+    other = {}
+    if generate_masks_and_position_ids:
+        # NOTE: the attention mask is 1x1xSxS, which will broadcast on the batch dimension
+        attention_masks, loss_masks, position_ids = get_ltor_masks_and_position_ids(
+            texts, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss
+        )
+        other = {
+            "attention_mask": attention_masks,
+            # to preserve the loss mask from the dataset
+            "loss_mask": loss_masks * loss_multipliers,
+            "position_ids": position_ids,
+        }
+
+    return output | other
 
 
 def apply_func_to_dict(func, dictionary):
@@ -332,6 +378,35 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
         cpu_dict = convert_to_amp_o2_format(cpu_dict)
 
     torch.cuda.synchronize()
+    return cpu_dict
+
+
+@torch.no_grad()
+def copy_model_states_to_cpu(model, cpu_dict=None, megatron_amp_O2=True, sync=True, alias_non_tensor=False):
+    """This function mutates the cpu_dict object to throw the model states into preallocated tensors(if they exist)
+        for non tensors it will do a deepcopy, unless alias_non_tensor is True
+    """
+    if cpu_dict is None:
+        cpu_dict = {}
+
+    for name, item in model.state_dict().items():
+        if isinstance(item, torch.Tensor):
+            if name not in cpu_dict:
+                cpu_dict[name] = torch.empty(
+                    item.size(), dtype=item.dtype, layout=item.layout, device="cpu", pin_memory=True
+                )
+            cpu_dict[name].copy_(item, non_blocking=sync)
+        elif alias_non_tensor:
+            cpu_dict[name] = item
+        else:
+            cpu_dict[name] = deepcopy(item)
+
+    if megatron_amp_O2:
+        cpu_dict = convert_to_amp_o2_format(cpu_dict)
+
+    if sync:
+        torch.cuda.synchronize()
+
     return cpu_dict
 
 
@@ -384,10 +459,10 @@ def convert_to_amp_o2_format(state_dict):
     """
     new_state_dict = {}
 
-    for key in state_dict.keys():
+    for key, item in state_dict.items():
         if "model.module." not in key:
-            new_key = key.replace("model.", "model.module.", 1)
-            new_state_dict[new_key] = state_dict[key]
+            key = key.replace("model.", "model.module.", 1)
+        new_state_dict[key] = item
 
     return new_state_dict
 
@@ -439,3 +514,9 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
         tuple(model_param.shape) == reference_param.local_shape
     ), f"Model shape ({tuple(model_param.shape)} does not match reference shape ({reference_param.local_shape})"
     return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param, dtype=model_param.dtype)
+
+
+def log_memory(prefix):
+    pyt = torch.cuda.memory_allocated() / (1024 ** 3)
+    el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
+    logging.info(f"Mem Usage | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
