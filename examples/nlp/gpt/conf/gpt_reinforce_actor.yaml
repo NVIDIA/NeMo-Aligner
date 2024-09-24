@@ -17,7 +17,7 @@ trainer:
     # iteration.
     critic_warmup_steps: 0
 
-    max_epochs: 1
+    max_epochs: 2
     max_steps: -1  # max PPO steps (-1 to go through the whole train set)
     val_check_interval: 10
     save_interval: ${.val_check_interval}
