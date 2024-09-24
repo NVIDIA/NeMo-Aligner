@@ -17,13 +17,13 @@
 from typing import Any, List
 
 import torch
-from megatron.core import parallel_state
 
 from nemo.collections.nlp.modules.common.lm_utils import pad_batch
 from nemo.collections.nlp.modules.common.text_generation_strategy import (
     GPTModelTextGenerationStrategy,
     TextGenerationStrategy,
 )
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
 
 
@@ -68,14 +68,10 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
             * the token(s) that ended generation, if any (e.g. the `EOS` token or the token(s) corresponding to
               an element of `sampling_params.end_strings`)
         """
-        lengths, is_end = None, None
+        lengths = None
         if parallel_state.is_pipeline_last_stage():  # only the last stage actually has access to lengths
-            is_end = self._end_idx >= 0
-            lengths = torch.where(is_end, self._end_idx + 1, self._context_lengths + self._max_length)
-
+            lengths = torch.where(self._end_idx >= 0, self._end_idx + 1, self._context_lengths + self._max_length)
             lengths = lengths.to(torch.int64).view((-1, 1))
-            is_end = is_end.view(-1, 1)
-
         lengths = broadcast_2d_tensor_within_pp(lengths, dtype=torch.int64).flatten()
         return lengths
 
@@ -108,10 +104,12 @@ def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False):
 def verify_is_valid_and_clamp_range_(
     response_tokens, response_lengths, strategy: TextGenerationStrategy, tokenizer, end_strings=None
 ):
-    """Function to verify if the tokens have properly ended, and clamps the tokens within the tokenizer range
+    """Function to verify if the tokens have properly ended, and clamp the tokens within the tokenizer range
     """
-    prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
+    if end_strings is None:
+        end_strings = []
 
+    prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
     is_valid = strategy.end_of_generation_condition(response_tokens, prev, tokenizer.eos_id, end_strings)
 
     mask = (0 <= response_tokens) & (response_tokens < tokenizer.vocab_size)

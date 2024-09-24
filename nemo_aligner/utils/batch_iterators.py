@@ -30,7 +30,7 @@ from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, run_if
 from nemo_aligner.utils.utils import get_global_set
 
 
-def _send_request(host, port, endpoint="/get_idx", batch_size=1):
+def _send_request(host, port, endpoint="get_idx", batch_size=1):
     output = run_if_model_parallel_src(
         requests.put,
         url=f"http://{host}:{port}/{endpoint}",
@@ -40,7 +40,7 @@ def _send_request(host, port, endpoint="/get_idx", batch_size=1):
 
     if output is not None:
         output = output.json()
-        output = torch.as_tensor(output).view(1, -1)
+        output = torch.as_tensor(output, dtype=torch.long).view(1, -1)
 
     output = broadcast_2d_tensor_within_mp(output, dtype=torch.long)
     return output.flatten().tolist()
@@ -48,10 +48,9 @@ def _send_request(host, port, endpoint="/get_idx", batch_size=1):
 
 @dataclass
 class SharedSet:
-    lock: threading.Lock
-
     def __post_init__(self):
         self.data = set()
+        self.lock = threading.Lock()
 
     def clear(self):
         with self.lock:
@@ -115,37 +114,32 @@ class HTTPBatchIterator:
             yield batch
             ids = _send_request(host=self.host, port=self.port, batch_size=self.desired_batch_size)
 
-        if torch.distributed.get_rank() == 0:
-            self.shared_set.clear()
-
 
 def get_batch_iterator_cls(batch_iterator_cfg):
     use_flask = batch_iterator_cfg.get("use_flask", False)
+    if not use_flask:
+        return DefaultBatchIterator
 
-    if use_flask:
-        port = batch_iterator_cfg.get("port", 1234)
-        ip_address = [socket.gethostbyname(socket.gethostname())]
-        torch.distributed.broadcast_object_list(ip_address, src=0, group=None, device=torch.cuda.current_device())
-        flask_host = ip_address[0]
-        shared_set = None
+    port = batch_iterator_cfg.get("port", 5557)
+    ip_address = [socket.gethostbyname(socket.gethostname())]
+    torch.distributed.broadcast_object_list(ip_address, src=0, group=None, device=torch.cuda.current_device())
+    flask_host = ip_address[0]
+    shared_set = None
 
-        # start the server on rank 0
-        if torch.distributed.get_rank() == 0:
-            lock = threading.Lock()
+    # start the server on rank 0
+    if torch.distributed.get_rank() == 0:
+        shared_set = SharedSet()
+        app = Flask(__name__)
 
-            shared_set = SharedSet(lock)
-            app = Flask(__name__)
+        @app.route("/get_idx", methods=["PUT"])
+        def get_http_idx():
+            batch_size = request.get_json()["batch_size"]
+            return shared_set.get_idx(batch_size)
 
-            @app.route("/get_idx", methods=["PUT"])
-            def get_http_idx():
-                batch_size = request.get_json()["batch_size"]
-                return shared_set.get_idx(batch_size)
+        flask_thread = threading.Thread(
+            target=lambda: app.run(host=flask_host, port=port, use_reloader=False), daemon=True
+        )
+        # TODO Starting the thread as daemon means it may not release all resources on exit => maybe implement a clean shutdown logic?
+        flask_thread.start()
 
-            flask_thread = threading.Thread(
-                target=lambda: app.run(host=flask_host, port=port, use_reloader=False), daemon=True
-            )
-            flask_thread.start()
-
-        return partial(HTTPBatchIterator, shared_set, flask_host, port)
-
-    return DefaultBatchIterator
+    return partial(HTTPBatchIterator, shared_set, flask_host, port)

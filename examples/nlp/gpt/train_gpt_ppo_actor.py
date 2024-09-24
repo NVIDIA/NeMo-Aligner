@@ -15,7 +15,6 @@ from functools import partial
 
 import torch
 import torch.multiprocessing as mp
-from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf
 
@@ -30,6 +29,7 @@ from nemo_aligner.data.nlp.builders import (
 )
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMCriticClient
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -48,6 +48,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
@@ -184,7 +185,7 @@ def main(cfg) -> None:
     ppo_trainer.fit()
 
     # Note: The main loop creates multiple HTTPCommunicators which own a
-    # pytriton.client.FuturesModelClients. At the end of the loop, we manually
+    # pytriton.client.FuturesModelClient. At the end of the loop, we manually
     # close all FuturesModelClients since we do not use the context manager
     # syntax. This guarantees all dangling threads are no longer blocking.
     # `atexit` does not suffice since the registered cleanup function can be

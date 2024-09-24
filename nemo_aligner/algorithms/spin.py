@@ -14,8 +14,8 @@
 
 from collections import defaultdict
 from statistics import mean
-import pandas as pd
 
+import pandas as pd
 import torch
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig

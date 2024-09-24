@@ -218,7 +218,6 @@ model:
           outdim: 256  # multiplied by two
 
   data:
-    dataloader_type: "single"
     num_workers: 1 #16
     shuffle_data: False
     train:

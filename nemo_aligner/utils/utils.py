@@ -18,17 +18,19 @@ import itertools
 import os
 import re
 import tempfile
+import warnings
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
-from functools import partial
+from functools import partial, wraps
 from typing import Iterator, List
 from unittest.mock import patch
 
 import torch
-from apex.transformer.pipeline_parallel.utils import _reconfigure_microbatch_calculator
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory, LocalNonpersistentObject
+from megatron.core.num_microbatches_calculator import reconfigure_microbatch_calculator
 from omegaconf import DictConfig, OmegaConf
+from torch.masked import as_masked_tensor
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
@@ -163,18 +165,37 @@ def remove_overwritten_fields(base_config, overwrite_config):
                 base_config.pop(key)
 
 
+def surpress_user_warnings(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning)
+            output = f(*args, **kwargs)
+        return output
+
+    return wrapper
+
+
+# need to surpress the masked tensor warnings from pytorch
+@surpress_user_warnings
 def masked_mean(values, mask, dim=None):
     """
     Masks values with mask, and computes the mean of the values using the masked values.
     """
-    return values[mask.bool()].mean(dim=dim)
+    if dim is None:
+        return values[mask.bool()].mean()
+    return as_masked_tensor(values, mask.bool()).mean(dim=dim).to_tensor(torch.nan)
 
 
+# need to surpress the masked tensor warnings from pytorch
+@surpress_user_warnings
 def masked_std(values, mask, dim=None):
     """
     Masks values with mask, and computes the std of the values using the masked values.
     """
-    return values[mask.bool()].std(dim=dim)
+    if dim is None:
+        return values[mask.bool()].std()
+    return as_masked_tensor(values, mask.bool()).std(dim=dim).to_tensor(torch.nan)
 
 
 def extract_value_from_ckpt(key, ckpt_path):
@@ -208,7 +229,7 @@ def calculate_response_lengths(tokens, eos_id):
 
 def configure_batch_sizes(mbs, gbs, dp=1):
     app_state = AppState()
-    _reconfigure_microbatch_calculator(
+    reconfigure_microbatch_calculator(
         rank=app_state.global_rank,
         rampup_batch_size=None,
         global_batch_size=gbs,
@@ -261,6 +282,9 @@ def offload_distributed_adam(state_dict, force_clear_memory=False):
     # make sure the offloading is finished before returning
     torch.cuda.synchronize()
     
+    if force_clear_memory:
+        clear_memory()
+
     if force_clear_memory:
         clear_memory()
 

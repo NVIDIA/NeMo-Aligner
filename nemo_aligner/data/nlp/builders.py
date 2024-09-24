@@ -35,7 +35,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
 )
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset, GPTSFTPackedDataset
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
     MegatronPretrainingRandomBatchSampler,
@@ -43,6 +43,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
     DPOModelDataset,
+    KTOModelDataset,
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
@@ -262,13 +263,29 @@ def _build_train_valid_test_datasets(
 build_train_valid_test_rlhf_datasets = partial(build_train_valid_test_datasets, RLHFDataset)
 build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, RewardModelDataset)
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
+build_train_valid_test_kto_datasets = partial(build_train_valid_test_datasets, KTOModelDataset)
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
 
 
 def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
-    dataset_cls = GPTSFTChatDataset if is_chat else GPTSFTDataset
-    if is_chat and data_cfg.get("hf_dataset", False) and data_cfg.max_seq_length is not None and data_cfg.max_seq_length > 1 and num_samples is None:
-        dataset_cls = TruncatedGPTSFTChatDataset
+    packed_sequence = data_cfg.get("packed_sequence", False)
+    dataset_kwargs = {}
+
+    if is_chat:
+        assert not packed_sequence, "Sequence packing is currently not supported with chat datasets."
+        dataset_cls = GPTSFTChatDataset
+        if data_cfg.get("hf_dataset", False) and data_cfg.max_seq_length is not None and data_cfg.max_seq_length > 1 and num_samples is None:
+            dataset_cls = TruncatedGPTSFTChatDataset
+    elif packed_sequence:
+        dataset_cls = GPTSFTPackedDataset
+        # Whether to return `cu_seqlen` to pass to the model. Having `cu_seqlen` in the model input
+        # enables THD attention kernel, which is the correct format for training with packed sequence to prevent
+        # cross-sequence attention. This flag should be True unless you have a specific use case.
+        dataset_kwargs = {"return_cu_seqlen": data_cfg.get("packed_sequence_return_cu_seqlen", True)}
+        assert data_cfg.micro_batch_size == 1, "Micro batch size must be 1 if using packed sequence"
+    else:
+        dataset_cls = GPTSFTDataset
+
     dataset = dataset_cls(
         file_path=data_cfg.file_path,
         tokenizer=tokenizer,
@@ -298,6 +315,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
         ),  # used to choose truncation method. Options: ['random', 'left', 'right']
         special_tokens=special_tokens,
         output_original_text=data_cfg.get("output_original_text", False),
+        **dataset_kwargs,
     )
     return dataset
 

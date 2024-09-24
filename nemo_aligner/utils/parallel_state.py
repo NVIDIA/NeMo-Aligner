@@ -97,4 +97,9 @@ def trt_llm_reshard_region():
 
 
 def __getattr__(name):
+    if is_trt_llm_reshard():
+        raise NotImplementedError(
+            f"reshard is currently enabled, but called a parallel state function {name} that aligner doesn't implement with resharding."
+        )
+
     return getattr(mcore_parallel_state, name)

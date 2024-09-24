@@ -16,7 +16,7 @@ from contextlib import nullcontext
 
 import torch
 import torch.distributed
-from apex.transformer.pipeline_parallel.utils import get_num_microbatches
+from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 from omegaconf import OmegaConf
@@ -50,6 +50,7 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
+from nemo_aligner.utils.trt_llm import HAVE_TRTLLM, GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import (
     adapter_control,
     clear_memory,
@@ -58,17 +59,6 @@ from nemo_aligner.utils.utils import (
     masked_mean,
     offload_distributed_adam,
 )
-
-try:
-    from tensorrt_llm.bindings import GptSession
-
-    from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
-
-    GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
-    HAVE_TRTLLM = True
-except (ImportError, ModuleNotFoundError) as e:
-    logging.info(f"got error message {e} when importing trt-llm dependencies, disabling")
-    HAVE_TRTLLM = False
 
 
 class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
@@ -202,17 +192,11 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         prepare_for_training_step(self, zero_grad=False)
 
     def get_loss_and_metrics(self, batch, forward_only):
-        batch_size, sequence_length = batch["response_tokens"].size()
+        sequence_length = batch["response_tokens"].size(1)
 
-        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-            data=batch["response_tokens"],
-            eod_token=self.tokenizer.eos_id,
-            reset_position_ids=False,
-            reset_attention_mask=False,
-            eod_mask_loss=False,
-        )
-        batch["attention_mask"] = attention_mask.expand(batch_size, -1, -1, -1)
-        batch["position_ids"] = position_ids.expand(batch_size, -1)
+        attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(tokens=batch["response_tokens"])
+        batch["attention_mask"] = attention_mask
+        batch["position_ids"] = position_ids
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
@@ -274,7 +258,10 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         return log_prob_output_only_func
 
     @torch.no_grad()
-    def get_inference_log_probs(self, response_tokens, forward_micro_batch_size):
+    def get_inference_log_probs(self, response_tokens, forward_micro_batch_size=None):
+        if forward_micro_batch_size is None:
+            forward_micro_batch_size = self.forward_micro_batch_size
+
         set_sync_funcs(self, forward_only=True)
 
         mbs, seq_length = response_tokens.size()
@@ -311,6 +298,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self.offload_adam_states()
 
         if self.use_trtllm_generation:
+            # TODO this might be optimized to avoid calling `refit()` twice in a row after a validation step
             self.trtllm_generate.refit(self.model)
             clear_memory()
 
@@ -373,9 +361,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         return rollout_batch
 
-    def get_logprobs(self, response_tokens):
-        return self.get_inference_log_probs(response_tokens, forward_micro_batch_size=self.forward_micro_batch_size)
-
     def get_init_policy_logprobs(self, response_tokens):
         use_peft_init_policy = self.use_peft and self.init_policy_state_dict is None
 
@@ -386,7 +371,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         )
 
         with context_mgr:
-            return self.get_logprobs(response_tokens)
+            return self.get_inference_log_probs(response_tokens)
 
     def finish_inference(self):
         # training will onload the adam states, no need to onload it here
@@ -405,7 +390,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 offload_distributed_adam(
                     self._optimizer.state_dict(state_dict_format=1, gather_on_root=False), force_clear_memory=True
                 )
-                if self.to_offload_adam_states and self.with_distributed_adam
+                if self.to_offload_adam_states
                 else nullcontext()
             )
 
@@ -428,5 +413,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             eod_mask_loss=False,  # since we ignore the loss mask here
         )
         attention_mask = attention_mask.expand(tokens.size(0), -1, -1, -1)
+        position_ids = position_ids.expand(tokens.size(0), -1)
 
         return attention_mask, loss_mask, position_ids

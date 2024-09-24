@@ -15,13 +15,15 @@
 import itertools
 from collections import UserDict
 from contextlib import nullcontext
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
 import pandas as pd
 import torch
+from megatron.core import parallel_state as mcore_parallel_state
 from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
+from typing_extensions import Self
 
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingRandomSampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
@@ -50,38 +52,33 @@ from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 class PPORolloutBatch(UserDict):
     @classmethod
     def from_rollout_batches(
-        cls, rollout_batches: List[Dict], eos_id: int, rollout_batch_seq_length: Union[int, None]
-    ):
+        cls: Self, rollout_batches: List[Dict], eos_id: int, rollout_batch_seq_length: Optional[int]
+    ) -> Self:
         """Given a list of rollout batches, stack the tensors within and put them in a single dictionary
         """
         stacked_dict = cls()
 
-        if len(rollout_batches) == 0:
-            return stacked_dict
-
-        keys = rollout_batches[0].keys()
-
-        for k in sorted(keys):
+        for k in sorted(rollout_batches[0]):
 
             list_of_tensors = [item[k] for item in rollout_batches]
 
-            if all(map(lambda x: x.ndim == 1, list_of_tensors)):
+            if all(x.ndim == 1 for x in list_of_tensors):
                 tensor = torch.cat(list_of_tensors)
             else:
                 pad_value = eos_id if k == "response_tokens" else 0
 
-                list_of_tensors = list(
-                    itertools.chain(*(map(lambda x: x.flatten(), item.split(1, dim=0)) for item in list_of_tensors))
-                )
+                list_of_tensors = [row.flatten() for tensor in list_of_tensors for row in tensor]
+                # TODO: can we avoid padding locally then padding globally?
                 tensor = torch.nn.utils.rnn.pad_sequence(list_of_tensors, batch_first=True, padding_value=pad_value)
 
                 # find the max sequence length globally
                 max_seqlen = torch.tensor([tensor.size(-1)], dtype=torch.long, device=torch.cuda.current_device())
                 torch.distributed.all_reduce(max_seqlen, op=torch.distributed.ReduceOp.MAX)
 
-                if rollout_batch_seq_length is None or max_seqlen > rollout_batch_seq_length:
+                if rollout_batch_seq_length is None or max_seqlen >= rollout_batch_seq_length:
                     pad_seq_len = max_seqlen.item()
                 else:
+                    # response tokens must be B x S because computing log probs requires us to offset by 1
                     pad_seq_len = rollout_batch_seq_length if k == "response_tokens" else rollout_batch_seq_length - 1
 
                 tensor = torch.nn.functional.pad(tensor, (0, pad_seq_len - tensor.size(-1)), value=pad_value)
@@ -99,9 +96,9 @@ class PPORolloutBatch(UserDict):
             # NOTE: this logic needs to use the pure parallel state, that is one without sharding but needs
             # to ping the is_trt_llm_reshard variable
             if is_trt_llm_reshard():
-                tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_pipeline_model_parallel_group())
+                tensor = rebalance_nd_tensor(tensor, group=mcore_parallel_state.get_pipeline_model_parallel_group())
 
-            tensor = rebalance_nd_tensor(tensor, group=parallel_state.get_data_parallel_group())
+            tensor = rebalance_nd_tensor(tensor, group=mcore_parallel_state.get_data_parallel_group())
             global_rollout_batch[k] = tensor
 
         return global_rollout_batch
@@ -165,7 +162,7 @@ class PPOTrainer:
         self.run_timer = run_timer
 
         self.trtllm_reshard = "trt_llm" in cfg and cfg.trt_llm.enable and cfg.trt_llm.reshard
-        self.critic_warmup_steps = cfg.get("critic_warmup_steps", 1)
+        self.critic_warmup_steps = cfg.get("critic_warmup_steps", 0)
 
         self.consumed_samples = 0
         # the step here is PPO step
@@ -175,6 +172,17 @@ class PPOTrainer:
 
         # compute `max_steps`
         train_dataloader = self.train_dataloader_builder(consumed_samples=0)
+        if (not isinstance(train_dataloader.batch_sampler, MegatronPretrainingRandomSampler)) and (
+            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
+        ):
+            # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
+            # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
+            # to fix this, you should use MegatronPretrainingRandomSampler instead, which alleviates this issue and allows
+            # random shuffling for each epoch.
+            raise ValueError(
+                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomSampler` as the batch_sampler for your train dataloader"
+            )
+
         self.num_steps_per_epoch = compute_num_steps_per_epoch(train_dataloader.batch_sampler)
         self.set_max_steps()
 
@@ -314,13 +322,15 @@ class PPOTrainer:
 
         # the chunking must be outside of the TRT-LLM context because we do logprob calculation in nemo
         balanced_local_batch = global_rollout_batch.chunk(
-            parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
+            rank=parallel_state.get_data_parallel_rank(),
+            split_size=parallel_state.get_data_parallel_world_size(),
+            seed=self.step,
         )
         # since we compute the logprobs in nemo we need to disable the resharding
         batched_response_tokens = balanced_local_batch["response_tokens"]
 
         self.timer.start("logprobs")
-        rollout_logprobs = self.model.get_logprobs(batched_response_tokens)
+        rollout_logprobs = self.model.get_inference_log_probs(batched_response_tokens)
         balanced_local_batch["logprobs"] = rollout_logprobs
         timer_metrics["logprobs"] = self.timer.stop_and_get_time("logprobs")
 
@@ -351,7 +361,9 @@ class PPOTrainer:
         # NOTE: the seed here must be the same as the chunk before since we need to shuffle
         # these values the same way as the other values
         balanced_rm_value_batch = global_rm_value_batch.chunk(
-            parallel_state.get_data_parallel_rank(), parallel_state.get_data_parallel_world_size(), self.step
+            rank=parallel_state.get_data_parallel_rank(),
+            split_size=parallel_state.get_data_parallel_world_size(),
+            seed=self.step,
         )
         balanced_local_batch.update(balanced_rm_value_batch)
 
@@ -368,6 +380,7 @@ class PPOTrainer:
         rewards = rollout_batch["rewards"]
         is_end = rollout_batch["is_end"]
 
+        # take the first sample for logging
         reward = rewards[0]
         prompt_length = prompt_lengths[0]
         response_length = response_lengths[0]
@@ -379,12 +392,12 @@ class PPOTrainer:
 
         metrics = {
             "table": table,
-            "consumed_samples": prompt_lengths.size(0),
+            "rollout_size": prompt_lengths.size(0),
             "response_lengths": response_lengths.float().mean().item(),
             "prompt_lengths": prompt_lengths.float().mean().item(),
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
             "rewards": rewards.mean().item(),
-            "amount_of_samples_properly_ended": is_end.sum().item(),
+            "fraction_of_samples_properly_ended": is_end.float().mean().item(),
         }
 
         return metrics
@@ -412,10 +425,9 @@ class PPOTrainer:
             self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False
         )
 
-        self.consumed_samples += rollout_metrics["consumed_samples"]
+        self.consumed_samples += rollout_metrics["rollout_size"]
 
         ppo_rollout_data, ppo_rollout_metrics = self.generate_ppo_data(rollout_batch)
-        ppo_rollout_metrics = cpu_dict(ppo_rollout_metrics)
 
         self.timer.start("finish_inference")
         self.model.finish_inference()
@@ -469,19 +481,6 @@ class PPOTrainer:
         return loss_mean, metrics
 
     def fit(self):
-        if (
-            not isinstance(
-                self.train_dataloader_builder(consumed_samples=0).batch_sampler, MegatronPretrainingRandomSampler
-            )
-        ) and (self.cfg.max_epochs is not None and self.cfg.max_epochs > 1):
-            # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
-            # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
-            # to fix this, you should use MegatronPretrainingRandomSampler instead, which alleviates this issue and allows
-            # random shuffling for each epoch.
-            raise ValueError(
-                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomSampler` as the batch_sampler for your train dataloader"
-            )
-
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
@@ -507,7 +506,8 @@ class PPOTrainer:
                 step_metrics = {}
                 timing_metrics = {}
 
-                critic_train_loop_amount = self.critic_warmup_steps if self.step == 0 else 1
+                # we add 1 here because when we have no warmup we need to send train to critic anyway
+                critic_train_loop_amount = self.critic_warmup_steps + 1 if self.step == 0 else 1
 
                 for _ in range(critic_train_loop_amount):
                     self.timer.start("rollout_time")
@@ -537,6 +537,12 @@ class PPOTrainer:
                     self.logger.log_table(
                         key="table/train_rollouts", dataframe=self.train_df, step=self.step,
                     )
+
+                if self.step == 0:
+                    # at step 0 we do critic warmup which consumed samples
+                    # we don't want to waste these samples and instead reset
+                    # the consumed samples to as if we were to do no critic warmup
+                    self.consumed_samples = metrics["rollout_size"]
 
                 rollout_size = ppo_rollout_data["response_tokens"].size(0)
                 rollout_dataloader_iter = get_iterator_k_split(

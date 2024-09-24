@@ -426,21 +426,21 @@ class SelfRewardingTrainer:
             assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
             self.trtllm_generate = GPTGenerateTRTLLM(
                 model_cfg=self.model.cfg,
-                max_generation_length=self.length_params["max_length"],
-                max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
-                max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2) * dp_batch_size),
-                generation_batch_size=self.cfg.trt_llm.get("generation_batch_size", self.model.cfg.spin.get("rollout_micro_batch_size", 4)),
-                unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
-                trt_model_type=self.cfg.trt_llm.get("model_type", "llama"),
                 end_strings=self.sampling_params["end_strings"],
-                reshard_model=False,
+                tokenizer=self.model.tokenizer,
                 sample_temperature=self.sampling_params["temperature"],
                 sample_top_k=self.sampling_params["top_k"],
                 sample_top_p=self.sampling_params["top_p"],
                 repetition_penalty=self.sampling_params["repetition_penalty"],
+                max_generation_length=self.length_params["max_length"],
+                max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
+                max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2) * dp_batch_size),
+                generation_batch_size=self.cfg.trt_llm.get("generation_batch_size", self.model.cfg.spin.get("rollout_micro_batch_size", 4)),
                 use_greedy=self.sampling_params.get("use_greedy", False),
-                tokenizer=self.model.tokenizer,
+                trt_model_type=self.cfg.trt_llm.get("model_type", "llama"),
                 seed=self.model.cfg.get("seed", None),
+                unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
+                reshard_model=False,
             )
 
     def validation_step(self, global_batch):
