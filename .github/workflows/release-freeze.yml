@@ -90,10 +90,14 @@ jobs:
             NEXT_MAJOR=$MAJOR
             NEXT_MINOR=$MINOR
             NEXT_PRE_RELEASE=rc$(( $(echo $PRE_RELEASE | awk -F"rc" '{print $2}') + 1))
-          else
+          elif [[ "${{ inputs.is_major }}" == "true" ]]; then
             NEXT_MAJOR=$(( MAJOR + 1))
-            NEXT_MINOR='0'
-            NEXT_PRE_RELEASE="'rc0'"
+            NEXT_MINOR=0
+            NEXT_PRE_RELEASE=rc0
+          else
+            NEXT_MAJOR=$MAJOR
+            NEXT_MINOR=$(( MINOR + 1))
+            NEXT_PRE_RELEASE=rc0
           fi
 
           sed -i "/^MAJOR/c\MAJOR = $NEXT_MAJOR" nemo_aligner/package_info.py
