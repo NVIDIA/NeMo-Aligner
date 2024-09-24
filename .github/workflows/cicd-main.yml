@@ -60,7 +60,7 @@ jobs:
      uses: ./.github/workflows/_run_test.yml
      if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'Unit_Tests') || needs.pre-flight.outputs.all == 'true'
      with:
-       RUNNER: self-hosted-azure
+       RUNNER: self-hosted
        TIMEOUT: 20
        SCRIPT: |
          pytest tests/
