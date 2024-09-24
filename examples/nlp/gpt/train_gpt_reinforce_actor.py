@@ -28,7 +28,7 @@ from nemo_aligner.data.nlp.builders import (
     collate_with_pad_to_max_batch,
 )
 from nemo_aligner.models.nlp.gpt.megatron_gpt_reinforce_actor import MegatronGPTReinforceModel
-from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMlient
+from nemo_aligner.models.nlp.gpt.reward_critic_clients import RemoteGPTRMClient
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
 from nemo_aligner.utils.distributed import Timer
