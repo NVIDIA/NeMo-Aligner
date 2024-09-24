@@ -3,32 +3,18 @@ name: "Code freeze"
 on:
   workflow_dispatch:
     inputs:
-      is_major:
-        description: Whether to do a major bump
-        required: false
-        default: False
-        type: boolean
-      is_prelease:
-        description: Whether to keep and bump the pre-release label
-        required: false
-        default: false
-        type: boolean
+      type_of_release:
+        type: choice
+        description: Type of release
+        options: 
+        - major
+        - minor
+        - pre_release
 
 jobs:
-  validate-inputs:
-    runs-on: ubuntu-latest
-    steps:
-      - name: main
-        run: |
-          if [[ "${{ inputs.is_major }}" == "true" && "${{ inputs.is_prelease }}" == "true" ]]; then
-            echo Please either major or pre-release, not both
-            exit 1
-          fi
-
   create-release-branch:
     runs-on: ubuntu-latest
     if: contains(fromJSON('["ko3n1g"]'), github.actor)
-    needs: [validate-inputs]
     environment: 
       name: main
     outputs:
@@ -48,7 +34,7 @@ jobs:
         run: |
           cd ${{ github.run_id }}
                     
-          if [[ "${{ inputs.is_prelease }}" == "false" ]]; then
+          if [[ "${{ inputs.type_of_release }}" != "pre_release" ]]; then
             sed -i "/^PRE_RELEASE/c\PRE_RELEASE = ''" nemo_aligner/package_info.py 
           fi
 
@@ -86,11 +72,11 @@ jobs:
           MINOR=$(cat nemo_aligner/package_info.py | awk '/^MINOR = /' | awk -F"= " '{print $2}')
           PATCH=$(cat nemo_aligner/package_info.py | awk '/^PATCH = /' | awk -F"= " '{print $2}')
 
-          if [[ "${{ inputs.is_prelease }}" == "true" ]]; then
+          if [[ "${{ inputs.type_of_release }}" == "pre_release" ]]; then
             NEXT_MAJOR=$MAJOR
             NEXT_MINOR=$MINOR
             NEXT_PRE_RELEASE=rc$(( $(echo $PRE_RELEASE | awk -F"rc" '{print $2}') + 1))
-          elif [[ "${{ inputs.is_major }}" == "true" ]]; then
+          elif [[ "${{ inputs.type_of_release }}" == "major" ]]; then
             NEXT_MAJOR=$(( MAJOR + 1))
             NEXT_MINOR=0
             NEXT_PRE_RELEASE=rc0
