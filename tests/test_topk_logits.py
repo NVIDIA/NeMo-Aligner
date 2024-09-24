@@ -184,8 +184,8 @@ def test_topk_logits(K = 3, batch_size = 4, seq_len = 8, partition_vocab_size = 
     # test backward
     naive_loss.backward()
     naive_grad = vocab_parallel_logits.grad
-    new_grad = _TopKLogitsCrossEntropy.backward(ctx, new_loss)[0] * 0.0080125 # <-- We're off by a scaling factor somehow!
-    torch.testing.assert_close(naive_grad, new_grad, atol=1e-4, rtol=1e-4)
+    new_grad = _TopKLogitsCrossEntropy.backward(ctx, 1. / (batch_size * seq_len) * torch.ones(batch_size, seq_len).to(torch.cuda.current_device()))[0]
+    torch.testing.assert_close(naive_grad, new_grad)
 
 if __name__ == '__main__':
     test_topk_logits()
