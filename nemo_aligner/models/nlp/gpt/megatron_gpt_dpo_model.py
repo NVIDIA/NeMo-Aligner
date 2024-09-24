@@ -16,9 +16,9 @@ import warnings
 from functools import partial
 
 import torch
-from apex.transformer.pipeline_parallel.utils import get_num_microbatches
-from megatron.core import parallel_state
+from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
@@ -31,6 +31,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, from_parallel_logits_to_logprobs
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
@@ -66,7 +67,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         self.sft_loss_weight = self.cfg.dpo.get("sft_loss_weight", 0)
         assert (
             self.preference_loss_weight != 0 or self.sft_loss_weight != 0
-        ), "sft loss weight and dpo loss weight cannot both be 0"
+        ), "sft loss weight and preference loss weight cannot both be 0"
 
         # variants of preference losses, by default DPO.
         self.preference_loss = self.cfg.dpo.get("preference_loss", "dpo")
@@ -87,6 +88,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         torch.distributed.all_gather(output_list, batch_logs, group=dp_group)
 
         split_iter = map(self.split_output_tensor, output_list)
+
         out_chosen, out_rejected = map(torch.cat, zip(*split_iter))
 
         return out_chosen.flatten(), out_rejected.flatten()
@@ -252,11 +254,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
-
-        print('Rewards:', rewards, gt_rewards)
-
         rewards_delta = chosen_rewards - reject_rewards
-
 
         if self.preference_loss == "dpo":
             loss = -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)
@@ -305,7 +303,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
     def sft_loss_func(self, pi_logprobs, labels, average_log_probs=False):
         logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
         chosen_logprobs, _ = self.split_output_tensor(logprobs)
-
         return -chosen_logprobs.mean(0)
 
     def get_loss_and_metrics(self, batch, forward_only):
@@ -409,8 +406,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
     @torch.no_grad()
     def get_logprob_batch(self, batch):
         seq_length = batch["chosen"].shape[1]
+        batch_size = batch["chosen"].shape[0]
 
-        data_iter = get_iterator_k_split(batch, get_num_microbatches())
+        num_microbatches = divide(batch_size, self.cfg.dpo.log_prob_forward_micro_batch_size)
+        data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only=True)
 
         fwd_bwd_function = get_forward_backward_func()
@@ -419,10 +418,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             forward_step_func=self.get_forward_output_and_loss_func(logprobs_only=True),
             data_iterator=data_iter,
             model=self.model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.dpo.log_prob_forward_micro_batch_size,
+            micro_batch_size=self.cfg.dpo.log_prob_forward_micro_batch_size * 2,
             collect_non_loss_data=True,
         )
 
