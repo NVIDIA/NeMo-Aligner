@@ -21,7 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Bug Fixes
 
-## [0.5.0] - 2024-09
+## NVIDIA NeMo-Aligner 0.5.0
 
 ### New Features and Optimizations
 - Implement Kahneman-Tversky Optimization (KTO).
@@ -32,7 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Bug Fixes
 - Change `log_prob_forward_micro_batch_size` in DPO to mean the same as the `micro_batch_size`, which is how many samples(chosen and rejected included) that we process at once.
 
-## [0.4.0] - 2024-07
+## NVIDIA NeMo-Aligner 0.4.0
 - Implement reward-aware preference optimization.
 - Fix log probs mismatch issue between policy and reference policy in DPO & variants.
 - Added TRT-LLM support in PPO. This can be enabled by `trainer.ppo.trt_llm.enable=True`. There is also a reshard option to reshard out pipeline parallelism during inference (i.e running tensor and data parallel only) for further speedup via `trainer.ppo.trt_llm.reshard=True`.
@@ -40,25 +40,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Added critic warmup to the PPO with the flag trainer.ppo.critic_warmup_steps.
 - PPO log probs are now computed with `higher_stability=True`. This can change results for some models, but should result in overall greater stability.
 
-### New Features and Optimizations
-- Critic and Reward Model server refactored. Now the reward model will have a flag called `model.forward_micro_batch_size` which determines the micro batch size on which it runs inferences. This can be higher than the training micro batch size since during inference, we have less memory pressure.
-- In the critic and reward model server, it is now possible to specify `inference_micro_batch_size` as a list.  This allows us to provide more information to PyTriton regarding the preferred batch sizes for inference.
-- It is no longer a requirement to specify `num_rollout_samples` to be a multiple of `inference_micro_batch_size * dp size` in PPO.
-
-### Breaking Changes
-- `inference.micro_batch_size` is now renamed to `inference.inference_micro_batch_size` when running reward model inference in `inference_rm.yaml`.  This is to stay consistent with the naming scheme of the PPO critic.
-- It is no longer possible to specify `add_EOS` when running reward model or critic inference.
-- NeMo-Aligner now requires Megatron-LM>=0.8.0 for the APIs to calculate the microbatch sizes.
-
-### Bug Fixes
-- Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.
-
-# NVIDIA NeMo-Aligner 0.4.0
-- Implement reward-aware preference optimization.
-- Added TRT-LLM support in PPO. This can be enabled by doing `trainer.ppo.trt_llm.enable=True`. There is also a reshard option to reshard out pipeline parallelism during inference for further speedup via `trainer.ppo.trt_llm.reshard=True`.
-- PPO algorithm will now detect if the sample sequence is ended, and if so zero out the gradient of the samples that did not stop properly.
-- Added critic warmup to the PPO with the flag trainer.ppo.critic_warmup_steps.
-  
 ### New Features and Optimizations
 - Critic and Reward Model server refactored. Now the reward model will have a flag called `model.forward_micro_batch_size` which determines the micro batch size on which it runs inferences. This can be higher than the training micro batch size since during inference, we have less memory pressure.
 - In the critic and reward model server, it is now possible to specify `inference_micro_batch_size` as a list.  This allows us to provide more information to PyTriton regarding the preferred batch sizes for inference.
