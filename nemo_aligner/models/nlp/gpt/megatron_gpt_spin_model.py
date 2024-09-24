@@ -134,6 +134,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 if parallel_state.is_pipeline_last_stage():
                     required_keys.update(
                         (
+                            "chosen",
+                            "rejected",
                             "ref_policy_log_probs_chosen",
                             "ref_policy_log_probs_rejected",
                             "chosen_mask",
@@ -291,6 +293,10 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         if self.preference_loss == "dpo":
             loss = -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)
+        elif self.preference_loss == "margin":
+            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            abs_margin = torch.abs(chosen_gt_rewards) - torch.abs(reject_gt_rewards)
+            loss = abs_margin * -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)
         elif self.preference_loss == "rpo_bwd_kl":
             logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
             logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
@@ -753,8 +759,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         seq_length = batch["chosen"].shape[1]
         batch_size = batch["chosen"].shape[0]
 
-        data_iter = get_iterator_k_split(batch, get_num_microbatches())
-        num_microbatches = divide(batch_size * 2, self.cfg.spin.log_prob_forward_micro_batch_size)
+        num_microbatches = divide(batch_size, min(batch_size, self.cfg.spin.log_prob_forward_micro_batch_size))
         data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only=True)
 
@@ -767,7 +772,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.spin.log_prob_forward_micro_batch_size,
+            micro_batch_size=min(batch_size, self.cfg.spin.log_prob_forward_micro_batch_size) * 2,
             collect_non_loss_data=True,
         )
 

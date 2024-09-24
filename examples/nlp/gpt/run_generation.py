@@ -26,7 +26,6 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.generation import GenerationTrainer, eye
 from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset, collate_with_pad_to_max_batch
-#from nemo_aligner.models.nlp.gpt.megatron_gpt_spin_model import MegatronGPTSPINModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -54,7 +53,7 @@ def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
-    trainer = resolve_and_create_trainer(cfg, "spin")
+    trainer = resolve_and_create_trainer(cfg, "generation")
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
@@ -89,7 +88,7 @@ def main(cfg) -> None:
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
     '''
     dp_group = parallel_state.get_data_parallel_group()
-    calc_gbs = cfg.model.spin.rollout_micro_batch_size * dp_group.size()
+    calc_gbs = cfg.model.generation.rollout_micro_batch_size * dp_group.size()
     with open_dict(cfg):
         cfg.model.global_batch_size = calc_gbs
     with open_dict(ptl_model.cfg):
@@ -101,10 +100,10 @@ def main(cfg) -> None:
 
     if cfg.model.data.get("sample", False):
         # if it is negative, num_samples is None
-        if cfg.trainer.spin.max_steps < 0:
+        if cfg.trainer.generation.max_steps < 0:
             num_samples = None
         else:
-            num_samples = cfg.trainer.spin.max_steps * cfg.model.global_batch_size
+            num_samples = cfg.trainer.generation.max_steps * cfg.model.global_batch_size
     else:
         num_samples = None
     train_ds = build_sft_dataset(
@@ -147,8 +146,8 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
-    spin_trainer = GenerationTrainer(
-        cfg=cfg.trainer.spin,
+    gen_trainer = GenerationTrainer(
+        cfg=cfg.trainer.generation,
         model=ptl_model,
         train_dataloader=train_dataloader,
         logger=logger,
@@ -158,9 +157,9 @@ def main(cfg) -> None:
     )
 
     if custom_trainer_state_dict is not None:
-        spin_trainer.load_state_dict(custom_trainer_state_dict)
+        gen_trainer.load_state_dict(custom_trainer_state_dict)
 
-    spin_trainer.generate()
+    gen_trainer.generate()
 
 
 if __name__ == "__main__":

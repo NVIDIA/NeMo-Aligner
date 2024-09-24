@@ -7,8 +7,8 @@ trainer:
   accelerator: gpu
   precision: bf16
   
-  # spin specific args
-  spin:
+  # generation specific args
+  generation:
     max_epochs: 1
     max_steps: -1
     limit_train_batches: 1.0
@@ -16,7 +16,7 @@ trainer:
     # Accelerate training times by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
-      # reshard is not supported in SPIN
+      # reshard is not supported in generation
 
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
@@ -34,8 +34,8 @@ trainer:
   enable_checkpointing: False
   use_distributed_sampler: False
   max_time: null
-  max_epochs: ${.spin.max_epochs}
-  max_steps: ${.spin.max_steps}
+  max_epochs: ${.generation.max_epochs}
+  max_steps: ${.generation.max_steps}
 
 exp_manager:
   explicit_log_dir: /results
@@ -68,7 +68,7 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
 
-  spin:
+  generation:
     num_responses_to_gen: 4
 
     # params for generation

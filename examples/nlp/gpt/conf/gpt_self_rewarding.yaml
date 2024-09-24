@@ -77,7 +77,7 @@ model:
   megatron_amp_O2: True
 
   spin:
-    log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, 2}
+    log_prob_forward_micro_batch_size: ${model.micro_batch_size}
     rollout_micro_batch_size: 32
     ref_policy_kl_penalty: 0.1   # Can also be a list of elements == max_iterations, where each element will be the KL penalty used for that iteration
     offload_adam_states: True
@@ -93,6 +93,75 @@ model:
     preference_loss: dpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
     preference_loss_weight: 1 # the coefficient of the preference loss
     sft_loss_weight: 0 # the coefficient of the SFT loss
+	
+    judge_reward_regex: "(?i)(?:Score|Points): {{ reward }}"
+    meta_judge_reward_regex: "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
+	
+    llm_judge_prompt: |
+      <extra_id_0>System
+
+      <extra_id_1>User
+      Review the user's question and the corresponding response using the additive 5-point
+      scoring system described below. Points are accumulated based on the satisfaction of each
+      criterion:
+      - Add 1 point if the response is relevant and provides some information related to
+      the user's inquiry, even if it is incomplete or contains some irrelevant content.
+      - Add another point if the response addresses a substantial portion of the user's question,
+      but does not completely resolve the query or provide a direct answer.
+      - Award a third point if the response answers the basic elements of the user's question in a
+      useful way, regardless of whether it seems to have been written by an AI Assistant or if it
+      has elements typically found in blogs or search results.
+      - Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
+      addressing the user's question directly and comprehensively, and is well-organized and
+      helpful, even if there is slight room for improvement in clarity, conciseness or focus.
+      - Bestow a fifth point for a response that is impeccably tailored to the user's question
+      by an AI Assistant, without extraneous information, reflecting expert knowledge, and
+      demonstrating a high-quality, engaging, and insightful answer.
+
+      <prompt>{{ prompt }}</prompt>
+      <response>{{ response }}</response>
+
+      After examining the user's instruction and the response:
+      - Briefly justify your total score, up to 100 words.
+      - Conclude with the score using the format: "Score: <total points>"
+      Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
+      necessary. To evaluate the response in alignment with this additive scoring model, we'll
+      systematically attribute points based on the outlined criteria.
+      <extra_id_1>Assistant
+	
+    llm_meta_judge_prompt: |
+      <extra_id_0>System
+
+      <extra_id_1>User
+      Review the user's question and the corresponding response, along with two judgments.
+      Determine which judgment is more accurate according to the rubric provided below. The
+      rubric used for the initial judgments is as follows:
+      - Add 1 point if the response is relevant and provides some information related to
+      the user's inquiry, even if it is incomplete or contains some irrelevant content.
+      - Add another point if the response addresses a substantial portion of the user's question,
+      but does not completely resolve the query or provide a direct answer.
+      - Award a third point if the response answers the basic elements of the user's question in a
+      useful way, regardless of whether it seems to have been written by an AI Assistant or if it
+      has elements typically found in blogs or search results.
+      - Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
+      addressing the user's question directly and comprehensively, and is well-organized and helpful,
+      even if there is slight room for improvement in clarity, conciseness or focus.
+      - Bestow a fifth point for a response that is impeccably tailored to the user's question
+      by an AI Assistant, without extraneous information, reflecting expert knowledge, and
+      demonstrating a high-quality, engaging, and insightful answer.
+
+      <prompt>{{ prompt }}<prompt>
+      <response>{{ response }}<response>
+      <judgement A>{{ judgement_a }}<judgement A>
+      <judgement B>{{ judgement_b }}<judgement B>
+
+      After examining the original question, response, and both judgments:
+      - Explain which judgment is more accurate according to the original rubric and why.
+      Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
+      consistency in applying the criteria.
+      - Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
+      <extra_id_1>Assistant
+
 
     # params for generation
     sampling_params:

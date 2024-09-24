@@ -136,15 +136,15 @@ class GenerationTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-        self.num_responses_to_gen = self.model.cfg.spin.num_responses_to_gen
-        self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
-        self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
+        self.num_responses_to_gen = self.model.cfg.generation.num_responses_to_gen
+        self.length_params = OmegaConf.to_container(self.model.cfg.generation.length_params, resolve=True)
+        self.sampling_params = OmegaConf.to_container(self.model.cfg.generation.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
         dp_batch_size = self.model.cfg.global_batch_size // parallel_state.get_data_parallel_world_size()
         #assert (
-        #    self.model.cfg.spin.rollout_micro_batch_size % dp_batch_size == 0
-        #), f"rollout_micro_batch_size [{self.model.cfg.spin.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
-        #self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
+        #    self.model.cfg.generation.rollout_micro_batch_size % dp_batch_size == 0
+        #), f"rollout_micro_batch_size [{self.model.cfg.generation.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
+        #self.rollout_micro_batch_size = self.model.cfg.generation.rollout_micro_batch_size
         #assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
         
         # storage for generated responses which we want to save

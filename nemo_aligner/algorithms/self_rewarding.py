@@ -27,6 +27,7 @@ from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
+from nemo.collections.common.tokenizers import AutoTokenizer
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingRandomBatchSampler,
@@ -192,7 +193,7 @@ systematically attribute points based on the outlined criteria.
 """
 
 
-DEFAULT_LLM_AS_JUDGE_PROMPT_LLAMA3 = """<|start_header_id|>system<|end_header_id|>
+DEFAULT_LLM_AS_JUDGE_PROMPT_LLAMA3 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 
 <|eot_id|><|start_header_id|>user<|end_header_id|>
 
@@ -260,12 +261,55 @@ consistency in applying the criteria.
 <extra_id_1>Assistant
 """
 
+
+DEFAULT_META_JUDGE_PROMPT_LLAMA3 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+
+<|eot_id|><|start_header_id|>user<|end_header_id|>
+
+Review the user's question and the corresponding response, along with two judgments.
+Determine which judgment is more accurate according to the rubric provided below. The
+rubric used for the initial judgments is as follows:
+- Add 1 point if the response is relevant and provides some information related to
+the user's inquiry, even if it is incomplete or contains some irrelevant content.
+- Add another point if the response addresses a substantial portion of the user's question,
+but does not completely resolve the query or provide a direct answer.
+- Award a third point if the response answers the basic elements of the user's question in a
+useful way, regardless of whether it seems to have been written by an AI Assistant or if it
+has elements typically found in blogs or search results.
+- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
+addressing the user's question directly and comprehensively, and is well-organized and helpful,
+even if there is slight room for improvement in clarity, conciseness or focus.
+- Bestow a fifth point for a response that is impeccably tailored to the user's question
+by an AI Assistant, without extraneous information, reflecting expert knowledge, and
+demonstrating a high-quality, engaging, and insightful answer.
+
+<prompt>{{ prompt }}<prompt>
+<response>{{ response }}<response>
+<judgement A>{{ judgement_a }}<judgement A>
+<judgement B>{{ judgement_b }}<judgement B>
+
+After examining the original question, response, and both judgments:
+- Explain which judgment is more accurate according to the original rubric and why.
+Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
+consistency in applying the criteria.
+- Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
+<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+
+"""
+
+
 DEFAULT_REWARD_REGEX_TEMPLATE = "(?i)(?:Score|Points): {{ reward }}"
 DEFAULT_META_REWARD_REGEX_TEMPLATE = "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
 
 
 SCALE = 400
 INIT_RATING = 1000
+
+
+def ids_to_text(self, ids):
+    tokens = self.ids_to_tokens(ids)
+    text = self.tokens_to_text(tokens)
+    return text
 
 
 class SelfRewardingTrainer:
@@ -353,18 +397,27 @@ class SelfRewardingTrainer:
         # for wandb table
         self.train_df = pd.DataFrame(columns=["step", "prompt", "chosen_response", "rejected_response"])
         
-        # llm-as-judge prompt and reward
-        #self.prompt_template = dedent(DEFAULT_LLM_AS_JUDGE_PROMPT)
-        #self.reward_regex_template = dedent(DEFAULT_REWARD_REGEX_TEMPLATE)
-        self.prompt_template = DEFAULT_LLM_AS_JUDGE_PROMPT
-        self.meta_judge_template = DEFAULT_META_JUDGE_PROMPT
-        self.reward_regex_template = DEFAULT_REWARD_REGEX_TEMPLATE
-        self.meta_judge_reward_regex_template = DEFAULT_META_REWARD_REGEX_TEMPLATE
+        if isinstance(self.model.tokenizer, AutoTokenizer):
+            self.model.tokenizer.ids_to_text = partial(ids_to_text, self.model.tokenizer)
         
-        assert find_variables_from_jinja_template(self.prompt_template) == {'prompt', 'response'}, 'template must include prompt and response templating variables'
+        # llm-as-judge prompt and reward
+        #self.prompt_template = DEFAULT_LLM_AS_JUDGE_PROMPT
+        #self.meta_judge_template = DEFAULT_META_JUDGE_PROMPT
+        #self.reward_regex_template = DEFAULT_REWARD_REGEX_TEMPLATE
+        #self.meta_judge_reward_regex_template = DEFAULT_META_REWARD_REGEX_TEMPLATE
+        
+        self.prompt_template = self.model.cfg.spin.get("llm_judge_prompt", DEFAULT_LLM_AS_JUDGE_PROMPT)
+        self.meta_judge_template = self.model.cfg.spin.get("llm_meta_judge_prompt", DEFAULT_META_JUDGE_PROMPT)
+        self.reward_regex_template = self.model.cfg.spin.get("judge_reward_regex", DEFAULT_REWARD_REGEX_TEMPLATE)
+        self.meta_judge_reward_regex_template = self.model.cfg.spin.get("meta_judge_reward_regex", DEFAULT_META_REWARD_REGEX_TEMPLATE)
+        
+        assert find_variables_from_jinja_template(self.prompt_template) == {'prompt', 'response'}, 'llm_judge_prompt must include `prompt` and `response` templating variables'
+        assert find_variables_from_jinja_template(self.meta_judge_template) == {'prompt', 'response', 'judgement_a', 'judgement_b'}, 'llm_meta_judge_prompt must include `prompt`, `response`, `judgement_a`, and `judgement_b` templating variables'
+        assert find_variables_from_jinja_template(self.reward_regex_template) == {'reward'}, 'judge_reward_regex must include `reward` templating variable'
+        assert find_variables_from_jinja_template(self.meta_judge_reward_regex_template) == {'reward'}, 'meta_judge_reward_regex must include `reward` templating variable'
+        
         self.template_fn = jinja2_env.from_string(self.prompt_template).render
         self.meta_judge_template_fn = jinja2_env.from_string(self.meta_judge_template).render
-        
         self.parse_reward_fn = create_parse_reward_fn(self.reward_regex_template)
         self.meta_parse_reward_fn = create_meta_parse_reward_fn(self.meta_judge_reward_regex_template)
         
@@ -544,18 +597,6 @@ class SelfRewardingTrainer:
             generations = self.trtllm_generate.generate(inputs)
             response_tokens = generations["response_tokens"]
             response_lengths = generations["response_lengths"]
-            '''
-            prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
-            # double check with nemo logic to make sure it ended
-            is_valid = strategy.end_of_generation_condition(
-                response_tokens, prev, self.model.tokenizer.eos_id, self.sampling_params["end_strings"]
-            )
-            
-            for idx in range(len(response_tokens)):
-                if torch.min(response_tokens[idx]).item() < 0 or torch.max(response_tokens[idx]).item() >= self.model.tokenizer.vocab_size:
-                    is_valid[idx] = False
-                    response_tokens[idx] = torch.clamp(response_tokens[idx], min=self.model.tokenizer.eos_id, max=self.model.tokenizer.vocab_size - 1)
-            '''
         else:
             generations = self.model.generate(
                 inputs=inputs,
@@ -612,10 +653,6 @@ class SelfRewardingTrainer:
                 batch_responses_str.append(response)
             rewards = [self.parse_reward_fn(resp_str) for resp_str in batch_responses_str]
             for idx, (r, t, s, e, end) in enumerate(zip(rewards, reward_responses, prompt_lengths.tolist(), resp_lengths.tolist(), is_end.tolist())):
-                #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and r is None:
-                #    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
-                #if r is not None and r > 10000:
-                #    print("*** high_score_response: ", batch_responses_str[idx])
                 # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
                 # a valid score, it's all good, we don't need correctness beyond that
                 #reward_scores[idx].append(r if end else None)
@@ -623,7 +660,7 @@ class SelfRewardingTrainer:
                 # should we include responses which only contain valid scores?
                 if self.use_meta_judge:
                     judge_responses[idx].append((t,s,e,end) if ((r is not None) and (r >= 0 and r <= 5)) else None)
-        #print("*** reward_scores_get_rewards: ", reward_scores)
+
         assert all([len(b) == self.num_evals_to_average for b in reward_scores]), f"did not get generate the correct number of reward scores: {reward_scores}"
         reward_scores = [[*filter(exists, b)] for b in reward_scores]
         if self.use_meta_judge:
@@ -645,15 +682,11 @@ class SelfRewardingTrainer:
                 batch_responses_str.append(response)
             rewards = [self.meta_parse_reward_fn(resp_str) for resp_str in batch_responses_str]
             for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
-                #if torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank() and r is None:
-                #    print("*** none_reward_for_this_resp: ", batch_responses_str[idx])
-                #if r is not None and r > 10000:
-                #    print("*** high_score_response: ", batch_responses_str[idx])
                 # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
                 # a valid score, it's all good, we don't need correctness beyond that
                 #reward_scores[idx].append(r if end else None)
                 reward_scores[idx].append(r if ((r is not None) and (r == 'A' or r == 'B')) else None)
-        #print("*** reward_scores_get_rewards: ", reward_scores)
+
         reward_scores = [[*filter(exists, b)] for b in reward_scores]
         
         reward_means = [(b[0] if len(b) > 0 else None) for b in reward_scores]
@@ -756,7 +789,6 @@ class SelfRewardingTrainer:
 
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
-
                         if (not self.first_iteration_sft) and torch.distributed.get_rank() == 0:
                             for idx in range(len(global_batch["bad_samples"])):
                                 if not global_batch["bad_samples"][idx]:
@@ -896,7 +928,7 @@ class SelfRewardingTrainer:
                             prompt = self.model.tokenizer.ids_to_text(t[:s].tolist()).replace("<extra_id_0>System\n\n", "")
                             response = self.model.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
                             # llama3
-                            #prompt = self.model.tokenizer.ids_to_text(t[:s].tolist()).replace("<|start_header_id|>system<|end_header_id|>\n\n", "")
+                            #prompt = self.model.tokenizer.ids_to_text(t[:s].tolist()).replace("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", "")
                             #response = self.model.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
                             reward_prompt_str = self.template_fn(prompt=prompt, response=response)
                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
@@ -911,28 +943,43 @@ class SelfRewardingTrainer:
                                     #response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
                                     reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
                                     reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                    '''
                                     if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
                                         overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
-                                        response_ft = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response_ft)[:-(overage+1)])
+                                        #if overage >= len(self.model.tokenizer.text_to_ids(response_ft)):
+                                        #    print(f"*** OVERAGE_NOT_FIT_RESPONSE: {reward_prompt_str}")
+                                        response_ft = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response_ft)[:-overage])
+                                        reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
+                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                    '''
+                                    while len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8):
+                                        overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
+                                        if overage > len(self.model.tokenizer.text_to_ids(response_ft)):
+                                            print(f"*** OVERAGE_NOT_FIT_RESPONSE: {reward_prompt_str}")
+                                            reward_prompt_str = self.template_fn(prompt="How does one make tea?", response="I have no answer at all.")
+                                            reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                            break
+                                        response_ft = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response_ft)[:-overage])
                                         reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
                                         reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                                 except:
                                     print(f"*** TOO_LONG: {prompt_and_response}")
                                     #overage = len(reward_prompt) - (self.model.cfg.encoder_seq_length - self.max_gen_seq_len)
-                                    overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
-                                    if len(self.model.tokenizer.text_to_ids(response)) >= overage:
-                                        # truncate response only
-                                        response = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response)[:-(overage+1)])
-                                        reward_prompt_str = self.template_fn(prompt=prompt, response=response)
-                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                        #assert len(reward_prompt) <= self.model.cfg.data.train_ds.max_seq_length, f"truncation of response only failed: {reward_prompt_str}"
-                                    else:
-                                        # truncate response and prompt *SHOULD NEVER HAPPEN*
-                                        print("*** PROMPT_AND_RESPONSE_NEED_TRUNCATION")
-                                        reward_prompt_str = self.template_fn(prompt="How does one make tea?", response="I have no answer at all.")
-                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                assert len(reward_prompt) <= (self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8), f"truncation of response only failed [ {len(reward_prompt)} ]: {reward_prompt_str}"
-                                    
+                                    while len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8):
+                                        overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
+                                        if len(self.model.tokenizer.text_to_ids(response)) >= overage:
+                                            # truncate response only
+                                            response = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response)[:-overage])
+                                            reward_prompt_str = self.template_fn(prompt=prompt, response=response)
+                                            reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                        else:
+                                            # truncate response and prompt *SHOULD NEVER HAPPEN*
+                                            print("*** PROMPT_AND_RESPONSE_NEED_TRUNCATION")
+                                            reward_prompt_str = self.template_fn(prompt="How does one make tea?", response="I have no answer at all.")
+                                            reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                            break
+                                assert len(reward_prompt) <= (self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8), f"truncation of response only failed [ {len(reward_prompt)} ]: {reward_prompt_str}"                                    
+
                             reward_buffer.append({"prompt_lengths": torch.LongTensor([len(reward_prompt)]), "prompts_only": torch.LongTensor(reward_prompt).unsqueeze(0)})
                         
                         #assert all([x['prompt_lengths'].item() <= self.model.cfg.data.train_ds.max_seq_length for x in reward_buffer]), f"reward_buffer violation: {[x['prompt_lengths'] for x in reward_buffer]}"
@@ -954,13 +1001,6 @@ class SelfRewardingTrainer:
                         filtered_variances = [(v,j,idx) for idx, (v,j,e) in enumerate(zip(variances, j_responses, ends)) if (v is not None) and (v > 0) and (len(j) > 1) and e]
                         bad_sample = False
                         
-                        # TODO: sample more from the underlying Dataset instead
-                        # if we have just one non-None value, take it as the chosen, and randomly choose from the others for reject
-                        #if len(filtered_scores) == 1:
-                            #idx_chosen = np.where(np.array(scores) == filtered_scores[0])[0][0]
-                            #idx_chosen = filtered_scores[0][-1]
-                            #idx_reject = np.random.choice(list(set(range(len(scores))) - set([idx_chosen])), 1, replace=False).item()
-                            #bad_sample = True
                         # if all scores are identical (even all None) we just randomly choose
                         if len(filtered_scores) <= 1 or all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
                             idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
@@ -1020,7 +1060,6 @@ class SelfRewardingTrainer:
                             for a, b in itertools.combinations([self.model.tokenizer.ids_to_text(s[0][s[1]:s[2]].tolist()) for s in reward_tokens_raw], 2):
                                 score_a = self.parse_reward_fn(a)
                                 score_b = self.parse_reward_fn(b)
-                                #print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_SAMPLE_REWARDS  A [ {score_a} ]  B [ {score_b} ]")
                                 if score_a is None or score_b is None or a == b:
                                     continue
                                 a = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", a)
