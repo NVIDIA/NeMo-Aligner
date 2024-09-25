@@ -416,6 +416,11 @@ class SelfRewardingTrainer:
         assert find_variables_from_jinja_template(self.reward_regex_template) == {'reward'}, 'judge_reward_regex must include `reward` templating variable'
         assert find_variables_from_jinja_template(self.meta_judge_reward_regex_template) == {'reward'}, 'meta_judge_reward_regex must include `reward` templating variable'
         
+        print(f"*** llm_judge_prompt: {self.prompt_template}")
+        print(f"*** llm_meta_judge_prompt: {self.meta_judge_template}")
+        print(f"*** judge_reward_regex: {self.reward_regex_template}")
+        print(f"*** meta_judge_reward_regex: {self.meta_judge_reward_regex_template}")
+        
         self.template_fn = jinja2_env.from_string(self.prompt_template).render
         self.meta_judge_template_fn = jinja2_env.from_string(self.meta_judge_template).render
         self.parse_reward_fn = create_parse_reward_fn(self.reward_regex_template)
