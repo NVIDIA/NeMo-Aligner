@@ -487,12 +487,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             ## TODO: fix. Is this support to be loss_mask?
             #neg_loss[target_mask] = 0.0
             
-            
-            # All reduce is needed to get the chunks from other GPUs.
-            torch.distributed.all_reduce(
-                neg_loss, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
-            )
-
             # compute the logsumexp of all K logits
             exp_logits = predicted_logits.exp()
             exp_logits[target_mask] = 0.0
@@ -538,7 +532,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             # this should be computed on one TP only. We do this in rank=0
             sum_predicted_probs = predicted_logprobs.exp().sum(dim=-1, keepdims=False)
             torch.distributed.all_reduce(
-                sum_predicted_probs, op=torch.distributed.ReduceOp.SUM, group=get_tensor_model_parallel_group()
+                sum_predicted_probs, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
             )
             logprob_K_add_1 = (1 - sum_predicted_probs).log()
             loss = - neg_loss - target_prob_K_add_1 * logprob_K_add_1
@@ -558,7 +552,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
 
-        # Retreive tensors from the forward path.
         (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
          target_token_ids_1d, partition_vocab_size) = ctx.saved_tensors
 
@@ -572,6 +565,11 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         arange_1d = torch.arange(start=0, end=grad_2d.size()[0], device=grad_2d.device).repeat_interleave(K)
 
         ## slot in the non-zero gradients
+        inv_target_mask = ~target_mask
+        probs = probs[inv_target_mask]
+        target_probs = target_probs[inv_target_mask]
+        arange_1d = arange_1d[inv_target_mask.view(-1)]
+        target_token_ids_1d = target_token_ids_1d[inv_target_mask.view(-1)]
         grad_2d[arange_1d, target_token_ids_1d] = probs.view(-1)
 
         softmax_update = torch.zeros_like(grad_2d)
