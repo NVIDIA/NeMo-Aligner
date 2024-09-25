@@ -46,7 +46,7 @@ from nemo_aligner.utils.ppo_utils import (
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
-from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
+from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean, masked_var
 
 
 class PPORolloutBatch(UserDict):
@@ -103,16 +103,19 @@ class PPORolloutBatch(UserDict):
 
         return global_rollout_batch
 
-    def chunk(self, rank, split_size, seed):
+    def chunk(self, rank, split_size):
         chunked_rollout_batch = type(self)()
 
         batch_set = set(tensor.size(0) for tensor in self.data.values())
         assert len(batch_set) == 1, "batch sizes are not the same across the rollout batch"
         B = batch_set.pop()
 
-        g_cpu = torch.Generator()
-        g_cpu.manual_seed(seed)
-        indices = torch.randperm(B, generator=g_cpu).tensor_split(split_size)[rank]
+        # g_cpu = torch.Generator()
+        # g_cpu.manual_seed(seed)
+        # indices = torch.randperm(B, generator=g_cpu).tensor_split(split_size)[rank]
+        # g_cpu = torch.Generator()
+        # g_cpu.manual_seed(seed)
+        indices = torch.arange(B).tensor_split(split_size)[rank]
 
         for k in self.data:
             chunked_rollout_batch[k] = self.data[k][indices].clone()
@@ -209,6 +212,7 @@ class PPOTrainer:
         response_tokens = rollout_batch["response_tokens"]
         values = rollout_batch["values"]
         rewards = rollout_batch["rewards"]
+
         logprobs = rollout_batch["logprobs"]
         is_end = rollout_batch["is_end"]
 
@@ -270,11 +274,36 @@ class PPOTrainer:
             ppo_rollout_metrics[f"{key}_std"] = global_var.sqrt().item()
 
         if self.cfg.normalize_advantages:
-            ppo_rollout_data["advantages"] = normalize_tensor(
-                ppo_rollout_data["advantages"],
-                ppo_rollout_data["mask"],
-                group=parallel_state.get_data_parallel_group(),
+            # by assumption all the ones we need to normalize are inside the local batch
+
+            # folding
+            advantages = ppo_rollout_data["advantages"]
+            mask = ppo_rollout_data["mask"]
+            prev_advantages = advantages
+
+            seq_length = advantages.size(-1)
+            advantages = advantages.view(
+                -1, self.cfg.rollout_micro_batch_size * self.cfg.num_responses_per_prompt, seq_length
             )
+            advantages = advantages.view(advantages.size(0), self.cfg.num_responses_per_prompt, -1, seq_length)
+
+            mask = mask.view(-1, self.cfg.rollout_micro_batch_size * self.cfg.num_responses_per_prompt, seq_length)
+            mask = mask.view(mask.size(0), self.cfg.num_responses_per_prompt, -1, seq_length)
+
+            mean = (advantages * mask).sum(1, keepdim=True) / mask.sum(1, keepdim=True)
+            var = (((advantages - mean) ** 2) * mask).sum(1, keepdim=True) / mask.sum(1, keepdim=True)
+
+            mean = masked_mean(advantages, mask, dim=1)
+            var = masked_var(advantages, mask, dim=1)
+            advantages.sub_(mean).mul_(torch.rsqrt(var + 1e-8)).nan_to_num_(0)
+
+            ppo_rollout_data["advantages"] = prev_advantages
+            # # maybe: gather everything, normal per prompt and then rechunk
+            # ppo_rollout_data["advantages"] = normalize_tensor(
+            #     ppo_rollout_data["advantages"],
+            #     ppo_rollout_data["mask"],
+            #     group=parallel_state.get_data_parallel_group(),
+            # )
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
 
@@ -303,11 +332,15 @@ class PPOTrainer:
             timer_metrics["batch_iterator_init"] = self.timer.stop_and_get_time("batch_iterator_init")
 
             self.timer.start("generate")
-            for batch in batch_iterator:
-                rollout_batch = self.model.infer(batch)
-                rollout_batches.append(rollout_batch)
 
-                futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+            for batch in batch_iterator:
+                num_loopy = 1 if is_validation else self.cfg.num_responses_per_prompt
+
+                for _ in range(num_loopy):
+                    rollout_batch = self.model.infer(batch)
+                    rollout_batches.append(rollout_batch)
+
+                    futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -322,9 +355,7 @@ class PPOTrainer:
 
         # the chunking must be outside of the TRT-LLM context because we do logprob calculation in nemo
         balanced_local_batch = global_rollout_batch.chunk(
-            rank=parallel_state.get_data_parallel_rank(),
-            split_size=parallel_state.get_data_parallel_world_size(),
-            seed=self.step,
+            rank=parallel_state.get_data_parallel_rank(), split_size=parallel_state.get_data_parallel_world_size(),
         )
         # since we compute the logprobs in nemo we need to disable the resharding
         batched_response_tokens = balanced_local_batch["response_tokens"]
@@ -361,14 +392,13 @@ class PPOTrainer:
         # NOTE: the seed here must be the same as the chunk before since we need to shuffle
         # these values the same way as the other values
         balanced_rm_value_batch = global_rm_value_batch.chunk(
-            rank=parallel_state.get_data_parallel_rank(),
-            split_size=parallel_state.get_data_parallel_world_size(),
-            seed=self.step,
+            rank=parallel_state.get_data_parallel_rank(), split_size=parallel_state.get_data_parallel_world_size(),
         )
         balanced_local_batch.update(balanced_rm_value_batch)
 
         global_rollout_batch.update(global_rm_value_batch)
 
+        # TODO: maybe compute local advantage normalization?
         return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
 
     def compute_rollout_metrics(self, rollout_batch):
@@ -394,7 +424,7 @@ class PPOTrainer:
 
         metrics = {
             "table": table,
-            "rollout_size": prompt_lengths.size(0),
+            "rollout_size": prompt_lengths.size(0) // self.cfg.num_responses_per_prompt,
             "response_lengths": response_lengths.float().mean().item(),
             "prompt_lengths": prompt_lengths.float().mean().item(),
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),

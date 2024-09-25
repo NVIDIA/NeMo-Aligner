@@ -15,6 +15,8 @@ trainer:
     # good at estimating the returns of the policy.
     # NOTE: setting this to N means the critic will be trained N + 1 times on the first
     # iteration.
+    num_responses_per_prompt: 1
+
     critic_warmup_steps: 0
 
     max_epochs: 1
@@ -70,6 +72,7 @@ trainer:
 
     # pick up from the model
     # *do not change this*
+    rollout_micro_batch_size: ${model.ppo.rollout_micro_batch_size}
     model_gbs: ${model.global_batch_size}
     model_mbs: ${model.micro_batch_size}
 

@@ -198,6 +198,16 @@ def masked_std(values, mask, dim=None):
     return as_masked_tensor(values, mask.bool()).std(dim=dim).to_tensor(torch.nan)
 
 
+@surpress_user_warnings
+def masked_var(values, mask, dim=None):
+    """
+    Masks values with mask, and computes the std of the values using the masked values.
+    """
+    if dim is None:
+        return values[mask.bool()].var()
+    return as_masked_tensor(values, mask.bool()).std(dim=dim).to_tensor(torch.nan)
+
+
 def extract_value_from_ckpt(key, ckpt_path):
     try:
         val = int(float(re.findall(rf"{key}\=([0-9]+\.*[0-9]*)", ckpt_path)[0]))
