@@ -13,6 +13,16 @@ We support both full-parameter DPO training and LoRA DPO training.
 For full-parameter DPO, there exists an actor and a reference model. The actor is initialized with the reference model and is fully trainable. The reference model is frozen and used to calculate logprobs for KL-penalty loss (see `DPO paper <https://arxiv.org/pdf/2305.18290.pdf>`__). 
 For LoRA-based DPO, the actor is initialized by the reference model plus LoRA weights, where only the LoRA weights are trainable. Therefore, it allows us to switch between the actor/reference models by simply enabling or disabling LoRA. In addition, there is no need to store two sets of LLM weights.
 
+.. _rpo-ipo-anchor:
+
+.. toctree::
+   :hidden:
+
+   rpo-ipo-variations
+
+RPO and IPO Variations
+#######################
+
 Besides the vanilla DPO algorithm, we support other variants of DPO algorithms including Identity preference optimization (IPO) and Reward-aware preference optimization (RPO). The algorithm is identified with the ``dpo.preference_loss`` config variable. We support three sorts of RPO algorithms based on the distance metric: ``rpo_sq`` for squared distance; ``rpo_bwd_kl`` for Bernoulli backward KL divergence; ``rpo_fwd_kl`` for Bernoulli forward KL divergence. To use the RPO algorithm, each dataset example should have ``chosen_reward`` and ``rejected_reward``, which might come from Human labelers or reward models. If ``chosen_reward`` and ``rejected_reward`` are not existent in the data, ``dpo.default_chosen_reward`` and ``dpo.default_rejected_reward`` are used.
 
 Obtaining a Pretrained Model
