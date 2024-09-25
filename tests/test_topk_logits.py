@@ -83,7 +83,16 @@ def loss_func(logits, target_logits, loss_mask, kd_loss="bwd_kl", logits_scale=1
     return torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
     
 
-def naive_topk_loss_function(output_tensor, target_topk_logits, target_topk_token_ids, target_log_sum_exp_logits, loss_mask):
+def naive_topk_loss_function(
+    output_tensor,
+    target_topk_logits,
+    target_topk_token_ids,
+    target_log_sum_exp_logits,
+    loss_mask,
+    labels,
+    kd_loss_weight = 1,
+    sft_loss_weight = 0,
+):
 
     output_tensor_max = torch.max(output_tensor, dim=-1)[0]
     torch.distributed.all_reduce(output_tensor_max,
@@ -125,18 +134,18 @@ def naive_topk_loss_function(output_tensor, target_topk_logits, target_topk_toke
     
     # compute the sft loss against the ground-truth labels
     sft_loss = torch.zeros_like(kd_loss)
-    if False: #sft_loss_weight != 0: ## TODO: add support
+    if sft_loss_weight != 0: ## TODO: add support
         target_label_logits = torch.gather(output_tensor, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
         if log_sum_exp_logits is None:
             log_sum_exp_logits = torch.logsumexp(output_tensor, dim=-1)
         target_label_logprobs = target_label_logits - log_sum_exp_logits
         sft_loss = - torch.sum(target_label_logprobs * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
     
-    # compute the aggregated loss ## TODO: support
-    #loss = self.kd_loss_weight * kd_loss + self.sft_loss_weight * sft_loss
-    return kd_loss
+    loss = kd_loss_weight * kd_loss + sft_loss_weight * sft_loss
 
-def test_topk_logits(K = 3, batch_size = 4, seq_len = 8, partition_vocab_size = 16):
+    return loss
+
+def test_topk_logits(K = 3, batch_size = 4, seq_len = 8, partition_vocab_size = 16, sft_loss_weight = 0.5, kd_loss_weight = 0.5):
     
     rank = int(os.environ['LOCAL_RANK'])
     world_size = torch.cuda.device_count()
@@ -153,6 +162,7 @@ def test_topk_logits(K = 3, batch_size = 4, seq_len = 8, partition_vocab_size = 
     target_logits, target_token_ids = torch.topk(true_logits, 3)
     target_log_sum_exp_logits = true_logits.exp().sum(-1)
     loss_mask = torch.ones(target_logits.size()[:-1]).to(torch.cuda.current_device())
+    labels = torch.randint(low = 0, high = partition_vocab_size * world_size, size = (batch_size, seq_len)).to(torch.cuda.current_device())
 
     torch.manual_seed(torch.cuda.current_device() + 10)
     vocab_parallel_logits = torch.autograd.Variable((torch.randint(low=0, high=100, size=(batch_size, seq_len, partition_vocab_size)) / 5).to(torch.cuda.current_device()),  requires_grad=True)
@@ -166,13 +176,28 @@ def test_topk_logits(K = 3, batch_size = 4, seq_len = 8, partition_vocab_size = 
     # test forward
     ctx = torch.autograd.function.FunctionCtx()
 
-    naive_loss = naive_topk_loss_function(vocab_parallel_logits, target_logits, target_token_ids, target_log_sum_exp_logits, loss_mask)
+    naive_loss = naive_topk_loss_function(
+        vocab_parallel_logits,
+        target_logits,
+        target_token_ids,
+        target_log_sum_exp_logits,
+        loss_mask,
+        labels,
+        kd_loss_weight,
+        sft_loss_weight,
+    )
     
-    ## TODO: loss mask?
-    new_loss = _TopKLogitsCrossEntropy.forward(ctx, vocab_parallel_logits, target_logits, target_token_ids, None) #, target_log_sum_exp_logits)
+    new_loss = _TopKLogitsCrossEntropy.forward(
+        ctx,
+        vocab_parallel_logits,
+        target_logits,
+        target_token_ids,
+        None,
+        labels,
+        False,
+        kd_loss_weight,
+        sft_loss_weight)
     ## sum p(x)logp(x) - p(x) logq(x)
-    target_probs = target_logits.exp()
-    target_probs = target_probs / target_probs.sum(-1, keepdims=True)
     new_loss = torch.mean(new_loss) ## TODO -- at what point do we reduce?
 
     torch.testing.assert_close(naive_loss, new_loss)
