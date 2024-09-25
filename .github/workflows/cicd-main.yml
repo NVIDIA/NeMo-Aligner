@@ -63,4 +63,5 @@ jobs:
        RUNNER: self-hosted
        TIMEOUT: 20
        SCRIPT: |
-         pytest tests/
+          cd /opt/NeMo-Aligner/
+          PYTHONPATH=$(pwd) pytest tests/
