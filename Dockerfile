@@ -102,7 +102,7 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
     git lfs install
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
-RUN cd /opt/nemo_aligner && \
+RUN cd /opt/NeMo-Aligner && \
     pip install --no-deps -e .
 
 # TRTLLM
