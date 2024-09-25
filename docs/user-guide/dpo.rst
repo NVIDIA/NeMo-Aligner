@@ -2,23 +2,19 @@
 
 .. _model-aligner-dpo:
 
-Model Alignment by Direct Preference Optimization (DPO)
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+Model Alignment by DPO, RPO and IPO
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 The NeMo Framework supports efficient model alignment via the NeMo-Aligner codebase.
 
 All algorithms in NeMo-Aligner will work with any GPT-based model that is from Megatron Core (in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire DPO pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  The same tutorial also works for GPT models (such as LLaMa2) of any size.
 
+DPO with LoRA
+#############
+
 We support both full-parameter DPO training and LoRA DPO training. 
 For full-parameter DPO, there exists an actor and a reference model. The actor is initialized with the reference model and is fully trainable. The reference model is frozen and used to calculate logprobs for KL-penalty loss (see `DPO paper <https://arxiv.org/pdf/2305.18290.pdf>`__). 
 For LoRA-based DPO, the actor is initialized by the reference model plus LoRA weights, where only the LoRA weights are trainable. Therefore, it allows us to switch between the actor/reference models by simply enabling or disabling LoRA. In addition, there is no need to store two sets of LLM weights.
-
-.. _rpo-ipo-anchor:
-
-.. toctree::
-   :hidden:
-
-   rpo-ipo-variations
 
 RPO and IPO Variations
 #######################
