@@ -124,7 +124,7 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                 output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
                 
                 # compute the knowlodge distillation loss against the ground-truth logits
-                topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
+                """topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
 
                 if self.use_k_add_1_logits:
                     # When target_log_sum_exp_logits is not None. The objective is
@@ -151,7 +151,17 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     log_sum_exp_logits = None
                     target_topk_logits_in_loss = target_topk_logits
                     
-                kd_loss = self.loss_func(topk_logits, target_topk_logits_in_loss, loss_mask=loss_mask)
+                kd_loss = self.loss_func(topk_logits, target_topk_logits_in_loss, loss_mask=loss_mask)"""
+
+                ## bwd kl
+                kd_loss = _TopKLogitsCrossEntropy.apply(
+                    output_tensor,
+                    target_topk_logits,
+                    target_topk_token_ids,
+                    target_log_sum_exp_logits,
+                    use_k_add_1_logits=False,
+                )
+                kd_loss = torch.sum(kd_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
                 
                 # compute the sft loss against the ground-truth labels
                 sft_loss = torch.zeros_like(kd_loss)

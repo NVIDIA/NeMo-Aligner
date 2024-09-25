@@ -427,7 +427,15 @@ def compute_topk_logits_in_batched_sequence(
 
 class _TopKLogitsCrossEntropy(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, vocab_parallel_logits, target_logits, target_token_ids, target_log_sum_exp_logits):
+    def forward(
+        ctx,
+        vocab_parallel_logits,
+        target_logits,
+        target_token_ids,
+        target_log_sum_exp_logits,
+        use_k_add_1_logits = False
+    ):
+ 
         # vocab_parallel_logits: logits
         # target_logits: Tensor of [B, seq_len, K]. Logits values of the target tokens.
         # target_token_ids: Tensor of [B, seq_len, K]. Token ids of the target tokens.
@@ -479,14 +487,11 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         #          = sum_{k=1}^{K} target_prob_k * logits_k - sum_{k=1}^{K} target_prob_k * log sum_{k=1}^K exp(logits_k)
         #          = sum_{k=1}^{K} target_prob_k * logits_k - log sum_{k=1}^K exp(logits_k)
         # neg_loss will be Tensor of shape [B, seq_len]
-        if target_log_sum_exp_logits is None:
+        if not use_k_add_1_logits:
             target_probs = target_logits.exp()
             target_probs = target_probs / target_probs.sum(-1, keepdims=True)
             neg_loss = (target_probs * predicted_logits).sum(-1, keepdims=False)
 
-            ## TODO: fix. Is this support to be loss_mask?
-            #neg_loss[target_mask] = 0.0
-            
             # compute the logsumexp of all K logits
             exp_logits = predicted_logits.exp()
             exp_logits[target_mask] = 0.0
@@ -584,7 +589,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # Finally elementwise multiplication with the output gradients.
         grad_input.mul_(grad_output.unsqueeze(dim=-1))
 
-        return grad_input, None, None, None
+        return grad_input, None, None, None, None
     
 
 class SyncTimer(NamedTimer):
