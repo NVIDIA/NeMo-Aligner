@@ -33,7 +33,6 @@ else
     cd NeMo-Aligner
 fi
 
-pip wheel --no-deps .
 pip install --no-deps -e .
 EOF
 
