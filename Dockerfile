@@ -102,7 +102,7 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
     apt-get install git-lfs && \
     git lfs install
 
-COPY --from=aligner-bump /opt/nemo_aligner /opt/nemo_aligner
+COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/nemo_aligner && \
     pip install --no-deps -e .
 
