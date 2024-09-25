@@ -33,7 +33,7 @@ else
     cd NeMo-Aligner
 fi
 
-pip install --no-deps -e .
+pip install --no-cache-dir --no-deps -e .
 EOF
 
 FROM ${BASE_IMAGE} as final
@@ -51,7 +51,7 @@ RUN pip uninstall -y transformer-engine && \
         git checkout FETCH_HEAD; \
     fi && \
     git submodule init && git submodule update && \
-    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
+    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install --no-cache-dir .
 
 # install latest apex
 ARG APEX_TAG
@@ -66,10 +66,10 @@ RUN pip uninstall -y apex && \
 
 # place any util pkgs here
 ARG PYTRITON_VERSION
-RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==$PYTRITON_VERSION
+RUN pip install --upgrade-strategy only-if-needed --no-cache-dir nvidia-pytriton==$PYTRITON_VERSION
 ARG PROTOBUF_VERSION
-RUN pip install -U --no-deps protobuf==$PROTOBUF_VERSION
-RUN pip install --upgrade-strategy only-if-needed jsonlines
+RUN pip install -U --no-deps --no-cache-dir protobuf==$PROTOBUF_VERSION
+RUN pip install --upgrade-strategy only-if-needed --no-cache-dir jsonlines
 
 # NeMo
 ARG NEMO_TAG
@@ -81,7 +81,7 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
         git checkout FETCH_HEAD; \
     fi && \
     pip uninstall -y nemo_toolkit sacrebleu && \
-    pip install -e ".[nlp]" && \
+    pip install --no-cache-dir -e ".[nlp]" && \
     cd nemo/collections/nlp/data/language_modeling/megatron && make
 
 # MLM
@@ -94,11 +94,12 @@ RUN pip uninstall -y megatron-core && \
         git fetch origin $MLM_TAG && \
         git checkout FETCH_HEAD; \
     fi && \
-    pip install -e .
+    pip install --no-cache-dir -e .
 
 # Git LFS
 RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
     apt-get install git-lfs && \
+    apt-get clean && \
     git lfs install
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
@@ -115,10 +116,10 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
 
 RUN cd TensorRT-LLM && \
-    pip install ./build/tensorrt_llm*.whl
+    pip install --no-cache-dir ./build/tensorrt_llm*.whl
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # WAR(0.4.0): The pin of NeMo requires a higher nvidia-modelopt version than
 #             TRT-LLM allows. This installation must follow TRT-LLM and is
 #             only necessary when NeMo 2.0.0rc1 is installed with TRT-LLM v10.
-RUN pip install --upgrade-strategy only-if-needed nvidia-modelopt==0.13.0
+RUN pip install --no-cache-dir --upgrade-strategy only-if-needed nvidia-modelopt==0.13.0
