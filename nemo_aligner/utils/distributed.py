@@ -495,8 +495,10 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
                 sum_exp_logits, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
             )
             log_sum_exp_logits = sum_exp_logits.log()
-            
-            loss = - neg_loss + log_sum_exp_logits
+           
+            const = (target_probs * target_probs.log()).sum(-1)
+
+            loss = - neg_loss + log_sum_exp_logits + const
         
             # Store softmax, target-softmax, target-mask and masked-target for backward pass.
             probs = exp_logits / sum_exp_logits.unsqueeze(dim=-1)
@@ -552,6 +554,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
 
+        # Retreive tensors from the forward path.
         (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
          target_token_ids_1d, partition_vocab_size) = ctx.saved_tensors
 

@@ -173,8 +173,6 @@ def test_topk_logits(K = 3, batch_size = 4, seq_len = 8, partition_vocab_size = 
     ## sum p(x)logp(x) - p(x) logq(x)
     target_probs = target_logits.exp()
     target_probs = target_probs / target_probs.sum(-1, keepdims=True)
-    s = (target_probs * target_probs.log()).sum(-1)
-    new_loss += s  ## s is a constant and does not need to be included in the loss, but it's needed for tests
     new_loss = torch.mean(new_loss) ## TODO -- at what point do we reduce?
 
     torch.testing.assert_close(naive_loss, new_loss)
@@ -185,6 +183,7 @@ def test_topk_logits(K = 3, batch_size = 4, seq_len = 8, partition_vocab_size = 
     naive_loss.backward()
     naive_grad = vocab_parallel_logits.grad
     new_grad = _TopKLogitsCrossEntropy.backward(ctx, 1. / (batch_size * seq_len) * torch.ones(batch_size, seq_len).to(torch.cuda.current_device()))[0]
+
     torch.testing.assert_close(naive_grad, new_grad)
 
 if __name__ == '__main__':
