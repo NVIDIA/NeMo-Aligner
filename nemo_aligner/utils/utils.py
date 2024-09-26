@@ -285,9 +285,6 @@ def offload_distributed_adam(state_dict, force_clear_memory=False):
     if force_clear_memory:
         clear_memory()
 
-    if force_clear_memory:
-        clear_memory()
-
     try:
         yield
 
