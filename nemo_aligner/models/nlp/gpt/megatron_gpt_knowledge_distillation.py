@@ -39,6 +39,7 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_validation_step,
     set_sync_funcs,
 )
+from nemo_aligner.utils.distributed import _TopKLogitsCrossEntropy
 
 
 class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
