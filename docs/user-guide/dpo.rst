@@ -2,7 +2,7 @@
 
 .. _model-aligner-dpo:
 
-Model Alignment by DPO, RPO and IPO
+Model Alignment by DPO, RPO, and IPO
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 The NeMo Framework supports efficient model alignment via the NeMo-Aligner codebase.
