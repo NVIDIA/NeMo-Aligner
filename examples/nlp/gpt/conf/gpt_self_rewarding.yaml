@@ -7,10 +7,10 @@ trainer:
   accelerator: gpu
   precision: bf16
   
-  # spin specific args
-  spin:
-    max_iterations: 3   # the number of iterations (rounds) for which the SPIN "game" is played. This is T in the original paper
-    max_epochs: 1       # the number of epochs to use per iteration. In the paper, they do 3 iterations with 2 epochs per iteration
+  # self-rewarding specific args
+  self_rewarding:
+    max_iterations: 3   # the number of iterations to conduct self-rewarding for, with the reference policy updated on each iteration
+    max_epochs: 1       # the number of epochs to use per iteration
     max_steps: -1
     val_check_interval: 0.1
     save_interval: 100
@@ -23,13 +23,13 @@ trainer:
     # Accelerate training times by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
-      # reshard is not supported in SPIN
+      # reshard is not supported in Self-Rewarding
 
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
       generation_batch_size: ${model.spin.rollout_micro_batch_size}
-      max_input_tokens: ${multiply:${trainer.spin.trt_llm.max_input_len}, ${trainer.spin.trt_llm.generation_batch_size}}
+      max_input_tokens: ${multiply:${trainer.self_rewarding.trt_llm.max_input_len}, ${trainer.self_rewarding.trt_llm.generation_batch_size}}
 
       model_type: gptnext
 
@@ -42,8 +42,8 @@ trainer:
   enable_checkpointing: False
   use_distributed_sampler: False
   max_time: null
-  max_epochs: ${.spin.max_epochs}
-  max_steps: ${.spin.max_steps}
+  max_epochs: ${.self_rewarding.max_epochs}
+  max_steps: ${.self_rewarding.max_steps}
 
 exp_manager:
   explicit_log_dir: /results
@@ -75,6 +75,7 @@ model:
   micro_batch_size: 1
   global_batch_size: 64
   megatron_amp_O2: True
+  dist_ckpt_format: zarr
 
   spin:
     log_prob_forward_micro_batch_size: ${model.micro_batch_size}
@@ -93,6 +94,9 @@ model:
     preference_loss: dpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
     preference_loss_weight: 1 # the coefficient of the preference loss
     sft_loss_weight: 0 # the coefficient of the SFT loss
+    judge_score_low: 0  # the lowest score which the LLM-as-a-judge can aware, as per your llm_judge_prompt
+    judge_score_high: 5  # the highest score which the LLM-as-a-judge can aware, as per your llm_judge_prompt
+    meta_max_relative_pcnt: 0.4
 
     judge_reward_regex: "(?i)(?:Score|Points): {{ reward }}"
     meta_judge_reward_regex: "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"

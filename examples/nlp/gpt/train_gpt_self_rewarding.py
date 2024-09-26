@@ -52,7 +52,7 @@ def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
-    trainer = resolve_and_create_trainer(cfg, "spin")
+    trainer = resolve_and_create_trainer(cfg, "self_rewarding")
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
@@ -92,10 +92,10 @@ def main(cfg) -> None:
 
     if cfg.model.data.get("sample", False):
         # if it is negative, num_samples is None
-        if cfg.trainer.spin.max_steps < 0:
+        if cfg.trainer.self_rewarding.max_steps < 0:
             num_samples = None
         else:
-            num_samples = cfg.trainer.spin.max_steps * cfg.model.global_batch_size
+            num_samples = cfg.trainer.self_rewarding.max_steps * cfg.model.global_batch_size
     else:
         num_samples = None
     train_ds = build_sft_dataset(
@@ -108,7 +108,7 @@ def main(cfg) -> None:
     )
 
     if cfg.model.data.get("sample", False):
-        num_samples = cfg.trainer.spin.limit_val_batches * val_data_cfg.global_batch_size
+        num_samples = cfg.trainer.self_rewarding.limit_val_batches * val_data_cfg.global_batch_size
     else:
         num_samples = None
     validation_ds = build_sft_dataset(
@@ -163,8 +163,8 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
-    spin_trainer = SelfRewardingTrainer(
-        cfg=cfg.trainer.spin,
+    self_rewarding_trainer = SelfRewardingTrainer(
+        cfg=cfg.trainer.self_rewarding,
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
@@ -178,9 +178,9 @@ def main(cfg) -> None:
     )
 
     if custom_trainer_state_dict is not None:
-        spin_trainer.load_state_dict(custom_trainer_state_dict)
+        self_rewarding_trainer.load_state_dict(custom_trainer_state_dict)
 
-    spin_trainer.fit()
+    self_rewarding_trainer.fit()
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os, json, itertools, math
+import os, json, itertools, math, copy
 from functools import partial
 import numpy as np
 from collections import defaultdict
@@ -398,28 +398,23 @@ class SelfRewardingTrainer:
         self.train_df = pd.DataFrame(columns=["step", "prompt", "chosen_response", "rejected_response"])
         
         if isinstance(self.model.tokenizer, AutoTokenizer):
-            self.model.tokenizer.ids_to_text = partial(ids_to_text, self.model.tokenizer)
-        
-        # llm-as-judge prompt and reward
-        #self.prompt_template = DEFAULT_LLM_AS_JUDGE_PROMPT
-        #self.meta_judge_template = DEFAULT_META_JUDGE_PROMPT
-        #self.reward_regex_template = DEFAULT_REWARD_REGEX_TEMPLATE
-        #self.meta_judge_reward_regex_template = DEFAULT_META_REWARD_REGEX_TEMPLATE
-        
+            self.tokenizer = copy.copy(self.model.tokenizer)
+            self.tokenizer.ids_to_text = partial(ids_to_text, self.tokenizer)
+        else:
+            self.tokenizer = self.model.tokenizer
+                
         self.prompt_template = self.model.cfg.spin.get("llm_judge_prompt", DEFAULT_LLM_AS_JUDGE_PROMPT)
         self.meta_judge_template = self.model.cfg.spin.get("llm_meta_judge_prompt", DEFAULT_META_JUDGE_PROMPT)
         self.reward_regex_template = self.model.cfg.spin.get("judge_reward_regex", DEFAULT_REWARD_REGEX_TEMPLATE)
         self.meta_judge_reward_regex_template = self.model.cfg.spin.get("meta_judge_reward_regex", DEFAULT_META_REWARD_REGEX_TEMPLATE)
+        self.judge_score_low = self.model.cfg.spin.get("judge_score_low", 0)
+        self.judge_score_high = self.model.cfg.spin.get("judge_score_high", 5)
+        self.meta_max_relative_pcnt = self.model.cfg.spin.get("meta_max_relative_pcnt", 0.4)
         
         assert find_variables_from_jinja_template(self.prompt_template) == {'prompt', 'response'}, 'llm_judge_prompt must include `prompt` and `response` templating variables'
         assert find_variables_from_jinja_template(self.meta_judge_template) == {'prompt', 'response', 'judgement_a', 'judgement_b'}, 'llm_meta_judge_prompt must include `prompt`, `response`, `judgement_a`, and `judgement_b` templating variables'
         assert find_variables_from_jinja_template(self.reward_regex_template) == {'reward'}, 'judge_reward_regex must include `reward` templating variable'
         assert find_variables_from_jinja_template(self.meta_judge_reward_regex_template) == {'reward'}, 'meta_judge_reward_regex must include `reward` templating variable'
-        
-        print(f"*** llm_judge_prompt: {self.prompt_template}")
-        print(f"*** llm_meta_judge_prompt: {self.meta_judge_template}")
-        print(f"*** judge_reward_regex: {self.reward_regex_template}")
-        print(f"*** meta_judge_reward_regex: {self.meta_judge_reward_regex_template}")
         
         self.template_fn = jinja2_env.from_string(self.prompt_template).render
         self.meta_judge_template_fn = jinja2_env.from_string(self.meta_judge_template).render
@@ -609,11 +604,6 @@ class SelfRewardingTrainer:
                 sampling_params=self.sampling_params,
                 strategy=strategy,
             )
-    
-            # this is a 1D LongTensor with the length of the responses where response is prompt+response
-            #response_lengths = strategy.get_lengths()
-            #max_response_length = response_lengths.max().item()
-            #response_tokens = torch.LongTensor(generations["token_ids"])
             
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
             response_tokens = torch.cuda.LongTensor(generations["token_ids"]) if generations else None
@@ -654,17 +644,17 @@ class SelfRewardingTrainer:
             reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
             batch_responses_str = []
             for t,s,e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
-                response = self.model.tokenizer.ids_to_text(t[s:e].tolist())
+                response = self.tokenizer.ids_to_text(t[s:e].tolist())
                 batch_responses_str.append(response)
             rewards = [self.parse_reward_fn(resp_str) for resp_str in batch_responses_str]
             for idx, (r, t, s, e, end) in enumerate(zip(rewards, reward_responses, prompt_lengths.tolist(), resp_lengths.tolist(), is_end.tolist())):
                 # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
                 # a valid score, it's all good, we don't need correctness beyond that
                 #reward_scores[idx].append(r if end else None)
-                reward_scores[idx].append(r if ((r is not None) and (r >= 0 and r <= 5)) else None)
+                reward_scores[idx].append(r if ((r is not None) and (r >= self.judge_score_low and r <= self.judge_score_high)) else None)
                 # should we include responses which only contain valid scores?
                 if self.use_meta_judge:
-                    judge_responses[idx].append((t,s,e,end) if ((r is not None) and (r >= 0 and r <= 5)) else None)
+                    judge_responses[idx].append((t,s,e,end) if ((r is not None) and (r >= self.judge_score_low and r <= self.judge_score_high)) else None)
 
         assert all([len(b) == self.num_evals_to_average for b in reward_scores]), f"did not get generate the correct number of reward scores: {reward_scores}"
         reward_scores = [[*filter(exists, b)] for b in reward_scores]
@@ -683,7 +673,7 @@ class SelfRewardingTrainer:
             reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
             batch_responses_str = []
             for t,s,e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
-                response = self.model.tokenizer.ids_to_text(t[s:e].tolist())
+                response = self.tokenizer.ids_to_text(t[s:e].tolist())
                 batch_responses_str.append(response)
             rewards = [self.meta_parse_reward_fn(resp_str) for resp_str in batch_responses_str]
             for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
@@ -728,7 +718,7 @@ class SelfRewardingTrainer:
             # call this in case we are using a length_control scheduler based on iteration number
             self.set_rho_by_iteration(self.iteration)
             
-            print(f"*** Iteration [ {self.iteration} ]  RHO [ {self.rho} ] ***")
+            #print(f"*** Iteration [ {self.iteration} ]  RHO [ {self.rho} ] ***")
 
             for _ in epoch_iter:
                 num_steps_in_epoch = min(
@@ -799,11 +789,11 @@ class SelfRewardingTrainer:
                                 if not global_batch["bad_samples"][idx]:
                                     self.train_df.loc[len(self.train_df)] = [
                                         self.step,
-                                        self.model.tokenizer.ids_to_text(global_batch["chosen"][idx][:global_batch["chosen_prompt_lens"][idx].item()].tolist()),
-                                        self.model.tokenizer.ids_to_text(
+                                        self.tokenizer.ids_to_text(global_batch["chosen"][idx][:global_batch["chosen_prompt_lens"][idx].item()].tolist()),
+                                        self.tokenizer.ids_to_text(
                                             global_batch["chosen"][idx][global_batch["chosen_prompt_lens"][idx].item():global_batch["chosen_gen_lens"][idx].item()].tolist()
                                         ),
-                                        self.model.tokenizer.ids_to_text(
+                                        self.tokenizer.ids_to_text(
                                             global_batch["rejected"][idx][global_batch["reject_prompt_lens"][idx].item():global_batch["reject_gen_lens"][idx].item()].tolist()
                                         ),
                                     ]
@@ -930,16 +920,16 @@ class SelfRewardingTrainer:
                         # Transform into batch of LLM-as-judge template samples for reward scoring
                         reward_buffer = []
                         for t,s,e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
-                            prompt = self.model.tokenizer.ids_to_text(t[:s].tolist()).replace("<extra_id_0>System\n\n", "")
-                            response = self.model.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
+                            prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<extra_id_0>System\n\n", "")
+                            response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
                             # llama3
-                            #prompt = self.model.tokenizer.ids_to_text(t[:s].tolist()).replace("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", "")
-                            #response = self.model.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
+                            #prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", "")
+                            #response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
                             reward_prompt_str = self.template_fn(prompt=prompt, response=response)
                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                             #if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-                                prompt_and_response = self.model.tokenizer.ids_to_text(t.tolist())
+                                prompt_and_response = self.tokenizer.ids_to_text(t.tolist())
                                 try:
                                     prompt_ft = re.findall(r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0]
                                     response_ft = re.findall(r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)", prompt_and_response)[0]
@@ -948,15 +938,7 @@ class SelfRewardingTrainer:
                                     #response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
                                     reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
                                     reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                    '''
-                                    if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-                                        overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
-                                        #if overage >= len(self.model.tokenizer.text_to_ids(response_ft)):
-                                        #    print(f"*** OVERAGE_NOT_FIT_RESPONSE: {reward_prompt_str}")
-                                        response_ft = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response_ft)[:-overage])
-                                        reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
-                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                    '''
+
                                     while len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8):
                                         overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
                                         if overage > len(self.model.tokenizer.text_to_ids(response_ft)):
@@ -964,7 +946,7 @@ class SelfRewardingTrainer:
                                             reward_prompt_str = self.template_fn(prompt="How does one make tea?", response="I have no answer at all.")
                                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                                             break
-                                        response_ft = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response_ft)[:-overage])
+                                        response_ft = self.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response_ft)[:-overage])
                                         reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
                                         reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                                 except:
@@ -974,7 +956,7 @@ class SelfRewardingTrainer:
                                         overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
                                         if len(self.model.tokenizer.text_to_ids(response)) >= overage:
                                             # truncate response only
-                                            response = self.model.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response)[:-overage])
+                                            response = self.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(response)[:-overage])
                                             reward_prompt_str = self.template_fn(prompt=prompt, response=response)
                                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                                         else:
@@ -987,10 +969,8 @@ class SelfRewardingTrainer:
 
                             reward_buffer.append({"prompt_lengths": torch.LongTensor([len(reward_prompt)]), "prompts_only": torch.LongTensor(reward_prompt).unsqueeze(0)})
                         
-                        #assert all([x['prompt_lengths'].item() <= self.model.cfg.data.train_ds.max_seq_length for x in reward_buffer]), f"reward_buffer violation: {[x['prompt_lengths'] for x in reward_buffer]}"
                         # list of floats, same length as gen_tokens_buf
                         reward_scores, reward_variances, judge_responses = self.get_rewards(reward_buffer)
-                        #print("*** reward_scores: ", reward_scores)
                         for idx, (t, s, e, r, v, j, end) in enumerate(zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist(), reward_scores, reward_variances, judge_responses, is_end.tolist())):
                             candidate_responses_with_rewards[idx].append((r,t,s,e,v,j,end))
                     
@@ -1010,10 +990,10 @@ class SelfRewardingTrainer:
                         if len(filtered_scores) <= 1 or all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
                             idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
                             bad_sample = True
-                            if len(filtered_scores) <= 1:
-                                print("BAD_SAMPLE_1")
-                            elif all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
-                                print("BAD_SAMPLE_2")
+                            #if len(filtered_scores) <= 1:
+                            #    print("BAD_SAMPLE_1")
+                            #elif all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
+                            #    print("BAD_SAMPLE_2")
                         elif len(filtered_scores) > 1:
                             #idx_chosen = filtered_scores[np.argmax([s[0] for s in filtered_scores])][-1]
                             #idx_reject = filtered_scores[np.argmin([s[0] for s in filtered_scores])][-1]
@@ -1051,7 +1031,7 @@ class SelfRewardingTrainer:
                         
                         if torch.equal(chosen_tokens, reject_tokens):
                             bad_sample = True
-                            print("BAD_SAMPLE_3")
+                            #print("BAD_SAMPLE_3")
                         
                         # meta-judge logic goes here
                         if self.use_meta_judge and len(filtered_variances) > 0:
@@ -1059,10 +1039,10 @@ class SelfRewardingTrainer:
                             reward_tokens_raw = filtered_variances[np.argmax([s[0] for s in filtered_variances])][1]
                             idx_for_cand = filtered_variances[np.argmax([s[0] for s in filtered_variances])][-1]
                             cand_for_meta = cand_list[idx_for_cand]
-                            orig_prompt_str = self.model.tokenizer.ids_to_text(cand_for_meta[1][:cand_for_meta[2]].tolist())
-                            orig_response_str = self.model.tokenizer.ids_to_text(cand_for_meta[1][cand_for_meta[2]:cand_for_meta[3]].tolist())
+                            orig_prompt_str = self.tokenizer.ids_to_text(cand_for_meta[1][:cand_for_meta[2]].tolist())
+                            orig_response_str = self.tokenizer.ids_to_text(cand_for_meta[1][cand_for_meta[2]:cand_for_meta[3]].tolist())
                             meta_batch = []
-                            for a, b in itertools.combinations([self.model.tokenizer.ids_to_text(s[0][s[1]:s[2]].tolist()) for s in reward_tokens_raw], 2):
+                            for a, b in itertools.combinations([self.tokenizer.ids_to_text(s[0][s[1]:s[2]].tolist()) for s in reward_tokens_raw], 2):
                                 score_a = self.parse_reward_fn(a)
                                 score_b = self.parse_reward_fn(b)
                                 if score_a is None or score_b is None or a == b:
@@ -1084,6 +1064,7 @@ class SelfRewardingTrainer:
                         if self.use_meta_judge and ((bad_ends > 0 or bad_sample) and (torch.rand((1,)) <= self.meta_judge_pcnt)) and len(meta_buffer_done) > 0:
                         #if self.use_meta_judge and (bad_ends > 0 or bad_sample) and len(meta_buffer_done) > 0:
                             final_buffer.append(meta_buffer_done.pop(0))
+                            # if you want to pop a random element instead, uncomment the below
                             #final_buffer.append(meta_buffer_done.pop(torch.randint(0, len(meta_buffer_done), (1,)).item()))
                         else:
                             final_buffer.append({
@@ -1183,13 +1164,12 @@ class SelfRewardingTrainer:
 
                 buffer.clear()
                 
-                print(f"*** Rank [ {torch.distributed.get_rank()} ] Iteration [ {self.iteration} ] Step [ {self.step} ] META_BATCH_PENDING [ {len(meta_buffer_pending)} ] META_BATCH_ROLLOUT [ {sum([len(x[-1]) for x in meta_buffer_pending])} ] META_BATCH_DONE [ {len(meta_buffer_done)} ]")
-                print(f"*** Rank [ {torch.distributed.get_rank()} ] Iteration [ {self.iteration} ] Step [ {self.step} ] META_CNTR  {cnt_tracker}  META_CNTR_PCNT  {cnt_tracker / sum(cnt_tracker).clip(min=1.0)}")
+                #print(f"*** Rank [ {torch.distributed.get_rank()} ] Iteration [ {self.iteration} ] Step [ {self.step} ] META_BATCH_PENDING [ {len(meta_buffer_pending)} ] META_BATCH_ROLLOUT [ {sum([len(x[-1]) for x in meta_buffer_pending])} ] META_BATCH_DONE [ {len(meta_buffer_done)} ]")
+                #print(f"*** Rank [ {torch.distributed.get_rank()} ] Iteration [ {self.iteration} ] Step [ {self.step} ] META_CNTR  {cnt_tracker}  META_CNTR_PCNT  {cnt_tracker / sum(cnt_tracker).clip(min=1.0)}")
                 if done:
                     meta_buffer_pending.clear()
                     #meta_buffer_done.clear()
                 if self.use_meta_judge and (not done) and (rollout_len := sum([len(x[-1]) for x in meta_buffer_pending])) >= self.rollout_micro_batch_size:
-                    #meta_buffer_unroll = [y for x in meta_buffer_pending for y in x[-1]]
                     num_rollouts = rollout_len // self.rollout_micro_batch_size
                     meta_buffer_unroll_grp = [(idx,y) for idx,x in enumerate(meta_buffer_pending) for y in x[-1]]
                     for _ in range(num_rollouts):
@@ -1199,63 +1179,16 @@ class SelfRewardingTrainer:
                         reroll = [(grp, [y[-1] for y in x]) for grp, x in itertools.groupby(meta_buffer_unroll, lambda kk: kk[0])]
                         for tup in reroll:
                             N = len(tup[-1])
+                            bad_meta_sample = False
                             # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
                             # we need to find a chosen and reject index in this list
                             reward_tokens_raw = meta_buffer_pending[tup[0]][0]
                             p = len(reward_tokens_raw)
-                            players = list(range(p))
-                            Bm = itertools.combinations(players, 2)
-                            bad_meta_sample = False
-                            alloc = []
-                            for _ in range(N):
-                                alloc.append(meta_reward_scores.pop(0))
-                            assert len(alloc) % 2 == 0, "alloc should always be divisible by 2"
-                            ptbl_a_win = np.zeros([p, p])
-                            ptbl_b_win = np.zeros([p, p])
-                            ptbl_tie = np.zeros([p, p])
-                            for (m_a, m_b), (ab, ba) in zip(Bm, divide_chunks(alloc, 2)):
-                                if ab is not None and ba is not None:
-                                    ptbl_a_win[m_a, m_b] += int(ab == 'A' and ba == 'B')
-                                    ptbl_b_win[m_a, m_b] += int(ab == 'B' and ba == 'A')
-                                ptbl_tie[m_a, m_b] += int(ab == ba)
                             
-                            ptbl_win = ptbl_a_win * 1 + ptbl_b_win.T * 1 + (ptbl_tie + ptbl_tie.T)
-                            
-                            X = np.zeros([p * (p - 1) * 2, p])
-                            Y = np.zeros(p * (p - 1) * 2)
-                            #w1 = ptbl_b_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
-                            #w2 = ptbl_a_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
-                            cur_row = 0
-                            sample_weights = []
-                            for m_a in players:
-                                for m_b in players:
-                                    if m_a == m_b:
-                                        continue
-                                    # if nan skip
-                                    if math.isnan(ptbl_win[m_a, m_b]) or math.isnan(ptbl_win[m_b, m_a]):
-                                        continue
-                                    X[cur_row, players[m_a]] = 1.
-                                    X[cur_row, players[m_b]] = -1.
-                                    Y[cur_row] = 1.0
-                                    sample_weights.append(ptbl_win[m_a, m_b])
-                                    #sample_weights.append(w1 * (1 if ptbl_a_win[m_a, m_b] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_a, m_b] >= 1 else 0))
-                            
-                                    X[cur_row + 1, players[m_a]] = 1.
-                                    X[cur_row + 1, players[m_b]] = -1.
-                                    Y[cur_row + 1] = 0.0
-                                    sample_weights.append(ptbl_win[m_b, m_a])
-                                    #sample_weights.append(w1 * (1 if ptbl_a_win[m_b, m_a] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_b, m_a] >= 1 else 0))
-                                    cur_row += 2
-                            X = X[:cur_row]
-                            Y = Y[:cur_row]
-                            
-                            lr = LogisticRegression(fit_intercept=False, penalty=None, tol=1e-6)
-                            lr.fit(X, Y, sample_weight=sample_weights)
-                            
-                            elo_scores = SCALE * lr.coef_[0] + INIT_RATING
+                            elo_scores = self.get_elo_scores(p, N, meta_reward_scores)
                             if len(np.unique(elo_scores)) < p:
                                 bad_meta_sample = True
-                                print("BAD_META_SAMPLE_1")
+                                #print("BAD_META_SAMPLE_1")
                             
                             meta_chosen_idx = np.argmax(elo_scores)
                             meta_reject_idx = np.argmin(elo_scores)
@@ -1272,17 +1205,16 @@ class SelfRewardingTrainer:
                             
                             if torch.equal(chosen_tokens, reject_tokens):
                                 bad_meta_sample = True
-                                print("BAD_META_SAMPLE_2")
+                                #print("BAD_META_SAMPLE_2")
                             
-                            chosen_score = self.parse_reward_fn(self.model.tokenizer.ids_to_text(chosen_tokens[chosen_prompt_len:chosen_gen_len].tolist()))
-                            reject_score = self.parse_reward_fn(self.model.tokenizer.ids_to_text(reject_tokens[reject_prompt_len:reject_gen_len].tolist()))
-                            print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_ACTUAL_REWARDS  CHOSEN[ {chosen_score} ]  REJECT[ {reject_score} ]")
+                            chosen_score = self.parse_reward_fn(self.tokenizer.ids_to_text(chosen_tokens[chosen_prompt_len:chosen_gen_len].tolist()))
+                            reject_score = self.parse_reward_fn(self.tokenizer.ids_to_text(reject_tokens[reject_prompt_len:reject_gen_len].tolist()))
+                            #print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_ACTUAL_REWARDS  CHOSEN[ {chosen_score} ]  REJECT[ {reject_score} ]")
                             if chosen_score is None or reject_score is None or chosen_score == reject_score:
                                 bad_meta_sample = True
-                                print("BAD_META_SAMPLE_3")
+                                #print("BAD_META_SAMPLE_3")
                             
-                            if meta_bad_ends == 0 and bad_meta_sample == False and ((cnt_tracker / sum(cnt_tracker).clip(min=1.0))[int(chosen_score)] < 0.4) and (cnt_tracker[int(chosen_score)] < int(self.num_steps_per_epoch * 0.2 * original_gbs_size / 5)):
-                            #if meta_bad_ends == 0 and bad_meta_sample == False and cnt_tracker[int(chosen_score)] < int(self.num_steps_per_epoch * 0.2 * original_gbs_size / 5):
+                            if meta_bad_ends == 0 and bad_meta_sample == False and ((cnt_tracker / sum(cnt_tracker).clip(min=1.0))[int(chosen_score)] < self.meta_max_relative_pcnt) and (cnt_tracker[int(chosen_score)] < int(self.num_steps_per_epoch * original_gbs_size / ((self.judge_score_high - self.judge_score_low) ** 2))):
                                 meta_pairs.append({
                                     "chosen_tokens": chosen_tokens,
                                     "chosen_prompt_len": chosen_prompt_len,
@@ -1318,6 +1250,59 @@ class SelfRewardingTrainer:
             ), f"iteration [ {iteration} ] is out of bounds for length_control schedule {self.spin_config['length_control']}"
 
             self.rho = self.spin_config["length_control"][iteration]
+    
+    def get_elo_scores(self, p, N, meta_reward_scores):
+        players = list(range(p))
+        Bm = itertools.combinations(players, 2)
+        alloc = []
+        for _ in range(N):
+            alloc.append(meta_reward_scores.pop(0))
+        assert len(alloc) % 2 == 0, "alloc should always be divisible by 2"
+        ptbl_a_win = np.zeros([p, p])
+        ptbl_b_win = np.zeros([p, p])
+        ptbl_tie = np.zeros([p, p])
+        for (m_a, m_b), (ab, ba) in zip(Bm, divide_chunks(alloc, 2)):
+            if ab is not None and ba is not None:
+                ptbl_a_win[m_a, m_b] += int(ab == 'A' and ba == 'B')
+                ptbl_b_win[m_a, m_b] += int(ab == 'B' and ba == 'A')
+            ptbl_tie[m_a, m_b] += int(ab == ba)
+        
+        ptbl_win = ptbl_a_win * 1 + ptbl_b_win.T * 1 + (ptbl_tie + ptbl_tie.T)
+        
+        X = np.zeros([p * (p - 1) * 2, p])
+        Y = np.zeros(p * (p - 1) * 2)
+        #w1 = ptbl_b_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
+        #w2 = ptbl_a_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
+        cur_row = 0
+        sample_weights = []
+        for m_a in players:
+            for m_b in players:
+                if m_a == m_b:
+                    continue
+                # if nan skip
+                if math.isnan(ptbl_win[m_a, m_b]) or math.isnan(ptbl_win[m_b, m_a]):
+                    continue
+                X[cur_row, players[m_a]] = 1.
+                X[cur_row, players[m_b]] = -1.
+                Y[cur_row] = 1.0
+                sample_weights.append(ptbl_win[m_a, m_b])
+                #sample_weights.append(w1 * (1 if ptbl_a_win[m_a, m_b] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_a, m_b] >= 1 else 0))
+        
+                X[cur_row + 1, players[m_a]] = 1.
+                X[cur_row + 1, players[m_b]] = -1.
+                Y[cur_row + 1] = 0.0
+                sample_weights.append(ptbl_win[m_b, m_a])
+                #sample_weights.append(w1 * (1 if ptbl_a_win[m_b, m_a] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_b, m_a] >= 1 else 0))
+                cur_row += 2
+        X = X[:cur_row]
+        Y = Y[:cur_row]
+        
+        lr = LogisticRegression(fit_intercept=False, penalty=None, tol=1e-6)
+        lr.fit(X, Y, sample_weight=sample_weights)
+        
+        elo_scores = SCALE * lr.coef_[0] + INIT_RATING
+        
+        return elo_scores
 
     @property
     def epoch(self):
