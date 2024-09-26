@@ -514,7 +514,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
            
             const = (target_probs * target_probs.log()).sum(-1)
 
-            loss = - neg_loss + log_sum_exp_logits_topk + const
+            kd_loss = - neg_loss + log_sum_exp_logits_topk + const
         
             # Store softmax, target-softmax, target-mask and masked-target for backward pass.
             probs = exp_logits_topk / sum_exp_logits_topk.unsqueeze(dim=-1)
@@ -550,7 +550,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
                 sum_predicted_probs, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
             )
             logprob_K_add_1 = (1 - sum_predicted_probs).log()
-            loss = - neg_loss - target_prob_K_add_1 * logprob_K_add_1
+            kd_loss = - neg_loss - target_prob_K_add_1 * logprob_K_add_1
     
             # Store softmax, target-mask and masked-target for backward pass.
             probs = predicted_logprobs.exp()
@@ -558,7 +558,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             vocab_size = exp_logits.size(-1)
 
         ## adding SFT loss here to minimize the number of collective ops we have to perform
-        sft_loss = torch.zeros_like(loss)
+        sft_loss = torch.zeros_like(kd_loss)
         if sft_loss_weight > 0:
             # Create a mask of valid vocab ids (1 means it needs to be masked).
             label_mask = (labels < vocab_start_index) | (labels >= vocab_end_index)
@@ -593,7 +593,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
             vocab_size = exp_logits.size(-1)
 
-        loss = kd_loss_weight * loss + sft_loss_weight * sft_loss
+        loss = kd_loss_weight * kd_loss + sft_loss_weight * sft_loss
 
         ctx.save_for_backward(
             probs, prob_K_add_1, target_probs, target_prob_K_add_1,
@@ -601,7 +601,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             torch.Tensor([kd_loss_weight, sft_loss_weight]), exp_logits, label_mask, masked_labels_1d, torch.LongTensor([vocab_size]), ## <-- variables for SFT loss
         )
 
-        return loss
+        return loss, kd_loss, sft_loss
 
     ## TODO support K+1-class softmax
     @staticmethod

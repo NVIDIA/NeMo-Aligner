@@ -154,26 +154,22 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                 kd_loss = self.loss_func(topk_logits, target_topk_logits_in_loss, loss_mask=loss_mask)"""
 
                 ## bwd kl
-                kd_loss = _TopKLogitsCrossEntropy.apply(
+                loss, kd_loss, sft_loss = _TopKLogitsCrossEntropy.apply(
                     output_tensor,
                     target_topk_logits,
                     target_topk_token_ids,
                     target_log_sum_exp_logits,
+                    labels,
                     use_k_add_1_logits=False,
+                    kd_loss_weight=self.kd_loss_weight,
+                    sft_loss_weight=self.sft_loss_weight
                 )
+
+                ## reduce losses
+                loss = torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
                 kd_loss = torch.sum(kd_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
-                
-                # compute the sft loss against the ground-truth labels
-                sft_loss = torch.zeros_like(kd_loss)
-                if self.sft_loss_weight != 0:
-                    target_label_logits = torch.gather(output_tensor, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-                    if log_sum_exp_logits is None:
-                        log_sum_exp_logits = torch.logsumexp(output_tensor, dim=-1)
-                    target_label_logprobs = target_label_logits - log_sum_exp_logits
-                    sft_loss = - torch.sum(target_label_logprobs * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
-                
-                # compute the aggregated loss
-                loss = self.kd_loss_weight * kd_loss + self.sft_loss_weight * sft_loss
+                sft_loss = torch.sum(sft_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
+
                 reduced_loss, reduced_kd_loss, reduced_sft_loss = average_losses_across_data_parallel_group([loss, kd_loss, sft_loss])
                 
                 return (

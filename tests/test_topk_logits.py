@@ -187,7 +187,7 @@ def test_topk_logits(K = 3, batch_size = 4, seq_len = 8, partition_vocab_size = 
         sft_loss_weight,
     )
     
-    new_loss = _TopKLogitsCrossEntropy.forward(
+    new_loss, kd, sft = _TopKLogitsCrossEntropy.forward(
         ctx,
         vocab_parallel_logits,
         target_logits,
