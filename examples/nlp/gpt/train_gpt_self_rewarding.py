@@ -120,16 +120,16 @@ def main(cfg) -> None:
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
 
-    #eos_id = ptl_model.tokenizer.eos_id
+    # eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    #collate_fn = partial(
+    # collate_fn = partial(
     #    self_rewarding_custom_collate,
     #    eos_id=eos_id,
     #    reset_position_ids=cfg.model.data.get("reset_position_ids", False),
     #    reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
     #    eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-    #)
+    # )
 
     train_dataloader = build_dataloader(
         cfg=cfg,

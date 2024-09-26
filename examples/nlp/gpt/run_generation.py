@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os, json, subprocess
+import json
+import os
+import subprocess
 from functools import partial
 
 import torch
@@ -20,8 +22,8 @@ from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 
-from nemo.core.config import hydra_runner
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.generation import GenerationTrainer, eye
@@ -58,11 +60,7 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
 
     ptl_model = load_from_nemo(
-        MegatronGPTModel,
-        cfg.model,
-        trainer,
-        strict=True,
-        restore_path=cfg.pretrained_checkpoint.restore_from_path,
+        MegatronGPTModel, cfg.model, trainer, strict=True, restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
     with open_dict(cfg):
@@ -79,14 +77,14 @@ def main(cfg) -> None:
     else:
         custom_trainer_state_dict = None
         consumed_samples = 0
-    
+
     if os.path.exists(gen_file := os.path.join(cfg.exp_manager.explicit_log_dir, "generations", "generations.jsonl")):
-        js_line = json.loads(subprocess.check_output(['tail', '-1', gen_file]).decode("utf_8"))
+        js_line = json.loads(subprocess.check_output(["tail", "-1", gen_file]).decode("utf_8"))
         custom_trainer_state_dict = {"step": js_line["step"], "consumed_samples": js_line["consumed_samples"]}
         consumed_samples = js_line["consumed_samples"]
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
-    '''
+    """
     dp_group = parallel_state.get_data_parallel_group()
     calc_gbs = cfg.model.generation.rollout_micro_batch_size * dp_group.size()
     with open_dict(cfg):
@@ -95,7 +93,7 @@ def main(cfg) -> None:
         ptl_model.cfg.global_batch_size = calc_gbs
     if hasattr(ptl_model, "global_batch_size"):
         ptl_model.global_batch_size = calc_gbs
-    '''
+    """
     train_data_cfg = cfg.model.data.train_ds
 
     if cfg.model.data.get("sample", False):
@@ -115,16 +113,16 @@ def main(cfg) -> None:
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
 
-    #eos_id = ptl_model.tokenizer.eos_id
+    # eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    #collate_fn = partial(
+    # collate_fn = partial(
     #    self_rewarding_custom_collate,
     #    eos_id=eos_id,
     #    reset_position_ids=cfg.model.data.get("reset_position_ids", False),
     #    reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
     #    eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-    #)
+    # )
 
     train_dataloader = build_dataloader(
         cfg=cfg,
@@ -139,7 +137,7 @@ def main(cfg) -> None:
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
-    #optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
+    # optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 

@@ -27,7 +27,7 @@ from typing import Iterator, List
 from unittest.mock import patch
 
 import torch
-from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory, LocalNonpersistentObject
+from megatron.core.dist_checkpointing.mapping import LocalNonpersistentObject, ShardedObject, ShardedTensorFactory
 from megatron.core.num_microbatches_calculator import reconfigure_microbatch_calculator
 from omegaconf import DictConfig, OmegaConf
 from torch.masked import as_masked_tensor
@@ -281,7 +281,7 @@ def offload_distributed_adam(state_dict, force_clear_memory=False):
 
     # make sure the offloading is finished before returning
     torch.cuda.synchronize()
-    
+
     if force_clear_memory:
         clear_memory()
 

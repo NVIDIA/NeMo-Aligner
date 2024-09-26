@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os, json
-from functools import partial
-import numpy as np
+import json
+import os
 from collections import defaultdict
+from functools import partial
 from statistics import mean
-import pandas as pd
 from textwrap import dedent
 
+import numpy as np
+import pandas as pd
 import torch
 from megatron.core import parallel_state
 from omegaconf import OmegaConf
@@ -34,7 +35,10 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_an
 from nemo.utils import logging
 from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor_within_pp
 from nemo_aligner.utils.ppo_utils import create_mask
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy, verify_is_valid_and_clamp_range_
+from nemo_aligner.utils.text_generation_utils import (
+    TrackLengthGPTModelTextGenerationStrategy,
+    verify_is_valid_and_clamp_range_,
+)
 from nemo_aligner.utils.train_utils import clip_gradients, set_eval
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import (
@@ -43,7 +47,6 @@ from nemo_aligner.utils.utils import (
     cpu_weight_swap,
     retrieve_model_state_dict_in_cpu,
 )
-
 
 try:
     from tensorrt_llm.bindings import GptSession
@@ -65,29 +68,34 @@ context_ids: torch.LongTensor - the entire preamble + prompt
 answer_ids: torch.LongTensor - the entire response only
 metadata: dict - with keys "system" for the preamble, and "mask" which is "User" or "Assistant"
 """
-def generate_sft_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
-    #input_ids = [item["input_ids"] for item in batch]
-    #masks = [item["mask"] for item in batch]
-    context_ids = [item["context_ids"] for item in batch]
-    #answer_ids = [item["answer_ids"] for item in batch]
-    context_lengths = torch.LongTensor([len(x) for x in context_ids])
-    #combined_lengths = torch.LongTensor([len(x) for x in input_ids])
 
-    #input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=eos_id)
-    #masks = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True, padding_value=False)
+
+def generate_sft_custom_collate(
+    batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False
+):
+    # input_ids = [item["input_ids"] for item in batch]
+    # masks = [item["mask"] for item in batch]
+    context_ids = [item["context_ids"] for item in batch]
+    # answer_ids = [item["answer_ids"] for item in batch]
+    context_lengths = torch.LongTensor([len(x) for x in context_ids])
+    # combined_lengths = torch.LongTensor([len(x) for x in input_ids])
+
+    # input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=eos_id)
+    # masks = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True, padding_value=False)
     context_ids = torch.nn.utils.rnn.pad_sequence(context_ids, batch_first=True, padding_value=eos_id)
-    #answer_ids = torch.nn.utils.rnn.pad_sequence(answer_ids, batch_first=True, padding_value=eos_id)
+    # answer_ids = torch.nn.utils.rnn.pad_sequence(answer_ids, batch_first=True, padding_value=eos_id)
 
     output = {
-        #"prompts_and_answers": input_ids,
-        #"masks": masks,
+        # "prompts_and_answers": input_ids,
+        # "masks": masks,
         "prompts_only": context_ids,
-        #"answers_only": answer_ids,
+        # "answers_only": answer_ids,
         "prompt_lengths": context_lengths,
-        #"combined_lengths": combined_lengths,
+        # "combined_lengths": combined_lengths,
     }
 
     return output
+
 
 def eye(x):
     return x
@@ -98,14 +106,7 @@ class GenerationTrainer:
     """
 
     def __init__(
-        self,
-        cfg: DictConfig,
-        model,
-        train_dataloader,
-        logger,
-        ckpt_callback,
-        run_timer,
-        exp_manager,
+        self, cfg: DictConfig, model, train_dataloader, logger, ckpt_callback, run_timer, exp_manager,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -124,9 +125,12 @@ class GenerationTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
-        
+
         if isinstance(self.cfg.get("limit_train_batches", 1.0), int):
-            self.train_dataloader.batch_sampler.total_samples = min(self.train_dataloader.batch_sampler.total_samples, self.cfg.limit_train_batches * self.train_dataloader.batch_sampler.global_batch_size)
+            self.train_dataloader.batch_sampler.total_samples = min(
+                self.train_dataloader.batch_sampler.total_samples,
+                self.cfg.limit_train_batches * self.train_dataloader.batch_sampler.global_batch_size,
+            )
             if hasattr(self.train_dataloader.batch_sampler, "last_batch_size"):
                 self.train_dataloader.batch_sampler.last_batch_size = 0
 
@@ -141,19 +145,24 @@ class GenerationTrainer:
         self.sampling_params = OmegaConf.to_container(self.model.cfg.generation.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
         dp_batch_size = self.model.cfg.global_batch_size // parallel_state.get_data_parallel_world_size()
-        #assert (
+        # assert (
         #    self.model.cfg.generation.rollout_micro_batch_size % dp_batch_size == 0
-        #), f"rollout_micro_batch_size [{self.model.cfg.generation.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
-        #self.rollout_micro_batch_size = self.model.cfg.generation.rollout_micro_batch_size
-        #assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
-        
+        # ), f"rollout_micro_batch_size [{self.model.cfg.generation.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
+        # self.rollout_micro_batch_size = self.model.cfg.generation.rollout_micro_batch_size
+        # assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
+
         # storage for generated responses which we want to save
         if torch.distributed.get_rank() == 0:
             os.makedirs(os.path.join(exp_manager.explicit_log_dir, "generations"), exist_ok=True)
-            self.generations_fh = open(os.path.join(exp_manager.explicit_log_dir, "generations", "generations.jsonl"), "a", encoding="utf_8", newline="\n")
+            self.generations_fh = open(
+                os.path.join(exp_manager.explicit_log_dir, "generations", "generations.jsonl"),
+                "a",
+                encoding="utf_8",
+                newline="\n",
+            )
         else:
             self.generations_fh = None
-        
+
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
             assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
@@ -161,7 +170,10 @@ class GenerationTrainer:
                 model_cfg=self.model.cfg,
                 max_generation_length=self.length_params["max_length"],
                 max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
-                max_input_tokens=self.cfg.trt_llm.get("max_input_tokens", self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2) * dp_batch_size),
+                max_input_tokens=self.cfg.trt_llm.get(
+                    "max_input_tokens",
+                    self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2) * dp_batch_size,
+                ),
                 generation_batch_size=dp_batch_size,
                 unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
                 trt_model_type=self.cfg.trt_llm.get("model_type", "gptnext"),
@@ -175,7 +187,7 @@ class GenerationTrainer:
                 tokenizer=self.model.tokenizer,
                 seed=self.model.cfg.get("seed", None),
             )
-    
+
     @torch.no_grad()
     def get_generations(self, list_of_batches):
         prompt_lengths = torch.cat([b["prompt_lengths"] for b in list_of_batches], dim=0)
@@ -196,16 +208,16 @@ class GenerationTrainer:
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
-        
+
         strategy = TrackLengthGPTModelTextGenerationStrategy(
-                model=self.model, context_lengths=prompt_lengths, max_length=adj_generation_length
-            )
+            model=self.model, context_lengths=prompt_lengths, max_length=adj_generation_length
+        )
 
         if self.use_trtllm_generation:
             generations = self.trtllm_generate.generate(inputs)
             response_tokens = generations["response_tokens"]
             response_lengths = generations["response_lengths"]
-            '''
+            """
             prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
             # double check with nemo logic to make sure it ended
             is_end = strategy.end_of_generation_condition(
@@ -216,7 +228,7 @@ class GenerationTrainer:
                 if torch.min(response_tokens[idx]).item() < 0 or torch.max(response_tokens[idx]).item() >= self.model.tokenizer.vocab_size:
                     is_end[idx] = False
                     response_tokens[idx] = torch.clamp(response_tokens[idx], min=self.model.tokenizer.eos_id, max=self.model.tokenizer.vocab_size - 1)
-            '''
+            """
         else:
             generations = self.model.generate(
                 inputs=inputs,
@@ -224,19 +236,19 @@ class GenerationTrainer:
                 sampling_params=self.sampling_params,
                 strategy=strategy,
             )
-    
+
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
-            #response_lengths = strategy.get_lengths()
-            #max_response_length = response_lengths.max().item()
-            #response_tokens = torch.LongTensor(generations["token_ids"])
-            
+            # response_lengths = strategy.get_lengths()
+            # max_response_length = response_lengths.max().item()
+            # response_tokens = torch.LongTensor(generations["token_ids"])
+
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
             response_tokens = torch.cuda.LongTensor(generations["token_ids"]) if generations else None
             response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
-            
+
             max_response_length = response_lengths.max().item()
-    
+
             # Sanity check to validate response length.
             if max_response_length != response_tokens.size(1):
                 # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
@@ -269,11 +281,11 @@ class GenerationTrainer:
             raise ValueError(
                 "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
             )
-        
+
         self.model._reset_activation_checkpointing_args()
         self.model._reset_sequence_parallelism_args()
         set_eval(self.model)
-        
+
         if self.use_trtllm_generation:
             self.trtllm_generate.refit(self.model)
             clear_memory()
@@ -303,55 +315,62 @@ class GenerationTrainer:
             )
 
             for _, global_batch in zip(loop_iter, global_pbar):
-                
+
                 dp_group = parallel_state.get_data_parallel_group()
 
                 gen_tokens = global_batch["prompt_and_response"]
                 prompt_lens = global_batch["prompt_lens"]
                 gen_lens = global_batch["gen_lens"]
                 valids = global_batch["valids"]
-                
+
                 gen_tokens_list = [torch.zeros_like(gen_tokens) for _ in range(dp_group.size())]
                 prompt_lens_list = [torch.zeros_like(prompt_lens) for _ in range(dp_group.size())]
                 gen_lens_list = [torch.zeros_like(gen_lens) for _ in range(dp_group.size())]
                 valids_list = [torch.zeros_like(valids) for _ in range(dp_group.size())]
-                
+
                 torch.distributed.all_gather(gen_tokens_list, gen_tokens, group=dp_group)
                 torch.distributed.all_gather(prompt_lens_list, prompt_lens, group=dp_group)
                 torch.distributed.all_gather(gen_lens_list, gen_lens, group=dp_group)
                 torch.distributed.all_gather(valids_list, valids, group=dp_group)
-                
+
                 self.consumed_samples += self.model.cfg.global_batch_size
                 self.step += 1
-                
+
                 if torch.distributed.get_rank() == 0 and gen_tokens_list is not None:
                     for t, s, e, v in zip(gen_tokens_list, prompt_lens_list, gen_lens_list, valids_list):
                         buffer = [[] for _ in range(t.shape[1])]
                         for idx in range(len(t)):
-                            for pdx, (t_, s_, e_, v_) in enumerate(zip(t[idx], s[idx].tolist(), e[idx].tolist(), v[idx].tolist())):
+                            for pdx, (t_, s_, e_, v_) in enumerate(
+                                zip(t[idx], s[idx].tolist(), e[idx].tolist(), v[idx].tolist())
+                            ):
                                 prompt = self.model.tokenizer.ids_to_text(t_[:s_].long().tolist())
                                 response = self.model.tokenizer.ids_to_text(t_[s_:e_].long().tolist())
                                 if v_:
                                     buffer[pdx].append((prompt, response))
-                        
+
                         for cand_list in buffer:
                             if len(cand_list) == 0:
                                 continue
                             assert all([cand_list[0][0] == x[0] for x in cand_list]), "all prompts in group not equal"
-                            payload = {"step": self.step, "consumed_samples": self.consumed_samples, "prompt": cand_list[0][0], "responses": list(set([x[1] for x in cand_list]))}
-                            self.generations_fh.write(json.dumps(payload, ensure_ascii=False) + '\n')
+                            payload = {
+                                "step": self.step,
+                                "consumed_samples": self.consumed_samples,
+                                "prompt": cand_list[0][0],
+                                "responses": list(set([x[1] for x in cand_list])),
+                            }
+                            self.generations_fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
                 torch.distributed.barrier()
-                
+
                 run_time_exceeded = self.run_timer.is_finished()
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
 
         self.logger.finalize()
-        
+
         if torch.distributed.get_rank() == 0 and self.generations_fh is not None:
             self.generations_fh.close()
-        
+
         if self.use_trtllm_generation:
             self.trtllm_generate.free(force_unload=True)
 
@@ -462,36 +481,45 @@ class GenerationTrainer:
         while True:
             try:
                 batches = next(iter_dataloader)
-                batch = generate_sft_custom_collate(batches,
-                                                      eos_id=self.model.tokenizer.eos_id,
-                                                      reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
-                                                      reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
-                                                      eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
-                                                      )
-                #print(f" rank [{torch.distributed.get_rank()}] *** RAW_BATCH_SHAPE: ", batch["prompts_only"].shape)
-                
+                batch = generate_sft_custom_collate(
+                    batches,
+                    eos_id=self.model.tokenizer.eos_id,
+                    reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
+                    reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
+                    eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
+                )
+                # print(f" rank [{torch.distributed.get_rank()}] *** RAW_BATCH_SHAPE: ", batch["prompts_only"].shape)
+
                 gen_tokens, prompt_lens, gen_lens, valids = [], [], [], []
                 for _ in range(self.num_responses_to_gen):
                     # Generation happens on GPU but returned tensors are on CPU so as not to blow up VRAM due to self.num_responses_to_gen
                     gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end = self.get_generations([batch])
-                    #candidate_responses.append((gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end))
+                    # candidate_responses.append((gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end))
                     gen_tokens.append(gen_tokens_buf)
                     prompt_lens.append(gen_prompt_lengths_buf)
                     gen_lens.append(gen_lengths_buf)
                     valids.append(is_end)
-                
+
                 # if you want to pad to the global DP batch instead of model.cfg.encoder_seq_length you can uncomment this
-                #max_seq_length = torch.tensor([x.size(-1) for x in gen_tokens], dtype=torch.float32, device=torch.cuda.current_device()).max().unsqueeze(0)
-                #torch.distributed.all_reduce(max_seq_length, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group())
-                #max_seq_length = int(max_seq_length)
-                
+                # max_seq_length = torch.tensor([x.size(-1) for x in gen_tokens], dtype=torch.float32, device=torch.cuda.current_device()).max().unsqueeze(0)
+                # torch.distributed.all_reduce(max_seq_length, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group())
+                # max_seq_length = int(max_seq_length)
+
                 new_batch = {
-                    "prompt_and_response": torch.stack([batch_pad_to_fixed_len(x, self.model.cfg.encoder_seq_length, pad_token=self.model.tokenizer.eos_id) for x in gen_tokens], dim=0).cuda(non_blocking=True),
+                    "prompt_and_response": torch.stack(
+                        [
+                            batch_pad_to_fixed_len(
+                                x, self.model.cfg.encoder_seq_length, pad_token=self.model.tokenizer.eos_id
+                            )
+                            for x in gen_tokens
+                        ],
+                        dim=0,
+                    ).cuda(non_blocking=True),
                     "prompt_lens": torch.stack(prompt_lens, dim=0).cuda(non_blocking=True),
                     "gen_lens": torch.stack(gen_lens, dim=0).cuda(non_blocking=True),
                     "valids": torch.stack(valids, dim=0).cuda(non_blocking=True),
                 }
-                
+
                 yield new_batch
                 del new_batch, gen_tokens, prompt_lens, gen_lens, valids
             except StopIteration:

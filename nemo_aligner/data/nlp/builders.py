@@ -274,7 +274,12 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
     if is_chat:
         assert not packed_sequence, "Sequence packing is currently not supported with chat datasets."
         dataset_cls = GPTSFTChatDataset
-        if data_cfg.get("hf_dataset", False) and data_cfg.max_seq_length is not None and data_cfg.max_seq_length > 1 and num_samples is None:
+        if (
+            data_cfg.get("hf_dataset", False)
+            and data_cfg.max_seq_length is not None
+            and data_cfg.max_seq_length > 1
+            and num_samples is None
+        ):
             dataset_cls = TruncatedGPTSFTChatDataset
     elif packed_sequence:
         dataset_cls = GPTSFTPackedDataset
