@@ -83,7 +83,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             raise TypeError(
                 f"`ref_policy_kl_penalty` must be a scalar or list, but got {type(self.spin_config['ref_policy_kl_penalty'])}"
             )
-        
+
         # RPO params
         self.preference_avg_log_probs = self.cfg.spin.get("preference_average_log_probs", False)
         self.sft_avg_log_probs = self.cfg.spin.get("sft_average_log_probs", self.preference_avg_log_probs)
@@ -104,7 +104,9 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         dp_group = parallel_state.get_data_parallel_group()
 
-        batch_logs = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, masks[:, 1:], average_log_probs=average_log_probs)
+        batch_logs = self.get_reduced_masked_logps(
+            pi_logprobs - ref_logprobs, masks[:, 1:], average_log_probs=average_log_probs
+        )
 
         output_list = [torch.zeros_like(batch_logs) for _ in range(dp_group.size())]
 
@@ -161,7 +163,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                 ref_logprobs = torch.cat(
                     (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
                 )
-            
+
             if batch.get("chosen_rewards") is not None and batch.get("rejected_rewards") is not None:
                 gt_rewards = torch.cat((batch["chosen_rewards"], batch["rejected_rewards"]), dim=0)
 
@@ -210,7 +212,10 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                     )
 
                 per_token_logps = from_parallel_logits_to_logprobs(
-                    vocab_parallel_logits=output_tensor, target=tokens, higher_stability=True, inference_only=validation_step
+                    vocab_parallel_logits=output_tensor,
+                    target=tokens,
+                    higher_stability=True,
+                    inference_only=validation_step,
                 )
 
                 preference_loss, acc_chosen = self.loss_func(
@@ -227,7 +232,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                         per_token_logps, masks[:, 1:], average_log_probs=self.sft_avg_log_probs
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
-                
+
                 (
                     reduced_loss,
                     reduced_preference_loss,
@@ -326,7 +331,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             acc_chosen = comp.float().mean()
 
         return loss, acc_chosen
-    
+
     def sft_loss_func(self, pi_logprobs, labels, average_log_probs=False):
         logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
         chosen_logprobs, _ = self.split_output_tensor(logprobs)
@@ -521,7 +526,9 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         if self.distributed_adam_offload_manager is None:
 
             self.distributed_adam_offload_manager = (
-                offload_distributed_adam(self._optimizer.state_dict(state_dict_format=1, gather_on_root=False), force_clear_memory=True)
+                offload_distributed_adam(
+                    self._optimizer.state_dict(state_dict_format=1, gather_on_root=False), force_clear_memory=True
+                )
                 if self.to_offload_adam_states and self.with_distributed_adam
                 else nullcontext()
             )
@@ -664,7 +671,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         # legacy checkpointing no longer supported (sorry)
         else:
             raise RuntimeError("legacy checkpoints are not supported by NeMo-Aligner")
-    
+
     @torch.no_grad()
     def get_logprob_batch(self, batch):
         seq_length = batch["chosen"].shape[1]
@@ -708,7 +715,7 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             )
 
         return logprobs
-    
+
     def get_ref_policy_logprobs(self, batch):
         with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
             ref_log_probs = self.get_logprob_batch(batch)
