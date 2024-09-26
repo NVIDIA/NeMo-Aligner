@@ -28,7 +28,7 @@
    SteerLM is a novel approach developed by NVIDIA. SteerLM simplifies alignment compared to RLHF. It is based on SFT, but allows user-steerable AI by enabling you to adjust attributes at inference time.
 
 :ref:`Model Alignment by SteerLM 2.0 Method <model-aligner-steerlm2>`
-   SteerLM 2.0 is an extenstion to SteerLM method that introduces an iterative training procedure to explicitly enforce the generated responses to follow the desired attribute distribution.
+   SteerLM 2.0 is an extension to SteerLM method that introduces an iterative training procedure to explicitly enforce the generated responses to follow the desired attribute distribution.
 
 :ref:`Model Alignment by DPO, RPO and IPO <model-aligner-dpo>`
    DPO, RPO, and IPO are simpler alignment methods compared to RLHF. DPO introduces a novel parameterization of the reward model in RLHF, which allows us to extract the corresponding optimal policy. Similarly, RPO and IPO provide alternative parameterizations or optimization strategies, each contributing unique approaches to refining model alignment.
