@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Misc helper functions"""
+import functools
 import gc
 import itertools
 import os
@@ -25,9 +26,6 @@ from dataclasses import replace
 from functools import partial, wraps
 from typing import Iterator, List
 from unittest.mock import patch
-
-import warnings
-import functools
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
@@ -539,5 +537,7 @@ def deprecated_in_version(version: str, message: str | None = None):
             )
             warnings.warn(warn_message, DeprecationWarning, stacklevel=2)
             return func(*args, **kwargs)
+
         return wrapper
+
     return decorator

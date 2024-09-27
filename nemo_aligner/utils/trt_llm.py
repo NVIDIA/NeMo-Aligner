@@ -13,6 +13,7 @@ from nemo_aligner.utils.utils import log_memory
 
 try:
     import tensorrt_llm
+
     HAVE_TRTLLM = True
 except (ImportError, ModuleNotFoundError) as e:
     logging.info(f"got error message {e} when importing trt-llm dependencies, disabling")
@@ -115,7 +116,7 @@ class GPTGenerateTRTLLM:
 
         assert max(offsets) == len(ids), "offset and stop token length are mismatched"
         # TRT-LLM expects stop_list to be on CPU
-        stop_list = torch.as_tensor([ids, offsets], dtype=torch.int32, device='cpu').repeat(
+        stop_list = torch.as_tensor([ids, offsets], dtype=torch.int32, device="cpu").repeat(
             self.generation_batch_size, 1, 1
         )
 
@@ -180,7 +181,9 @@ class GPTGenerateTRTLLM:
 
         # TRTLLM returns the output_ids and sequence_lengths only on the first PP rank, and None otherwise, so we need to broadcast
         output_ids = broadcast_tensor_within_pp(output_dict["output_ids"] if output_dict else None, from_last=False)
-        response_lengths = broadcast_tensor_within_pp(output_dict["sequence_lengths"] if output_dict else None, from_last=False)
+        response_lengths = broadcast_tensor_within_pp(
+            output_dict["sequence_lengths"] if output_dict else None, from_last=False
+        )
 
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
         output_ids = torch.squeeze(output_ids, dim=1).long()
