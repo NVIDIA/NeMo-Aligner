@@ -161,9 +161,9 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     target_topk_token_ids,
                     target_log_sum_exp_logits,
                     labels,
-                    use_k_add_1_logits=False,
-                    kd_loss_weight=self.kd_loss_weight,
-                    sft_loss_weight=self.sft_loss_weight
+                    False,
+                    self.kd_loss_weight,
+                    self.sft_loss_weight
                 )
 
                 ## reduce losses
@@ -277,4 +277,3 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
 
     def finish_validation_step(self):
         finish_validation_step(self)
-        

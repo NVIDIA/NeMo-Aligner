@@ -605,7 +605,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
     ## TODO support K+1-class softmax
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, grad_output, *_):
 
         # Retreive tensors from the forward path.
         (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
