@@ -4,7 +4,7 @@
 #
 # To update NeMo-Aligner from a pre-built NeMo-Framework container:
 #
-#   docker buildx build --target=aligner-bump -t aligner:latest .
+#   docker buildx build --target=aligner-bump --build-arg=BASE_IMAGE=nvcr.io/nvidia/nemo:24.07 -t aligner:latest .
 #
 
 # Number of parallel threads for compute heavy build jobs
@@ -27,11 +27,14 @@ WORKDIR /opt
 RUN <<"EOF" bash -exu
 if [[ ! -d NeMo-Aligner ]]; then
     git clone https://github.com/NVIDIA/NeMo-Aligner.git
-    cd NeMo-Aligner
-    git checkout $ALIGNER_COMMIT
-else
-    cd NeMo-Aligner
 fi
+cd NeMo-Aligner
+git fetch -a
+# -f since git status may not be clean
+git checkout -f $ALIGNER_COMMIT
+# case 1: ALIGNER_COMMIT is a local branch so we have to apply remote changes to it
+# case 2: ALIGNER_COMMIT is a commit, so git-pull is expected to fail
+git pull --rebase || true
 
 pip install --no-deps -e .
 EOF
