@@ -30,6 +30,7 @@ defaults:
 
 jobs:
   main:
+    if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
     runs-on: self-hosted-builder
     steps:
       - name: Checkout repository
