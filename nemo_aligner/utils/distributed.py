@@ -598,7 +598,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         ctx.save_for_backward(
             probs, prob_K_add_1, target_probs, target_prob_K_add_1,
             target_mask, target_token_ids_1d, torch.LongTensor([partition_vocab_size]),
-            torch.Tensor([kd_loss_weight, sft_loss_weight]), exp_logits, label_mask, masked_labels_1d, torch.LongTensor([vocab_size]), ## <-- variables for SFT loss
+            torch.Tensor([kd_loss_weight, sft_loss_weight]), exp_logits, label_mask, masked_labels_1d, ## <-- variables for SFT loss
         )
 
         return loss, kd_loss, sft_loss
@@ -610,7 +610,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # Retreive tensors from the forward path.
         (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
          target_token_ids_1d, partition_vocab_size,
-         loss_weights, full_softmax, label_mask, masked_labels_1d, vocab_size) = ctx.saved_tensors
+         loss_weights, full_softmax, label_mask, masked_labels_1d) = ctx.saved_tensors
 
         K = probs.size()[-1]
 
@@ -637,10 +637,10 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         kd_loss_weight = loss_weights[0]
         sft_loss_weight = loss_weights[1]
-        grad_input_sft = torch.zeros_like(grad_input)
-        if sft_loss_weight > 0:
+        #grad_input_sft = torch.zeros_like(grad_input)
+        grad_2d *= kd_loss_weight
 
-            vocab_size = vocab_size.item()
+        if sft_loss_weight > 0:
 
             # All the inputs have softmax as thier gradient.
             grad_input_sft = full_softmax
@@ -650,16 +650,17 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             # Add the gradient from matching classes.
             arange_1d_label = torch.arange(start=0, end=grad_2d_sft.size()[0], device=grad_2d_sft.device)
 
-            softmax_update = 1.0 - label_mask.view(-1).float()
+            label_mask = label_mask.view(-1).float()
+            label_mask -= 1.0
+            grad_2d_sft[arange_1d_label, masked_labels_1d] += label_mask
+            grad_2d_sft *= sft_loss_weight
 
-            grad_2d_sft[arange_1d_label, masked_labels_1d] -= softmax_update
-
-        grad_input = kd_loss_weight * grad_input + sft_loss_weight * grad_input_sft
+            grad_2d += grad_2d_sft
 
         # Finally elementwise multiplication with the output gradients.
         grad_input.mul_(grad_output.unsqueeze(dim=-1))
 
-        return grad_input, None, None, None, None
+        return grad_input, None, None, None, None, None, None, None
     
 
 class SyncTimer(NamedTimer):
