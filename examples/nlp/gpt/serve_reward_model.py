@@ -12,20 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
-
 import torch
-from megatron.core import parallel_state
 from pytorch_lightning.trainer.trainer import Trainer
-from pytriton.model_config import ModelConfig
-from pytriton.model_config.common import DynamicBatcher
-from pytriton.triton import Triton, TritonConfig
 
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo.core.config import hydra_runner
+from nemo_aligner.algorithms.reward_server import RewardModelServer
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
-from nemo_aligner.servers.constants import ServerSignal
-from nemo_aligner.servers.server_callables import RewardModelCallable
+from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_script_utils import init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, set_autocast_gpu_dtype
 
@@ -37,7 +31,6 @@ ENDPOINT_BIND_ADDRESS = "0.0.0.0"
 @hydra_runner(config_path="conf", config_name="inference_rm")
 def main(cfg) -> None:
     cfg.model = load_and_override_model_config(cfg.rm_model_file, cfg.model)
-
     trainer = Trainer(strategy=NLPDDPStrategy(), **cfg.trainer)
 
     # needed for autocasting BF16
@@ -51,47 +44,34 @@ def main(cfg) -> None:
     reward_model_cls = REWARD_MODEL_CLASS_DICT[reward_model_type]
 
     ptl_model = load_from_nemo(reward_model_cls, cfg.model, trainer, strict=True, restore_path=cfg.rm_model_file,)
-
     ptl_model.freeze()
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
     ptl_model = ptl_model.cuda()
-
-    dp_size = parallel_state.get_data_parallel_world_size()
-    max_batch_size = cfg.inference.micro_batch_size * dp_size
-
-    infer_fn = ptl_model.infer
     ptl_model.prepare_for_inference()
 
-    if torch.distributed.get_rank() == 0:
-        infer_callable = RewardModelCallable(model_name="reward_model", infer_fn=infer_fn, lock=threading.Lock())
-        triton_config = TritonConfig(
-            allow_http=True,
-            allow_grpc=False,
-            allow_metrics=False,
-            http_address=ENDPOINT_BIND_ADDRESS,
-            http_port=cfg.inference.port,
+    def tokenize_func(sentences):
+        return tokenize_batch(
+            sentences=sentences,
+            tokenizer=ptl_model.tokenizer,
+            max_len=ptl_model.cfg.encoder_seq_length,
+            add_BOS=False,
+            add_EOS=False,
         )
-        dynamic_batcher = DynamicBatcher(max_queue_delay_microseconds=2000)
-        model_config = ModelConfig(batching=True, max_batch_size=max_batch_size, batcher=dynamic_batcher)
 
-        with Triton(config=triton_config) as triton:
-            triton.bind(
-                model_name=infer_callable.model_name,
-                infer_func=infer_callable.infer,
-                inputs=infer_callable.inputs,
-                outputs=infer_callable.outputs,
-                config=model_config,
-            )
-            triton.serve()
-    else:
-        while True:
-            choice = ServerSignal.INVALID.cuda()
-            torch.distributed.broadcast(choice, 0)
-            if choice.item() == ServerSignal.FORWARD:
-                infer_fn()
-            else:
-                raise RuntimeError(f"Invalid operation: {choice.item()}")
+    inference_cfg = cfg.inference
+
+    server = RewardModelServer(
+        infer_fn=ptl_model.infer,
+        tokenize_func=tokenize_func,
+        model_name=inference_cfg.get("model_name", "reward_model"),
+        port=inference_cfg.get("port", 5555),
+        inference_micro_batch_size=inference_cfg.get("inference_micro_batch_size", 2),
+        model_forward_micro_batch_size=cfg.model.get("forward_micro_batch_size", cfg.model.micro_batch_size),
+        strip_sequence_length_to_multiple=inference_cfg.get("strip_sequence_length_to_multiple", None),
+        max_queue_delay_microseconds=inference_cfg.get("max_queue_delay_microseconds", 2000),
+    )
+    server.run_server()
 
 
 if __name__ == "__main__":

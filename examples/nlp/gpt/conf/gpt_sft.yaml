@@ -12,6 +12,7 @@ trainer:
 
     val_check_interval: 100
     save_interval: ${.val_check_interval}
+    limit_train_batches: 1.0
 
     limit_val_batches: 1.0
     gradient_clip_val: 1.0
@@ -137,8 +138,7 @@ model:
       end_of_turn: "\x0A"  # \0x0A is '\n'
       end_of_name: "\x0A"  # \0x0A is '\n'
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
-    num_workers: 1
-    dataloader_type: single  # only supports single
+    num_workers: 0
     train_ds:
       # Example of how to specify paths to multiple datasets
       # file_names:

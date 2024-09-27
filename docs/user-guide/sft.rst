@@ -2,46 +2,51 @@
 
 .. _prerequisite:
 
-Prerequisite: Obtaining a pretrained model
-##########################################
+Obtain a Pretrained Model
+#########################
 
-The NeMo framework supports efficient model alignment via the NeMo Aligner codebase.
+The NeMo Framework supports efficient model alignment using the NeMo-Aligner codebase. All algorithms in NeMo-Aligner will work with any NeMo GPT-based model. To see a collection of scripts that convert popular models from Hugging Face to ``.nemo`` format, go `here <https://github.com/NVIDIA/NeMo/tree/main/scripts/nlp_language_modeling>`__.
 
-All algorithms in NeMo Aligner will work with any NeMo GPT based model. `Here <https://github.com/NVIDIA/NeMo/tree/main/scripts/nlp_language_modeling>`__ is a collection of scripts that convert popular models from HuggingFace to ``.nemo`` format.
-
-To start, we must first get a pretrained model to align. There are 2 models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes we will use the smaller 2B model. 
+To get started, you need to obtain a pretrained model to align. Three models are recommended: 2B GPT, LLama2-7B, or Nemotron-340B. For demonstration purposes, the smaller 2B model will be used, but you can follow the rest of the tutorial with either model.
 
 .. tab-set::
 
     .. tab-item:: 2B GPT
         :sync: key1
 
-        #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
-        #. Extract the NeMo File to a folder with ``mkdir model_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C model_checkpoint``
-        #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/468d5b6d369733909524d42b80a514f33bc19263/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
+        1. Get the 2B checkpoint at ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``.
+        2. Extract the NeMo file to a folder with ``mkdir model_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C model_checkpoint``.
+        3. Run the script to convert from the old NeMo checkpoint to the Megatron Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/0ec7e9090d3261b8ce81818b0555a204e50d814d/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             .. code-block:: bash 
 
                python convert_gpt_nemo_to_mcore.py \
                   --input_name_or_path ./model_checkpoint \
                   --output_path ./mcore_gpt.nemo
 
-    .. tab-item:: LLaMa2 7B
+    .. tab-item:: LLaMa2-7B
         :sync: key2
 
-        #. Download the `Llama 2 7B LLM model and tokenizer <https://huggingface.co/meta-llama/Llama-2-7b>`__ into the models folder.
-        #. Convert the LLaMa2 LLM into ``.nemo`` format
+        1. Download the `Llama2-7B LLM model and tokenizer <https://huggingface.co/meta-llama/Llama-2-7b-hf>`__ into the model's folder.
+        2. Convert the LLaMa2 LLM into ``.nemo`` format.
             .. code-block:: bash 
 
                python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py \
                    --input_name_or_path /path/to/llama --output_path /output_path/mcore_gpt.nemo
 
-After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Aligner.
+    .. tab-item:: Nemotron-340B
+        :sync: key3
+
+        1. Download the model from `Hugging Face <https://huggingface.co/nvidia/Nemotron-4-340B-Base>`__.
+        2. For all scripts, point ``*.restore_from_path`` to the directory where you have downloaded the files. 
+           Note: Because of the 340B's size, it is recommended that you use TP8 PP24 which will be safe for algorithms in Aligner.
+
+After these steps, you will have a file called ``mcore_gpt.nemo`` to use in NeMo-Aligner.
 
 .. note::
-   If you bring your own .nemo model, make sure to change the `model.encoder_seq_length` in the aligner configs to match the sequence length of your own model.
+   If you bring your own .nemo model, make sure to change the `model.encoder_seq_length` in the Aligner configs to match the sequence length of your own model.
 
 .. note::
-   Mcore models use Transformer engine as a backend, and it tries to find efficient kernels. But depending on the GPU you have it may not find them. If you ever face errors that relate to kernel finding set these variables on top of your script.
+   When working with Megatron Core models, which utilize the Transformer engine as a backend, the system attempts to find efficient kernels. However, depending on your GPU, it may not always locate them. If you encounter errors related to kernel finding, consider setting these variables at the top of your script.
 
    .. code-block:: bash
 
@@ -52,9 +57,9 @@ After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Align
 .. _model-aligner-sft:
 
 Model Alignment by Supervised Fine-Tuning (SFT)
-############################################################
+###############################################
 
-**Supervised Fine-Tuning** (SFT) is the process of fine-tuning a model's parameters on supervised data of inputs and outputs. It teaches the model how to follow user specified instructions. It is typically done after model pre-training. It is also an important prerequisite step in Reinforcement Learning from Human Feedback (RLHF) and Direct Preference Optimization (DPO). Nemo-Aligner supports two types of SFT formats:
+**SFT** is the process of fine-tuning a model's parameters on supervised data of inputs and outputs. It teaches the model how to follow user-specified instructions. It is typically done after model pre-training. It is also an important prerequisite step in Reinforcement Learning from Human Feedback (RLHF) and Direct Preference Optimization (DPO). Nemo-Aligner supports two types of SFT formats:
 
 1. **Prompt-Response**. In the *Prompt-Response* format, each example contains an input prompt and the annotated response. SFT fine-tunes the base model to follow the prompt instruction and answer in the style of the annotated responses. The prompt-response format can be used in various problems like Question Answering (Q&A) and Summarization.
 
@@ -63,16 +68,16 @@ Model Alignment by Supervised Fine-Tuning (SFT)
 Fine-Tune with a Prompt-Response Dataset
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-Step 1: Data Formatting
-%%%%%%%%%%%%%%%%%%%%%%%
+Step 1: Format the data
+^^^^^^^^^^^^^^^^^^^^^^^
 
-This section uses the `Dolly dataset <https://github.com/databrickslabs/dolly>`__ as an example to demonstrate how to format your SFT data. This dataset consists of 15,000 instruction-context-response triples.
+This example uses the `Dolly dataset <https://github.com/databrickslabs/dolly>`__ to demonstrate how to format your SFT data. This dataset consists of 15,000 instruction-context-response triples.
 
-First, to download the data enter the following command::
+Download the data by entering the following command::
 
     wget https://huggingface.co/datasets/databricks/databricks-dolly-15k/resolve/main/databricks-dolly-15k.jsonl
 
-The downloaded data, stored at ``databricks-dolly-15k.jsonl``, is a JSONL file with each line formatted like this::
+The downloaded data, stored in the file ``databricks-dolly-15k.jsonl``, follows a JSONL format, with each line structured as shown below::
 
    {
        "instruction": "When did Virgin Australia start operating?",
@@ -95,17 +100,22 @@ This script converts the *Instruction*, *Context*, and *Response* fields into *I
       "category": "closed_qa"
    }
 
-Step 2: SFT Training
-%%%%%%%%%%%%%%%%%%%%
+Sequence packing is also supported with prompt-response datasets. Sequence packing is a training technique in which multiple training examples are concatenated to create one longer sequence.
+This approach eliminates the need for padding and improves GPU utilization. Refer to the `sequence packing documentation <https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#>`_ for a detailed overview of sequence packing and its advantages.
 
-Now that we have the data we will use NeMo-Aligner to do the supervised fine tuning.
+NeMo provides a script to pack your SFT prompt-response dataset. Refer to the `prepare dataset <https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#prepare-dataset>`_ section of the documentation for details on how to use this script.
+
+Step 2: Run SFT training
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
 
 .. tab-set::
 
     .. tab-item:: Terminal
         :sync: key3
 
-         To run SFT on the terminal directly. Note that the working directory must be at the NeMo Aligner repo for this to work.
+         To run SFT on the terminal directly, use the following command. For successful execution, ensure that the NeMo-Aligner repository is set as your current working directory.
 
          .. code-block:: bash 
 
@@ -140,7 +150,7 @@ Now that we have the data we will use NeMo-Aligner to do the supervised fine tun
     .. tab-item:: Slurm
         :sync: key4
 
-         To run SFT via slurm do the following:
+         To run SFT via Slurm, run the following command:
 
          .. code-block:: bash 
 
@@ -213,46 +223,54 @@ Now that we have the data we will use NeMo-Aligner to do the supervised fine tun
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
-If you have a smaller or bigger machine make sure to change the ``trainer.num_nodes`` and ``trainer.devices`` correspondingly. This allows scaling to thousands of GPUs.
+If using sequence packing, replace the data paths with the paths to your packed datasets. For each packed dataset, you should also set ``packed_sequence=True`` in the config:
 
-For this particular run on 2B model, the final train loss is around 1.536. When the training finishes there will be a file called ``megatron_gpt_sft.nemo`` for use.
+.. code-block:: python
+   +model.data.train_ds.packed_sequence=True \
+   +model.data.validation_ds.packed_sequence=True
+
+It is not required to pack both the train and validation datasets. If packing only the train dataset, exclude ``+model.data.validation_ds.packed_sequence=True``.
+
+To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
+
+For this particular run on the 2B model, the final training loss is approximately 1.536. Once the training finishes, you’ll find a file called ``megatron_gpt_sft.nemo`` available for use.
 
 .. note::
-   NeMo FW has support for wandb logging. To get started with wandb please see their `quick start guide <https://docs.wandb.ai/quickstart>`__. You can turn on wandb logging with ``exp_manager.create_wandb_logger=True`` and it will log the job results to wandb.
+   NeMo Framework supports wandb logging. To get started with wandb, see the `Quick Start Guide <https://docs.wandb.ai/quickstart>`__. You can enable wandb logging with ``exp_manager.create_wandb_logger=True`` and it will log the job results to wandb.
 
-   For the slurm scripts we provide, they all use the `pyxis <https://github.com/NVIDIA/pyxis>`__ slurm extension which require ``--container-image=`` ``--container-mounts=`` to be provided. It is not necessary to use this extension, NeMo Aligner will work on regular python environments as well.
+   The provided Slurm scripts rely on the `pyxis <https://github.com/NVIDIA/pyxis>`__ Slurm extension, which requires specifying the ``--container-image=`` ``--container-mounts=``. However, it’s important to note that NeMo-Aligner can also function in regular Python environments without this extension.
 
-Step 3: Inference or Further Fine-Tuning
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Step 3: Run inference or further fine-tuning
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Given the trained SFT model, we can run inference on new examples or further fine-tune the SFT model to boost the performance (e.g., RLHF or DPO). It is worthwhile to note that their inputs need to follow the **Prompt Response Template** used in this model. The template is set by ``data.train_ds.prompt_template``. The saved nemo model ``megatron_gpt_sft.nemo`` also stores the prompt format. We can ``tar -xvf megatron_gpt_sft.nemo`` and find it in `model_config.yaml`.
+Given the trained SFT model, you can run inference on new examples or fine-tune the SFT model to boost the performance (e.g., RLHF or DPO). It is important to note that their inputs need to follow the **Prompt Template** used in this model. The template is set by ``data.train_ds.prompt_template``. The saved NeMo model, ``megatron_gpt_sft.nemo``, also stores the prompt format. You can ``tar -xvf megatron_gpt_sft.nemo`` and find it in `model_config.yaml`.
 
 In this example, the template is ``"{input} {output}"``.
 
 Fine-Tune with a Chat Dataset
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-Step 1: Data Formatting
-%%%%%%%%%%%%%%%%%%%%%%%
+Step 1: Format the data
+^^^^^^^^^^^^^^^^^^^^^^^
 
-We will use the `OpenAssistant dataset <https://huggingface.co/datasets/OpenAssistant/oasst1>`__ in this example. Download and convert the dataset into the chat format in the following script:
+In this example, you use the `OpenAssistant dataset <https://huggingface.co/datasets/OpenAssistant/oasst1>`__. Download and convert the dataset into the chat format by using the following script:
 
 .. code-block:: bash
 
    python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_openassistant_data.py --output_directory=data/oasst
       
 
-Step 2: SFT Training
-%%%%%%%%%%%%%%%%%%%%
+Step 2: Run SFT training
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Now that we have the data. We will use NeMo-Aligner to do the supervised fine tuning. Compared to the SFT with a prompt-response dataset, here it is important to set ``model.data.chat=True``.
+Now, you will use the data for supervised fine-tuning with NeMo-Aligner. Compared to the SFT with a prompt-response dataset, you need to set ``model.data.chat=True``.
 
 .. tab-set::
 
     .. tab-item:: Terminal
         :sync: key3
 
-         To run SFT on the terminal directly. Note that the working directory must be at the NeMo Aligner repo for this to work.
+         To run SFT on the terminal directly, use the following command. For successful execution, ensure that the NeMo-Aligner repository is set as your current working directory.
 
          .. code-block:: bash 
 
@@ -289,7 +307,7 @@ Now that we have the data. We will use NeMo-Aligner to do the supervised fine tu
     .. tab-item:: Slurm
         :sync: key4
 
-         To run SFT via slurm do the following:
+         To run SFT via Slurm, run the following command:
 
          .. code-block:: bash 
 
@@ -364,20 +382,21 @@ Now that we have the data. We will use NeMo-Aligner to do the supervised fine tu
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
-If you have a smaller or bigger machine make sure to change the ``trainer.num_nodes`` and ``trainer.devices`` correspondingly. This allows scaling to thousands of GPUs.
 
-For this particular run on llama2-7b model, the final val loss is around 1.201. When the training finishes, there will be a file called ``megatron_gpt_sft.nemo`` for use.
+To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
+
+For this particular run on the Llama2-7b model, the final val loss is around 1.201. Once the training finishes, you'll find a file called ``megatron_gpt_sft.nemo`` available for use.
 
 
-Step 3: Inference or Further Fine-Tuning
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Step 3: Run inference or further fine-tuning
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Given the trained SFT model, we can run inference on new examples or further fine-tune the SFT model to boost the performance (e.g., RLHF or DPO). It is important to note that their inputs need to follow the **Prompt Template** used in this model. The template is set by ``data.chat_prompt_tokens``. The saved nemo model ``megatron_gpt_sft.nemo`` stores the prompt format. We can ``tar -xvf megatron_gpt_sft.nemo`` and find it in `model_config.yaml`. In this example, it is::
+Given the trained SFT model, you can run inference on new examples or further fine-tune the SFT model to boost the performance (e.g., RLHF or DPO). It is important to note that their inputs need to follow the **Prompt Template** used in this model. The template is set by ``data.chat_prompt_tokens``. The saved NeMo model, ``megatron_gpt_sft.nemo``, stores the prompt format. You can ``tar -xvf megatron_gpt_sft.nemo`` and find it in `model_config.yaml`. In this example, it is::
 
    prompt_template: "\0System\n{system message}\n\x11User\n{turn 1 user message}\n\x11Assistant\n\x12{turn 1 assistant label}\n{turn 1 assistant message}\n\x11User\n{turn 2 user message}\n\x11Assistant\n\x12{turn 2 assistant label}\n{turn 2 assistant message}\n\x11"
 
 
-We can run inference using the ``megatron_gpt_sft.nemo`` and the prompte template. When asking the model `What is machine learning?`, its answer is
+You can run inference using ``megatron_gpt_sft.nemo`` and the Prompt Template. When asking the model `What is machine learning?`, the answer will be as follows:
 
 .. code-block:: python
 

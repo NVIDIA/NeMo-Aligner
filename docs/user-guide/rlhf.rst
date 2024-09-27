@@ -5,11 +5,11 @@
 Model Alignment by RLHF
 @@@@@@@@@@@@@@@@@@@@@@@
 
-For the purposes of this tutorial, we will go through the entire RLHF pipeline using models from the NeMo Framework. These can be models such as LLaMa2 or Mistral. Our scripts will work the same way.
+For the purposes of this tutorial, we will go through the entire Reinforcement Learning from Human Feedback (RLHF) pipeline using models from the NeMo Framework. These models can include LLaMa2 or Mistral, and our scripts will function consistently across them.
 
-RLHF is usually preceded by a Supervised Fine-Tuning (SFT). We should first follow the :ref:`Prerequisite guide <prerequisite>` and the :ref:`SFT guide <sft>`. After obtaining the SFT model, we will use this to start the RLHF process. We will use the `PPO <https://arxiv.org/abs/1707.06347>`__ algorithm for the reinforcement learning on the `Anthropic-HH-RLHF <https://huggingface.co/datasets/Anthropic/hh-rlhf>`__ dataset.
+RLHF is usually preceded by a Supervised Fine-Tuning (SFT). We should first follow the :ref:`Prerequisite guide <prerequisite>` and the :ref:`SFT guide <sft>`. After obtaining the SFT model, we will use this to start the RLHF process. We will use the `PPO <https://arxiv.org/abs/1707.06347>`__ algorithm for reinforcement learning on the `Anthropic-HH-RLHF <https://huggingface.co/datasets/Anthropic/hh-rlhf>`__ dataset.
 
-Data processing for RLHF
+Data Processing for RLHF
 #########################
 
 We have a script ready to use for processing the Anthropic-HH dataset into a jsonlines format. Run the following command on the `download_and_process.py <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/8d4f34c9da6b3254ca316b2c43ee88b77a894529/launcher_scripts/nemo_launcher/collections/dataprep_scripts/anthropichh_dataprep/download_and_process.py#L1>`__ script for anthropic HH.
@@ -18,12 +18,12 @@ We have a script ready to use for processing the Anthropic-HH dataset into a jso
 
       python download_and_process.py
 
-After running this script you should have the files ``{train,test}_comparisons.jsonl`` and ``{train,test}_prompts.jsonl``. Comparison files are used for reward model training, whereas prompts file are used for the reinforcement learning training.
+After running this script, you should have the files ``{train,test}_comparisons.jsonl`` and ``{train,test}_prompts.jsonl``. Comparison files are used for reward model training, whereas prompts files are used for the reinforcement learning training.
 
 Reward Model Training
 #####################
 
-The reward model is used to score how good a response is. It is trained using a pairwise comparison loss and therefore requires a dataset of response pairs, where one response in the pair is ranked higher than the other. A good reward model is cruical for the success of the PPO training.
+The reward model is used to score the quality of the response. It is trained using a pairwise comparison loss, which means it requires a dataset of response pairs. In each pair, one response is ranked higher than the other. A well-constructed reward model is essential for the success of the Proximal Policy Optimization (PPO) training process.
 
 Data Preprocessing
 %%%%%%%%%%%%%%%%%%
@@ -36,7 +36,7 @@ You can also bring your own data for the reward model training phase. The reward
    {"text": prompt2 || bad_response_2}
    ...
 
-where || denotes string concatenation and *prompt1* and *prompt2* are different prompts. Note that for the same prompt, *prompt || good_response* must come before *prompt || bad_response* in the dataset.
+The || denotes a string concatenation, whereas *prompt1* and *prompt2* are different prompts. Note that for the same prompt, *prompt || good_response* must come before *prompt || bad_response* in the dataset.
 
 An example JSONL file can look like the following::
 
@@ -47,14 +47,14 @@ An example JSONL file can look like the following::
   ...
 
 
-To launch reward model training, you must start with a pretrained or SFT trained model. For this section we will use the SFT model trained in the previous step to train the reward model.
+To launch reward model training, you must start with a pretrained or SFT-trained model. For this section, we will use the SFT model trained in the previous step to train the reward model.
 
 .. tab-set::
 
     .. tab-item:: Terminal
         :sync: key3
 
-         To run reward model training on the terminal directly
+         To run reward model training on the terminal directly:
 
          .. code-block:: bash 
 
@@ -78,7 +78,7 @@ To launch reward model training, you must start with a pretrained or SFT trained
     .. tab-item:: Slurm
         :sync: key4
 
-         To run reward model training using Slurm. The script below uses 4 nodes, but you can change the node count to something smaller.
+         To run reward model training with Slurm, use the following script. The script below uses 4 nodes, but you can change the node count to something smaller.
 
          .. code-block:: bash 
 
@@ -140,25 +140,25 @@ To launch reward model training, you must start with a pretrained or SFT trained
             set +x
 
 
-*Remark: currently, the example training script does not automatically run evaluation on the provided test set. This may change in a future release.* 
+*Remark: Currently, the example training script does not automatically run evaluation on the provided test set. This may change in a future release.* 
 
-A good reward model training will have validation accuracy improve as the training goes on. In the above slurm example we achieve 69.57% validation accuracy. 
+During reward model training, it’s expected that the validation accuracy improves as the training progresses. In the example provided above using Slurm, we achieved a validation accuracy of 69.57%. 
 
-With the finished training NeMo-Aligner will save a ``megatron_gpt.nemo`` which is the reward model we need for the RL stage.
+With the finished training, NeMo-Aligner will save a ``megatron_gpt.nemo`` which is the reward model we need for the RL stage.
 
 PPO Training
 ############
 
-After you have fine-tuned a GPT model using Supervised Fine-Tuning (SFT), and trained a reward model as explained in the preceding section, you can start doing RLHF with PPO.
+After you have fine-tuned a GPT model using SFT and trained a reward model as explained in the preceding section, you can proceed with RLHF using PPO.
 
-During PPO training, we conceptually have 4 models interacting with each other:
+During PPO training, we conceptually have four models that interact with each other:
 
-#. The PPO Actor Network (also known as the Policy Network): This is the model we are training, and it should start from an SFT model.
-#. The Reward Model (RM) Network (also known as a Preference Model (PM)): This model takes a prompt concatenated with a response as input, and outputs a single scalar value: the reward, which the PPO algorithm will try to maximize.
+#. The PPO Actor Network (also known as the Policy Network): This is the model we are training. It should start from an SFT model.
+#. The Reward Model (RM) Network (also known as a Preference Model (PM)): This model takes a prompt concatenated with a response as input and outputs a single scalar value, the reward, which the PPO algorithm will try to maximize.
 #. The PPO Critic Network (also known as the Value Network): Since PPO is an Actor-Critic algorithm, we need a Critic to guide the Actor during training. The Critic will provide value estimates for each token in the responses provided by the Actor. These values can be seen as an estimate of the total reward the Actor will receive after generating all the remaining tokens. The Critic should be initialized from the RM so as to provide useful feedback in the early stages of training. Note: The RM generates a single reward for the entire sequence, whereas the Critic generates a value for each token.
 #. The Initial Policy Network (also known as the Reference Model): We use this model to compute a KL Divergence penalty term that ensures that the PPO Actor does not diverge too much from the Initial Policy. This way, we prevent the PPO Actor from overfitting to the rewards given by the RM, and ensure it does not forget the knowledge it acquired during pretraining and SFT. This model should be the one used to initialize the PPO Actor Network.
 
-In the most optimized configuration, Aligner will run the actor and initial policy within the same job and the critic and reward model within the same job. It will then use cpu offloading to load back the corresponding model when needed.
+In the most optimized configuration, NeMo-Aligner will run the Actor and initial policy within the same job as well as the Critic and reward model within the same job. It will then use CPU offloading to load back the corresponding model when needed.
    
 The next section discusses how to launch each of these two jobs.
 
@@ -170,6 +170,8 @@ To launch the server:
 .. code-block:: bash 
 
    #!/bin/bash
+   # Example: If using the reward model trained from the above configuration, you can find
+              the trained reward model checkpoint here: "/results/checkpoints/megatron_gpt.nemo"
    CHECKPOINT_NEMO_FILE="/path/to/trained_rm.nemo"
    GPFS="/path/to/nemo-aligner-repo"
 
@@ -194,7 +196,7 @@ To launch the server:
       ++model.offload_adam_states=True \
       ++model.mcore_gpt=True
 
-The above example launches the reward model critic server on 8 gpus and 1 node. Please make sure to change ``trainer.devices``, ``trainer.num_nodes`` depending on your model size and scale. Aligner will work on any scale. Also make sure to tune the `trainer.ppo.inference_micro_batch_size` argument, this sets how big of a batch the PPO actor is allowed to send to the critic per DP rank.
+The above example launches the reward model Critic server on 8 GPUs and 1 node. Please make sure to change ``trainer.devices``, ``trainer.num_nodes`` depending on your model size and scale. NeMo-Aligner will work on any scale. In addition, make sure to tune the `trainer.ppo.inference_micro_batch_size` argument as this determines the batch size the PPO Actor is allowed to send to the Critic per DP rank.
 
 Launching the Initial Policy and PPO Actor Training
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -233,15 +235,15 @@ The PPO Actor training job contains the master controller that makes the HTTP ca
       ++model.ppo.entropy_bonus=0.0 \
       remote_critic_rm.pad_to_length=2048
 
-The above launches the initial and actor server on 1 node with 8 GPUs
+The above script launches the initial and Actor server on 1 node with 8 GPUs.
 
 .. note::
-   Fore more info on PPO hyperparameters please see `PPO Hparams <https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/RLHFTraining.md#ppo-hyperparameters>`__.
+   For more info on PPO hyperparameters, see `PPO Hparams <https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/RLHFTraining.md#ppo-hyperparameters>`__.
 
-Launching Both Servers for RLHF training
+Launching Both Servers for RLHF Training
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-You can use slurm to launch the 2 jobs and get them to coordinate together in a full RLHF job via the following:
+You can use Slurm to launch both jobs and coordinate them together in a full RLHF job using the following script:
 
 .. code-block:: bash 
 
@@ -353,19 +355,64 @@ You can use slurm to launch the 2 jobs and get them to coordinate together in a 
 
    wait
 
-The above script runs the reward model critic server on 1 node and the actor on 1 node.
+The above script runs the reward model Critic server on 1 node and the Actor on 1 node.
 
 It is important to launch all jobs with ``&`` after the srun command, to ensure they do not block each other. 
 
 .. note::
-   Make sure to change the critic arg ``trainer.ppo.inference_micro_batch_size`` such that ``trainer.ppo.inference_micro_batch_size * DP size <= model.ppo.rollout_micro_batch_size``.
+   Make sure to change the Critic arg ``trainer.ppo.inference_micro_batch_size`` such that ``trainer.ppo.inference_micro_batch_size * DP size <= model.ppo.rollout_micro_batch_size``.
+
+Speeding up PPO with TensorRT-LLM
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+NeMo-Aligner has support for accelerating RLHF with `TensorRT-LLM <https://github.com/NVIDIA/TensorRT-LLM>`__. This can provide a significant speedup to the PPO training time when enabled. There are a few crucial flags to set when using TensorRT-LLM with Aligner.
+
+#. `trainer.ppo.trt_llm.enable=True` enables TensorRT-LLM.
+#. `trainer.ppo.trt_llm.reshard=True` enables on the fly pipeline parallelism resharding during inference. This essentially runs training with pipeline parallelism but inference with tensor parallelism only.
+#. `trainer.ppo.trt_llm.unload_engine_train=False`: may be set to True to unload the engine during training, which frees up more memory for training since the engine is on GPU but comes at a cost of loading and offloading the engine. It's recommended to keep this False.
+#. `trainer.trt_llm.model_type=llama` tells TensorRT-LLM which model type we want to run inference on. Must be changed for other model types, as an example for nemotron this should be gptnext.
+#. `trainer.ppo.batch_iterator.use_flask=True` enables a flask server to balance work across different DP workers.
+
+For more information please see the aligner `paper <https://arxiv.org/abs/2405.01481>`__.
+
+PPO Results with TensorRT-LLM
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+We used the TensorRT-LLM PPO integration to train the `LLaMa3-70B-PPO-Chat <https://huggingface.co/nvidia/Llama3-70B-PPO-Chat>`__ model. This model was trained using a global batch size of 128, num_rollout_samples of 128, constant learning rate of 1e-7 and KL penalty of 3e-3. For more details please see the Helpsteer2 `paper <https://arxiv.org/abs/2406.08673>`__.
+
+PPO Performance Results with TensorRT-LLM
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+We test the scaling of our TRT-LLM integration by running Llama3 70B Actor and Llama3 70B Reward model on the Helpsteer2 prompts with ``num_rollout_samples=1024``, ``global_batch_size=128``, reshard enabled and engine offloading set to False.
++------------------+-------------------+-----------------------------+----------------------+-------------------+
+| Actor Node Count | Critic Node Count | Number of Tokens Generated  | Step Time(seconds)  | Scaling Efficiency |
++==================+===================+=============================+======================+===================+
+| 8                | 4                 | 350.7                       | 366.7                | 1                 |
++------------------+-------------------+-----------------------------+----------------------+-------------------+
+| 16               | 8                 | 323.3                       | 190.4                | 1.93              |
++------------------+-------------------+-----------------------------+----------------------+-------------------+
+| 32               | 16                | 331.7                       | 108                  | 3.40              |
++------------------+-------------------+-----------------------------+----------------------+-------------------+
+| 64               | 32                | 334                         | 56.9                 | 6.44              |
++------------------+-------------------+-----------------------------+----------------------+-------------------+
+
+NOTE: for 64x32 config we used a rollout_micro_batch_size of 16 instead of 8 since we have more memory coming from the distributed optimizer.
+
+We also support running RLHF on Llama3.1 405B Actor and Reward Model. The following numbers are generated with ``num_rollout_samples=128``, ``global_batch_size=128``, reshard turned off, engine offloading set to False.
+
++------------------+-------------------+----------------------------+--------------------+
+| Actor Node Count | Critic Node Count | Number of Tokens Generated | Step Time(seconds) |
++==================+===================+============================+====================+
+| 84               | 42                | 915.6                      | 164.6              |
++------------------+-------------------+----------------------------+--------------------+
+
+In the future we aim to improve the performance of generation with large models that have high pipeline parallelism size.
 
 PPO Results
 %%%%%%%%%%%
 
 Once you've completed RLHF training, you can serve your model using the `megatron_gpt_eval.py <https://github.com/NVIDIA/NeMo/blob/8cd5f1c8e7d4fed9f4f946028cd02047c5d2296f/examples/nlp/language_modeling/megatron_gpt_eval.py#L4>`__ script from the NeMo codebase to run more rigorous evaluation of your trained model.
    
-Scaling the tutorial to bigger models
+Scaling the Tutorial to Bigger Models
 #####################################
 
-The above tutorial is a way to get started with RLHF but is not the most optimal performant or convergence configuration. When running RLHF fully, we expect around +0.4 to +0.5 on the MT-bench score. It is cruical to start with a good SFT model and monitor the response length.
+While the tutorial above provides a way to get started with RLHF, it doesn’t represent the most optimal performance or convergence configuration. When running RLHF fully, we anticipate achieving an MT-bench score improvement of approximately +0.4 to +0.5. It’s essential to begin with a high-quality SFT model and closely monitor the response length.

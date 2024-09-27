@@ -70,6 +70,13 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
 
+  # if there is ever a need to run inference
+  # then this flag will control the batch size
+  # we run inference on. The model will take a potentially
+  # large inference batch, cut it into micro batches
+  # of size forward_micro_batch_size and then run inference
+  forward_micro_batch_size: ${.micro_batch_size}
+
   encoder_seq_length: 4096
   max_position_embeddings: ${model.encoder_seq_length}
 
@@ -97,8 +104,7 @@ model:
     splits_string: null
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True
-    num_workers: 2
-    dataloader_type: single # cyclic
+    num_workers: 0
     reset_position_ids: False # Reset position ids after end-of-document token
     reset_attention_mask: False # Reset attention mask after end-of-document token
     eod_mask_loss: False # Mask loss for the end of document tokens

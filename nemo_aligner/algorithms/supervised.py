@@ -48,6 +48,7 @@ class SupervisedTrainer:
         logger,
         ckpt_callback,
         run_timer,
+        run_init_validation=False,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -57,6 +58,7 @@ class SupervisedTrainer:
         self.cfg = cfg
         self.optimizer = optimizer
         self.scheduler = scheduler
+        self.run_init_validation = run_init_validation  # do we run validation in the beginning before any training
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -67,9 +69,16 @@ class SupervisedTrainer:
         self.ckpt_callback = ckpt_callback
 
         # compute `max_steps`
-        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(
+            self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
+        )
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
+        self.val_check_interval = (
+            int(self.cfg.val_check_interval * self.num_steps_per_epoch)
+            if isinstance(self.cfg.val_check_interval, float)
+            else self.cfg.val_check_interval
+        )
         self.set_max_steps()
 
         self.timer = SyncTimer(
@@ -174,6 +183,14 @@ class SupervisedTrainer:
 
         self.run_timer.start_time()
 
+        if self.run_init_validation:
+            logging.info("Running validation in the very beginning.")
+            val_loss, val_metrics = self.run_validation()
+            # validation is done on the UPDATED weights
+            # so we use the incremented self.step
+            self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+            logging.info("Initial validation metrics logged.")
+
         for _ in epoch_iter:
             num_steps_in_epoch = min(
                 self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
@@ -210,7 +227,7 @@ class SupervisedTrainer:
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
-                    self.cfg.val_check_interval,
+                    self.val_check_interval,
                     self.cfg.save_interval,
                     self.limit_val_batches,
                     run_time_exceeded=run_time_exceeded,

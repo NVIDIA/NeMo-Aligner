@@ -16,8 +16,7 @@ import warnings
 from contextlib import nullcontext
 
 import torch
-from apex.transformer.pipeline_parallel.utils import get_num_microbatches
-from megatron.core import parallel_state
+from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
@@ -30,6 +29,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, from_parallel_logits_to_logprobs
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,

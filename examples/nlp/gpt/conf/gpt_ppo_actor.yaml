@@ -9,6 +9,14 @@ trainer:
   precision: bf16
 
   ppo:
+    # How many steps we train warmup the critic for (without training the policy)
+    # this may help prevent the critic loss from hockey sticking since
+    # the critic is initialized from the reward model and may not be initially
+    # good at estimating the returns of the policy.
+    # NOTE: setting this to N means the critic will be trained N + 1 times on the first
+    # iteration.
+    critic_warmup_steps: 0
+
     max_epochs: 1
     max_steps: -1  # max PPO steps (-1 to go through the whole train set)
     val_check_interval: 10
@@ -22,16 +30,48 @@ trainer:
     gae_lambda: 0.95
     normalize_advantages: True
 
+
+    # the sequence length to pad the rollout batch for training to
+    # reduce fragmentation at the cost of using more
+    # memory, set to null if we don't want to pad it
+    # to a constant size
+    # if actual seq length is higher than this a warning will be raised
+    # but will not crash and training will still proceed on the larger
+    # sequence length
+    rollout_batch_seq_length: null
+
+    # Speed-up training by accelerating inference stage using TRTLLM
+    trt_llm:
+      enable: False
+      reshard: False # if True then reshard the model into TP only for inference
+
+      # TRTLLM preallocates activation memory according to the number of input tokens
+      # By default, assume the max input length is the difference between the model sequence length and the max number of tokens to generate
+      max_input_len: ${subtract:${model.encoder_seq_length}, ${model.ppo.length_params.max_length}}
+      max_input_tokens: ${multiply:${.max_input_len}, ${model.ppo.rollout_micro_batch_size}}
+
+      # the seed to use for trt-llm generation
+      seed: ${model.seed}
+
+      # for supported values see: https://github.com/NVIDIA/NeMo/blob/db6244857af3b012f645c7f4672522978bb608b1/nemo/export/trt_llm/converter/utils.py#L26
+      model_type: llama # can be gptj, gptnext, llama, gemma, falcon
+
+      # Save GPU memory by unloading and reloading the TRTLLM engine before and after the training stage
+      # Reloading the engine incurs a constant time overhead
+      unload_engine_train: False
+
+    batch_iterator:
+      # When use_flask is True, we will spawn a flask server on rank 0 to balance the work of policy rollouts.
+      # This option is useful in cases where the generation length varies greatly across DP ranks since
+      # the flask server will allow DP ranks with shorter responses to process more samples and DP ranks
+      # with longer responses to process less samples. Thereby lowering the DP wait time.
+      use_flask: False
+      port: 5557
+
     # pick up from the model
     # *do not change this*
     model_gbs: ${model.global_batch_size}
     model_mbs: ${model.micro_batch_size}
-
-    # the sequence length to pad the rollout batch to
-    # this reduces fragmentation at the cost of using more
-    # memory, set to null if we don't want to pad it
-    # to a constant size
-    rollout_batch_seq_length: null
 
   # no need to change these
   logger: False # logger provided by exp_manager
@@ -78,12 +118,12 @@ exp_manager:
   resume_ignore_no_checkpoint: True
   create_checkpoint_callback: True
   checkpoint_callback_params:
-    monitor: val_global_rewards
+    monitor: val_rewards
     save_top_k: 1
     mode: max
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt-{step}-{consumed_samples}-{ppo_optimization_step}-{epoch}-{val_global_rewards:.3f}'
+    filename: 'megatron_gpt-{step}-{consumed_samples}-{ppo_optimization_step}-{epoch}-{val_rewards:.3f}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
 
 pretrained_checkpoint:
@@ -131,6 +171,8 @@ model:
     length_params:
       max_length: ${int_div:${model.encoder_seq_length}, 2}
       min_length: 1
+
+    trt_llm: ${trainer.ppo.trt_llm}
 
   #peft 
   peft:
@@ -188,8 +230,7 @@ model:
     splits_string: null
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True
-    num_workers: 2
-    dataloader_type: single # cyclic
+    num_workers: 0
     reset_position_ids: False # Reset position ids after end-of-document token
     reset_attention_mask: False # Reset attention mask after end-of-document token
     eod_mask_loss: False # Mask loss for the end of document tokens

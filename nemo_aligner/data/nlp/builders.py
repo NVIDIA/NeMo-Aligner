@@ -22,7 +22,6 @@ from functools import partial
 
 import numpy as np
 import torch
-from megatron.core import parallel_state
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
@@ -36,7 +35,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
 )
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset, GPTSFTPackedDataset
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingBatchSampler,
     MegatronPretrainingRandomBatchSampler,
@@ -44,10 +43,12 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
     DPOModelDataset,
+    KTOModelDataset,
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
 )
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
@@ -261,11 +262,27 @@ def _build_train_valid_test_datasets(
 build_train_valid_test_rlhf_datasets = partial(build_train_valid_test_datasets, RLHFDataset)
 build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, RewardModelDataset)
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
+build_train_valid_test_kto_datasets = partial(build_train_valid_test_datasets, KTOModelDataset)
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
 
 
 def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
-    dataset_cls = GPTSFTChatDataset if is_chat else GPTSFTDataset
+    packed_sequence = data_cfg.get("packed_sequence", False)
+    dataset_kwargs = {}
+
+    if is_chat:
+        assert not packed_sequence, "Sequence packing is currently not supported with chat datasets."
+        dataset_cls = GPTSFTChatDataset
+    elif packed_sequence:
+        dataset_cls = GPTSFTPackedDataset
+        # Whether to return `cu_seqlen` to pass to the model. Having `cu_seqlen` in the model input
+        # enables THD attention kernel, which is the correct format for training with packed sequence to prevent
+        # cross-sequence attention. This flag should be True unless you have a specific use case.
+        dataset_kwargs = {"return_cu_seqlen": data_cfg.get("packed_sequence_return_cu_seqlen", True)}
+        assert data_cfg.micro_batch_size == 1, "Micro batch size must be 1 if using packed sequence"
+    else:
+        dataset_cls = GPTSFTDataset
+
     dataset = dataset_cls(
         file_path=data_cfg.file_path,
         tokenizer=tokenizer,
@@ -295,11 +312,12 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
         ),  # used to choose truncation method. Options: ['random', 'left', 'right']
         special_tokens=special_tokens,
         output_original_text=data_cfg.get("output_original_text", False),
+        **dataset_kwargs,
     )
     return dataset
 
 
-def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg):
+def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_masks_and_position_ids=True):
     """collate function that pads each sequence to the max in the batch
     """
     return partial(
@@ -309,6 +327,7 @@ def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg):
         reset_position_ids=cfg.model.data.get("reset_position_ids", False),
         reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
         eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+        generate_masks_and_position_ids=generate_masks_and_position_ids,
     )
 
 
@@ -339,16 +358,12 @@ def build_dataloader(
         "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
 
-    # Megatron sampler
-    if hasattr(cfg.model.data, "dataloader_type") and cfg.model.data.dataloader_type == "single":
-        if use_random_sampler:
-            cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
-            common_params["seed"] = cfg.model.seed
-        else:
-            cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
-        batch_sampler = cls(**common_params)
+    if use_random_sampler:
+        cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
+        common_params["seed"] = cfg.model.seed
     else:
-        raise ValueError('`cfg.model.data.dataloader_type` must be set to "single"')
+        cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+    batch_sampler = cls(**common_params)
 
     return torch.utils.data.DataLoader(
         dataset,

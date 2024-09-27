@@ -14,7 +14,7 @@ trainer:
     max_steps: -1
     val_check_interval: 0.1
     save_interval: 100
-    limit_train_batches: null
+    limit_train_batches: 1.0
 
     # how many GBS we loop over
     limit_val_batches: 1.0
@@ -115,8 +115,7 @@ model:
       end_of_name: "\x0A"  # \0x0A is '\n'
 
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
-    num_workers: 1
-    dataloader_type: single  # only supports single
+    num_workers: 0
     reset_position_ids: False # Reset position ids after end-of-document token
     reset_attention_mask: False # Reset attention mask after end-of-document token
     eod_mask_loss: False # Mask loss for the end of document tokens

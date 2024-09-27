@@ -17,8 +17,7 @@ from typing import Mapping
 import numpy as np
 import torch
 import wandb
-from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
-from megatron.core import parallel_state
+from megatron.core.num_microbatches_calculator import get_micro_batch_size, get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_data_parallel_rng_tracker_name
 from PIL import Image
@@ -32,6 +31,7 @@ from nemo.collections.multimodal.models.text_to_image.stable_diffusion.ldm.ddpm 
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -44,12 +44,10 @@ BatchType = Mapping[str, torch.tensor]
 
 
 def calculate_gaussian_kl_penalty_shared_var(curr_eps, init_eps):
-
     diff = curr_eps - init_eps
     kl = torch.sum(diff ** 2, dim=(1, 2, 3, 4), keepdim=True).flatten()
     dimensionality = torch.numel(curr_eps[0])
     kl /= dimensionality
-
     return kl
 
 
@@ -57,7 +55,6 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
     def __init__(self, cfg, trainer):
 
         super().__init__(cfg, trainer=trainer)
-
         self.init_model = LatentDiffusion(cfg, None).to(torch.cuda.current_device()).eval()
         self.cfg = cfg
         self.with_distributed_adam = self.with_distributed_adam
@@ -105,7 +102,7 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
     def finish_validation_step(self):
-        """things to call to prepare for validation
+        """things to call after validation step ends
         """
         finish_validation_step(self)
         # restore the batch sizes for training
@@ -207,6 +204,99 @@ class MegatronSDDRaFTPModel(MegatronLatentDiffusion, SupervisedInterface):
             captions.append("SD: " + prompts[i] + ", Reward = " + str(reward_init[i]))
 
         return vae_decoder_output_draft_p, images, captions
+
+    @torch.no_grad()
+    def annealed_guidance(self, batch, x_T, weighing_fn=None):
+        """ this function tries to perform sampling with a modified score function at each step which is an average
+         of the base model and the trained model """
+        if weighing_fn is None:
+            weighing_fn = lambda sigma1, sigma2, i, total: i * 1.0 / total
+
+        with torch.cuda.amp.autocast(
+            enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
+        ):
+            batch_size = len(batch)
+            prev_img_draft_p = x_T
+
+            device_draft_p = self.model.betas.device
+
+            # init sampler and make schedule
+            sampler_draft_p = sampling_utils.initialize_sampler(self.model, self.sampler_type.upper())
+            sampler_init = sampling_utils.initialize_sampler(self.init_model, self.sampler_type.upper())
+            sampler_draft_p.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
+            sampler_init.make_schedule(ddim_num_steps=self.inference_steps, ddim_eta=self.eta, verbose=False)
+
+            cond, u_cond = sampling_utils.encode_prompt(
+                self.model.cond_stage_model, batch, self.unconditional_guidance_scale
+            )
+
+            timesteps = sampler_draft_p.ddim_timesteps
+            time_range = np.flip(timesteps)
+            total_steps = timesteps.shape[0]
+
+            iterator = tqdm(time_range, desc=f"{sampler_draft_p.sampler.name} Sampler", total=total_steps)
+
+            list_eps_draft_p = []
+            list_eps_init = []
+            truncation_steps = self.cfg.truncation_steps
+
+            denoise_step_kwargs = {
+                "unconditional_guidance_scale": self.unconditional_guidance_scale,
+                "unconditional_conditioning": u_cond,
+            }
+            for i, step in enumerate(iterator):
+
+                denoise_step_args = [total_steps, i, batch_size, device_draft_p, step, cond]
+
+                # run ddim step for FT model
+                img_draft_p, pred_x0_draft_p, eps_t_draft_p = sampler_draft_p.single_ddim_denoise_step(
+                    prev_img_draft_p.clone(), *denoise_step_args, **denoise_step_kwargs
+                )
+                # run ddim step for base model
+                img_init, pred_x0_init, eps_t_init = sampler_init.single_ddim_denoise_step(
+                    prev_img_draft_p.clone(), *denoise_step_args, **denoise_step_kwargs
+                )
+                # sigmas_i = sampler_draft_p.ddim_sigmas[i]
+                # get weighing scheme
+                w_draft = float(weighing_fn(None, None, i, total_steps))
+                w_base = 1 - w_draft
+                # combine weights
+                eps = w_base * eps_t_init + w_draft * eps_t_draft_p
+                # use this to get new image
+                index = total_steps - i - 1
+                ts = torch.full((batch_size,), step, device=device_draft_p, dtype=torch.long)
+                # get new image
+                img_new_p, pred_x0_new_p = sampler_draft_p._get_x_prev_and_pred_x0(
+                    False,
+                    batch_size,
+                    index,
+                    device_draft_p,
+                    prev_img_draft_p.clone(),
+                    ts,
+                    None,  # model output, we shouldnt need this
+                    eps,
+                    False,
+                    False,
+                    1.0,
+                    0.0,
+                )
+                prev_img_draft_p = img_new_p
+
+            last_states = [pred_x0_draft_p]
+            # stack
+            trajectories_predx0 = (
+                torch.stack(last_states, dim=0).transpose(0, 1).contiguous().view(-1, *last_states[0].shape[1:])
+            )  # B1CHW -> BCHW
+
+            vae_decoder_output = []
+            for i in range(0, batch_size, self.vae_batch_size):
+                image = self.model.differentiable_decode_first_stage(trajectories_predx0[i : i + self.vae_batch_size])
+                vae_decoder_output.append(image)
+
+            vae_decoder_output = torch.cat(vae_decoder_output, dim=0)
+            vae_decoder_output = torch.clip((vae_decoder_output + 1) / 2, 0, 1) * 255.0
+
+            return vae_decoder_output
 
     def generate(
         self, batch, x_T,
