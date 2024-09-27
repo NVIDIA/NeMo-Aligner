@@ -37,7 +37,6 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: ${{ github.run_id }}
-          ref: ${{ inputs.sha }}
 
       - name: Clean runner cache
         run: | 
@@ -58,7 +57,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          file: Dockerfile
+          file: ${{ github.run_id }}/Dockerfile
           push: true
           build-args: ${{ inputs.build-args }}
           cache-from: |
