@@ -61,7 +61,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          file: ${{ github.run_id }}/Dockerfile
+          file: ${{ github.run_id }}/${{ inputs.dockerfile }}
           push: true
           build-args: ${{ inputs.build-args }}
           cache-from: |
