@@ -434,6 +434,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         target_token_ids,
         target_log_sum_exp_logits,
         labels,
+        loss_mask,
         use_k_add_1_logits = False,
         kd_loss_weight = 1.,
         sft_loss_weight = 0,
@@ -515,6 +516,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             const = (target_probs * target_probs.log()).sum(-1)
 
             kd_loss = - neg_loss + log_sum_exp_logits_topk + const
+            kd_loss = torch.sum(kd_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
         
             # Store softmax, target-softmax, target-mask and masked-target for backward pass.
             probs = exp_logits_topk / sum_exp_logits_topk.unsqueeze(dim=-1)
@@ -593,24 +595,27 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
             vocab_size = exp_logits.size(-1)
 
+        sft_loss = torch.sum(sft_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
         loss = kd_loss_weight * kd_loss + sft_loss_weight * sft_loss
+        #loss = torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
 
         ctx.save_for_backward(
             probs, prob_K_add_1, target_probs, target_prob_K_add_1,
             target_mask, target_token_ids_1d, torch.LongTensor([partition_vocab_size]),
-            torch.Tensor([kd_loss_weight, sft_loss_weight]), exp_logits, label_mask, masked_labels_1d, torch.LongTensor([vocab_size]), ## <-- variables for SFT loss
+            torch.Tensor([kd_loss_weight, sft_loss_weight]), exp_logits, label_mask, masked_labels_1d), ## <-- variables for SFT loss
         )
 
-        return loss, kd_loss, sft_loss
+        return loss #, kd_loss, sft_loss
 
     ## TODO support K+1-class softmax
+    ## TODO: this implementation uses extra mem because we differentiate 3 losses
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, grad_output, *_):
 
         # Retreive tensors from the forward path.
         (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
          target_token_ids_1d, partition_vocab_size,
-         loss_weights, full_softmax, label_mask, masked_labels_1d, vocab_size) = ctx.saved_tensors
+         loss_weights, full_softmax, label_mask, masked_labels_1d) = ctx.saved_tensors
 
         K = probs.size()[-1]
 
@@ -636,30 +641,26 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         grad_2d -= softmax_update
 
         kd_loss_weight = loss_weights[0]
+        grad_input = kd_loss_weight * grad_input
+
         sft_loss_weight = loss_weights[1]
-        grad_input_sft = torch.zeros_like(grad_input)
         if sft_loss_weight > 0:
 
-            vocab_size = vocab_size.item()
+            arange_1d_label = torch.arange(start=0, end=grad_input.size()[0], device=grad_input.device)
 
-            # All the inputs have softmax as thier gradient.
-            grad_input_sft = full_softmax
-            # For simplicity, work with the 2D gradient.
-            grad_2d_sft = grad_input_sft.view(-1, partition_vocab_size)
+            full_softmax *= sft_loss_weight
+            grad_2d += full_softmax.view(-1, partition_vocab_size)
 
-            # Add the gradient from matching classes.
-            arange_1d_label = torch.arange(start=0, end=grad_2d_sft.size()[0], device=grad_2d_sft.device)
+            label_mask = label_mask.float()
+            label_mask -= 1
+            label_mask *= sft_loss_weight
+            grad_2d[arange_1d_label, masked_labels_1d] += label_mask.view(-1).float()
 
-            softmax_update = 1.0 - label_mask.view(-1).float()
-
-            grad_2d_sft[arange_1d_label, masked_labels_1d] -= softmax_update
-
-        grad_input = kd_loss_weight * grad_input + sft_loss_weight * grad_input_sft
 
         # Finally elementwise multiplication with the output gradients.
         grad_input.mul_(grad_output.unsqueeze(dim=-1))
 
-        return grad_input, None, None, None, None
+        return grad_input, None, None, None, None, None, None, None, None
     
 
 class SyncTimer(NamedTimer):

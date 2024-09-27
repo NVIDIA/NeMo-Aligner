@@ -155,30 +155,32 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                 kd_loss = self.loss_func(topk_logits, target_topk_logits_in_loss, loss_mask=loss_mask)"""
 
                 ## bwd kl
-                loss, kd_loss, sft_loss = _TopKLogitsCrossEntropy.apply(
+                loss = _TopKLogitsCrossEntropy.apply(
                     output_tensor,
                     target_topk_logits,
                     target_topk_token_ids,
                     target_log_sum_exp_logits,
                     labels,
-                    use_k_add_1_logits=False,
-                    kd_loss_weight=self.kd_loss_weight,
-                    sft_loss_weight=self.sft_loss_weight
+                    loss_mask,
+                    False,
+                    self.kd_loss_weight,
+                    self.sft_loss_weight
                 )
 
                 ## reduce losses
-                loss = torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
-                kd_loss = torch.sum(kd_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
-                sft_loss = torch.sum(sft_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
+                #loss = torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
+                #kd_loss = torch.sum(kd_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
+                #sft_loss = torch.sum(sft_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
+                #reduced_loss, reduced_kd_loss, reduced_sft_loss = average_losses_across_data_parallel_group([loss, kd_loss, sft_loss])
 
-                reduced_loss, reduced_kd_loss, reduced_sft_loss = average_losses_across_data_parallel_group([loss, kd_loss, sft_loss])
-                
+                reduced_loss = average_losses_across_data_parallel_group([loss])[0]
+
                 return (
                     loss,
                     {
                         "avg": reduced_loss,
-                        "avg_sft_loss": reduced_sft_loss,
-                        "avg_kd_loss": reduced_kd_loss,
+                        "avg_sft_loss": reduced_loss, #reduced_sft_loss,
+                        "avg_kd_loss": reduced_loss, #reduced_kd_loss,
                     },
                 )
 
@@ -277,4 +279,4 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
 
     def finish_validation_step(self):
         finish_validation_step(self)
-        
+
