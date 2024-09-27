@@ -23,6 +23,10 @@ on:
         required: false
         description: Additional build args to use
         type: string
+      dockerfile:
+        required: true
+        description: Path to dockerfile
+        type: string
 
 defaults:
   run:
