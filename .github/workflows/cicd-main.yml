@@ -30,7 +30,7 @@ concurrency:
 jobs:
   build-container:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
-    uses: NVIDIA/NeMo-Aligner/.github/workflows/_build_container.yml@ko3n1g/feat/build-container
+    uses: NVIDIA/NeMo-Aligner/.github/workflows/_build_container.yml
     with:
       image-name: nemo_aligner_container
       build-args: |
