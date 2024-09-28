@@ -122,10 +122,10 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                                              op=torch.distributed.ReduceOp.MAX,
                                              group=get_tensor_model_parallel_group())
                 output_tensor = output_tensor - output_tensor_max.unsqueeze(dim=-1).detach()
-                output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
+                """output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
                 
                 # compute the knowlodge distillation loss against the ground-truth logits
-                """topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
+                topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
 
                 if self.use_k_add_1_logits:
                     # When target_log_sum_exp_logits is not None. The objective is
