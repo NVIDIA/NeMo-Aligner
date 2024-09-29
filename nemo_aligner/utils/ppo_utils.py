@@ -72,11 +72,9 @@ def calculate_ppo_rewards(values, rewards, response_lengths, init_policy_kl, pen
 def calculate_kl_penalty(log_probs_a, log_probs_b, use_absolute_kl=True):
     """Calculates a per-token estimate of the KL Divergence between two log_probs.
     """
-    init_policy_kl = log_probs_a - log_probs_b
-    if use_absolute_kl:
-        init_policy_kl = init_policy_kl.abs()
-
-    return init_policy_kl
+    log_r = log_probs_b - log_probs_a
+    r = log_r.exp()
+    return r - 1 - log_r
 
 
 def create_mask(values, prompt_lengths, response_lengths):
