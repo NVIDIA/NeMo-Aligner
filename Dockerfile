@@ -1,4 +1,5 @@
 # To build NeMo-Aligner from a base PyTorch container:
+# TODO(terry): update this before merge
 #
 #   docker buildx build -t aligner:latest .
 #

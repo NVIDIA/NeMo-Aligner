@@ -115,10 +115,10 @@ class GPTGenerateTRTLLM:
                 offsets = append_and_repad_list(offsets, max(offsets) + 1, pad_id=-1)
 
         assert max(offsets) == len(ids), "offset and stop token length are mismatched"
-        # TRT-LLM expects stop_list to be on CPU
-        stop_list = torch.as_tensor([ids, offsets], dtype=torch.int32, device="cpu").repeat(
+        # TRT-LLM expects stop_list to be a numpy array
+        stop_list = torch.as_tensor([ids, offsets], dtype=torch.int32, device='cpu').repeat(
             self.generation_batch_size, 1, 1
-        )
+        ).numpy()
 
         self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
             # We use `pad_id` as end token instead of `eos_id` to actually "disable" this end token
