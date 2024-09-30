@@ -31,6 +31,7 @@ from nemo.utils import logging
 class MegatronMultimodalGenerate(MegatronGenerate):
     def __init__(self, model, inference_strategy=None):
         super().__init__(model, inference_strategy)
+        self.image_processor = self.model.model.module.image_processor if hasattr(self.model.model, "module") else self.model.model.image_processor
 
     def put(self):
         logging.info("request IP: " + str(request.remote_addr))
@@ -177,8 +178,13 @@ class MegatronMultimodalGenerate(MegatronGenerate):
             if self.inference_strategy is not None:
                 extra['strategy'] = self.inference_strategy
             
+            image_sizes = None
+            if image_list is not None:
+                image_inputs = self.image_processor(image_list, return_tensors="pt")
+                image_list, image_sizes = image_inputs["pixel_values"], image_inputs["image_sizes"]
+
             context_tokens_tensor, context_length_tensor = self.inference_strategy.tokenize_batch(
-                sentences, tokens_to_generate, add_BOS
+                sentences, tokens_to_generate, add_BOS, image_sizes=image_sizes
             )
 
             output = generate(

@@ -30,6 +30,7 @@ from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import get
 from nemo.utils import logging
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
 from nemo.collections.nlp.modules.common.text_generation_utils import generate
+from megatron.core import InferenceParams
 from nemo_aligner.utils.text_generation_utils import MGPTModelTextGenerationStrategy
 
 class MultimodalGPTModel(MegatronNevaModel):
@@ -64,8 +65,9 @@ class MultimodalGPTModel(MegatronNevaModel):
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
-        media_start_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_start_token", "<extra_id_4>"))
-        media_end_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_end_token", "<extra_id_5>"))
+        media_start_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_start_token", "[IMG_BREAK]"))
+        media_end_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_end_token", "[IMG_END]"))
+        media_token_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("image_patch_token", "[IMG]"))
 
         if self.mcore_gpt:
             if not parallel_state.is_initialized():
@@ -80,6 +82,7 @@ class MultimodalGPTModel(MegatronNevaModel):
             model = MCoreNevaModel(
                 mm_cfg=self.cfg.mm_cfg,
                 media_start_id=media_start_id,
+                media_token_id=media_token_id,
                 media_end_id=media_end_id,
                 mcore_gpt=self.mcore_gpt,
                 config=self.transformer_config,
@@ -184,3 +187,63 @@ class MultimodalGPTModel(MegatronNevaModel):
             logging.critical('Unexpected keys were detected during the load. Please double check.')
             logging.critical(f'Unexpected keys: \n{unexpected_keys}')
         return results
+
+    def get_forward_output_only_func(self):
+        def fwd_output_only_func(dataloader_iter, model):
+            batch = next(dataloader_iter)
+            if isinstance(batch, tuple):
+                batch = batch[0]
+            extra_arg = {}
+            (
+                tokens,
+                attention_mask,
+                position_ids,
+                media,
+                set_inference_key_value_memory,
+                inference_max_sequence_len,
+            ) = batch
+            tokens = tokens.cuda()
+            position_ids = position_ids.cuda()
+            if attention_mask != None:
+                attention_mask = attention_mask.cuda()
+                attention_mask = attention_mask[0:1]
+            if media is not None:
+                media = [element.cuda() for sample in media for element in sample] # we have list of list of images
+                #media = media.cuda()
+            labels = None
+            if self.mcore_gpt:
+                # if first step, then clear KV cache, otherwise reuse inference_paarms
+                if set_inference_key_value_memory[0].item():
+                    self.inference_params = InferenceParams(
+                        max_batch_size=tokens.size(0), max_sequence_length=inference_max_sequence_len[0].item()
+                    )
+                extra_arg['inference_params'] = self.inference_params
+            else:
+                extra_arg['set_inference_key_value_memory'] = set_inference_key_value_memory[0].item()
+                extra_arg['inference_max_sequence_len'] = inference_max_sequence_len[0].item()
+
+            forward_args = {
+                'input_ids': tokens,
+                'position_ids': position_ids,
+                'attention_mask': attention_mask,
+                'labels': labels,
+                'media': media,
+            }
+            if not self.mcore_gpt:
+                forward_args['checkpoint_activations_all_layers'] = None
+            output_tensor = model(**forward_args, **extra_arg)
+
+            # Advance inference sequence offset.
+            if self.inference_params:
+                # if last stage, then (final) output is [b, s, h], otherwise it's [s, b, h]
+                if parallel_state.is_pipeline_last_stage():
+                    self.inference_params.sequence_len_offset += output_tensor.size(1)
+                else:
+                    self.inference_params.sequence_len_offset += output_tensor.size(0)
+
+            def id_func(output_tensor):
+                return output_tensor, {'logits': output_tensor}
+
+            return output_tensor, id_func
+
+        return fwd_output_only_func
