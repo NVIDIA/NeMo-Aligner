@@ -14,6 +14,7 @@
 
 """distributed utils for communicating between different ranks"""
 
+import functools
 import time
 import warnings
 from collections import defaultdict
@@ -31,7 +32,6 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.parallel_state import get_model_parallel_group, get_model_parallel_src_rank
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 from nemo_aligner.utils.utils import deprecated_in_version
-import functools
 
 
 def rebalance_nd_tensor(tensor, group):
@@ -483,6 +483,7 @@ class ScopedTimer:
                     already has a recorded duration without consuming the previous
                     measurement using consume_durations().
     """
+
     def __init__(self, *args, **kwargs):
         self._timer = NamedTimer(*args, **kwargs)
         self._duration_log = {}
@@ -500,7 +501,9 @@ class ScopedTimer:
         finally:
             self._timer.stop(name=name)
             if name in self._duration_log:
-                raise ValueError(f"Attempted to store new duration for {name=} before consuming last measurement. Call consume_durations() to consume the last set of measurements.")
+                raise ValueError(
+                    f"Attempted to store new duration for {name=} before consuming last measurement. Call consume_durations() to consume the last set of measurements."
+                )
             self._duration_log[name] = self._timer.get(name=name)
 
 

@@ -28,10 +28,11 @@ from typing_extensions import Self
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingRandomSampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
+from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
-    SyncTimer,
     ScopedTimer,
+    SyncTimer,
     all_reduce_dict,
     masked_global_mean_var,
     normalize_tensor,
@@ -48,7 +49,6 @@ from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
-from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 
 
 class PPORolloutBatch(UserDict):
@@ -362,7 +362,7 @@ class PPOTrainer:
 
         global_rollout_batch.update(global_rm_value_batch)
 
-        return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch))#, timer_metrics
+        return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch))  # , timer_metrics
 
     def compute_rollout_metrics(self, rollout_batch):
         table = {}
@@ -399,9 +399,7 @@ class PPOTrainer:
     def run_validation(self):
         self.model.prepare_for_inference()
 
-        _, rollout_metrics = self._run_inference(
-            self.val_dataloader_builder, consumed_samples=0, is_validation=True
-        )
+        _, rollout_metrics = self._run_inference(self.val_dataloader_builder, consumed_samples=0, is_validation=True)
 
         self.model.finish_inference()
         return rollout_metrics
@@ -539,7 +537,9 @@ class PPOTrainer:
                 with self.timer("train_time"):
                     self.run_training(rollout_dataloader_iter)
 
-                self.logger.log_metrics(timing_metrics | self.timer.consume_durations(), step=self.step, prefix="timers/")
+                self.logger.log_metrics(
+                    timing_metrics | self.timer.consume_durations(), step=self.step, prefix="timers/"
+                )
 
                 self.step += 1
 
