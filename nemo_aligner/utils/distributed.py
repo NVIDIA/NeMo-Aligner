@@ -31,6 +31,7 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.parallel_state import get_model_parallel_group, get_model_parallel_src_rank
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 from nemo_aligner.utils.utils import deprecated_in_version
+import functools
 
 
 def rebalance_nd_tensor(tensor, group):
@@ -379,22 +380,27 @@ def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distri
     return dict(zip(keys, tensor.tolist()))
 
 
+@deprecated_in_version("0.7.0", "Consider using ScopedTimer")
 class SyncTimer(NamedTimer):
     """Wrapper around NamedTimer to sync across DP ranks
         for more precise timing
     """
 
     def __init__(self, *args, **kwargs):
+        # TODO: double check can delete
         self.reduce_op = kwargs.pop("reduce_op", torch.distributed.ReduceOp.MAX)
         super().__init__(*args, **kwargs)
+        # TODO: double check can delete
         self.stored_results = defaultdict(list)
 
+    # TODO: double check can delete
     def sync_time(self, list_to_sync):
         output_tensor = torch.tensor(list_to_sync, dtype=torch.float32, device="cuda")
         torch.distributed.all_reduce(output_tensor, op=self.reduce_op, group=parallel_state.get_data_parallel_group())
 
         return output_tensor
 
+    # TODO: double check can delete
     def get_synced(self, *args, **kwargs):
         # time unsynced
         output = self.get(*args, **kwargs)
@@ -406,6 +412,7 @@ class SyncTimer(NamedTimer):
         self.stop(name=name)
         return self.get(name=name)
 
+    # TODO: double check can delete
     def store(self, name=""):
         """instead of immediately syncing the timing, we'll store it
             for a sync later on
@@ -414,6 +421,7 @@ class SyncTimer(NamedTimer):
         output = self.get(name=name)
         self.stored_results[name].append(output)
 
+    # TODO: double check can delete
     def sync_and_consume_over_stored_time(self, name=""):
         """get the timings we stored, sync them and iterates over them
             this function consumes the timings (i.e remove them after iterating)
@@ -425,6 +433,75 @@ class SyncTimer(NamedTimer):
         yield from output_list
 
         del self.stored_results[name]
+
+
+class ScopedTimer:
+    """
+    A thin adapter over the NamedTimer class to help time sections of code 
+    using a context manager.
+
+    This class is useful for tracking timings automatically so you don't need 
+    to manually collect them. You only need to pass the timer around and can 
+    collect the durations in one place, instead of returning and mutating 
+    dictionaries throughout your code.
+
+    The ScopedTimer ensures that durations are logged and consumed properly, 
+    preventing accidental overwriting of previous measurements.
+
+    Usage:
+        timer = ScopedTimer()
+
+        # All durations are logged in the timer
+        with timer("step_time"):
+            with timer("fwd"):
+                model.fwd()
+            with timer("bwd"):
+                model.bwd()
+
+        # Consume all durations and reset internal store
+        durations = timer.consume_durations()
+
+        # Durations that are not consumed will raise a ValueError
+        with timer("fwd"):
+            model.fwd()
+        with timer("fwd"):
+            model.fwd()  # <-- This will raise an error as timer.consume_durations()
+                         # is not called, meaning the previous measurement is 
+                         # still stored.
+
+    Methods:
+        consume_durations() -> dict[str, float]:
+            Returns a dictionary of all logged durations and resets the internal log.
+
+        __call__(name: str):
+            Context manager for timing a section of code. Raises a ValueError if
+            durations are not consumed before starting a new measurement for the 
+            same name.
+
+    Raises:
+        ValueError: If attempting to start a new timing section for a name that
+                    already has a recorded duration without consuming the previous
+                    measurement using consume_durations().
+    """
+    def __init__(self, *args, **kwargs):
+        self._timer = NamedTimer(*args, **kwargs)
+        self._duration_log = {}
+
+    def consume_durations(self) -> dict[str, float]:
+        durations = self._duration_log
+        self._duration_log = {}
+        return durations
+
+    @contextmanager
+    def __call__(self, name: str):
+        try:
+            self._timer.start(name=name)
+            yield
+        finally:
+            self._timer.stop(name=name)
+            if name in self._duration_log:
+                raise ValueError(f"Attempted to store new duration for {name=} before consuming last measurement. Call consume_durations() to consume the last set of measurements.")
+            self._duration_log[name] = self._timer.get(name=name)
 
 
 @dataclass
