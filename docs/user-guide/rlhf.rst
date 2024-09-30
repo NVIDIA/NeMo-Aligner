@@ -252,6 +252,11 @@ You can use Slurm to launch both jobs and coordinate them together in a full RLH
    #SBATCH hetjob
    #SBATCH -N 1 --ntasks-per-node 8 -A <<ACCOUNT>> -p <<PARTITION>> --job-name <<JOBNAME>> -t 4:00:00 --exclusive
 
+   # To ensure determinism when calculating log probabilities between two forward-passes with identical weights, it is strongly
+   # recommended to set NCCL_ALGO. See https://github.com/NVIDIA/Megatron-LM/blob/b3375a0e38c10e2300ef4be031f7dcabab52b448/megatron/training/arguments.py#L593-L595
+   # for options.
+   export NCCL_ALGO=Tree
+
    NAME="2p_ppo"
 
    # PARAMETERS
