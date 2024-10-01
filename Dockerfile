@@ -21,37 +21,45 @@ ARG PROTOBUF_VERSION=4.24.4
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
+# NeMo Aligner
 FROM ${BASE_IMAGE} AS aligner-bump
 ARG ALIGNER_COMMIT
 WORKDIR /opt
-# NeMo Aligner
 RUN <<"EOF" bash -exu
-if [[ ! -d NeMo-Aligner ]]; then
-    git clone https://github.com/NVIDIA/NeMo-Aligner.git
-fi
-cd NeMo-Aligner
-git fetch -a
-# -f since git status may not be clean
-git checkout -f $ALIGNER_COMMIT
-# case 1: ALIGNER_COMMIT is a local branch so we have to apply remote changes to it
-# case 2: ALIGNER_COMMIT is a commit, so git-pull is expected to fail
-git pull --rebase || true
+    if [[ ! -d NeMo-Aligner ]]; then
+        git clone https://github.com/NVIDIA/NeMo-Aligner.git
+    fi
+    cd NeMo-Aligner
+    git fetch -a
+    # -f since git status may not be clean
+    git checkout -f $ALIGNER_COMMIT
+    # case 1: ALIGNER_COMMIT is a local branch so we have to apply remote changes to it
+    # case 2: ALIGNER_COMMIT is a commit, so git-pull is expected to fail
+    git pull --rebase || true
 
-pip install --no-deps -e .
+    pip install --no-deps -e .
 EOF
 
 # TRTLLM
 FROM ${BASE_IMAGE} AS trtllm-build
 WORKDIR /opt
 ARG TRTLLM_VERSION
+RUN <<"EOF" bash -exu
+    curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
+    apt-get install git-lfs && \
+    git lfs install
+EFO
 COPY --from=aligner-bump /opt/NeMo-Aligner/setup/trtllm.patch /opt/NeMo-Aligner/setup/trtllm.patch
-RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
+RUN <<"EOF" bash -exu
+    git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     cd TensorRT-LLM && \
     git checkout ${TRTLLM_VERSION} && \
     patch -p1 < ../NeMo-Aligner/setup/trtllm.patch && \
     . docker/common/install_tensorrt.sh && \
     python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
+EOF
 
+# Final image
 FROM ${BASE_IMAGE} AS final
 WORKDIR /opt
 # needed in case git complains that it can't detect a valid email, this email is fake but works
@@ -59,7 +67,8 @@ RUN git config --global user.email "worker@nvidia.com"
 # install TransformerEngine
 ARG MAX_JOBS
 ARG TE_TAG
-RUN pip uninstall -y transformer-engine && \
+RUN <<"EOF" bash -exu
+    pip uninstall -y transformer-engine && \
     git clone https://github.com/NVIDIA/TransformerEngine.git && \
     cd TransformerEngine && \
     if [ ! -z $TE_TAG ]; then \
@@ -68,10 +77,12 @@ RUN pip uninstall -y transformer-engine && \
     fi && \
     git submodule init && git submodule update && \
     NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
+EOF
 
 # install latest apex
 ARG APEX_TAG
-RUN pip uninstall -y apex && \
+RUN <<"EOF" bash -exu
+    pip uninstall -y apex && \
     git clone https://github.com/NVIDIA/apex && \
     cd apex && \
     if [ ! -z $APEX_TAG ]; then \
@@ -79,6 +90,7 @@ RUN pip uninstall -y apex && \
         git checkout FETCH_HEAD; \
     fi && \
     pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
+EOF
 
 # place any util pkgs here
 ARG PYTRITON_VERSION
@@ -111,11 +123,6 @@ RUN pip uninstall -y megatron-core && \
         git checkout FETCH_HEAD; \
     fi && \
     pip install -e .
-
-# Git LFS
-RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
-    apt-get install git-lfs && \
-    git lfs install
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
