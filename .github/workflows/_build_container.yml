@@ -73,4 +73,4 @@ jobs:
             nemoci.azurecr.io/nemo_aligner_container_cache:${{ github.event.pull_request.number || 'noop' }}
             nemoci.azurecr.io/nemo_aligner_container_cache:main
           cache-to: ${{ env.CACHE }}
-          tag: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
+          tags: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
