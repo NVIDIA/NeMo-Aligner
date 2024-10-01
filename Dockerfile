@@ -22,28 +22,26 @@ ARG PROTOBUF_VERSION=4.24.4
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
 FROM ${BASE_IMAGE} AS aligner-bump
-
 ARG ALIGNER_COMMIT
-
 WORKDIR /opt
-
 # NeMo Aligner
 RUN <<"EOF" bash -exu
 if [[ ! -d NeMo-Aligner ]]; then
     git clone https://github.com/NVIDIA/NeMo-Aligner.git
-    cd NeMo-Aligner
-    git checkout $ALIGNER_COMMIT
-    pip install --no-deps -e .
-    cd -
 fi
 cd NeMo-Aligner
 git fetch -a
-git checkout -f ${ALIGNER_COMMIT}
-git pull
+# -f since git status may not be clean
+git checkout -f $ALIGNER_COMMIT
+# case 1: ALIGNER_COMMIT is a local branch so we have to apply remote changes to it
+# case 2: ALIGNER_COMMIT is a commit, so git-pull is expected to fail
+git pull --rebase || true
+
+pip install --no-deps -e .
 EOF
 
-FROM aligner-bump as final
-
+FROM ${BASE_IMAGE} as final
+WORKDIR /opt
 # needed in case git complains that it can't detect a valid email, this email is fake but works
 RUN git config --global user.email "worker@nvidia.com"
 # install TransformerEngine
@@ -106,6 +104,10 @@ RUN pip uninstall -y megatron-core && \
 RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
     apt-get install git-lfs && \
     git lfs install
+
+COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
+RUN cd /opt/NeMo-Aligner && \
+    pip install --no-deps -e .
 
 # TRTLLM
 ARG TRTLLM_VERSION
