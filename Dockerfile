@@ -43,21 +43,17 @@ EOF
 # TRTLLM
 FROM ${BASE_IMAGE} AS trtllm-build
 WORKDIR /opt
-RUN <<"EOF" bash -exu
-    curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
+RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
     apt-get install git-lfs && \
     git lfs install
-EOF
 COPY --from=aligner-bump /opt/NeMo-Aligner/setup/trtllm.patch /opt/NeMo-Aligner/setup/trtllm.patch
 ARG TRTLLM_VERSION
-RUN <<"EOF" bash -exu
-    git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
+RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     cd TensorRT-LLM && \
     git checkout ${TRTLLM_VERSION} && \
     patch -p1 < ../NeMo-Aligner/setup/trtllm.patch && \
     . docker/common/install_tensorrt.sh && \
     python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
-EOF
 
 # Final image
 FROM ${BASE_IMAGE} AS final
@@ -68,25 +64,25 @@ RUN git config --global user.email "worker@nvidia.com"
 ARG MAX_JOBS
 ARG TE_TAG
 RUN pip uninstall -y transformer-engine && \
-git clone https://github.com/NVIDIA/TransformerEngine.git && \
-cd TransformerEngine && \
-if [ ! -z $TE_TAG ]; then \
-    git fetch origin $TE_TAG && \
-    git checkout FETCH_HEAD; \
-fi && \
-git submodule init && git submodule update && \
-NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
+    git clone https://github.com/NVIDIA/TransformerEngine.git && \
+    cd TransformerEngine && \
+    if [ ! -z $TE_TAG ]; then \
+        git fetch origin $TE_TAG && \
+        git checkout FETCH_HEAD; \
+    fi && \
+    git submodule init && git submodule update && \
+    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
 
 # install latest apex
 ARG APEX_TAG
 RUN pip uninstall -y apex && \
-git clone https://github.com/NVIDIA/apex && \
-cd apex && \
-if [ ! -z $APEX_TAG ]; then \
-    git fetch origin $APEX_TAG && \
-    git checkout FETCH_HEAD; \
-fi && \
-pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
+    git clone https://github.com/NVIDIA/apex && \
+    cd apex && \
+    if [ ! -z $APEX_TAG ]; then \
+        git fetch origin $APEX_TAG && \
+        git checkout FETCH_HEAD; \
+    fi && \
+    pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
 
 # place any util pkgs here
 ARG PYTRITON_VERSION
