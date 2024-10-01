@@ -108,7 +108,7 @@ def verify_is_valid_and_clamp_range_(
     """
     if end_strings is None:
         end_strings = []
-    
+
     mask = (0 <= response_tokens) & (response_tokens < tokenizer.vocab_size)
     response_tokens.clamp_(min=0, max=tokenizer.vocab_size - 1)
 
@@ -116,5 +116,5 @@ def verify_is_valid_and_clamp_range_(
     is_valid = strategy.end_of_generation_condition(response_tokens, prev, tokenizer.eos_id, end_strings)
 
     is_valid = is_valid & torch.all(mask, dim=-1)
-    
+
     return is_valid
