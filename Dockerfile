@@ -43,13 +43,13 @@ EOF
 # TRTLLM
 FROM ${BASE_IMAGE} AS trtllm-build
 WORKDIR /opt
-ARG TRTLLM_VERSION
 RUN <<"EOF" bash -exu
     curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
     apt-get install git-lfs && \
     git lfs install
 EOF
 COPY --from=aligner-bump /opt/NeMo-Aligner/setup/trtllm.patch /opt/NeMo-Aligner/setup/trtllm.patch
+ARG TRTLLM_VERSION
 RUN <<"EOF" bash -exu
     git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     cd TensorRT-LLM && \
