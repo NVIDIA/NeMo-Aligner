@@ -52,7 +52,7 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     . docker/common/install_tensorrt.sh && \
     python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
 
-FROM ${BASE_IMAGE} as final
+FROM ${BASE_IMAGE} AS final
 WORKDIR /opt
 # needed in case git complains that it can't detect a valid email, this email is fake but works
 RUN git config --global user.email "worker@nvidia.com"
