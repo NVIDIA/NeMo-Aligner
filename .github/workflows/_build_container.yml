@@ -44,12 +44,22 @@ jobs:
         with: 
           # We use `docker` driver as this speeds things up for 
           # trivial (non-multi-stage) builds.
-          driver: docker
+          driver: docker-container
 
-      - name: Pull cache images
+      - name: Set cache-to
+        id: cache-to
         run: |
-          docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }} || true
-          docker pull nemoci.azurecr.io/nemo_aligner_container:buildcache || true
+          CACHE="nemoci.azurecr.io/nemo_aligner_container_cache:${{ github.event.pull_request.number || 'noop' }}"
+
+          if [[ "${{ github.ref }}" == "refs/head/main" ]]; then
+            CACHE=$(eche -E "$CACHE\nnemoci.azurecr.io/nemo_aligner_container_cache:main")
+          fi
+
+          echo "$CACHE"
+          
+          echo "CACHE<<EOF" >> $GITHUB_ENV
+          echo "$CACHE" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -60,19 +70,6 @@ jobs:
             MAX_JOBS=32
             ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
           cache-from: |
-            nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }}
-            nemoci.azurecr.io/nemo_aligner_container:buildcache
-          cache-to: type=inline
-          tags: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
-
-      - name: Update PR image
-        if: github.event_name == 'pull_request'
-        run: |
-          docker tag nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
-          docker push nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
-
-      - name: Update buildcache image
-        if: github.ref == 'refs/heads/main'
-        run: |
-          docker tag nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} nemoci.azurecr.io/nemo_aligner_container:buildcache
-          docker push nemoci.azurecr.io/nemo_aligner_container:buildcache
+            nemoci.azurecr.io/nemo_aligner_container_cache:${{ github.event.pull_request.number || 'noop' }}
+            nemoci.azurecr.io/nemo_aligner_container_cache:main
+          cache-to: ${{ env.CACHE }}
