@@ -1,11 +1,10 @@
 # To build NeMo-Aligner from a base PyTorch container:
-# TODO(terry): update this before merge
 #
 #   docker buildx build -t aligner:latest .
 #
 # To update NeMo-Aligner from a pre-built NeMo-Framework container:
 #
-#   docker buildx build --target=aligner-bump --build-arg=BASE_IMAGE=nvcr.io/nvidia/nemo:24.07 -t aligner:latest .
+#   docker buildx build --target=aligner-bump -t aligner:latest .
 #
 
 # Number of parallel threads for compute heavy build jobs
@@ -14,13 +13,12 @@ ARG MAX_JOBS=8
 # Git refs for dependencies
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
 ARG PYTRITON_VERSION=0.5.10
-ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
-ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
+ARG NEMO_TAG=8332f43ee27b3b24406303fc0aa0056d9e924420  # On: r2.0.0
+ARG MLM_TAG=3d9d28a0d09d273740d88ffc70520c17e53c36b8  # On: core_r0.9.0
 ARG ALIGNER_COMMIT=main
-ARG TRTLLM_VERSION=v0.10.0
+ARG TRTLLM_VERSION=v0.12.0
 ARG PROTOBUF_VERSION=4.24.4
-
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.07-py3
 
 FROM ${BASE_IMAGE} AS aligner-bump
 ARG ALIGNER_COMMIT
@@ -38,7 +36,7 @@ git checkout -f $ALIGNER_COMMIT
 # case 2: ALIGNER_COMMIT is a commit, so git-pull is expected to fail
 git pull --rebase || true
 
-pip install --no-deps -e .
+pip install --no-cache-dir --no-deps -e .
 EOF
 
 FROM ${BASE_IMAGE} as final
@@ -106,24 +104,19 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
     apt-get install git-lfs && \
     git lfs install
 
-COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
-RUN cd /opt/NeMo-Aligner && \
-    pip install --no-deps -e .
-
 # TRTLLM
 ARG TRTLLM_VERSION
 RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     cd TensorRT-LLM && \
     git checkout ${TRTLLM_VERSION} && \
-    patch -p1 < ../NeMo-Aligner/setup/trtllm.patch && \
     . docker/common/install_tensorrt.sh && \
-    python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
+    python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt  --python_bindings --benchmarks
 
 RUN cd TensorRT-LLM && \
-    pip install ./build/tensorrt_llm*.whl
+    pip install -e .
+RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
-# WAR(0.4.0): The pin of NeMo requires a higher nvidia-modelopt version than
-#             TRT-LLM allows. This installation must follow TRT-LLM and is
-#             only necessary when NeMo 2.0.0rc1 is installed with TRT-LLM v10.
-RUN pip install --upgrade-strategy only-if-needed nvidia-modelopt==0.13.0
+COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
+RUN cd /opt/NeMo-Aligner && \
+    pip install --no-deps -e .
