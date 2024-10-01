@@ -217,7 +217,13 @@ def main(cfg) -> None:
             nb_paddings += 1
     
     # Text generation strategy
-    strategy = MGPTModelTextGenerationStrategy(model)
+    strategy = MGPTModelTextGenerationStrategy(
+        model=model, 
+        image_token=cfg.image_token, 
+        image_patch_token=cfg.image_patch_token,
+        image_break_token=cfg.image_break_token,
+        image_end_token=cfg.image_end_token)
+
     # Third method of running text generation, use inference server
     if cfg.server:
         from nemo.collections.nlp.modules.common.megatron_web_server import get_chatbot_demo, get_demo

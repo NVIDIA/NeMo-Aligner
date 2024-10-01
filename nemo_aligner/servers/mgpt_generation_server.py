@@ -163,6 +163,8 @@ class MegatronMultimodalGenerate(MegatronGenerate):
                     img_data = base64.b64decode(base64_string)
                     # Open the image using PIL
                     img = Image.open(BytesIO(img_data))
+                    img.load()
+                    img = img.convert("RGB")
                     # Append to image_list
                     image_list.append(img)
                 except Exception as e:

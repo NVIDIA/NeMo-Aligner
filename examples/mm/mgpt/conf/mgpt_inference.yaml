@@ -28,6 +28,11 @@ base_model_file: null  # GPT nemo file path for the LLM model
 vision_encoder: null # Path or HF name of the vision encoder
 checkpoint_dir: null # checkpoint file dir. This is used to load the PTL checkpoint generated during the GPT training
 checkpoint_name: null # PTL checkpoint file name, only used for PTL checkpoint loading
+image_token: null
+image_patch_token: null
+image_break_token: null
+image_end_token: null
+
 tokenizer: # only used for PTL checkpoint loading
   library: sentencepiece
   type: null
