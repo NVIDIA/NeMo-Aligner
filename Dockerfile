@@ -48,7 +48,7 @@ RUN <<"EOF" bash -exu
     curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
     apt-get install git-lfs && \
     git lfs install
-EFO
+EOF
 COPY --from=aligner-bump /opt/NeMo-Aligner/setup/trtllm.patch /opt/NeMo-Aligner/setup/trtllm.patch
 RUN <<"EOF" bash -exu
     git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
