@@ -21,6 +21,17 @@ ARG PROTOBUF_VERSION=4.24.4
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
+# TRTLLM
+FROM ${BASE_IMAGE} AS trtllm-build
+WORKDIR /opt
+ARG TRTLLM_VERSION
+RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
+    cd TensorRT-LLM && \
+    git checkout ${TRTLLM_VERSION} && \
+    patch -p1 < ../NeMo-Aligner/setup/trtllm.patch && \
+    . docker/common/install_tensorrt.sh && \
+    python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
+
 FROM ${BASE_IMAGE} AS aligner-bump
 ARG ALIGNER_COMMIT
 WORKDIR /opt
@@ -110,15 +121,8 @@ RUN cd /opt/NeMo-Aligner && \
     pip install --no-deps -e .
 
 # TRTLLM
-ARG TRTLLM_VERSION
-RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
-    cd TensorRT-LLM && \
-    git checkout ${TRTLLM_VERSION} && \
-    patch -p1 < ../NeMo-Aligner/setup/trtllm.patch && \
-    . docker/common/install_tensorrt.sh && \
-    python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
-
-RUN cd TensorRT-LLM && \
+COPY --from=trtllm-build /opt/TensorRT-LLM /opt/TensorRT-LLM
+RUN cd /opt/TensorRT-LLM && \
     pip install ./build/tensorrt_llm*.whl
 # ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
