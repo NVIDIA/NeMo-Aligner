@@ -56,7 +56,7 @@ jobs:
           fi
 
           echo "$CACHE"
-          
+
           echo "CACHE<<EOF" >> $GITHUB_ENV
           echo "$CACHE" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
@@ -73,3 +73,4 @@ jobs:
             nemoci.azurecr.io/nemo_aligner_container_cache:${{ github.event.pull_request.number || 'noop' }}
             nemoci.azurecr.io/nemo_aligner_container_cache:main
           cache-to: ${{ env.CACHE }}
+          tag: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
