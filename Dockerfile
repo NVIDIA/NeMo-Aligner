@@ -21,17 +21,6 @@ ARG PROTOBUF_VERSION=4.24.4
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
-# TRTLLM
-FROM ${BASE_IMAGE} AS trtllm-build
-WORKDIR /opt
-ARG TRTLLM_VERSION
-RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
-    cd TensorRT-LLM && \
-    git checkout ${TRTLLM_VERSION} && \
-    patch -p1 < ../NeMo-Aligner/setup/trtllm.patch && \
-    . docker/common/install_tensorrt.sh && \
-    python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
-
 FROM ${BASE_IMAGE} AS aligner-bump
 ARG ALIGNER_COMMIT
 WORKDIR /opt
@@ -50,6 +39,18 @@ git pull --rebase || true
 
 pip install --no-deps -e .
 EOF
+
+# TRTLLM
+FROM ${BASE_IMAGE} AS trtllm-build
+WORKDIR /opt
+ARG TRTLLM_VERSION
+COPY --from=aligner-bump /opt/NeMo-Aligner/setup/trtllm.patch /opt/NeMo-Aligner/setup/trtllm.patch
+RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
+    cd TensorRT-LLM && \
+    git checkout ${TRTLLM_VERSION} && \
+    patch -p1 < ../NeMo-Aligner/setup/trtllm.patch && \
+    . docker/common/install_tensorrt.sh && \
+    python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
 
 FROM ${BASE_IMAGE} as final
 WORKDIR /opt
