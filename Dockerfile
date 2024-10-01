@@ -114,12 +114,13 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
 
 RUN cd TensorRT-LLM && \
     pip install -e .
-RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
     pip install --no-deps -e .
+
+RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
 RUN <<"EOF" bash -exu
 cd NeMo
