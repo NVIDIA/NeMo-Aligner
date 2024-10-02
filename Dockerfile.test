@@ -13,3 +13,4 @@ RUN cp /root/hello /root/hello2
 FROM ${BASE_IMAGE} AS final
 COPY --from=builder-one /root/sha /root/sha
 COPY --from=builder-two /root/hello /root/hello
+
