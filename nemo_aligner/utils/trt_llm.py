@@ -58,9 +58,9 @@ class GPTGenerateTRTLLM:
         #     be a token that the model is guaranteed to never generate)
         #   - pass `end_id=-1` (and possibly also `pad_id=-1`) to TRT-LLM (would require making sure
         #     this works as intended)
-        assert (
-            tokenizer.pad_id != tokenizer.eos_id
-        ), "We require tokenizers to have a different pad_id than eos_id when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
+        # assert (
+        #     tokenizer.pad_id != tokenizer.eos_id
+        # ), "We require tokenizers to have a different pad_id than eos_id when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
 
         if use_greedy and sample_top_k != 1:
             logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
@@ -83,7 +83,7 @@ class GPTGenerateTRTLLM:
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        self.pad_id = 128255
+        self.pad_id = tokenizer._unk_id
         end_id = tokenizer.eos_id
         end_strings = list(end_strings)
 

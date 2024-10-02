@@ -39,6 +39,23 @@ from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
+_SAVE_TOP_K = False
+
+
+def is_save_top_k():
+    global _SAVE_TOP_K
+    return _SAVE_TOP_K
+
+
+@contextmanager
+def saving_top_k():
+    global _SAVE_TOP_K
+    try:
+        _SAVE_TOP_K = True
+        yield
+    finally:
+        _SAVE_TOP_K = False
+
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     """A save connector that will ask the Reward model to not try to load
@@ -61,7 +78,8 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
 
 def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train_end=False, save_top_only=False):
     """work around used so we can save models manually"""
-    super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
+    with saving_top_k():
+        super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
 
     if save_top_only:
         return
@@ -329,14 +347,12 @@ def collate_with_batch_max_sequence_length(
     texts = [item["text"] for item in data_batch]
     loss_multipliers = torch.as_tensor([item["loss_multiplier"] for item in data_batch]).view(len(data_batch), 1)
     lengths = torch.as_tensor([item["length"] for item in data_batch])
+    answer = [item["answer"] for item in data_batch]
     batch_max_length = lengths.max()
 
     texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
-    output = {
-        "text": texts,
-        "length": lengths,
-    }
+    output = {"text": texts, "length": lengths, "answers": answer}
 
     other = {}
     if generate_masks_and_position_ids:

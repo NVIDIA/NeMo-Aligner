@@ -11,8 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
 from functools import partial
 
+import jsonlines
 import torch
 import torch.multiprocessing as mp
 from megatron.core.utils import divide
@@ -51,6 +53,58 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
+
+# Solve the following math problem efficiently and clearly. Make sure to put the answer (and only answer) inside \\boxed{{}}.
+# Below is a math question. I want you to first reason through the steps required to reach the answer, then put the answer (and only answer) inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \\boxed{{42}}.
+# Below is a math question. I want you to first reason through the steps required to reach the answer, then end your response with \"#### \" followed by the answer inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \"#### \\boxed{{42}}\" (without the quotes)
+# Please reason step by step on the following question, and put your final answer within \boxed{{}}.
+# Solve the following math problem efficiently and clearly. Make sure to put the answer (and only answer) inside \\boxed{{}}.
+
+PROMPT_TEMPLATE = """<extra_id_0>System
+
+<extra_id_1>User
+Below is a math question. I want you to first reason through the steps required to reach the answer, then put the answer (and only answer) inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \\boxed{{42}}.
+
+{problem}
+<extra_id_1>Assistant
+"""
+
+
+class MathDataset:
+    def __init__(self, data_path, tokenizer):
+        super().__init__()
+        self.data_path = data_path
+        self.tokenizer = tokenizer
+
+        assert os.path.exists(self.data_path), f"{self.data_path} must exist"
+
+        with jsonlines.open(self.data_path) as reader:
+            self.data = [obj for obj in reader]
+
+    def __len__(self):
+        return len(self.data)
+
+    def encode(self, text):
+        text_ids = self.tokenizer.text_to_ids(text)
+        return text_ids, len(text_ids)
+
+    def __getitem__(self, idx):
+        """
+        Return a single prompt.
+        """
+        text = PROMPT_TEMPLATE.format(problem=self.data[idx]["problem"])
+        answer = self.data[idx]["expected_answer"]
+
+        sample, _ = self.encode(text)
+        sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
+
+        output = {
+            "text": sample_tensor,
+            "length": sample_tensor.shape[0],
+            "answer": answer,
+            "loss_multiplier": True,
+        }
+        return output
 
 
 @hydra_runner(config_path="conf", config_name="gpt_ppo_actor")
@@ -97,18 +151,8 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    # use the entire dataset
-    train_valid_test_num_samples = [-1, -1, -1]
-    train_ds, validation_ds, _ = build_train_valid_test_rlhf_datasets(
-        cfg=cfg.model,
-        data_prefix=cfg.model.data.data_prefix,
-        data_impl=cfg.model.data.data_impl,
-        splits_string=cfg.model.data.splits_string,
-        train_valid_test_num_samples=train_valid_test_num_samples,
-        seq_length=cfg.model.data.seq_length,
-        seed=cfg.model.seed,
-        tokenizer=ptl_model.tokenizer,
-    )
+    train_ds = MathDataset(cfg.model.data.data_prefix["train"][0], ptl_model.tokenizer)
+    validation_ds = MathDataset(cfg.model.data.data_prefix["validation"][0], ptl_model.tokenizer)[0]
 
     max_seqlen = cfg.model.ppo.length_params.max_length
     eos_id = ptl_model.tokenizer.eos_id
@@ -124,6 +168,7 @@ def main(cfg) -> None:
         gbs=cfg.model.ppo.num_rollout_samples,
         collate_fn=collate_fn,
         load_gbs=False,
+        use_random_sampler=False,
     )
 
     val_dataloader_builder = partial(

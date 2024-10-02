@@ -7,6 +7,8 @@ trainer:
   accelerator: gpu
   precision: bf16
 
+  load_strict: True
+
   ppo:
     port: 5556
 
