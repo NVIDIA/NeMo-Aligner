@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from typing import List, Optional, Tuple, Union, Dict
-
+from functools import partial
 import hydra
 import torch
 from megatron.core import parallel_state
@@ -30,6 +30,9 @@ from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import get
 from nemo.utils import logging
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
 from nemo.collections.nlp.modules.common.text_generation_utils import generate
+from nemo.collections.nlp.modules.common.megatron.utils import (
+    average_losses_across_data_parallel_group,
+)
 from megatron.core import InferenceParams
 from nemo_aligner.utils.text_generation_utils import MGPTModelTextGenerationStrategy
 
@@ -208,8 +211,8 @@ class MultimodalGPTModel(MegatronNevaModel):
                 attention_mask = attention_mask.cuda()
                 attention_mask = attention_mask[0:1]
             if media is not None:
-                media = [element.cuda() for sample in media for element in sample] # we have list of list of images
-                #media = media.cuda()
+                #media = [element.cuda() for sample in media for element in sample] # we have list of list of images
+                media = media.cuda()
             labels = None
             if self.mcore_gpt:
                 # if first step, then clear KV cache, otherwise reuse inference_paarms

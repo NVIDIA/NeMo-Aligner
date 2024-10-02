@@ -93,26 +93,25 @@ model:
     llm:
       from_pretrained: null # path to nemo checkpoint
       freeze: True
-      model_type: llama_2 # `nvgpt` or `llama_2` supported
+      model_type: nvgpt
     vision_encoder:
       from_pretrained: "" # path or name
       from_hf: True
-      patch_dim: 14
-      crop_size: [224, 224]
+      patch_dim: 16
+      crop_size: [1024, 1024]
       hidden_size: 1024 # could be found from model but tricky in code
       downsample_height: 1
       downsample_width: 1
-      vision_select_layer: -2   # default to the last layer
-      class_token_length: 1
+      vision_select_layer: -1   # default to the last layer
+      class_token_length: 0
       freeze: True
     pretrain_mm_mlp_adapter: null # path to pretrained mm adapter
     mm_mlp_adapter_type: linear
     use_im_start_end: False
-    image_token: "<image>"
-    video_token: "<video>"
-    image_patch_token: "<extra_id_3>"
-    im_start_token: "<extra_id_4>"
-    im_end_token: "<extra_id_5>"    
+    image_token: "[IMG]"
+    image_patch_token: "[IMG]"
+    im_start_token: "[IMG_BREAK]"
+    im_end_token: "[IMG_END]"    
 
   # can be used to customize behavior of model.generate for inference metrics
   # note that you have to specify all parameters explicitly even if they match defaults
@@ -154,7 +153,8 @@ model:
     
   data:
     is_multimodal: True
-    chat: False # whether use chatbot data or not
+    chat: True # whether use chatbot data or not
+    add_speakers: False # Add speaker labels to the prompt template
     chat_prompt_tokens:  # special tokens for the chat prompts, a dictionary of {token_type: token}. note that some tokenizer may combine the characters at the junction between {end_of_turn}{turn_start}. e.g. '<im end><im start>', the '><' sometimes is merged to be a single token. This is not supported, try to avoid
       system_turn_start: "<extra_id_0>"
       turn_start: "<extra_id_1>"
@@ -192,7 +192,7 @@ model:
       label_key: 'output'
       add_eos: True
       add_sep: False
-      add_bos: False
+      add_bos: True
       truncation_field: "input" # # Can be multiple keys separated with ',' Options: keys in prompt_template
       index_mapping_dir: null # Path to a directory to write index mapping files.
       prompt_template: "{input} {output}" # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"

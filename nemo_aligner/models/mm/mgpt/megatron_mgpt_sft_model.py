@@ -21,8 +21,9 @@ from megatron.core.num_microbatches_calculator import get_micro_batch_size, get_
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
+from nemo_aligner.utils.multimodal import NestedTensorList, get_iterator_k_split
 
-from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
+#from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.modules.common.text_generation_utils import (
     get_default_length_params,
     get_default_sampling_params,
@@ -63,10 +64,8 @@ class MegatronMGPTSFTModel(MultimodalGPTModel, NLPAdapterModelMixin, SupervisedI
             and return loss as well as metrics
         """
         _, seq_length = batch["tokens"].shape
-        batch = {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
-
+        batch = {k: v for k, v in batch.items() if isinstance(v, (torch.Tensor, NestedTensorList))}
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
-
         set_sync_funcs(self, forward_only)
 
         fwd_bwd_function = get_forward_backward_func()

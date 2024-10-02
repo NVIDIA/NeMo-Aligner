@@ -82,7 +82,6 @@ class TrackLengthGPTModelTextGenerationStrategy(GPTModelTextGenerationStrategy):
 
         return lengths
 
-
 def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False):
     """convert the sentences into lists of tokens, pad them to the same length, add bos tokens if it is needed
     """
@@ -324,8 +323,8 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
             # not using type2use. uncomment it if it is used
             # if type_ids is not None:
             #     types2use = type_ids[:, :context_length]
-            #if media is not None:
-            #    media = self._image_processor(media)
+            if media is not None:
+                media = torch.nested.nested_tensor(media[0])
         else:
             # Set this to false so the memory is not reallocated.
             set_inference_key_value_memory = False
