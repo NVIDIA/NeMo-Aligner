@@ -21,6 +21,8 @@ import pandas as pd
 import torch
 from megatron.core import parallel_state as mcore_parallel_state
 from megatron.core.utils import divide
+from nemo_skills.code_execution.math_grader import extract_answer
+from nemo_skills.code_execution.sandbox import get_sandbox
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 from typing_extensions import Self
@@ -160,6 +162,11 @@ class PPOTrainer:
         self.batch_iterator_cls = batch_iterator_cls
         self.logger = logger
         self.ckpt_callback = ckpt_callback
+
+        self.sandbox = get_sandbox()
+
+        # sanity check
+        assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
