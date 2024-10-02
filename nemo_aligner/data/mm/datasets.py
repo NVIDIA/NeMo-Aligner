@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from omegaconf import DictConfig
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset, default_collate
 from einops import rearrange
 from typing import Any, Dict, List, Tuple, Sequence

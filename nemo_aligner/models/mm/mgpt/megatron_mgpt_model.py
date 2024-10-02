@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from typing import List, Optional, Tuple, Union, Dict
-
+from functools import partial
 import hydra
 import torch
 from megatron.core import parallel_state
@@ -30,6 +30,10 @@ from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import get
 from nemo.utils import logging
 from nemo.collections.nlp.modules.common.transformer.text_generation import LengthParam, OutputType, SamplingParam
 from nemo.collections.nlp.modules.common.text_generation_utils import generate
+from nemo.collections.nlp.modules.common.megatron.utils import (
+    average_losses_across_data_parallel_group,
+)
+from megatron.core import InferenceParams
 from nemo_aligner.utils.text_generation_utils import MGPTModelTextGenerationStrategy
 
 class MultimodalGPTModel(MegatronNevaModel):
@@ -64,8 +68,9 @@ class MultimodalGPTModel(MegatronNevaModel):
 
     def model_provider_func(self, pre_process, post_process):
         """Model depends on pipeline paralellism."""
-        media_start_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_start_token", "<extra_id_4>"))
-        media_end_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_end_token", "<extra_id_5>"))
+        media_start_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_start_token", "[IMG_BREAK]"))
+        media_end_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("im_end_token", "[IMG_END]"))
+        media_token_id = self.tokenizer.token_to_id(self.cfg.mm_cfg.get("image_patch_token", "[IMG]"))
 
         if self.mcore_gpt:
             if not parallel_state.is_initialized():
@@ -80,6 +85,7 @@ class MultimodalGPTModel(MegatronNevaModel):
             model = MCoreNevaModel(
                 mm_cfg=self.cfg.mm_cfg,
                 media_start_id=media_start_id,
+                media_token_id=media_token_id,
                 media_end_id=media_end_id,
                 mcore_gpt=self.mcore_gpt,
                 config=self.transformer_config,
@@ -169,7 +175,7 @@ class MultimodalGPTModel(MegatronNevaModel):
                 self.tokenizer.ids_to_text(tokens[length.item() :][:max_response_length])
                 for tokens, length in zip(output["token_ids"], context_length_tensor)
             ]
-
+            
             if not sampling_params['all_probs']:
                 del output['full_logprob']             
 
@@ -184,4 +190,4 @@ class MultimodalGPTModel(MegatronNevaModel):
             logging.critical('Unexpected keys were detected during the load. Please double check.')
             logging.critical(f'Unexpected keys: \n{unexpected_keys}')
         return results
-
+    
