@@ -60,7 +60,7 @@ def main(cfg) -> None:
         MegatronGPTCriticModel,
         cfg.model,
         trainer,
-        strict=cfg.load_strict,
+        strict=cfg.ppo.load_strict,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 

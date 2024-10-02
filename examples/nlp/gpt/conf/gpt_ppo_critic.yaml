@@ -7,10 +7,9 @@ trainer:
   accelerator: gpu
   precision: bf16
 
-  load_strict: True
-
   ppo:
     port: 5556
+    load_strict: True
 
     # run rm and critic together
     combine_rm_and_critic_server: True
