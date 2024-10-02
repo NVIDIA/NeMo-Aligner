@@ -108,7 +108,7 @@ def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False):
     return context_tokens_tensor, context_length_tensor
 
 class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
-    def __init__(self, model):
+    def __init__(self, model, image_token: str = None, image_patch_token: str = None, image_break_token: str = None, image_end_token: str = None):
         super().__init__(model)
         self.forward_model = self.model.model
         self.tokenizer = self.model.tokenizer
@@ -117,10 +117,26 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
         self.data_cfg = self.model.cfg.data
 
         add_extra_token = 0
-        self.image_token = self.cfg.mm_cfg.get("image_token", "<image>")
-        self.image_patch_token = self.cfg.mm_cfg.get("image_patch_token", "<extra_id_3>")
-        self.im_start_token = self.cfg.mm_cfg.get("im_start_token", "<extra_id_4>")
-        self.im_end_token = self.cfg.mm_cfg.get("im_end_token", "<extra_id_5>")
+        if image_token is None:
+            self.image_token = self.cfg.mm_cfg.get("image_token", "[IMG]")
+        else:
+            self.image_token = image_token
+        
+        if image_patch_token is None:
+            self.image_patch_token = self.cfg.mm_cfg.get("image_patch_token", "[IMG]")
+        else:
+            self.image_patch_token = image_patch_token
+
+        if image_break_token is None:
+            self.im_start_token = self.cfg.mm_cfg.get("im_start_token", "[IMG_BREAK]") # starting of a new image tile
+        else:
+            self.im_start_token = image_break_token
+        
+        if image_end_token is None:
+            self.im_end_token = self.cfg.mm_cfg.get("im_end_token", "[IMG_END]")
+        else:
+            self.im_end_token = image_end_token
+
         self.use_im_start_end = self.cfg.mm_cfg.get("use_im_start_end", False)
 
         self.context_length = self.cfg.encoder_seq_length
@@ -141,10 +157,7 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
             mm_mlp_adapter_type=getattr(self.cfg.mm_cfg, 'mm_mlp_adapter_type', 'linear'),
         )
 
-        patch_dim = self.multimodal_cfg['patch_dim']
-        height_num_patches = self.multimodal_cfg['crop_size'][0] // patch_dim
-        width_num_patches = self.multimodal_cfg['crop_size'][1] // patch_dim
-        self.num_media_latents = height_num_patches * width_num_patches
+        self.patch_size = self.multimodal_cfg['patch_dim']
 
     def clip_max_len(self, maxlen: int) -> int:
         """clip the max len based on the LM model max sequence length"""
@@ -201,13 +214,18 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
         context_length_tensor = torch.cuda.LongTensor(context_lengths)
         return context_tokens_tensor, context_length_tensor, exceeded
 
-    def process_prompt(self, prompt, max_len, add_BOS, add_EOS=False):
+    def process_prompt(self, prompt, max_len, add_BOS, add_EOS=False, image_sizes=None):
+        image_size = None
         if type(prompt) == str:
-            prompt_with_media = self.preprocess_media_tokens(prompt)
+            if image_sizes is not None:
+                image_size = image_sizes[0]
+            prompt_with_media = self.preprocess_media_tokens(prompt, image_sizes=image_size)
         elif type(prompt) == list:
             prompt_with_media = []
-            for p in prompt:
-                prompt_with_media.append(self.preprocess_media_tokens(p))
+            for i, p in enumerate(prompt):
+                if image_sizes is not None:
+                    image_size = image_sizes[i]
+                prompt_with_media.append(self.preprocess_media_tokens(p, image_sizes=image_size))
         else:
             raise ValueError(f'{type(prompt)} is not supported for tokenization')
         return self._tokenize_batch(prompt_with_media, max_len, add_BOS, add_EOS=False)
@@ -231,7 +249,7 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
         images = torch.stack(images, dim=0)
         return images.unsqueeze(dim=1).unsqueeze(dim=1)
     
-    def preprocess_media_tokens(self, conversation: str, media_type: str = "image", is_multimodal: bool = True):
+    def preprocess_media_tokens(self, conversation: str, media_type: str = "image", is_multimodal: bool = True, image_sizes: list = None):
         """
         Preprocesses multimodal sources based on the provided configuration.
 
@@ -255,23 +273,33 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
         else:
             return conversation
 
-        if not is_multimodal:
+        if not is_multimodal or image_sizes is None:
             return conversation
-
-        num_patches = self.num_media_latents
-
-        if self.use_im_start_end:
-            replace_token = self.image_patch_token * num_patches
-        else:
-            replace_token = self.image_patch_token * (num_patches - 2)
-
-        replace_token = self.im_start_token + replace_token + self.im_end_token
-        conversation = conversation.replace(default_token, replace_token)
+        
+        # Calculate the number of pathes
+        replace_strings = []
+        for image_size in image_sizes:
+            height, width = image_size
+            num_height_tokens = height // self.patch_size
+            num_width_tokens = width // self.patch_size
+            replace_tokens = [
+                        [self.image_patch_token] * num_width_tokens + [self.im_start_token]
+                    ] * num_height_tokens
+            # Flatten list
+            replace_tokens = [item for sublist in replace_tokens for item in sublist]
+            replace_tokens[-1] = self.im_end_token
+            replace_str = "".join(replace_tokens)
+            replace_strings.append(replace_str)
+            conversation = conversation.replace(self.image_token, "<placeholder>", 1)
+        
+        while "<placeholder>" in conversation:
+            replace_str = replace_strings.pop(0)
+            conversation = conversation.replace("<placeholder>", replace_str, 1)
 
         return conversation
     
-    def tokenize_batch(self, prompt, max_len, add_BOS, add_EOS=False):
-        context_tokens_tensor, context_length_tensor, _ = self.process_prompt(prompt, max_len, add_BOS, add_EOS=add_EOS)
+    def tokenize_batch(self, prompt, max_len, add_BOS, add_EOS=False, image_sizes=None):
+        context_tokens_tensor, context_length_tensor, _ = self.process_prompt(prompt, max_len, add_BOS, add_EOS=add_EOS, image_sizes=image_sizes)
         return context_tokens_tensor, context_length_tensor
 
     def prepare_batch_at_step(
@@ -297,7 +325,7 @@ class MGPTModelTextGenerationStrategy(TextGenerationStrategy):
             # if type_ids is not None:
             #     types2use = type_ids[:, :context_length]
             if media is not None:
-                media = self._image_processor(media)
+                media = torch.nested.nested_tensor(media[0])
         else:
             # Set this to false so the memory is not reallocated.
             set_inference_key_value_memory = False

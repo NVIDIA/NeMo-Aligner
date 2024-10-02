@@ -24,7 +24,7 @@ from io import BytesIO
 from PIL import Image
 
 from nemo.collections.nlp.modules.common.text_generation_utils import generate
-from nemo.collections.nlp.modules.common.text_generation_server import MegatronGenerate, GENERATE_NUM, lock
+from nemo.collections.nlp.modules.common.text_generation_server import MegatronGenerate, GENERATE_NUM, API_ALLOWED_KEYS, lock
 from nemo.utils import logging
 
 from nemo.collections.nlp.modules.common.text_generation_server import API_ALLOWED_KEYS as imported_keys
@@ -35,6 +35,7 @@ API_ALLOWED_KEYS.add("images")
 class MegatronMultimodalGenerate(MegatronGenerate):
     def __init__(self, model, inference_strategy=None):
         super().__init__(model, inference_strategy)
+        self.image_processor = self.model.model.module.image_processor if hasattr(self.model.model, "module") else self.model.model.image_processor
 
     def put(self):
         logging.info("request IP: " + str(request.remote_addr))
@@ -166,6 +167,8 @@ class MegatronMultimodalGenerate(MegatronGenerate):
                     img_data = base64.b64decode(base64_string)
                     # Open the image using PIL
                     img = Image.open(BytesIO(img_data))
+                    img.load()
+                    img = img.convert("RGB")
                     # Append to image_list
                     image_list.append(img)
                 except Exception as e:
@@ -181,8 +184,13 @@ class MegatronMultimodalGenerate(MegatronGenerate):
             if self.inference_strategy is not None:
                 extra['strategy'] = self.inference_strategy
             
+            image_sizes = None
+            if image_list is not None:
+                image_inputs = self.image_processor(image_list, return_tensors="pt")
+                image_list, image_sizes = image_inputs["pixel_values"], image_inputs["image_sizes"]
+
             context_tokens_tensor, context_length_tensor = self.inference_strategy.tokenize_batch(
-                sentences, tokens_to_generate, add_BOS
+                sentences, tokens_to_generate, add_BOS, image_sizes=image_sizes
             )
 
             output = generate(
@@ -207,13 +215,14 @@ class MegatronMultimodalGenerate(MegatronGenerate):
             for k in output:
                 if isinstance(output[k], torch.Tensor):
                     output[k] = output[k].tolist()
+
             if output is not None:  # may be `None` for intermediate PP ranks when PP>2
                 # adding predictions key which contains only model predictions without the prompt
                 output["predictions"] = [
                     self.model.tokenizer.ids_to_text(tokens[length.item() :][:tokens_to_generate])
                     for tokens, length in zip(output["token_ids"], context_length_tensor)
                 ]
-
+                
         if not all_probs:
             del output['full_logprob']
 
