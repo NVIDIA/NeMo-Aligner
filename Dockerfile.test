@@ -4,7 +4,7 @@ FROM ${BASE_IMAGE} AS builder-one
 ARG ALIGNER_COMMIT
 RUN echo "${ALIGNER_COMMIT}" > /root/sha
 RUN echo "hello_world" > /root/hello && \
-    touch -a -m -t 201512180130.09 /root/hello
+    touch -d '2007-01-31 8:46:26' /root/hello
 
 FROM ${BASE_IMAGE} AS builder-two
 COPY --from=builder-one /root/hello /root/hello
