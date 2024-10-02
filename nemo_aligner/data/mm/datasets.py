@@ -16,17 +16,58 @@
 import os
 import re
 import copy
+import json
+from dataclasses import dataclass
+from omegaconf import DictConfig
 import numpy as np
 import torch
+from torch.utils.data import Dataset, default_collate
 from einops import rearrange
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, Sequence
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.core import Dataset
 from nemo.utils import logging
-from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, TarOrFolderImageLoader, process_image
-from transformers import CLIPImageProcessor, SiglipImageProcessor
+from nemo.collections.multimodal.data.neva.neva_dataset import TarOrFolderImageLoader, process_image
+
+import transformers
+from nemo_aligner.utils.multimodal import NestedTensorList
 
 MAX_NUM_IMAGES = 1
+MIN_NUM_IMAGES = 1
+IMAGE_PADDING_VAL = -100
+
+def _preprocess_media_tokens(conversation: str, 
+                            image_token: str = "[IMG]", 
+                            image_patch_token: str = "[IMG]", 
+                            im_start_token: str = "[IMG_BREAK]", 
+                            im_end_token: str = "[IMG_END]", 
+                            patch_size: int = 16, 
+                            image_sizes: list = None,
+):
+    if image_sizes is None:
+        return conversation
+    
+    # Calculate the number of pathes
+    replace_strings = []
+    for image_size in image_sizes:
+        height, width = image_size
+        num_height_tokens = height // patch_size
+        num_width_tokens = width // patch_size
+        replace_tokens = [
+                    [image_patch_token] * num_width_tokens + [im_start_token]
+                ] * num_height_tokens
+        # Flatten list
+        replace_tokens = [item for sublist in replace_tokens for item in sublist]
+        replace_tokens[-1] = im_end_token
+        replace_str = "".join(replace_tokens)
+        replace_strings.append(replace_str)
+        conversation = conversation.replace(image_token, "<placeholder>", 1)
+    
+    while "<placeholder>" in conversation:
+        replace_str = replace_strings.pop(0)
+        conversation = conversation.replace("<placeholder>", replace_str, 1)
+
+    return conversation
 
 def process_media_tokens(
         text: str, 
@@ -313,7 +354,7 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
     return output
 
 
-class MultimodalChatDataset(NevaDataset):
+class MultimodalChatDataset(Dataset):
     def __init__(
             self, 
             data_cfg, 
@@ -330,37 +371,11 @@ class MultimodalChatDataset(NevaDataset):
             ignore_index=-1,
             splice_single_frame=None,
             sep_token_between_frames=False,
+            add_speakers=False,
             special_tokens=None,
     ):
-        
-        super().__init__(
-            tokenizer=tokenizer, 
-            data_path=data_cfg.file_path, 
-            multimodal_cfg=dict(
-                is_multimodal=True,
-                sep_image_conv_front=False,
-                conv_template=None,
-                crop_size=mm_cfg.vision_encoder.crop_size,
-                image_token_len=image_token_len,
-                image_folder=image_folder,
-                video_folder=video_folder,
-                image_aspect_ratio=image_aspect_ratio,
-                use_im_start_end=mm_cfg.get("use_im_start_end", False),
-                patch_dim=mm_cfg.vision_encoder.patch_dim,
-                mm_mlp_adapter_type=mm_cfg.get("mm_mlp_adapter_type", "linear"),
-                image_processor=image_processor,
-                add_extra_token=add_extra_token,
-                context_length=data_cfg.max_seq_length,
-                media_type=media_type,
-                num_frames=num_frames,
-            ),
-            data_cfg=dict(
-                splice_single_frame=splice_single_frame,
-                num_frames=num_frames,
-                sep_token_between_frames=sep_token_between_frames,
-            )
-        )
-        
+        super().__init__()
+
         self.data_cfg = data_cfg
         self.mm_cfg = mm_cfg
         self.tokenizer = tokenizer
@@ -369,12 +384,41 @@ class MultimodalChatDataset(NevaDataset):
         self.add_extra_token = add_extra_token
         self.ignore_index = ignore_index
 
-        self.image_token = mm_cfg.get("image_token", "<image>")
-        self.video_token = mm_cfg.get("video_token", "<video>")
-        self.image_patch_token = mm_cfg.get("image_patch_token", "<extra_id_3>")
-        self.im_start_token = mm_cfg.get("im_start_token", "<extra_id_4>")
-        self.im_end_token = mm_cfg.get("im_end_token", "<extra_id_5>")
+        self.image_token = mm_cfg.get("image_token", "[IMG]")
+        self.image_patch_token = mm_cfg.get("image_patch_token", "[IMG]")
+        self.im_start_token = mm_cfg.get("im_start_token", "[IMG_BREAK]")
+        self.im_end_token = mm_cfg.get("im_end_token", "[IMG_END]")
+        self.image_folder = image_folder
+        self.image_loader = TarOrFolderImageLoader(self.image_folder) if self.image_folder else None
+        self.image_processor = image_processor
         
+        self.patch_size = self.mm_cfg.vision_encoder.patch_dim
+        
+        logging.warning("Loading images from the dataset")
+        self.list_data_dict = []
+        for line in open(data_cfg.file_path, "r"):
+            record = json.loads(line)
+            # Search for <img src="/absolute/path/to/image" in the conversation
+            #   add it as record['image'], remove src tag from the <img> tag
+            record['images'] = []
+            img_pattern = r'<img\s+src=[\'"]([^\'"]+)[\'"](?:[^>]*)?/?>'
+            for turn in record['conversations']:
+                matches = re.finditer(img_pattern, turn['value'])
+                for match in matches:
+                    image_name = match.group(1).split("/")[-1]
+                    image_path = os.path.join(image_folder, image_name)
+
+                    if not os.path.isfile(image_path):
+                        logging.warning(f"Image not found: {image_path}")
+                        continue
+                    
+                    record['images'].append(image_name)  # url
+
+                turn['value'] = re.sub(img_pattern, self.image_token, turn['value'])
+
+            self.list_data_dict.append(record)        
+        
+        self.add_speakers = add_speakers
         if special_tokens is None:
             self.special_tokens = {
                 "system_turn_start": "<extra_id_0>",
@@ -385,18 +429,27 @@ class MultimodalChatDataset(NevaDataset):
             }
         else:
             self.special_tokens = special_tokens
-        
-    def get_prompt(self, system_token, system_message, messages) -> str:
+
+    def __len__(self):
+        return len(self.list_data_dict)
+    
+    def get_prompt(self, system_token, system_message, messages, add_speakers: bool = False) -> str:
         prompt_dict = []
 
-        prompt = f"{self.special_tokens['system_turn_start']}{system_token}{self.special_tokens['end_of_name']}"        
-        prompt += f"{system_message}"
+        if system_message is not None:
+            prompt = f"{self.special_tokens['system_turn_start']}{system_token}{self.special_tokens['end_of_name']}"        
+            prompt += f"{system_message}"
+        else:
+            prompt = ""
         
         prompt_dict.append({"system": prompt})
 
         for turn in messages:
-            speaker = f"{self.special_tokens['end_of_turn']}{self.special_tokens['turn_start']}{turn['from']}{self.special_tokens['end_of_name']}"
-            message = f"{turn['value']}"
+            if add_speakers:
+                speaker = f"{self.special_tokens['turn_start']}{turn['from']}{self.special_tokens['end_of_name']}"
+            else:
+                speaker = f"{self.special_tokens['turn_start']}"
+            message = f"{turn['value']}{self.special_tokens['end_of_turn']}"
             prompt += speaker + message
             prompt_dict.append(
                 {
@@ -471,7 +524,7 @@ class MultimodalChatDataset(NevaDataset):
         # Apply the prompt template
         for source in sources:
             messages = []
-            system_message = source.get('system', "")
+            system_message = source.get('system', None)
             system_token = source.get('system_token', "System")
             mask_role = source.get('mask', "User")
             for i, turn in enumerate(source['conversations']):
@@ -481,11 +534,13 @@ class MultimodalChatDataset(NevaDataset):
                 else:
                     mask_turn = True if turn['from'] == mask_role else False
                     messages.append({"from": turn['from'], "value": turn['value'], "mask": mask_turn})
-            _, context_dict = self.get_prompt(system_token, system_message, messages)
+            _, context_dict = self.get_prompt(system_token, system_message, messages, add_speakers=self.add_speakers)
 
         # Mask targets
         tokens_list = []
         labels_list = []
+        if self.data_cfg.add_bos:
+            tokens_list.extend([self.tokenizer.bos_id])
         system_tokens = self.tokenizer.text_to_ids(context_dict[0]['system'])    
         tokens_list.extend(system_tokens)
         labels_list.extend([self.ignore_index for _ in range(len(system_tokens))])
@@ -516,7 +571,7 @@ class MultimodalChatDataset(NevaDataset):
             labels=labels,
         )
 
-    def preprocess_media_tokens(self, sources: dict, cur_token_len: int, use_plain: bool = False) -> Dict:
+    def preprocess_media_tokens(self, sources: dict, image_sizes: List[Tuple[int, int]]) -> Dict:
         """
         Preprocesses multimodal sources based on the provided configuration.
 
@@ -526,45 +581,28 @@ class MultimodalChatDataset(NevaDataset):
 
         Parameters:
         - sources (dict): A dictionary containing the multimodal sources to be processed.
-        - multimodal_cfg (dict): A configuration dictionary specifying various options for multimodal processing.
-          It includes keys like 'is_multimodal', 'use_im_start_end', and 'sep_image_conv_front'.
-        - cur_token_len (int): The current length of tokens to be considered for image processing.
-        - use_plain (bool, optional): A boolean flag to use plain image token replacement without additional processing.
-          Defaults to False.
-
+        - image_sizes (List[Tuple]): A list denoting the size if each image in the sample
         Returns:
         - dict: The processed sources dictionary after applying multimodal preprocessing steps.
         """
-        multimodal_cfg = self.multimodal_cfg
-        is_multimodal = multimodal_cfg['is_multimodal']
-        media_type = multimodal_cfg['media_type']
-        image_token_len = cur_token_len
-        if media_type == 'image':
-            default_token = self.image_token
-        elif media_type == 'video':
-            raise NotImplementedError("Video modality is not supported.")
-        else:
+
+        if image_sizes is None:
             return sources
-
-        if not is_multimodal:
-            return sources
-
-        num_patches = image_token_len
-        if multimodal_cfg['use_im_start_end']:
-            replace_token = self.image_patch_token * num_patches
-        else:
-            replace_token = self.image_patch_token * (num_patches - 2)
-
-        replace_token = self.im_start_token + replace_token + self.im_end_token
 
         for source in sources:
             conversation = source['conversations']
-            if use_plain:
-                assert default_token in conversation[0]['value']
-                conversation[0]['value'] = default_token
             for turn in conversation:
-                turn["value"] = turn["value"].replace(default_token, replace_token)
-
+                original_text = turn.get("value", "")
+                turn["value"] = _preprocess_media_tokens(
+                    conversation=original_text,
+                    image_token=self.image_token,
+                    image_patch_token=self.image_patch_token,
+                    im_start_token=self.im_start_token,
+                    im_end_token=self.im_end_token,
+                    patch_size=self.patch_size,
+                    image_sizes=image_sizes
+                )
+                
         return sources
 
     def __getitem__(self, i) -> Dict[str, torch.Tensor]:
@@ -572,37 +610,35 @@ class MultimodalChatDataset(NevaDataset):
         if isinstance(i, int):
             sources = [sources]
         assert len(sources) == 1, "Don't know why it is wrapped to a list"  # FIXME
-        if 'image' in sources[0]:
-            if not isinstance(self.list_data_dict[i]['image'], list):
-                self.list_data_dict[i]['image'] = [self.list_data_dict[i]['image']]
+
+        crop_size = copy.deepcopy(self.mm_cfg.vision_encoder['crop_size'])
+        if 'images' in sources[0]:
+            if not isinstance(self.list_data_dict[i]['images'], list):
+                self.list_data_dict[i]['images'] = [self.list_data_dict[i]['images']]
 
             images = []
-            for image_file in self.list_data_dict[i]['image']:
+            for image_file in self.list_data_dict[i]['images']:
                 image = self.image_loader.open_image(image_file)
                 if image is None:
-                    logging.warning(f"Image {image_file} could not be found!")
-                image = process_image(self.processor, image, self.multimodal_cfg['image_aspect_ratio'])
+                    logging.warning(f"Image {image_file} could not be found!")    
+                    continue
+
                 images.append(image)
-            media_tensors = torch.tensor([])
+
             if images:
-                media_tensors = torch.stack(images)
-                patch_dim = self.multimodal_cfg['patch_dim']
+                image_inputs = self.image_processor(images, return_tensors="pt")
+                image_list, image_sizes = image_inputs["pixel_values"], image_inputs["image_sizes"]
 
-                height_num_patches = media_tensors[0].shape[1] // patch_dim
-                width_num_patches  = media_tensors[0].shape[2] // patch_dim
+                if isinstance(image_list[0], list): # List of List of Images            
+                    image_list = image_list[0]
 
-                cur_token_len = height_num_patches * width_num_patches
+                if isinstance(image_sizes[0], list):
+                    image_sizes = image_sizes[0]
 
-                sources = self.preprocess_media_tokens(
-                    copy.deepcopy(sources),
-                    cur_token_len,
-                    use_plain=(self.conv_template == "plain"),
-                )
-        elif 'video' in sources[0]:
-            raise NotImplementedError("Only image modality is supported for now.")
+                sources = self.preprocess_media_tokens(sources=copy.deepcopy(sources), image_sizes=image_sizes)
+                      
         else:
-            logging.warning("media not found in sources")
-            media_tensors = torch.tensor([])
+            logging.warning("media not found in sources")            
             sources = copy.deepcopy(sources)
 
         data_dict = self.preprocess_conversations(sources)
@@ -610,24 +646,58 @@ class MultimodalChatDataset(NevaDataset):
         if isinstance(i, int):
             data_dict = dict(tokens=data_dict["tokens"][0], labels=data_dict["labels"][0])
 
-        # image exist in the data
-        if self.multimodal_cfg['is_multimodal']:
-            if isinstance(self.processor, CLIPImageProcessor):
-                crop_size = [self.processor.crop_size['height'], self.processor.crop_size['width']]
-            else:
-                crop_size = copy.deepcopy(self.multimodal_cfg['crop_size'])
-                    
-            # Image does not exist in the data, but the model is multimodal
-            # TODO, if there are different videos on T dimensions.
-            if media_tensors.shape[0] < MAX_NUM_IMAGES:
-                padding_size = MAX_NUM_IMAGES - media_tensors.shape[0]
-                zero_padding = torch.zeros((padding_size, 3, crop_size[0], crop_size[1]), dtype=torch.float)
-                media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
-
-            if self.multimodal_cfg['media_type'] == 'image':
-                data_dict['image'] = media_tensors
-            elif self.multimodal_cfg['media_type'] == 'video':
-                data_dict['video'] = media_tensors
-
+        current_num_images = len(image_list)
+        if current_num_images < MIN_NUM_IMAGES:
+            image_list.append = torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float)
+        data_dict['image'] = image_list
         return data_dict
-    
+
+@dataclass
+class DataCollatorForSupervisedDataset(object):
+    """Collate examples for supervised fine-tuning."""
+
+    model_cfg: DictConfig
+    tokenizer: transformers.PreTrainedTokenizer
+
+    def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
+        max_len = max(instance['tokens'].shape[0] for instance in instances)
+        max_len = (max_len - 1) // 64 * 64 + 64
+        for instance in instances:
+            pad_len = max_len - instance['tokens'].shape[0]
+            instance['tokens'] = F.pad(instance['tokens'], (0, pad_len), 'constant', 0)
+            instance['labels'] = F.pad(instance['labels'], (0, pad_len), 'constant', -1)
+
+        # Use default_collate for the tokens and labels
+        batch = default_collate([{k: v for k, v in instance.items() if k != 'image'} for instance in instances])
+
+        tokenizer = self.tokenizer
+        model_cfg = self.model_cfg
+
+        tokens = batch['tokens']
+        labels = batch['labels']
+
+        media = [torch.nested.nested_tensor(instance['image']) for instance in instances]
+        media = NestedTensorList(media)
+
+        attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
+            data=tokens,
+            eod_token=tokenizer.eos_id,
+            eod_mask_loss=model_cfg.data.get("eod_mask_loss", False),
+            reset_attention_mask=False,
+            reset_position_ids=False,
+        )
+
+        loss_mask[labels == -1] = 0.0
+        tokens[tokens == -1] = 0
+        labels[labels == -1] = 0
+
+        batch = {
+            'tokens': tokens,
+            'labels': labels,
+            'attention_mask': attention_mask,
+            'loss_mask': loss_mask,
+            'position_ids': position_ids,
+            'media': media,
+        }
+
+        return batch

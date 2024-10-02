@@ -39,7 +39,7 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_from_nemo
-from nemo.collections.multimodal.data.neva.neva_dataset import DataCollatorForSupervisedDataset
+from nemo_aligner.data.mm.datasets import DataCollatorForSupervisedDataset
 
 """Script to start SFT training"""
 
@@ -90,6 +90,7 @@ def _modify_config(mgpt_cfg, cfg, add_cfg_to_tree=False):
         if cfg.model.data.get("chat", False):
             # chat model, overwrite the prompt template
             prompt_template = get_prompt_template_example(cfg.model.data.chat_prompt_tokens)
+            mgpt_cfg.data.add_speakers = cfg.model.data.add_speakers
             mgpt_cfg.data.train_ds.prompt_template = prompt_template
             mgpt_cfg.data.validation_ds.prompt_template = prompt_template
 
@@ -135,18 +136,19 @@ def _modify_config(mgpt_cfg, cfg, add_cfg_to_tree=False):
         mgpt_cfg.mm_cfg.pretrain_mm_mlp_adapter = cfg.model.mm_cfg.get("pretrain_mm_mlp_adapter", None)
         mgpt_cfg.mm_cfg.mm_mlp_adapter_type = cfg.model.mm_cfg.get("mm_mlp_adapter_type", "linear")
         mgpt_cfg.mm_cfg.use_im_start_end = cfg.model.mm_cfg.get("use_im_start_end", False)
-        mgpt_cfg.mm_cfg.im_start_token = cfg.model.mm_cfg.get("im_start_token", "<extra_id_4>")
-        mgpt_cfg.mm_cfg.im_end_token = cfg.model.mm_cfg.get("im_end_token", "<extra_id_5>")
-        mgpt_cfg.mm_cfg.image_patch_token = cfg.model.mm_cfg.get("image_patch_token", "<extra_id_3>")
+        mgpt_cfg.mm_cfg.im_start_token = cfg.model.mm_cfg.get("im_start_token", "[IMG_BREAK]")
+        mgpt_cfg.mm_cfg.im_end_token = cfg.model.mm_cfg.get("im_end_token", "[IMG_END]")
+        mgpt_cfg.mm_cfg.image_patch_token = cfg.model.mm_cfg.get("image_patch_token", "[IMG]")
+        mgpt_cfg.mm_cfg.image_patch_token = cfg.model.mm_cfg.get("image_token", "[IMG]")
         
         # check if we are pretraining the adapter or finetuning the LLM
         if mgpt_cfg.mm_cfg.llm.freeze and mgpt_cfg.restore_from_path is None: # if pretraining
             mgpt_cfg.restore_from_path = mgpt_cfg.mm_cfg.llm.from_pretrained
 
         # Check if an external tokenizer is given
-        artifacts = ["model", "vocab_file", "merge_file", "additional_special_tokens"]
+        artifacts = ["library", "type", "model", "vocab_file", "merge_file", "additional_special_tokens"]
         for artifact in artifacts:
-            if mgpt_cfg.tokenizer.get(artifact, None):
+            if cfg.model.tokenizer.get(artifact, None):                
                 mgpt_cfg.tokenizer[artifact] = cfg.model.tokenizer[artifact]
 
     return mgpt_cfg

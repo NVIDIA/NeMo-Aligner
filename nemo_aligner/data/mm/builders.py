@@ -256,6 +256,7 @@ def build_mm_sft_dataset(model_cfg, data_cfg, mm_cfg, tokenizer, image_processor
         ignore_index=model_cfg.data.get("ignore_index", -1),
         splice_single_frame=model_cfg.data.get("splice_single_frame", None),
         sep_token_between_frames=model_cfg.data.get("sep_token_between_frames", False),
+        add_speakers=model_cfg.data.get("add_speakers", True),
         special_tokens=special_tokens,
     )
     return dataset
