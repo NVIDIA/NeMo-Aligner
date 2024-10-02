@@ -372,3 +372,7 @@ def build_dataloader(
         pin_memory=True,
         collate_fn=collate_fn,
     )
+
+class HelloWorld:
+    def __init__(self):
+        print("hello, world!")
