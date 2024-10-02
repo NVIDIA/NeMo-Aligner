@@ -3,7 +3,8 @@ ARG BASE_IMAGE=ubuntu:22.04
 FROM ${BASE_IMAGE} AS builder-one
 ARG ALIGNER_COMMIT
 RUN echo "${ALIGNER_COMMIT}" > /root/sha
-RUN echo "hello_world" > /root/hello
+RUN echo "hello_world" > /root/hello && \
+    touch -a -m -t 201512180130.09 /root/hello
 
 FROM ${BASE_IMAGE} AS builder-two
 COPY --from=builder-one /root/hello /root/hello
