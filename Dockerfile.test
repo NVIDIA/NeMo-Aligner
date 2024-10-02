@@ -1,0 +1,16 @@
+ARG BASE_IMAGE=ubuntu:22.04
+
+FROM ${BASE_IMAGE} AS builder-one
+ARG ALIGNER_COMMIT
+RUN echo "${ALIGNER_COMMIT}" > /root/sha
+RUN echo "hello_world" > /root/hello
+
+FROM ${BASE_IMAGE} AS builder-two
+COPY --from=builder-one /root/hello /root/hello
+RUN cp /root/hello /root/hello2
+
+FROM ${BASE_IMAGE} AS final
+COPY --from=builder-one /root/sha /root/sha
+COPY --from=builder-two /root/hello /root/hello
+ 
+

@@ -64,7 +64,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          file: Dockerfile
+          file: Dockerfile.test
           push: true
           build-args: |
             MAX_JOBS=32
