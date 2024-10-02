@@ -142,6 +142,7 @@ Note that you would need to set up multi-node training in your cluster env, depe
          model.reward_model_type="regression" \
          model.regression.num_attributes=9
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 Step 4: Generate annotations
 ############################
@@ -158,6 +159,7 @@ To generate annotations, run the following command in the background to launch a
          inference.micro_batch_size=2 \
          inference.port=1424
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 Now execute:
 
@@ -230,7 +232,7 @@ For the purposes of this tutorial, the Attribute-Conditioned SFT model is traine
         exp_manager.explicit_log_dir=/results/acsft_70b \
         exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True 
 
-        
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 
 Step 6: Inference

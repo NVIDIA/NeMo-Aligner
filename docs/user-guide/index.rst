@@ -14,6 +14,7 @@
    spin.rst
    draftp.rst
    cai.rst
+   known_errors.rst
 
 :ref:`Prerequisite Obtaining a Pre-Trained Model <prerequisite>`
    This section provides instructions on how to download pre-trained LLMs in .nemo format. The following section will use these base LLMs for further fine-tuning and alignment. 
@@ -41,3 +42,6 @@
 
 :ref:`Constitutional AI: Harmlessness from AI Feedback <model-aligner-cai>`
    CAI, an alignment method developed by Anthropic, enables the incorporation of AI feedback for aligning LLMs. This feedback is grounded in a small set of principles (referred to as the ‘Constitution’) that guide the model toward desired behaviors, emphasizing helpfulness, honesty, and harmlessness.
+
+:ref:`Known Errors and Resolutions <known_errors_and_resolutions>`
+   This section details how to resolve common pitfalls that may arise during the alignment process.
