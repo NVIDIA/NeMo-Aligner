@@ -54,17 +54,10 @@ OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
-# Solve the following math problem efficiently and clearly. Make sure to put the answer (and only answer) inside \\boxed{{}}.
-# Below is a math question. I want you to first reason through the steps required to reach the answer, then put the answer (and only answer) inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \\boxed{{42}}.
-# Below is a math question. I want you to first reason through the steps required to reach the answer, then end your response with \"#### \" followed by the answer inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \"#### \\boxed{{42}}\" (without the quotes)
-# Please reason step by step on the following question, and put your final answer within \boxed{{}}.
-# Solve the following math problem efficiently and clearly. Make sure to put the answer (and only answer) inside \\boxed{{}}.
-
 PROMPT_TEMPLATE = """<extra_id_0>System
 
 <extra_id_1>User
 Below is a math question. I want you to first reason through the steps required to reach the answer, then put the answer (and only answer) inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \\boxed{{42}}.
-
 {problem}
 <extra_id_1>Assistant
 """

@@ -163,6 +163,7 @@ class PPOTrainer:
         self.logger = logger
         self.ckpt_callback = ckpt_callback
 
+        # TODO: we need to send it once per TP rank, but do that later i guess...
         self.sandbox = get_sandbox()
 
         # sanity check
@@ -320,7 +321,7 @@ class PPOTrainer:
         """
         reshard_context = trt_llm_reshard_region if self.trtllm_reshard else nullcontext
 
-        rollout_batches, futures = [], []
+        rollout_batches, futures, all_rewards = [], [], []
         timer_metrics = {}
 
         with reshard_context():
@@ -348,6 +349,13 @@ class PPOTrainer:
                     rollout_batches.append(rollout_batch)
 
                     futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+                    texts = [
+                        self.model.tokenizer.ids_to_text(item[length:].tolist())
+                        for item, length in zip(rollout_batch["response_tokens"], batch["length"])
+                    ]
+                    answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
+                    # TODO: need to make this async for real
+                    all_rewards.append([self.sandbox.is_output_correct(*item) for item in answers])
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -383,9 +391,11 @@ class PPOTrainer:
         with reshard_context():
             self.timer.start("critic_wait")
             rm_value_rollout_batches = []
-            for future in futures:
-                rewards, values = future.result() if isinstance(future, FutureResult) else future
-                rm_value_rollout_batches.append({"rewards": rewards, "values": values})
+            for future, rewards in zip(futures, all_rewards):
+                _, values = future.result() if isinstance(future, FutureResult) else future
+                rm_value_rollout_batches.append(
+                    {"values": values, "rewards": torch.as_tensor(rewards, dtype=values.dtype, device=values.device)}
+                )
             timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
 
             unbalanced_rm_value_batch = PPORolloutBatch.from_rollout_batches(

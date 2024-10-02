@@ -65,14 +65,14 @@ class RMCriticFutureResult(FutureResult):
         if self.combine_rm_and_critic_server:
             rewards, values = get_future_result(self.critic_future, "rewards", "values")
         else:
-            rewards = get_future_result(self.rm_future, "rewards")
+            # rewards = get_future_result(self.rm_future, "rewards")
             values = get_future_result(self.critic_future, "values")
 
         values = values[:, : self.og_seq_length - 1].contiguous()
 
         self.critic_future = None
         self.rm_future = None
-        return rewards.flatten(), values
+        return None, values
 
 
 class SaveFuture(FutureResult):
@@ -131,10 +131,10 @@ class RemoteGPTRMCriticClient:
         )
 
         rm_future = None
-        if not self.combine_rm_and_critic_server:
-            rm_future = run_if_model_parallel_src(
-                self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data,
-            )
+        # if not self.combine_rm_and_critic_server:
+        #     rm_future = run_if_model_parallel_src(
+        #         self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data,
+        #     )
 
         return RMCriticFutureResult(critic_future, rm_future, self.combine_rm_and_critic_server, og_seq_length)
 

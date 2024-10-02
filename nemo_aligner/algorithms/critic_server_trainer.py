@@ -94,7 +94,7 @@ class CriticServerTrainer:
             item * parallel_state.get_data_parallel_world_size() for item in inference_micro_batch_size
         ]
 
-        self.infer_fn = model.infer_rm_critic if self.combine_rm_and_critic_server else model.infer
+        self.infer_fn = model.infer_rm_critic if self.combine_rm_and_critic_server else model._infer_critic
         self.port = cfg.port
 
         # PyTriton args
@@ -141,7 +141,8 @@ class CriticServerTrainer:
             pad_to_multiple=pad_batch_to_multiple,
             strip_sequence_length_to_multiple=self.strip_sequence_length_to_multiple,
         )
-        rewards, values = self.run_inference(inputs=inputs)
+        rewards = None
+        values = self.run_inference(inputs=inputs)
 
         # if the inference request has extra padding that it doesn't need
         # then we will pad it back up to the expected padding when returning the values
@@ -153,6 +154,7 @@ class CriticServerTrainer:
         output = {
             "values": values,
         }
+
         if self.combine_rm_and_critic_server:
             output["rewards"] = rewards.reshape((-1, 1))
 
@@ -269,11 +271,11 @@ class CriticServerTrainer:
         """only rank 0 needs valid input data, but all other ranks should call `run_inference()`
         """
         self.model.prepare_for_inference()
-        rewards, values = run_distributed_inference(inputs, self.infer_fn)
+        outputs = run_distributed_inference(inputs, self.infer_fn)
         self.model.finish_inference()
 
         torch.distributed.barrier()
-        return rewards, values
+        return outputs
 
     def run_training(self, tokens=None, returns=None, prev_values=None, mask=None):
         """assume that the batch is already padded
