@@ -137,7 +137,7 @@ for pr_and_commit in \
   "10653 b4aa80f94b67c407d6bf33f875fb85a9d2ed7a5b" \
 ; do
   pr=$(cut -f1 -d' ' <<<"$pr_and_commit")
-  head_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")
+  head_pr_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")
   git fetch origin $head_pr_commit:PR-${pr}
   # cherry-picks all commits between main and the top of the PR
   git cherry-pick --allow-empty $(git merge-base origin/main PR-${pr})..PR-${pr}
