@@ -116,12 +116,10 @@ RUN pip uninstall -y megatron-core && \
     fi && \
     pip install -e .
 
-COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
-RUN cd /opt/NeMo-Aligner && \
-    pip install --no-deps -e .
-
-# TRTLLM
+# We have this a bit weird copy order to not break the cache
+# (as aligner will certainly update stuff and so successive layers
 COPY --from=trtllm-build /opt/TensorRT-LLM /opt/TensorRT-LLM
+# TRTLLM
 RUN cd /opt/TensorRT-LLM && \
     pip install ./build/tensorrt_llm*.whl
 # ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
@@ -130,3 +128,8 @@ RUN cd /opt/TensorRT-LLM && \
 #             TRT-LLM allows. This installation must follow TRT-LLM and is
 #             only necessary when NeMo 2.0.0rc1 is installed with TRT-LLM v10.
 RUN pip install --upgrade-strategy only-if-needed nvidia-modelopt==0.13.0
+
+COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
+
+RUN cd /opt/NeMo-Aligner && \
+    pip install --no-deps -e .
