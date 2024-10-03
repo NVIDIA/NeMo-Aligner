@@ -45,3 +45,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "run_only_on(device): runs the test only on a given device [CPU | GPU]",
     )
+
+def pytest_sessionfinish(session, exitstatus):
+    """ whole test run finishes. """
+    import torch
+    # After the test session completes, destroy the NCCL process group. This suppresses a NCCL warning from pytorch>=2.4
+    torch.distributed.destroy_process_group()

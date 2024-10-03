@@ -145,19 +145,3 @@ for pr_and_commit in \
   git tag cherry-pick-PR-${pr}
 done
 EOF
-#RUN <<"EOF" bash -exu
-#cd NeMo
-## Ensures we don't cherry-pick "future" origin/main commits
-#git fetch -a
-## 10654: feat: Migrate GPTSession refit path in Nemo export to ModelRunner for Aligner NeMo#10654
-## 10651: [fix] Ensures disabling exp_manager with exp_manager=null does not error NeMo#10651
-## 10652: [feat] Update get_model_parallel_src_rank to support tp-pp-dp ordering NeMo#10652
-## 10653: fix: MegatronGPTModel get_forward_output_only_func position_ids=None NeMo#10653
-#for pr in 10654 10651 10652 10653; do
-#  git fetch origin pull/${pr}/head:PR-${pr}
-#  # cherry-picks all commits between main and the top of the PR
-#  git cherry-pick --allow-empty $(git merge-base origin/main PR-${pr})..PR-${pr}
-#  # Tag cherry-picks to help
-#  git tag cherry-pick-PR-${pr}
-#done
-#EOF

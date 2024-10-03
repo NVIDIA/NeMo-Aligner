@@ -102,7 +102,7 @@ def broadcast_tensor(tensor, src, group, dtype: torch.dtype | None = None):
     Broadcast any tensor from the src rank to every other rank in the given group.
     All the ranks that send or receive data must call this function.
     
-    dtype: Optional dtype, {dir(torch)}
+    dtype: Optional dtype
     """
     if torch.distributed.get_rank() == src:
         tensor = tensor.cuda()
