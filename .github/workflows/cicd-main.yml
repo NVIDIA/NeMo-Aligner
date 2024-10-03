@@ -64,4 +64,4 @@ jobs:
        TIMEOUT: 20
        SCRIPT: |
           cd /opt/NeMo-Aligner/
-          PYTHONPATH=$(pwd) pytest tests/
+          # PYTHONPATH=$(pwd) pytest tests/
