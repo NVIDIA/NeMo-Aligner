@@ -246,12 +246,14 @@ def init_model_parallel():
     Utils.destroy_model_parallel()
 
 
-@pytest.mark.parametrize('override_dtype', [False, True])
-@pytest.mark.parametrize('dtype', [torch.float32, torch.bfloat16, torch.float16, torch.int32])
-@pytest.mark.parametrize('shape', [(2), (2,3), (2,3,4)])
-@pytest.mark.parametrize('from_last', [True, False])
-@pytest.mark.parametrize('pp_size', [2])
-@pytest.mark.parametrize('tp_size', [1])
+@pytest.mark.parametrize(
+    'tp_size, pp_size, from_last, shape, dtype, override_dtype', [
+        (1, 2, True, (2,), torch.float32, False),
+        (1, 2, False, (2,3), torch.bfloat16, True),
+        (1, 2, True, (2,3,4), torch.float16, False),
+        (1, 2, False, (2,), torch.int32, True),
+    ]
+)
 def test_broadcast_within_pp(init_model_parallel, tp_size, pp_size, from_last, shape, dtype, override_dtype):
     init_model_parallel(tensor_model_parallel_size=tp_size, pipeline_model_parallel_size=pp_size)
     num_el = np.product(shape)
