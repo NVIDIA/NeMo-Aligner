@@ -145,7 +145,7 @@ def main(cfg) -> None:
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
     train_ds = MathDataset(cfg.model.data.data_prefix["train"][0], ptl_model.tokenizer)
-    validation_ds = MathDataset(cfg.model.data.data_prefix["validation"][0], ptl_model.tokenizer)[0]
+    validation_ds = MathDataset(cfg.model.data.data_prefix["validation"][0], ptl_model.tokenizer)
 
     max_seqlen = cfg.model.ppo.length_params.max_length
     eos_id = ptl_model.tokenizer.eos_id
