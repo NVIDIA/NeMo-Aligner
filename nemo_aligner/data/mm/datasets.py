@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from omegaconf import DictConfig
 import transformers
 from einops import rearrange
-from nemo_aligner.utils.multimodal import NestedTensorList
+from nemo_aligner.utils.multimodal import TensorList
 
 MIN_NUM_IMAGES = 1
 IMAGE_PADDING_VAL = -100
@@ -394,7 +394,7 @@ class DataCollatorForSupervisedDataset(object):
         labels = batch['labels']
 
         media = [torch.nested.nested_tensor(instance['image']) for instance in instances]
-        media = NestedTensorList(media)
+        media = TensorList(media)
 
         attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
             data=tokens,
