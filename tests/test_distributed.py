@@ -233,19 +233,7 @@ class TestDistributedFunctions:
         self._run_test(self._test_distributed_entropy, batch_size, seed)
 
 
-@pytest.fixture
-def init_model_parallel():
-    from tests.unit_tests.test_utilities import Utils
-    def initialize(*args, **kwargs):
-        Utils.initialize_model_parallel(*args, **kwargs)
-
-    # Yield the initialized function, which is available to the test
-    yield initialize
-
-    # Teardown: Called when the test ends
-    Utils.destroy_model_parallel()
-
-
+@pytest.mark.run_only_on("GPU")
 @pytest.mark.parametrize(
     'tp_size, pp_size, from_last, shape, dtype, override_dtype', [
         (1, 2, True, (2,), torch.float32, False),
