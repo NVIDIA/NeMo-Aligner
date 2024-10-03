@@ -32,7 +32,7 @@ from nemo.utils import logging
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
-from nemo_aligner.utils.multimodal import NestedTensorList, get_iterator_k_split
+from nemo_aligner.utils.multimodal import TensorList, get_iterator_k_split
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -63,7 +63,7 @@ class MegatronMGPTSFTModel(MultimodalGPTModel, NLPAdapterModelMixin, SupervisedI
             and return loss as well as metrics
         """
         _, seq_length = batch["tokens"].shape
-        batch = {k: v for k, v in batch.items() if isinstance(v, (torch.Tensor, NestedTensorList))}
+        batch = {k: v for k, v in batch.items() if isinstance(v, (torch.Tensor, TensorList))}
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
 

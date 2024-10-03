@@ -31,7 +31,7 @@ from nemo.utils import logging
 from nemo.collections.multimodal.data.neva.neva_dataset import TarOrFolderImageLoader, process_image
 
 import transformers
-from nemo_aligner.utils.multimodal import NestedTensorList
+from nemo_aligner.utils.multimodal import TensorList
 
 MAX_NUM_IMAGES = 1
 MIN_NUM_IMAGES = 1
@@ -100,44 +100,48 @@ def maybe_process_prompt_and_media(
         image_patch_dim, 
         use_im_start_end, 
         crop_size,
-        is_multimodal: bool = True
+        is_multimodal: bool = True,
     ):
-    if "image" in record:
-        if not isinstance(record['image'], list):
-            record['image'] = [record['image']]
+    if "images" in record:
+        if not isinstance(record['images'], list):
+            record['images'] = [record['images']]
         images = []
-        for image_file in record["image"]:
+        for image_file in record["images"]:
             image = image_loader.open_image(image_file)
             if image is None:
                 logging.warning(f"Image {image} could not be found!")
-            image = process_image(image_processor, image, image_aspect_ratio)
             images.append(image)
-        media_tensors = torch.tensor([])
+
         if images:
-            media_tensors = torch.stack(images)
-            height_num_patches = media_tensors[0].shape[1] // image_patch_dim
-            width_num_patches  = media_tensors[0].shape[2] // image_patch_dim
-            num_image_tokens = height_num_patches * width_num_patches
-            record['prompt'] = process_media_tokens(
-                record['prompt'],
-                image_token,
-                image_patch_token,
-                image_start_token,
-                image_end_token,
-                num_image_tokens,
-                use_im_start_end,
+            image_inputs = image_processor(images, return_tensors="pt")
+            
+            image_list, image_sizes = image_inputs["pixel_values"], image_inputs["image_sizes"]
+            if isinstance(image_list[0], list): # List of List of Images            
+                image_list = image_list[0]
+
+            if isinstance(image_sizes[0], list):
+                image_sizes = image_sizes[0]
+        
+            record['prompt'] = _preprocess_media_tokens(
+                conversation=record['prompt'],
+                image_token=image_token,
+                image_patch_token=image_patch_token,
+                im_start_token=image_start_token,
+                im_end_token=image_end_token,
+                patch_size=image_patch_dim,
+                image_sizes=image_sizes
             )
 
         # image exist in the data
         if is_multimodal:
             # Image does not exist in the data, but the model is multimodal
             # TODO, if there are different videos on T dimensions.
-            if media_tensors.shape[0] < MAX_NUM_IMAGES:
-                padding_size = MAX_NUM_IMAGES - media_tensors.shape[0]
-                zero_padding = torch.zeros((padding_size, 3, crop_size[0], crop_size[1]), dtype=torch.float)
-                media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
+            current_num_images = len(image_list)
+            if current_num_images < MIN_NUM_IMAGES:
+                image_list = []
+                image_list.append = torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float)            
         
-        record["image"] = media_tensors
+        record["images"] = image_list
     return record
 
 class MultimodalDPOModelDataset(Dataset):
@@ -177,11 +181,11 @@ class MultimodalDPOModelDataset(Dataset):
         # Multimodal
         self.is_multimodal = cfg.data.get("is_multimodal", True)
         self.media_type = cfg.data.get("media_type", "image") # Only image is supported for now
-        self.image_token = cfg.mm_cfg.get("image_token", "<image>")
-        self.image_patch_token = cfg.mm_cfg.get("image_patch_token", "<extra_id_3>")
+        self.image_token = cfg.mm_cfg.get("image_token", "[IMG]")
+        self.image_patch_token = cfg.mm_cfg.get("image_patch_token", "[IMG]")
         self.image_folder = cfg.data.get("image_folder", None)        
-        self.image_start_token = cfg.mm_cfg.get("im_start_token", "<extra_id_4>")
-        self.image_end_token = cfg.mm_cfg.get("im_end_token", "<extra_id_5>")
+        self.image_start_token = cfg.mm_cfg.get("im_start_token", "[IMG_BREAK]")
+        self.image_end_token = cfg.mm_cfg.get("im_end_token", "[IMG_END]")
         self.add_extra_token = cfg.data.get("add_extra_token", 0) 
         self.image_loader = TarOrFolderImageLoader(self.image_folder) if self.image_folder else None
         self.image_processor = image_processor
@@ -198,10 +202,9 @@ class MultimodalDPOModelDataset(Dataset):
         img_pattern = r'<img\s+src=[\'"]([^\'"]+)[\'"](?:[^>]*)?/?>'
         self.data = []
         for record in data:
-            # This currently supports only a single image
-            # search for <img src="/absolute/path/to/image" in the conversation
+            # Search for <img src="/absolute/path/to/image" in the conversation
             #   add it as record['image'], remove src tag from the <img> tag
-            record['image'] = []
+            record['images'] = []
             matches = re.finditer(img_pattern, record['prompt'])
             for match in matches:
                 image_name = match.group(1).split("/")[-1]
@@ -215,7 +218,7 @@ class MultimodalDPOModelDataset(Dataset):
                     if not os.path.isfile(image_path):
                         logging.warning(f"Image not found: {image_path}")
                         continue
-                record['image'].append(image_name)  # url
+                record['images'].append(image_name)  # url
             record['prompt'] = re.sub(img_pattern, self.image_token, record['prompt'])
             self.data.append(record)
 
@@ -307,7 +310,7 @@ class MultimodalDPOModelDataset(Dataset):
             "rejected_labels": labels_reject_tokens,
             "chosen_reward": payload.get("chosen_reward", self.default_chosen_reward),
             "rejected_reward": payload.get("rejected_reward", self.default_rejected_reward),
-            "media": payload.get("image", None),
+            "media": payload.get("images", None),
         }
         return output
 
@@ -335,9 +338,9 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
         attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
 
-    media = torch.stack([item["media"] for item in batch], dim=0)
-    media = rearrange(media, "b T c h w -> b T 1 c h w") # TODO (tugrul): support different images for chosen and rejected samples
-
+    media = [torch.nested.nested_tensor(item['media']) for item in batch]
+    media = TensorList(media)
+    
     output = {
         "chosen": chosen_tokens,
         "rejected": rejected_tokens,
@@ -678,7 +681,7 @@ class DataCollatorForSupervisedDataset(object):
         labels = batch['labels']
 
         media = [torch.nested.nested_tensor(instance['image']) for instance in instances]
-        media = NestedTensorList(media)
+        media = TensorList(media)
 
         attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
             data=tokens,

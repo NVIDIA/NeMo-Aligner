@@ -29,7 +29,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
-from nemo_aligner.utils.multimodal import NestedTensorList, get_iterator_k_split
+from nemo_aligner.utils.multimodal import TensorList, get_iterator_k_split
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, from_parallel_logits_to_logprobs
 from nemo_aligner.utils.train_utils import (
@@ -516,7 +516,9 @@ class MegatronMGPTDPOModel(MultimodalGPTModel, NLPAdapterModelMixin, SupervisedI
         masks = torch.cat((batch["attention_mask"], batch["attention_mask"]), dim=0)
         pos_ids = torch.cat((batch["position_ids"], batch["position_ids"]), dim=0)
         labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
-        media = torch.cat((batch["chosen_media"], batch["rejected_media"]), dim=0)
+        
+        #media = torch.cat((batch["chosen_media"], batch["rejected_media"]), dim=0)
+        media = TensorList.cat((batch["chosen_media"], batch["rejected_media"]))        
         global_batch = [tokens, masks, pos_ids, media, labels]
 
         if self.use_peft and self.ref_policy_state_dict is None:
