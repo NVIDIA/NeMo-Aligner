@@ -44,6 +44,7 @@ def run_only_on_device_fixture(request, device):
 @pytest.fixture
 def init_model_parallel():
     from tests.test_mcore_utilities import Utils
+
     def initialize(*args, **kwargs):
         Utils.initialize_model_parallel(*args, **kwargs)
 
@@ -59,9 +60,11 @@ def pytest_configure(config):
         "markers", "run_only_on(device): runs the test only on a given device [CPU | GPU]",
     )
 
+
 def pytest_sessionfinish(session, exitstatus):
     """ whole test run finishes. """
     import torch
+
     # After the test session completes, destroy the NCCL process group. This suppresses a NCCL warning from pytorch>=2.4
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()

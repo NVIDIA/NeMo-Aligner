@@ -97,38 +97,59 @@ _DTYPE_TO_ENUM = {
 _ENUM_TO_DTYPE = {enum: dtype for dtype, enum in _DTYPE_TO_ENUM.items()}
 
 
-def broadcast_tensor(tensor, src, group, dtype: torch.dtype | None = None):
-    f"""
-    Broadcast any tensor from the src rank to every other rank in the given group.
+def broadcast_tensor(tensor, src, group, dtype: torch.dtype | None = None, max_tensor_ndim: int = 5):
+    """
+    Broadcast a tensor from the source rank to every other rank in the given group.
     All the ranks that send or receive data must call this function.
     
-    dtype: Optional dtype
+    Parameters:
+    - tensor: The tensor to be broadcasted.
+    - src: The rank of the source tensor.
+    - group: The process group to use for the broadcast.
+    - dtype: (Optional) The desired data type to cast the tensor before broadcasting.
+    - max_tensor_ndim: The maximum number of dimensions the tensor can have, default is 5.
+
+    Restrictions:
+    - To optimize the number of broadcasts, this function assumes a maximum number of dimensions
+      for the tensor, controlled by the `max_tensor_ndim` parameter (default: 5).
+    
+    Returns:
+    - The broadcasted tensor.
     """
+
     if torch.distributed.get_rank() == src:
         tensor = tensor.cuda()
         if dtype:
             tensor = tensor.to(dtype)
 
+        assert tensor.ndim <= max_tensor_ndim
+
+        # Create a single int32 tensor to hold dtype enum, ndim, and shape
         input_dtype_enum = torch.tensor(_DTYPE_TO_ENUM.get(tensor.dtype, 0), device="cuda", dtype=torch.int32)
         input_ndim = torch.tensor(tensor.ndim, device="cuda", dtype=torch.int32)
-        input_shape = torch.tensor(tensor.shape, device="cuda", dtype=torch.int32)
+        padded_shape = torch.tensor(
+            list(tensor.shape) + [-1] * (max_tensor_ndim - tensor.ndim), device="cuda", dtype=torch.int32
+        )
 
-        torch.distributed.broadcast(input_dtype_enum, src, group)
-        torch.distributed.broadcast(input_ndim, src, group)
-        torch.distributed.broadcast(input_shape, src, group)
+        # Combine into a single tensor for broadcasting
+        metadata = torch.cat([input_dtype_enum.view(1), input_ndim.view(1), padded_shape])
+
+        # Broadcast metadata (dtype_enum, ndim, shape)
+        torch.distributed.broadcast(metadata, src, group)
         torch.distributed.broadcast(tensor, src, group)
     else:
-        input_dtype_enum = torch.empty((), dtype=torch.int32, device="cuda")
-        torch.distributed.broadcast(input_dtype_enum, src, group)
-        dtype = _ENUM_TO_DTYPE[input_dtype_enum.item()]
+        # Receive metadata as a single tensor
+        metadata = torch.empty((2 + max_tensor_ndim,), dtype=torch.int32, device="cuda")
+        torch.distributed.broadcast(metadata, src, group)
 
-        input_ndim = torch.empty((), dtype=torch.int32, device="cuda")
-        torch.distributed.broadcast(input_ndim, src, group)
+        # Extract dtype, ndim, and shape from metadata
+        input_dtype_enum = metadata[0].item()
+        input_ndim = metadata[1].item()
+        input_shape = metadata[2 : 2 + input_ndim].tolist()
 
-        input_shape = torch.empty(input_ndim, dtype=torch.int32, device="cuda")
-        torch.distributed.broadcast(input_shape, src, group)
+        dtype = _ENUM_TO_DTYPE[input_dtype_enum]
 
-        tensor = torch.empty(input_shape.tolist(), dtype=dtype, device="cuda")
+        tensor = torch.empty(input_shape, dtype=dtype, device="cuda")
         torch.distributed.broadcast(tensor, src, group)
     return tensor
 
