@@ -49,3 +49,7 @@ model:
   regression:
     merge_attributes: False # whether to merge attribute values into a scalar
     attribute_weights: null # apply these weights to each attributes when merging them into a scalar
+
+  # NOTE: The user does not need to change the global batch size below
+  # GBS is overridden to 0 to disable checks for compatibility with the megatron-core parallel state
+  global_batch_size: 0
