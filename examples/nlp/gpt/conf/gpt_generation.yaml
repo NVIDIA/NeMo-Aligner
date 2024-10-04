@@ -7,32 +7,23 @@ trainer:
   accelerator: gpu
   precision: bf16
   
-  # spin specific args
-  spin:
-    max_iterations: 3   # the number of iterations (rounds) for which the SPIN "game" is played. This is T in the original paper
-    max_epochs: 1       # the number of epochs to use per iteration. In the paper, they do 3 iterations with 2 epochs per iteration
+  # generation specific args
+  generation:
+    max_epochs: 1
     max_steps: -1
-    val_check_interval: 0.1
-    save_interval: 100
     limit_train_batches: 1.0
-
-    # how many GBS we loop over
-    limit_val_batches: 1.0
-    gradient_clip_val: 1.0
 
     # Accelerate training times by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
-      # reshard is not supported in SPIN
+      # reshard is not supported in generation
 
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
-      max_input_tokens: ${multiply:${trainer.spin.trt_llm.max_input_len}, ${model.spin.rollout_micro_batch_size}}
+      max_input_tokens: null
 
-      # the seed to use for trt-llm generation
-      seed: ${model.seed}
-      model_type: llama
+      model_type: gptnext
 
       # Unload and reload the TRTLLM engine before and after the training stage 
       # Reloading the engine incurs a constant time overhead
@@ -43,8 +34,8 @@ trainer:
   enable_checkpointing: False
   use_distributed_sampler: False
   max_time: null
-  max_epochs: ${.spin.max_epochs}
-  max_steps: ${.spin.max_steps}
+  max_epochs: ${.generation.max_epochs}
+  max_steps: ${.generation.max_steps}
 
 exp_manager:
   explicit_log_dir: /results
@@ -77,11 +68,8 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
 
-  spin:
-    log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, 2}
-    rollout_micro_batch_size: 32
-    ref_policy_kl_penalty: 0.2   # Can also be a list of elements == max_iterations, where each element will be the KL penalty used for that iteration
-    offload_adam_states: True
+  generation:
+    num_responses_to_gen: 4
 
     # params for generation
     sampling_params:
@@ -136,6 +124,7 @@ model:
 
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
     num_workers: 0
+    dataloader_type: single  # only supports single
     reset_position_ids: False # Reset position ids after end-of-document token
     reset_attention_mask: False # Reset attention mask after end-of-document token
     eod_mask_loss: False # Mask loss for the end of document tokens
@@ -167,31 +156,10 @@ model:
       prompt_template: null # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
       truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
-
-    validation_ds:
-      file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
-      global_batch_size: ${model.global_batch_size}
-      micro_batch_size: ${model.micro_batch_size}
-      shuffle: False
-      memmap_workers: ${model.data.train_ds.memmap_workers}
-      max_seq_length: ${model.data.train_ds.max_seq_length}
-      min_seq_length: 1
-      drop_last: True
-      label_key: ${model.data.train_ds.label_key}
-      add_eos: ${model.data.train_ds.add_eos}
-      add_sep: ${model.data.train_ds.add_sep}
-      add_bos: ${model.data.train_ds.add_bos}
-      truncation_field: ${model.data.train_ds.truncation_field} # Options: keys in prompt_template
-      index_mapping_dir: null # Path to a directory to write index mapping files.
-      prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
-      hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
-      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
-      output_original_text: True  # needed for the proper metrics support
+      output_original_text: False
 
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
     data:
       train_ds:
-        file_path: True
-      validation_ds:
         file_path: True
