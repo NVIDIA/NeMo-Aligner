@@ -50,11 +50,35 @@ jobs:
         id: all
         run: |
           echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT"
+  
+  foobar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Parse test_to_run
+        run: |
+          set -x
+          echo "${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}"
+          echo "${{ github.event.label.name }}"
+          echo "${{ github.ref }}"
 
   build-container:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
     uses: ./.github/workflows/_build_container.yml
   
+  Unit_Tests:
+     needs: [build-container, pre-flight]
+     uses: ./.github/workflows/_run_test.yml
+     if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+     with:
+       RUNNER: self-hosted
+       TIMEOUT: 20
+       SCRIPT: |
+        ALIGNER_REPO_DIR=/opt/NeMo-Aligner
+        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
+
+        cd ${ALIGNER_REPO_DIR}
+        torchrun --nproc_per_node 2 -m pytest . -rA -s -x
+
   Functional_Tests:
     needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
