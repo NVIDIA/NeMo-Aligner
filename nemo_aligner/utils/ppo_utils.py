@@ -57,7 +57,7 @@ def calculate_entropy(log_probs, mask=None):
     return entropy_unmasked.mean() if mask is None else masked_mean(entropy_unmasked, mask)
 
 
-def calculate_ppo_rewards(values, rewards, response_lengths, init_policy_kl, penalty_factor=0.0):
+def calculate_ppo_rewards(values, rewards, response_lengths):
     """the reward should be defined on the last valid action"""
 
     rewards_sequence = torch.zeros_like(values)
@@ -66,10 +66,10 @@ def calculate_ppo_rewards(values, rewards, response_lengths, init_policy_kl, pen
 
     rewards_sequence[torch.arange(rewards_sequence.size(0)), idx] = rewards.flatten()
 
-    return rewards_sequence - penalty_factor * init_policy_kl
+    return rewards_sequence
 
 
-def calculate_kl_penalty(log_probs_a, log_probs_b, use_absolute_kl=True):
+def calculate_kl_penalty(log_probs_a, log_probs_b):
     """Calculates a per-token estimate of the KL Divergence between two log_probs.
     """
     log_r = log_probs_b - log_probs_a

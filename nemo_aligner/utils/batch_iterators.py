@@ -73,12 +73,21 @@ class DefaultBatchIterator:
     """
 
     sampler_iter: Iterator[int]
-    num_microbatches: int
     dataset: Mapping
     collate_fn: Callable
+    num_repeats: int
+    rollout_micro_batch_size: int
 
     def __iter__(self):
-        for _, ids in zip(range(self.num_microbatches), self.sampler_iter):
+        try:
+            batch_of_ids = next(self.sampler_iter)
+        except StopIteration:
+            return
+
+        # get all the ids
+        all_ids = torch.as_tensor(batch_of_ids).repeat_interleave(self.num_repeats)
+
+        for ids in all_ids.split(self.rollout_micro_batch_size):
             batch = self.collate_fn([self.dataset[index] for index in ids])
             yield batch
 
