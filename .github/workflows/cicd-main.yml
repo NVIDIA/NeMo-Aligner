@@ -60,7 +60,8 @@ jobs:
           echo "${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}"
           echo "${{ github.event.label.name }}"
           echo "${{ github.ref }}"
-          echo "${{ contains( github.event.pull_request.labels.*.name, 'My Label') }}"
+          echo "${{ contains( github.event.pull_request.labels.*.name, 'Label') }}"
+          echo "${{ contains( github.event.pull_request.labels.*.name, 'Run CICD') }}"
           echo ${{  github.event.pull_request.labels.*.name }}
 
   build-container:
