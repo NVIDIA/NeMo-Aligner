@@ -18,6 +18,7 @@ on:
     branches:
       - 'main'
       - 'r**'
+      - 'dev'
   workflow_dispatch:
     inputs:
       test_to_run:
