@@ -73,5 +73,6 @@ jobs:
       TIMEOUT: 20
       SCRIPT: |
          export PYTHONPATH=/opt/NeMo-Aligner:${PYTHONPATH:-}
+         # Required by test that run git commands, e.g., determining GIT_ROOT
          git config --global --add safe.directory /opt/NeMo-Aligner
          ${{ matrix.script }}
