@@ -58,14 +58,21 @@ jobs:
       - name: Parse test_to_run
         run: |
           set -x
-          echo "${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}"
+          echo "${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}" 
+          echo
           echo "${{ github.event.label.name }}"
+          echo
           echo "${{ github.ref }}"
+          echo
           echo "${{ contains( github.event.pull_request.labels.*.name, 'Label') }}"
+          echo
           echo "${{ contains( github.event.pull_request.labels.*.name, 'Run CICD') }}"
-          echo ${{  github.event.pull_request.labels.*.name }}
-          echo ${{ toJSON(github.event.pull_request.labels) }}
-          echo ${{ toJSON(github.event.label) }}
+          echo
+          echo "${{  github.event.pull_request.labels.*.name }}"
+          echo
+          echo "${{ toJSON(github.event.pull_request.labels) }}"
+          echo
+          echo "${{ toJSON(github.event.label) }}"
 
   build-container:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
