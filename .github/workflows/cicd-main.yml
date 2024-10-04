@@ -19,6 +19,7 @@ on:
       - 'main'
       - 'r**'
       - 'dev'
+    types: [labeled]
   workflow_dispatch:
     inputs:
       test_to_run:
@@ -63,6 +64,8 @@ jobs:
           echo "${{ contains( github.event.pull_request.labels.*.name, 'Label') }}"
           echo "${{ contains( github.event.pull_request.labels.*.name, 'Run CICD') }}"
           echo ${{  github.event.pull_request.labels.*.name }}
+          echo ${{ toJSON(github.event.pull_request.labels) }}
+          echo ${{ toJSON(${{ github.event.label) }}
 
   build-container:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
