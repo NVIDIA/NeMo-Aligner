@@ -14,8 +14,9 @@
 
 import pytest
 import torch
-from nemo_aligner.utils import parallel_state, tensor_parallel
+from megatron.core import tensor_parallel
 
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
