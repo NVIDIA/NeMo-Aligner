@@ -125,7 +125,7 @@ RUN pip uninstall -y megatron-core && \
 
 # We have this a bit weird copy order to not break the cache
 # (as aligner will certainly update stuff and so successive layers
-COPY --from=trtllm-build /opt/TensorRT-LLM /opt/TensorRT-LLM
+COPY --from=nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${TE_TAG} /opt/TensorRT-LLM /opt/TensorRT-LLM
 # TRTLLM
 RUN cd /opt/TensorRT-LLM && \
     pip install ./build/tensorrt_llm*.whl

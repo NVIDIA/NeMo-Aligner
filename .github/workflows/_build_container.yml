@@ -60,7 +60,22 @@ jobs:
           echo "CACHE<<EOF" >> $GITHUB_ENV
           echo "$CACHE" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-
+      
+      - name: Build and push TRTLLM
+        uses: docker/build-push-action@v5
+        env:
+          TE_TAG: 7d576ed25266a17a7b651f2c12e8498f67e0baea
+        with:
+          file: Dockerfile
+          push: true
+          target: trtllm-build
+          build-args: MAX_JOBS=32
+          cache-from: |
+            nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:${{ github.event.pull_request.number || 'noop' }}
+            nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:main
+          cache-to: ${{ env.CACHE }}
+          tags: nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${TE_TAG}
+      
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
