@@ -219,7 +219,9 @@ class GRPOTrainer:
         ppo_rollout_data["prev_logprobs"] = logprobs
         ppo_rollout_data["response_tokens"] = response_tokens
         ppo_rollout_data["is_end"] = is_end
-        ppo_rollout_data["init_logprobs"] = rollout_batch["init_logprobs"]
+
+        if "init_logprobs" in rollout_batch:
+            ppo_rollout_data["init_logprobs"] = rollout_batch["init_logprobs"]
 
         # for the critic
         # compute metrics
