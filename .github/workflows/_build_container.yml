@@ -25,6 +25,10 @@ defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
 
+env:
+  TE_TAG: 7d576ed25266a17a7b651f2c12e8498f67e0baea
+  ALIGNER_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+
 jobs:
   main:
     runs-on: self-hosted-builder
@@ -63,8 +67,7 @@ jobs:
       
       - name: Build and push TRTLLM
         uses: docker/build-push-action@v5
-        env:
-          TE_TAG: 7d576ed25266a17a7b651f2c12e8498f67e0baea
+        
         with:
           file: Dockerfile
           push: true
@@ -83,7 +86,7 @@ jobs:
           push: true
           build-args: |
             MAX_JOBS=32
-            ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
+            ALIGNER_COMMIT=$ALIGNER_COMMIT
           cache-from: |
             nemoci.azurecr.io/nemo_aligner_container_cache:${{ github.event.pull_request.number || 'noop' }}
             nemoci.azurecr.io/nemo_aligner_container_cache:main
