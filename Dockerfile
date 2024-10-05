@@ -67,7 +67,7 @@ RUN pip uninstall -y transformer-engine && \
         git checkout FETCH_HEAD; \
     fi && \
     git submodule init && git submodule update && \
-    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel
+    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel .
 
 # Final image
 FROM ${BASE_IMAGE} AS final
