@@ -77,7 +77,7 @@ jobs:
             nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:${{ github.event.pull_request.number || 'noop' }}
             nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:main
           cache-to: ${{ env.CACHE }}
-          tags: nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${TE_TAG}
+          tags: nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${{ env.TE_TAG }}
       
       - name: Build and push
         uses: docker/build-push-action@v5
