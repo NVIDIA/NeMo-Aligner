@@ -26,6 +26,7 @@ defaults:
     shell: bash -x -e -u -o pipefail {0}
 
 env:
+  TRTLLM_VERSION: v0.10.0
   TE_TAG: 7d576ed25266a17a7b651f2c12e8498f67e0baea
   ALIGNER_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -67,12 +68,28 @@ jobs:
       
       - name: Build and push TRTLLM
         uses: docker/build-push-action@v5
-        
         with:
           file: Dockerfile
           push: true
           target: trtllm-build
-          build-args: MAX_JOBS=32
+          build-args: 
+            MAX_JOBS=32
+            TRTLLM_VERSION=${{ env.TRTLLM_VERSION }}
+          cache-from: |
+            nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:${{ github.event.pull_request.number || 'noop' }}
+            nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:main
+          cache-to: ${{ env.CACHE }}
+          tags: nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${{ env.TRTLLM_VERSION }}
+
+      - name: Build and push TE
+        uses: docker/build-push-action@v5
+        with:
+          file: Dockerfile
+          push: true
+          target: te-build
+          build-args: 
+            MAX_JOBS=32
+            TE_TAG=${{ env.TE_TAG }}
           cache-from: |
             nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:${{ github.event.pull_request.number || 'noop' }}
             nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:main

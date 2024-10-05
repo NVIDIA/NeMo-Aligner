@@ -69,7 +69,8 @@ RUN pip uninstall -y transformer-engine && \
     git submodule init && git submodule update && \
     NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel .
 
-FROM nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${TE_TAG} as trt-llm-proxy
+FROM nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${TRTLLM_VERSION} as trt-llm-proxy
+FROM nemoci.azurecr.io/nemo_aligner_container_te_build:${TE_TAG} as te-proxy
 
 # Final image
 FROM ${BASE_IMAGE} AS final
@@ -78,7 +79,7 @@ WORKDIR /opt
 RUN git config --global user.email "worker@nvidia.com"
 # install TransformerEngine
 ARG MAX_JOBS
-COPY --from=te-build /opt/TransformerEngine/ /opt/TransformerEngine/
+COPY --from=te-proxy /opt/TransformerEngine/ /opt/TransformerEngine/
 RUN pip uninstall -y transformer-engine && \
     pip install /opt/TransformerEngine/*.whl
 
