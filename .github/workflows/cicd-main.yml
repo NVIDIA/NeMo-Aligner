@@ -22,12 +22,46 @@ on:
   push:
     branches:
       - 'main'
+  workflow_dispatch:
+    inputs:
+      test_to_run:
+        required: false
+        default: all
+        type: string
+        description: Comma-separated list of tests to run. Use "all" to run the full test suite.
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-jobs:
+jobs: 
+  pre-flight:
+    runs-on: ubuntu-latest
+    outputs:
+      test_to_run: ${{ steps.test_to_run.outputs.main }}
+      all: ${{ steps.all.outputs.main }}
+    steps:
+      - name: Parse test_to_run
+        id: test_to_run
+        run: |
+          parsed_string=$(echo ${{ inputs.test_to_run || 'all' }} | jq -c --raw-input 'split(",")')
+          echo "main=${parsed_string}" | tee -a "$GITHUB_OUTPUT"
+      - name: Parse all
+        id: all
+        run: |
+          echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT" 
+        
   build-container:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
     uses: ./.github/workflows/_build_container.yml
+
+  Unit_Tests:
+     needs: [build-container, pre-flight]
+     uses: ./.github/workflows/_run_test.yml
+     if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'Unit_Tests') || needs.pre-flight.outputs.all == 'true'
+     with:
+       RUNNER: self-hosted
+       TIMEOUT: 20
+       SCRIPT: |
+          cd /opt/NeMo-Aligner/
+          # PYTHONPATH=$(pwd) pytest tests/
