@@ -69,6 +69,8 @@ RUN pip uninstall -y transformer-engine && \
     git submodule init && git submodule update && \
     NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel .
 
+FROM nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${TE_TAG} as trt-llm-proxy
+
 # Final image
 FROM ${BASE_IMAGE} AS final
 WORKDIR /opt
@@ -125,7 +127,7 @@ RUN pip uninstall -y megatron-core && \
 
 # We have this a bit weird copy order to not break the cache
 # (as aligner will certainly update stuff and so successive layers
-COPY --from=nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${TE_TAG} /opt/TensorRT-LLM /opt/TensorRT-LLM
+COPY --from=trt-llm-proxy /opt/TensorRT-LLM /opt/TensorRT-LLM
 # TRTLLM
 RUN cd /opt/TensorRT-LLM && \
     pip install ./build/tensorrt_llm*.whl
