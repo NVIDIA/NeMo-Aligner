@@ -103,7 +103,9 @@ jobs:
           push: true
           build-args: |
             MAX_JOBS=32
-            ALIGNER_COMMIT=$ALIGNER_COMMIT
+            ALIGNER_COMMIT=${{ env.ALIGNER_COMMIT }}
+            TRTLLM_VERSION=${{ env.TRTLLM_VERSION }}
+            TE_TAG=${{ env.TE_TAG }}
           cache-from: |
             nemoci.azurecr.io/nemo_aligner_container_cache:${{ github.event.pull_request.number || 'noop' }}
             nemoci.azurecr.io/nemo_aligner_container_cache:main
