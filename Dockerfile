@@ -55,14 +55,10 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     . docker/common/install_tensorrt.sh && \
     python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
 
-# Final image
-FROM ${BASE_IMAGE} AS final
-WORKDIR /opt
-# needed in case git complains that it can't detect a valid email, this email is fake but works
-RUN git config --global user.email "worker@nvidia.com"
-# install TransformerEngine
-ARG MAX_JOBS
+# TE
+FROM ${BASE_IMAGE} AS te-build
 ARG TE_TAG
+WORKDIR /opt
 RUN pip uninstall -y transformer-engine && \
     git clone https://github.com/NVIDIA/TransformerEngine.git && \
     cd TransformerEngine && \
@@ -71,7 +67,17 @@ RUN pip uninstall -y transformer-engine && \
         git checkout FETCH_HEAD; \
     fi && \
     git submodule init && git submodule update && \
-    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
+    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel
+
+# Final image
+FROM ${BASE_IMAGE} AS final
+WORKDIR /opt
+# needed in case git complains that it can't detect a valid email, this email is fake but works
+RUN git config --global user.email "worker@nvidia.com"
+# install TransformerEngine
+ARG MAX_JOBS
+COPY --from=te-build /opt/TransformerEngine/ /opt/TransformerEngine/
+RUN pip install /opt/TransformerEngine/*.whl
 
 # install latest apex
 ARG APEX_TAG
