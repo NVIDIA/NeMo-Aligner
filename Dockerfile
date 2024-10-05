@@ -77,7 +77,8 @@ RUN git config --global user.email "worker@nvidia.com"
 # install TransformerEngine
 ARG MAX_JOBS
 COPY --from=te-build /opt/TransformerEngine/ /opt/TransformerEngine/
-RUN pip install /opt/TransformerEngine/*.whl
+RUN pip uninstall -y transformer-engine && \
+    pip install /opt/TransformerEngine/*.whl
 
 # install latest apex
 ARG APEX_TAG
