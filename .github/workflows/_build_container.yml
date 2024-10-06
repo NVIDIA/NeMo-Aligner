@@ -97,6 +97,7 @@ jobs:
         with:
           file: Dockerfile
           push: true
+          target: final
           build-args: |
             MAX_JOBS=32
             ALIGNER_COMMIT=${{ env.ALIGNER_COMMIT }}
