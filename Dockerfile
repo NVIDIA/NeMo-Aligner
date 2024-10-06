@@ -112,7 +112,8 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     fi && \
     pip uninstall -y nemo_toolkit sacrebleu && \
     pip install -e ".[nlp]" && \
-    cd nemo/collections/nlp/data/language_modeling/megatron && make
+    cd nemo/collections/nlp/data/language_modeling/megatron && make && \
+    echo "cache break!"
 
 # MLM
 ARG MLM_TAG
