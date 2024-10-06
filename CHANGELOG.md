@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Bug Fixes
 
+- Changed class comment under `RegressionRewardModelDataset` such that the warning comment: "WARNING: It's recommended to preprocess..." is now "WARNING: It is recommended to preprocess". Allows for wider compatiblity by fixing a syntax error due ot an unterminated string literal bug caused by the ' character when running code.
+
 ## NVIDIA NeMo-Aligner 0.5.0
 
 ### New Features and Optimizations
