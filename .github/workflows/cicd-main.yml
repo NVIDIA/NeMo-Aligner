@@ -83,7 +83,7 @@ jobs:
      uses: ./.github/workflows/_run_test.yml
      if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
      with:
-       RUNNER: self-hosted
+       RUNNER: self-hosted-azure
        TIMEOUT: 20
        SCRIPT: |
         ALIGNER_REPO_DIR=/opt/NeMo-Aligner
@@ -105,7 +105,7 @@ jobs:
            bash ${ALIGNER_REPO_DIR}/tests/functional/ppo.sh
 
     with:
-      RUNNER: self-hosted
+      RUNNER: self-hosted-azure
       TIMEOUT: 20
       SCRIPT: |
         ALIGNER_REPO_DIR=/opt/NeMo-Aligner
