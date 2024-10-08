@@ -17,9 +17,9 @@ mostly adapted from https://github.com/NVIDIA/NeMo/blob/8c061debd05837148e86fac1
 """
 from functools import partial
 
+from megatron.core.distributed import finalize_model_grads
 from megatron.core.num_microbatches_calculator import get_current_global_batch_size
 from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
-from megatron.core.distributed import finalize_model_grads
 
 from nemo.collections.nlp.modules.common.megatron.clip_grads import (
     clip_grad_norm_distributed_optimizer,
@@ -39,10 +39,7 @@ def set_sync_funcs(ptl_model, forward_only):
             if ptl_model.validation_param_sync_overlap:
                 param_sync_func = ptl_model.sync_overlap_parameters
         elif not ptl_model.use_mcore_dist_optim:
-            no_sync_func = partial(
-                ptl_model._optimizer.no_sync,
-                greedy_grad_copy=ptl_model.megatron_amp_O2,
-            )
+            no_sync_func = partial(ptl_model._optimizer.no_sync, greedy_grad_copy=ptl_model.megatron_amp_O2,)
             grad_sync_func = ptl_model.reduce_overlap_gradients
             param_sync_func = ptl_model.sync_overlap_parameters
         else:
@@ -53,7 +50,9 @@ def set_sync_funcs(ptl_model, forward_only):
                 if ptl_model.cfg.optim.get("align_grad_reduce", True):
                     grad_sync_func = [model_chunk.start_grad_sync for model_chunk in ptl_model.model]
                     grad_sync_func = grad_sync_func[0] if len(ptl_model.model) == 1 else grad_sync_func
-            if ptl_model.cfg.optim.get("overlap_param_sync", False) and ptl_model.cfg.optim.get("align_param_gather", False):
+            if ptl_model.cfg.optim.get("overlap_param_sync", False) and ptl_model.cfg.optim.get(
+                "align_param_gather", False
+            ):
                 param_sync_func = [model_chunk.start_param_sync for model_chunk in ptl_model.model]
                 param_sync_func = param_sync_func[0] if len(ptl_model.model) == 1 else param_sync_func
 
