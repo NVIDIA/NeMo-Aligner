@@ -130,12 +130,10 @@ git fetch -a
 # 148543d6e9c66ff1f8562e84484448202249811d: feat: Migrate GPTSession refit path in Nemo export to ModelRunner for Aligner NeMo#10654
 # 0c92fe17df4642ffc33d5d8c0c83fda729e3910c: [fix] Ensures disabling exp_manager with exp_manager=null does not error NeMo#10651
 # 60e677423667c029dd05875da72bf0719774f844: [feat] Update get_model_parallel_src_rank to support tp-pp-dp ordering NeMo#10652
-# b4aa80f94b67c407d6bf33f875fb85a9d2ed7a5b: fix: MegatronGPTModel get_forward_output_only_func position_ids=None NeMo#10653
 for pr_and_commit in \
   "10654 148543d6e9c66ff1f8562e84484448202249811d" \
   "10651 0c92fe17df4642ffc33d5d8c0c83fda729e3910c" \
   "10652 60e677423667c029dd05875da72bf0719774f844" \
-  "10653 b4aa80f94b67c407d6bf33f875fb85a9d2ed7a5b" \
 ; do
   pr=$(cut -f1 -d' ' <<<"$pr_and_commit")
   head_pr_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")

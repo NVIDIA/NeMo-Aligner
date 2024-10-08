@@ -58,7 +58,7 @@ def rebalance_nd_tensor(tensor, group):
     return output_tensor
 
 
-@deprecated_in_version("0.6.0", "Please use broadcast_tensor(tensor, src, group, dtype)")
+@deprecated_in_version("0.7.0", "Please use broadcast_tensor(tensor, src, group, dtype)")
 def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
     """Broadcast any 2d tensor from the src rank to every other rank in the given group.
     All the ranks that send or receive data must call this function."""
@@ -165,7 +165,7 @@ def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     return tensor
 
 
-@deprecated_in_version("0.6.0", "Please use broadcast_tensor_within_pp(tensor, dtype)")
+@deprecated_in_version("0.7.0", "Please use broadcast_tensor_within_pp(tensor, dtype)")
 def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32, from_last: bool = True):
     """
     from_last: True=broadcast from the last PP rank and False=broadcast from first PP rank (default=True)

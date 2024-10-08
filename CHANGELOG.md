@@ -11,6 +11,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Breaking Changes
 
 ### Bug Fixes
+
+### Deprecation Notices
 -->
 
 ## [Next Version]
@@ -40,6 +42,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Bug Fixes
 - It is now required, for stability, to add `export NCCL_ALGO=...` to scripts launching PPO training loop. Please see the [RLHF docs](./docs/user-guide/rlhf.rst) for information.
+
+### Deprecation Notices
+- `SyncedTimer` is marked for deprecation and will be removed in `0.7.0`. Please switch to `ScopedTimer`
+- `broadcast_2d_tensor` and `broadcast_2d_tensor_within_pp` is marked for deprecation and will be removed in `0.7.0`. Please switch to `broadcast_tensor` and `broadcast_tensor_within_pp`. 
 
 ## NVIDIA NeMo-Aligner 0.5.0
 
