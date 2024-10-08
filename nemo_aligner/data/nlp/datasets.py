@@ -132,6 +132,116 @@ class RLHFDataset(Dataset):
         return output
 
 
+class MathDataset(Dataset):
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.name = name
+        self.data = data
+        self.drop_last = drop_last
+        self.seq_length = seq_length
+        self.tokenizer = tokenizer
+
+        if "length_params" in cfg:
+            max_sample_length = seq_length - cfg.length_params.max_length
+        else:
+            max_sample_length = seq_length // 2
+
+        assert max_sample_length > 0, f"max sample length must be greater than 0, but got {max_sample_length}"
+
+        self.max_sample_length = max_sample_length
+
+        self.use_json = self.cfg.data.data_impl.startswith("json")
+
+        # Checks
+        assert np.min(documents) >= 0
+        assert np.max(documents) < len(self.data)
+
+        # save index mappings to a configurable dir
+        self.index_mapping_dir = cfg.data.get("index_mapping_dir", None)
+
+        # create index_mapping_dir on rank 0
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            if torch.distributed.get_rank() == 0:
+                if self.index_mapping_dir is not None and not os.path.isdir(self.index_mapping_dir):
+                    os.makedirs(self.index_mapping_dir)
+            torch.distributed.barrier()
+
+    def __len__(self):
+        return len(self.data)
+
+    def encode(self, text):
+        if self.cfg.data.get("apply_ftfy", False):
+            import ftfy
+
+            text = ftfy.fix_text(text)
+
+        text_ids = self.tokenizer.text_to_ids(text)
+
+        if len(text_ids) > 0 and self.cfg.data.get("append_eod", False):
+            text_ids.append(self.tokenizer.eos_id)
+
+        return text_ids, len(text_ids)
+
+    def __getitem__(self, idx):
+        """
+        Return a single prompt.
+        """
+        mask_sample = False
+        if idx == -1:
+            # This may happen on the last batch due to the padding that occurs in
+            #   https://github.com/NVIDIA/NeMo/blob/643d814fc2d885b7348ac676333ebd76cd79b663/nemo/collections/nlp/data/language_modeling/megatron/megatron_batch_samplers.py#L168
+            # in which case we may want to mask the loss associated to these padded samples.
+            # However, this class is not currently used, so for now we raise an exception: this may be revisited
+            # at a later time if this situation actually occurs in practice.
+            # logging.warning("Got -1 as item index in RLHFDataset => masking loss from this sample")
+            raise NotImplementedError("Obtained unexpected `idx == -1`, see comments in code for details")
+
+        orig_idx = idx = idx % len(self)
+        while True:
+            sample = self.data[idx]
+            args = sample["args"]
+
+            if self.use_json:
+                sample, _ = self.encode(sample["text"])
+            if len(sample) <= self.max_sample_length:
+                break
+            idx = (idx + 1) % len(self)
+            if idx == orig_idx:
+                raise RuntimeError(f"All samples have length > {self.max_sample_length}")
+            continue
+
+        if idx != orig_idx:
+            logging.warning(
+                f"Sample {orig_idx} in dataset '{self.name}' has length "
+                f"{len(self.data[orig_idx])} > {self.max_sample_length} "
+                f"=> replacing it with sample {idx} and masking its loss"
+            )
+            mask_sample = True
+
+        if self.use_json:
+            # `sample` is a regular Python list.
+            sample_tensor = torch.tensor(sample, dtype=torch.int64)
+        else:
+            # `sample` is a NumPy array.
+            sample_tensor = torch.from_numpy(sample.astype(np.int64))
+
+        # if we want to mask the sample we should
+        # set the loss multiplier to 0
+        loss_multiplier = not mask_sample
+
+        output = {
+            "text": sample_tensor,
+            "length": sample_tensor.shape[0],
+            "loss_multiplier": loss_multiplier,
+            "args":args
+        }
+        return output
+
+
+
 class RewardModelDataset(Dataset):
     """This class assumes that we only have 2 responses per prompt that is ranked. Chosen is the better
         one(even index) whereas Rejected is the worse response(odd index)

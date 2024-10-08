@@ -234,6 +234,13 @@ class RMFutureResult(FutureResult):
         self.rm_future = None
         return rewards.flatten()
 
+class MathFutureResult(FutureResult):
+    def __init__(self, rm_future):
+        self.rm_future = rm_future
+
+    def result(self):
+        return self.rm_future
+
 
 @dataclass
 class RemoteGPTRMClient:
@@ -277,3 +284,43 @@ class RemoteGPTRMClient:
         )
 
         return RMFutureResult(rm_future)
+
+
+@dataclass
+class RemoteGPTMathClient:
+    cfg: DictConfig
+
+    def __post_init__(self):
+        cfg = self.cfg
+
+    def gsm8k_rewards(self, prompt, response, args):
+        ans = args["answer"]
+        pattern = r"-?\$?\d[\d,]*\.?\d*|-?\.\d+"
+        matches = re.findall(pattern, response)
+        # print(prompt, response, matches, ans)
+        if matches:
+            try:
+                prediction = float(matches[-1].replace('$', '').replace(',', ''))
+                return int(prediction == ans)
+            except:
+                return 0
+        else:
+            return 0
+
+    def infer_rm_critic(self, rollout_batch, model, args):
+        response_tokens = rollout_batch["response_tokens"].cpu()
+        og_seq_length = response_tokens.size(-1)
+
+        rewards = []
+        for i in range(rollout_batch["response_tokens"].size(0)):
+            prompt = model.tokenizer.ids_to_text(rollout_batch["response_tokens"][i, :rollout_batch["prompt_lengths"][i]].tolist())
+            response = model.tokenizer.ids_to_text(rollout_batch["response_tokens"][i, rollout_batch["prompt_lengths"][i]:rollout_batch["response_lengths"][i]].tolist())
+            print(response, model.cfg.reinforce.sampling_params.end_strings)
+            print(args)
+            for end_string in model.cfg.reinforce.sampling_params.end_strings:
+                response = response.replace(end_string, "")
+            rewards.append(self.gsm8k_rewards(prompt, response, args[i]))
+        
+        rewards = torch.tensor(rewards, device=rollout_batch["response_tokens"].device).float()
+
+        return MathFutureResult(rewards)
