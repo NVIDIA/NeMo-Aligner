@@ -165,6 +165,8 @@ To launch reward model training, you must have checkpoints for `UNet <https://hu
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
+
 
 .. note::
    For more info on DRaFT+ hyperparameters please see the model config files (for SD and SDXL respectively):
@@ -264,5 +266,5 @@ AIG provides the inference-time flexibility to interpolate between the base Stab
                 exp_manager.explicit_log_dir=${DIR_SAVE_CKPT_PATH} \
                 exp_manager.wandb_logger_kwargs.project=${PROJECT} +weight_type='draft,base,power_2.0'
 
-
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 

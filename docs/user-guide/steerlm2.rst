@@ -159,6 +159,8 @@ By organizing the data in this format, the SteerLM 2.0 model can be effectively 
         exp_manager.explicit_log_dir=/results/acsft_70b \
         exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True 
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
+
 Inference
 ------------------
 

@@ -190,7 +190,7 @@ Note that you would need to set up multi-node training run in your cluster env, 
       trainer.sft.val_check_interval=50 \
       trainer.sft.save_interval=50
 
-
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 
 Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
@@ -277,6 +277,7 @@ Run the following command to train the RM:
       trainer.rm.val_check_interval=25 \
       trainer.rm.limit_val_batches=100000
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 The trained RM checkpoint will be saved to output dir given by ``exp_manager.explicit_log_dir``.
 
@@ -297,6 +298,8 @@ Run the following command in the background to launch a RM and PPO critic traini
       model.optim.sched.min_lr=9e-8 \
       model.seed=1234 \
       exp_manager.explicit_log_dir=<path to critic output dir>
+
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 Run the following command to launch actor training and a reference policy server:
 
@@ -321,6 +324,8 @@ Run the following command to launch actor training and a reference policy server
       trainer.ppo.initial_policy_kl_penalty=0.02 \
       remote_critic_rm.critic.ip=<ip to critic service> \
       remote_critic_rm.critic.port=5567
+
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 The trained LLM policy checkpoint will be saved to the output dir given by ``exp_manager.explicit_log_dir``.
 

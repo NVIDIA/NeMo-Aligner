@@ -42,6 +42,8 @@ To launch the server:
       ++model.tensor_model_parallel_size=4 \
       rm_model_file=${RM_NEMO_FILE}
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
+
 
 The above example launches the reward model server on 8 GPUs and 1 node. Please make sure to change trainer.devices, trainer.num_nodes depending on your model size and scale. Aligner will work on any scale. Also, make sure to tune the trainer.rs.inference_micro_batch_size argument. This argument sets the size of the batch the RS actor is allowed to send to the critic per DP rank.
 
@@ -94,6 +96,8 @@ The RS Actor training job contains the master controller that makes the HTTP cal
       remote_rm.reward_model.port=${CRITIC_PORT} \
       model.rs.num_rollouts_per_prompt=8 \
       model.rs.top_n_rollouts=1
+
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 The above command launches the initial and actor server on 1 node with 8 GPUs.
 
@@ -216,6 +220,8 @@ You can use slurm to launch the 2 jobs and get them to coordinate together in a 
    srun --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_rs}" &
 
    wait
+
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 The above script runs the reward model server on 1 node and the actor on 1 node.
 
