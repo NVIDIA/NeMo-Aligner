@@ -19,6 +19,7 @@ from functools import partial
 
 from megatron.core.num_microbatches_calculator import get_current_global_batch_size
 from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
+from megatron.core.distributed import finalize_model_grads
 
 from nemo.collections.nlp.modules.common.megatron.clip_grads import (
     clip_grad_norm_distributed_optimizer,
@@ -27,21 +28,42 @@ from nemo.collections.nlp.modules.common.megatron.clip_grads import (
 from nemo.collections.nlp.modules.common.megatron.module import Float16Module
 
 
+# TODO: Delete this once API introduced in NeMo (https://github.com/NVIDIA/NeMo/pull/10803)
 def set_sync_funcs(ptl_model, forward_only):
     # handle asynchronous grad reduction
     no_sync_func = None
     grad_sync_func = None
     param_sync_func = None
-    if not forward_only and ptl_model.with_distributed_adam:
-        no_sync_func = partial(ptl_model._optimizer.no_sync, greedy_grad_copy=ptl_model.megatron_amp_O2,)
-        grad_sync_func = ptl_model.reduce_overlap_gradients
-        param_sync_func = ptl_model.sync_overlap_parameters
+    if ptl_model.with_distributed_adam:
+        if forward_only:
+            if ptl_model.validation_param_sync_overlap:
+                param_sync_func = ptl_model.sync_overlap_parameters
+        elif not ptl_model.use_mcore_dist_optim:
+            no_sync_func = partial(
+                ptl_model._optimizer.no_sync,
+                greedy_grad_copy=ptl_model.megatron_amp_O2,
+            )
+            grad_sync_func = ptl_model.reduce_overlap_gradients
+            param_sync_func = ptl_model.sync_overlap_parameters
+        else:
+            if ptl_model.cfg.optim.get("overlap_grad_sync", False):
+                no_sync_func = [model_chunk.no_sync for model_chunk in ptl_model.model]
+                no_sync_func = no_sync_func[0] if len(ptl_model.model) == 1 else no_sync_func
 
-    # pipeline schedules will get these from ptl_model.model.config
+                if ptl_model.cfg.optim.get("align_grad_reduce", True):
+                    grad_sync_func = [model_chunk.start_grad_sync for model_chunk in ptl_model.model]
+                    grad_sync_func = grad_sync_func[0] if len(ptl_model.model) == 1 else grad_sync_func
+            if ptl_model.cfg.optim.get("overlap_param_sync", False) and ptl_model.cfg.optim.get("align_param_gather", False):
+                param_sync_func = [model_chunk.start_param_sync for model_chunk in ptl_model.model]
+                param_sync_func = param_sync_func[0] if len(ptl_model.model) == 1 else param_sync_func
+
+    # pipeline schedules will get these from self.model.config
     for module in ptl_model.get_model_module_list():
         module.config.no_sync_func = no_sync_func
         module.config.grad_sync_func = grad_sync_func
         module.config.param_sync_func = param_sync_func
+        if ptl_model.use_mcore_dist_optim:
+            module.config.finalize_model_grads_func = finalize_model_grads
 
 
 def prepare_for_training_step(ptl_model, zero_grad=True):
