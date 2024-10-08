@@ -499,9 +499,10 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         #          = sum_{k=1}^{K} target_prob_k * logits_k - log sum_{k=1}^K exp(logits_k)
         # neg_loss will be Tensor of shape [B, seq_len]
         if not use_k_add_1_logits:
-            exp_logits = target_logits.exp()
-            sum_exp_logits = exp_logits.sum(-1, keepdims=True)
-            target_probs = exp_logits / sum_exp_logits
+            target_exp_logits = target_logits.exp()
+            target_sum_exp_logits = target_exp_logits.sum(-1, keepdims=True)
+            target_probs = target_exp_logits / target_sum_exp_logits
+            del target_exp_logits
             neg_loss = (target_probs * predicted_logits_topk).sum(-1, keepdims=False)
 
             # compute the logsumexp of all K logits
@@ -513,7 +514,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             )
             log_sum_exp_logits_topk = sum_exp_logits_topk.log()
            
-            log_sum_exp = sum_exp_logits.log()
+            log_sum_exp = target_sum_exp_logits.log()
             const = (target_probs * (target_logits - log_sum_exp)).sum(-1)
 
             kd_loss = - neg_loss + log_sum_exp_logits_topk + const
