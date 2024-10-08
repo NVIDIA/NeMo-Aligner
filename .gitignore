@@ -11,6 +11,7 @@ code_eval/*
 exp/*
 instruction_following_eval/*
 scripts/*
+.devcontainer/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
