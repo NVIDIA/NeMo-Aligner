@@ -64,6 +64,9 @@ jobs:
        RUNNER: self-hosted-azure
        TIMEOUT: 20
        SCRIPT: |
+        nvidia-smi
+        ls -lah /usr/local/
+        ls -lah /usr/local/cuda-12/compat/lib.real/
         ALIGNER_REPO_DIR=/opt/NeMo-Aligner
         export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
 
@@ -88,6 +91,9 @@ jobs:
       RUNNER: self-hosted-azure
       TIMEOUT: 20
       SCRIPT: |
+        nvidia-smi
+        ls -lah /usr/local/
+        ls -lah /usr/local/cuda-12/compat/lib.real/
         ALIGNER_REPO_DIR=/opt/NeMo-Aligner
         export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
         ALIGNER_CI_DIR=/home/TestData/aligner
