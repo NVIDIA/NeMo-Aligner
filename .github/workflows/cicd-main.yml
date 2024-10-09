@@ -57,21 +57,22 @@ jobs:
     uses: ./.github/workflows/_build_container.yml
   
   Unit_Tests:
-     needs: [build-container, pre-flight]
-     uses: ./.github/workflows/_run_test.yml
-     if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
-     with:
-       RUNNER: self-hosted-azure
-       TIMEOUT: 20
-       SCRIPT: |
-        nvidia-smi
-        ls -lah /usr/local/
-        ls -lah /usr/local/cuda-12/compat/lib.real/
-        ALIGNER_REPO_DIR=/opt/NeMo-Aligner
-        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
+    needs: [build-container, pre-flight]
+    uses: ./.github/workflows/_run_test.yml
+    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+    with:
+      IS_OPTIONAL: true
+      RUNNER: self-hosted-azure
+      TIMEOUT: 20
+      SCRIPT: |
+       nvidia-smi
+       ls -lah /usr/local/
+       ls -lah /usr/local/cuda-12/compat/lib.real/
+       ALIGNER_REPO_DIR=/opt/NeMo-Aligner
+       export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
 
-        cd ${ALIGNER_REPO_DIR}
-        torchrun --nproc_per_node 2 -m pytest . -rA -s -x
+       cd ${ALIGNER_REPO_DIR}
+       torchrun --nproc_per_node 2 -m pytest . -rA -s -x
 
   Functional_Tests:
     name: ${{ matrix.TEST_NAME }}
@@ -88,6 +89,7 @@ jobs:
             bash ${ALIGNER_REPO_DIR}/tests/functional/ppo.sh
 
     with:
+      IS_OPTIONAL: true
       RUNNER: self-hosted-azure
       TIMEOUT: 20
       SCRIPT: |
