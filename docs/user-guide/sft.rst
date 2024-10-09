@@ -385,7 +385,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner. Compare
 
 To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
 
-For this particular run on the Llama3-8b model, the final val loss is around TODO!!. Once the training finishes, you'll find a file called ``megatron_gpt_sft.nemo`` available for use.
+For this particular run on the Llama3-8b model, the final val loss is around 1.17. Once the training finishes, you'll find a file called ``megatron_gpt_sft.nemo`` available for use.
 
 
 Step 3: Run inference or further fine-tuning
