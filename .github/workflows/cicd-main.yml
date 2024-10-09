@@ -60,7 +60,7 @@ jobs:
      uses: ./.github/workflows/_run_test.yml
      if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'Unit_Tests') || needs.pre-flight.outputs.all == 'true'
      with:
-       RUNNER: self-hosted
+       RUNNER: self-hosted-azure
        TIMEOUT: 20
        SCRIPT: |
           cd /opt/NeMo-Aligner/
