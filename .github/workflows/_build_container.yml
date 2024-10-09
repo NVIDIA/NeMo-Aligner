@@ -103,8 +103,8 @@ jobs:
           build-args: |
             MAX_JOBS=32
             ALIGNER_COMMIT=${{ env.ALIGNER_COMMIT }}
-            TRTLLM_VERSION=${{ env.TRTLLM_VERSION }}
-            TE_TAG=${{ env.TE_TAG }}
+            TRT_PROXY_IMAGE=nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${TRTLLM_VERSION}
+            TE_PROXY_IMAGE=nemoci.azurecr.io/nemo_aligner_container_te_build:${TE_TAG}
           cache-from: |
             nemoci.azurecr.io/nemo_aligner_container_cache:${{ github.event.pull_request.number || 'noop' }}
             nemoci.azurecr.io/nemo_aligner_container_cache:main

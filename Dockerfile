@@ -20,6 +20,8 @@ ARG TRTLLM_VERSION=v0.10.0
 ARG PROTOBUF_VERSION=4.24.4
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
+ARG TRT_PROXY_IMAGE
+ARG TE_PROXY_IMAGE
 
 # NeMo Aligner
 FROM ${BASE_IMAGE} AS aligner-bump
@@ -69,8 +71,8 @@ RUN pip uninstall -y transformer-engine && \
     git submodule init && git submodule update && \
     NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel .
 
-FROM nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${TRTLLM_VERSION} as trt-llm-proxy
-FROM nemoci.azurecr.io/nemo_aligner_container_te_build:${TE_TAG} as te-proxy
+FROM ${TRT_PROXY_IMAGE} as trt-llm-proxy
+FROM ${TE_PROXY_IMAGE} as te-proxy
 
 # Final image
 FROM ${BASE_IMAGE} AS final
@@ -112,8 +114,7 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     fi && \
     pip uninstall -y nemo_toolkit sacrebleu && \
     pip install -e ".[nlp]" && \
-    cd nemo/collections/nlp/data/language_modeling/megatron && make && \
-    echo "cache break!"
+    cd nemo/collections/nlp/data/language_modeling/megatron && make
 
 # MLM
 ARG MLM_TAG
