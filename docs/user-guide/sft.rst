@@ -7,7 +7,7 @@ Obtain a Pretrained Model
 
 The NeMo Framework supports efficient model alignment using the NeMo-Aligner codebase. All algorithms in NeMo-Aligner will work with any NeMo GPT-based model. To see a collection of scripts that convert popular models from Hugging Face to ``.nemo`` format, go `here <https://github.com/NVIDIA/NeMo/tree/main/scripts/nlp_language_modeling>`__.
 
-To get started, you need to obtain a pretrained model to align. Three models are recommended: 2B GPT, LLama2-7B, or Nemotron-340B. For demonstration purposes, the smaller 2B model will be used, but you can follow the rest of the tutorial with either model.
+To get started, you need to obtain a pretrained model to align. Three models are recommended: 2B GPT, LLama3-8B, or Nemotron-340B. For demonstration purposes, the smaller 2B model will be used, but you can follow the rest of the tutorial with any of thes three models.
 
 .. tab-set::
 
@@ -23,11 +23,11 @@ To get started, you need to obtain a pretrained model to align. Three models are
                   --input_name_or_path ./model_checkpoint \
                   --output_path ./mcore_gpt.nemo
 
-    .. tab-item:: LLaMa2-7B
+    .. tab-item:: LLaMa3-8B
         :sync: key2
 
-        1. Download the `Llama2-7B LLM model and tokenizer <https://huggingface.co/meta-llama/Llama-2-7b-hf>`__ into the model's folder.
-        2. Convert the LLaMa2 LLM into ``.nemo`` format.
+        1. Download the `Llama3-8B LLM model and tokenizer <https://https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder.
+        2. Convert the LLaMa3 LLM into ``.nemo`` format.
             .. code-block:: bash 
 
                python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py \
@@ -385,7 +385,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner. Compare
 
 To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
 
-For this particular run on the Llama2-7b model, the final val loss is around 1.201. Once the training finishes, you'll find a file called ``megatron_gpt_sft.nemo`` available for use.
+For this particular run on the Llama3-8b model, the final val loss is around TODO!!. Once the training finishes, you'll find a file called ``megatron_gpt_sft.nemo`` available for use.
 
 
 Step 3: Run inference or further fine-tuning
