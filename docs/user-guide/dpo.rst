@@ -7,7 +7,7 @@ Model Alignment by DPO, RPO, and IPO
 
 The NeMo Framework supports efficient model alignment via the NeMo-Aligner codebase.
 
-All algorithms in NeMo-Aligner will work with any GPT-based model that is from Megatron Core (in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire Direct Preference Optimization (DPO) pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  The same tutorial also works for GPT models (such as LLaMa2) of any size.
+All algorithms in NeMo-Aligner will work with any GPT-based model that is from Megatron Core (in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire Direct Preference Optimization (DPO) pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  The same tutorial also works for GPT models (such as LLaMa3) of any size.
 
 DPO with LoRA
 #############
@@ -43,11 +43,11 @@ To start, we must first get a pretrained model to align. There are two models we
                   --in-folder ./model_checkpoint \
                   --out-file ./mcore_gpt.nemo
 
-    .. tab-item:: LLaMa2 7B
+    .. tab-item:: LLaMa3 7B
         :sync: key2
 
-        #. Download the `Llama 2 7B LLM model and tokenizer <https://huggingface.co/meta-llama/Llama-2-7b>`__ into the models folder.
-        #. Convert the LLaMa2 LLM into ``.nemo`` format.
+        #. Download the `Llama 3 8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the models folder.
+        #. Convert the LLaMa3 LLM into ``.nemo`` format.
             .. code-block:: bash 
 
                python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py \
