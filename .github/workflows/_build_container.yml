@@ -74,6 +74,7 @@ jobs:
           target: trtllm-build
           build-args: 
             MAX_JOBS=32
+            ALIGNER_COMMIT=${{ env.ALIGNER_COMMIT }}
             TRTLLM_VERSION=${{ env.TRTLLM_VERSION }}
           cache-from: nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:${{ env.TRTLLM_VERSION }}
           cache-to: nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:${{ env.TRTLLM_VERSION }}
@@ -87,6 +88,7 @@ jobs:
           target: te-build
           build-args: 
             MAX_JOBS=32
+            ALIGNER_COMMIT=${{ env.ALIGNER_COMMIT }}
             TE_TAG=${{ env.TE_TAG }}
           cache-from: nemoci.azurecr.io/nemo_aligner_container_te_build_cache:${{ env.TRTLLM_VERSION }}
           cache-to: nemoci.azurecr.io/nemo_aligner_container_te_build_cache:${{ env.TRTLLM_VERSION }}
