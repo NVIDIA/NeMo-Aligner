@@ -58,8 +58,11 @@ jobs:
             set +e 
             (  
               set -e
-
-              docker run --rm --device=/dev/nvidia0 --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} bash -eux -o pipefail -c '${{ inputs.SCRIPT }}'
+              
+              cmd=$(cat <<"EOF"
+            ${{ inputs.SCRIPT }}
+            EOF
+              docker run --rm --device=/dev/nvidia0 --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} bash -eux -o pipefail -c "$cmd"
             ) 2> >(tee err.log)
 
             EXIT_CODE=$?
@@ -73,4 +76,7 @@ jobs:
         - name: after_script
           if: always() && inputs.AFTER_SCRIPT != ':'
           run: |
-            docker run --rm --device=/dev/nvidia0 --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} bash -eux -o pipefail -c '${{ inputs.AFTER_SCRIPT }}'
+            cmd=$(cat <<"EOF"
+            ${{ inputs.AFTER_SCRIPT }}
+            EOF
+            docker run --rm --device=/dev/nvidia0 --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} bash -eux -o pipefail -c "$cmd"
