@@ -65,14 +65,20 @@ jobs:
       RUNNER: self-hosted-azure
       TIMEOUT: 20
       SCRIPT: |
-       nvidia-smi
-       ls -lah /usr/local/
-       ls -lah /usr/local/cuda-12/compat/lib.real/
-       ALIGNER_REPO_DIR=/opt/NeMo-Aligner
-       export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
+        nvidia-smi
+        # TODO: remove this before merging
+        ls -lah /usr/local/
+        ls -lah /usr/local/cuda-12/compat/lib.real/
 
-       cd ${ALIGNER_REPO_DIR}
-       torchrun --nproc_per_node 2 -m pytest . -rA -s -x
+        ALIGNER_REPO_DIR=/opt/NeMo-Aligner
+        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
+
+        cd ${ALIGNER_REPO_DIR}
+
+        # TODO: remove this before merging
+        export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | sed 's|:*/usr/local/cuda-12/compat/lib\.real/*$||')
+
+        torchrun --nproc_per_node 2 -m pytest . -rA -s -x
 
   Functional_Tests:
     name: ${{ matrix.TEST_NAME }}
@@ -94,6 +100,7 @@ jobs:
       TIMEOUT: 20
       SCRIPT: |
         nvidia-smi
+        # TODO: remove this before merging
         ls -lah /usr/local/
         ls -lah /usr/local/cuda-12/compat/lib.real/
         ALIGNER_REPO_DIR=/opt/NeMo-Aligner
@@ -102,5 +109,8 @@ jobs:
 
         # Required by test that run git commands, e.g., determining GIT_ROOT
         git config --global --add safe.directory $ALIGNER_REPO_DIR
+
+        # TODO: remove this before merging
+        export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | sed 's|:*/usr/local/cuda-12/compat/lib\.real/*$||')
 
         ${{ matrix.SCRIPT }}
