@@ -26,7 +26,7 @@ To get started, you need to obtain a pretrained model to align. Three models are
     .. tab-item:: LLaMa3-8B
         :sync: key2
 
-        1. Download the `Llama3-8B LLM model and tokenizer <https://https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder.
+        1. Download the `Llama3-8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder.
         2. Convert the LLaMa3 LLM into ``.nemo`` format.
             .. code-block:: bash 
 
