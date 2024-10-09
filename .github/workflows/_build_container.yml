@@ -17,7 +17,7 @@ on:
     inputs:
       ref: 
         description: Git ref to checkout
-        default: ${{ github.sha }}
+        default: ${{ github.event.pull_request.head.sha || github.sha }}
         required: false
         type: string
 
@@ -28,7 +28,7 @@ defaults:
 env:
   TRTLLM_VERSION: v0.10.0
   TE_TAG: 7d576ed25266a17a7b651f2c12e8498f67e0baea
-  ALIGNER_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+  ALIGNER_COMMIT: ${{ inputs.ref }}
 
 jobs:
   main:
@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: ${{ github.run_id }}
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.ALIGNER_COMMIT }}
 
       - name: Clean runner cache
         run: | 
