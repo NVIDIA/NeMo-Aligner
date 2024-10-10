@@ -120,7 +120,7 @@ By organizing the data in this format, the SteerLM 2.0 model can be effectively 
         trainer.sft.val_check_interval=800 \
         trainer.sft.save_interval=800 \
         model.megatron_amp_O2=True \
-        model.restore_from_path=/models/llama70b \
+        model.restore_from_path=/path/to/steerlm1/model \
         model.tensor_model_parallel_size=8 \
         model.pipeline_model_parallel_size=2 \
         model.optim.lr=6e-6 \
@@ -158,6 +158,8 @@ By organizing the data in this format, the SteerLM 2.0 model can be effectively 
         exp_manager.wandb_logger_kwargs.name=acsft_training \
         exp_manager.explicit_log_dir=/results/acsft_70b \
         exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True 
+
+``/path/to/steerlm1/model`` is the path to the initial SteerLM model. For details on training the initial SteerLM model, refer to the :ref:`SteerLM documentation <model-aligner-steerlm>`.
 
 Inference
 ------------------

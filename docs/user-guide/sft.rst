@@ -148,7 +148,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
                exp_manager.resume_if_exists=True \
                exp_manager.resume_ignore_no_checkpoint=True \
                exp_manager.create_checkpoint_callback=True \
-               exp_manager.checkpoint_callback_params.monitor=validation_loss
+               exp_manager.checkpoint_callback_params.monitor=val_loss
 
     .. tab-item:: Slurm
         :sync: key4
@@ -220,7 +220,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
                exp_manager.resume_ignore_no_checkpoint=True \
                exp_manager.create_checkpoint_callback=True \
                exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True \
-               exp_manager.checkpoint_callback_params.monitor=validation_loss
+               exp_manager.checkpoint_callback_params.monitor=val_loss
             EOF
 
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
