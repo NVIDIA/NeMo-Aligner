@@ -72,6 +72,7 @@ jobs:
         # TODO: remove this before merging
         ls -lah /usr/local/
         ls -lah /usr/local/cuda-12/compat/lib.real/
+        echo ${LD_LIBRARY_PATH:-}
 
         ALIGNER_REPO_DIR=/opt/NeMo-Aligner
         export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
@@ -108,6 +109,7 @@ jobs:
         # TODO: remove this before merging
         ls -lah /usr/local/
         ls -lah /usr/local/cuda-12/compat/lib.real/
+        echo ${LD_LIBRARY_PATH:-}
         ALIGNER_REPO_DIR=/opt/NeMo-Aligner
         export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
         ALIGNER_CI_DIR=/home/TestData/aligner

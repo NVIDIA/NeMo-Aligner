@@ -54,6 +54,7 @@ jobs:
           name: Run main script
           timeout-minutes: ${{ inputs.TIMEOUT }}
           run: |
+            nvidia-smi
             mkdir -p ${{ github.run_id }}
             cd ${{ github.run_id }}/
             set +e 
