@@ -50,11 +50,20 @@ jobs:
             #docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
             docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
 
+        - name: tiny-test
+          run: |
+            cmd=$(cat <<"RUN_TEST_EOF"
+            python -c 'import torch; print(torch.cuda.get_device())'
+            RUN_TEST_EOF
+            )
+            docker run --rm --runtime=nvidia --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }} bash -eux -o pipefail -c "$cmd" || true
+
         - id: main
           name: Run main script
           timeout-minutes: ${{ inputs.TIMEOUT }}
           run: |
             nvidia-smi
+            cudaCheck
             mkdir -p ${{ github.run_id }}
             cd ${{ github.run_id }}/
             set +e 
@@ -80,6 +89,7 @@ jobs:
           timeout-minutes: ${{ inputs.TIMEOUT }}
           run: |
             nvidia-smi
+            cudaCheck
             mkdir -p ${{ github.run_id }}
             cd ${{ github.run_id }}/
             set +e 
@@ -105,6 +115,7 @@ jobs:
           timeout-minutes: ${{ inputs.TIMEOUT }}
           run: |
             nvidia-smi
+            cudaCheck
             mkdir -p ${{ github.run_id }}
             cd ${{ github.run_id }}/
             set +e 
