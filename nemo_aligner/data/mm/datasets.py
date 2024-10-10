@@ -17,6 +17,7 @@ import os
 import re
 import copy
 import json
+import gc
 from dataclasses import dataclass
 from omegaconf import DictConfig
 import numpy as np
@@ -140,6 +141,10 @@ def maybe_process_prompt_and_media(
             if current_num_images < MIN_NUM_IMAGES:
                 image_list = []
                 image_list.append = torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float)            
+
+        # Release image memory
+        del images
+        gc.collect()  # Explicitly trigger garbage collection
         
         record["images"] = image_list
     return record
@@ -341,6 +346,9 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
     media = [torch.nested.nested_tensor(item['media']) for item in batch]
     media = TensorList(media)
     
+    del batch  # Explicitly delete batch to free memory
+    gc.collect()  # Trigger garbage collection
+
     output = {
         "chosen": chosen_tokens,
         "rejected": rejected_tokens,
@@ -355,6 +363,11 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         "chosen_media": media,
         "rejected_media": media,
     }
+    
+    # Clear CUDA memory cache if using GPU
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        
     return output
 
 
