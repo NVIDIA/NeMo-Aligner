@@ -298,6 +298,7 @@ class RemoteGPTMathClient:
 
     def __post_init__(self):
         cfg = self.cfg
+        subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.11.0"])
 
     def gsm8k_rewards(self, prompt, response, args):
         ans = args["answer"]
@@ -314,7 +315,7 @@ class RemoteGPTMathClient:
             return 0
 
     def MATH_rewards(self, prompt, response, args):
-        subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.11.0"])
+
         ans = args["answer"]
         correctness = 0
         try:
@@ -324,7 +325,7 @@ class RemoteGPTMathClient:
         except:
             pass
 
-        subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.9.3"])
+        # subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.9.3"])
         return correctness
 
     def infer_rm_critic(self, rollout_batch, model, args):
@@ -348,5 +349,5 @@ class RemoteGPTMathClient:
             rewards.append(self.MATH_rewards(prompt, response, args[i]))
 
         rewards = torch.tensor(rewards, device=rollout_batch["response_tokens"].device).float()
-
+        print(rewards)
         return MathFutureResult(rewards)
