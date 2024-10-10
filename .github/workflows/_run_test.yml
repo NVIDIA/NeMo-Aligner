@@ -47,7 +47,8 @@ jobs:
 
         - name: Docker pull image
           run: |
-            docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
+            #docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
+            docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
 
         - id: main
           name: Run main script
