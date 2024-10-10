@@ -113,7 +113,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
     return gpt_cfg
 
 
-@hydra_runner(config_path="conf", config_name="gpt_sft")
+@hydra_runner(config_path="conf", config_name="gpt_sft4linky")
 def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
