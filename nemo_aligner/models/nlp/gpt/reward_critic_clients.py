@@ -12,21 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from dataclasses import dataclass
 from functools import partial
 
 import numpy as np
 import torch
+from math_grader import extract_answer, math_equal
 from omegaconf import DictConfig
 
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
-import re
+
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
     over to the remote PyTrition server
 """
+
 
 class HelpsteerTemplate:
     def get_first_turn_template(self, text):
@@ -43,10 +46,9 @@ class HelpsteerTemplate:
         return f"""{text}\n<extra_id_2>"""
 
 
-
 def chat_template(user_text, assistant_text, template):
     formatter = HelpsteerTemplate()
-    
+
     text = ""
     for i in range(len(user_text)):
         if i == 0:
@@ -59,22 +61,24 @@ def chat_template(user_text, assistant_text, template):
 
 
 def extract_dialogue_helpsteer(text):
-    user_pattern = r'<extra_id_1>User\n(.*?)\n<extra_id_1>'
-    assistant_pattern = r'<extra_id_1>Assistant\n(.*?)\n(?:<extra_id_1>|<extra_id_2>)'
-    
+    user_pattern = r"<extra_id_1>User\n(.*?)\n<extra_id_1>"
+    assistant_pattern = r"<extra_id_1>Assistant\n(.*?)\n(?:<extra_id_1>|<extra_id_2>)"
+
     user_text = re.findall(user_pattern, text, re.DOTALL)
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
-    
+
     return user_text, assistant_text
 
+
 def extract_dialogue_llama(text):
-    user_pattern = r'<\|start_header_id\|>user<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>'
-    assistant_pattern = r'<\|start_header_id\|>assistant<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>'
-    
+    user_pattern = r"<\|start_header_id\|>user<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+    assistant_pattern = r"<\|start_header_id\|>assistant<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+
     user_text = re.findall(user_pattern, text, re.DOTALL)
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
-    
+
     return user_text, assistant_text
+
 
 def _str_list2numpy(str_list) -> np.ndarray:
     str_ndarray = np.array(str_list)[..., np.newaxis]
@@ -234,6 +238,7 @@ class RMFutureResult(FutureResult):
         self.rm_future = None
         return rewards.flatten()
 
+
 class MathFutureResult(FutureResult):
     def __init__(self, rm_future):
         self.rm_future = rm_future
@@ -249,9 +254,7 @@ class RemoteGPTRMClient:
     def __post_init__(self):
         cfg = self.cfg
 
-        server_dict = {
-            cfg.reward_model.name: (cfg.reward_model.ip, cfg.reward_model.port)
-        }
+        server_dict = {cfg.reward_model.name: (cfg.reward_model.ip, cfg.reward_model.port)}
 
         self.communicator = HTTPCommunicator.create_http_communicator_from_dict(server_dict)
         self.communicator.print_server_dict()
@@ -263,21 +266,23 @@ class RemoteGPTRMClient:
 
         texts = []
         for i in range(rollout_batch["response_tokens"].size(0)):
-            text = model.tokenizer.ids_to_text(rollout_batch["response_tokens"][i, :rollout_batch["response_lengths"][i]].tolist())
+            text = model.tokenizer.ids_to_text(
+                rollout_batch["response_tokens"][i, : rollout_batch["response_lengths"][i]].tolist()
+            )
             user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
             print(text + "<|start_header_id|>")
-            print("--"*80)
+            print("--" * 80)
             print("USER TEXT", user_text)
             print("ASSISTANT_TEXT", assistant_text)
             text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
-            print("**"*80)
+            print("**" * 80)
             print(text)
-            print("0O0"*60)
+            print("0O0" * 60)
             texts.append(text)
 
         send_data = {
             "sentences": _str_list2numpy(texts),
-            }
+        }
 
         rm_future = run_if_model_parallel_src(
             self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data,
@@ -300,11 +305,21 @@ class RemoteGPTMathClient:
         # print(prompt, response, matches, ans)
         if matches:
             try:
-                prediction = float(matches[-1].replace('$', '').replace(',', ''))
+                prediction = float(matches[-1].replace("$", "").replace(",", ""))
                 return int(prediction == ans)
             except:
                 return 0
         else:
+            return 0
+
+    def MATH_rewards(self, prompt, response, args):
+        ans = args["answer"]
+        try:
+            prediction = extract_answer(response)
+            correctness = math_equal(prediction, ans)
+            print(f"prediction: {prediction}, answer: {answer}, correctness: {correctness}")
+            return int(correctness)
+        except:
             return 0
 
     def infer_rm_critic(self, rollout_batch, model, args):
@@ -313,14 +328,20 @@ class RemoteGPTMathClient:
 
         rewards = []
         for i in range(rollout_batch["response_tokens"].size(0)):
-            prompt = model.tokenizer.ids_to_text(rollout_batch["response_tokens"][i, :rollout_batch["prompt_lengths"][i]].tolist())
-            response = model.tokenizer.ids_to_text(rollout_batch["response_tokens"][i, rollout_batch["prompt_lengths"][i]:rollout_batch["response_lengths"][i]].tolist())
+            prompt = model.tokenizer.ids_to_text(
+                rollout_batch["response_tokens"][i, : rollout_batch["prompt_lengths"][i]].tolist()
+            )
+            response = model.tokenizer.ids_to_text(
+                rollout_batch["response_tokens"][
+                    i, rollout_batch["prompt_lengths"][i] : rollout_batch["response_lengths"][i]
+                ].tolist()
+            )
             print(response, model.cfg.reinforce.sampling_params.end_strings)
             print(args)
             for end_string in model.cfg.reinforce.sampling_params.end_strings:
                 response = response.replace(end_string, "")
-            rewards.append(self.gsm8k_rewards(prompt, response, args[i]))
-        
+            rewards.append(self.MATH_rewards(prompt, response, args[i]))
+
         rewards = torch.tensor(rewards, device=rollout_batch["response_tokens"].device).float()
 
         return MathFutureResult(rewards)
