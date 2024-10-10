@@ -18,7 +18,15 @@ on:
     branches:
       - 'main'
       - 'r**'
-    types: [ labeled ]
+      - 'dev'
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      test_to_run:
+        required: false
+        default: all
+        type: string
+        description: Comma-separated list of tests to run. Use "all" to run the full test suite.
   push:
     branches:
       - 'main'
@@ -28,6 +36,86 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-container:
-    if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
-    uses: ./.github/workflows/_build_container.yml
+  pre-flight:
+    runs-on: ubuntu-latest
+    outputs:
+      test_to_run: ${{ steps.test_to_run.outputs.main }}
+      all: ${{ steps.all.outputs.main }}
+    steps:
+      - name: Parse test_to_run
+        id: test_to_run
+        run: |
+          parsed_string=$(echo ${{ inputs.test_to_run || 'all' }} | jq -c --raw-input 'split(",")')
+          echo "main=${parsed_string}" | tee -a "$GITHUB_OUTPUT"
+      - name: Parse all
+        id: all
+        run: |
+          echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT"
+  
+  # TODO: disable for now to save time
+  #build-container:
+  #  if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
+  #  uses: ./.github/workflows/_build_container.yml
+  
+  Unit_Tests:
+    needs: [pre-flight]
+    # TODO: disable for now to save time
+    #needs: [build-container, pre-flight]
+    uses: ./.github/workflows/_run_test.yml
+    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+    with:
+      IS_OPTIONAL: true
+      RUNNER: self-hosted-azure
+      TIMEOUT: 20
+      SCRIPT: |
+        nvidia-smi
+        # TODO: remove this before merging
+        ls -lah /usr/local/
+        ls -lah /usr/local/cuda-12/compat/lib.real/
+
+        ALIGNER_REPO_DIR=/opt/NeMo-Aligner
+        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
+
+        cd ${ALIGNER_REPO_DIR}
+
+        # TODO: remove this before merging
+        #export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | sed 's|:*/usr/local/cuda-12/compat/lib\.real/*$||')
+
+        torchrun --nproc_per_node 2 -m pytest . -rA -s -x
+
+  Functional_Tests:
+    name: ${{ matrix.TEST_NAME }}
+    # TODO: disable for now to save time
+    #needs: [build-container, pre-flight]
+    needs: [pre-flight]
+    uses: ./.github/workflows/_run_test.yml
+    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
+    strategy:
+     matrix:
+       include:
+        - TEST_NAME: ppo
+          SCRIPT: |
+            RM_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/llama3--nlayers4-hidden64-ffn224-dummy_rm-megatron_gpt.nemo \
+            ACTOR_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo \
+            bash ${ALIGNER_REPO_DIR}/tests/functional/ppo.sh
+
+    with:
+      IS_OPTIONAL: true
+      RUNNER: self-hosted-azure
+      TIMEOUT: 20
+      SCRIPT: |
+        nvidia-smi
+        # TODO: remove this before merging
+        ls -lah /usr/local/
+        ls -lah /usr/local/cuda-12/compat/lib.real/
+        ALIGNER_REPO_DIR=/opt/NeMo-Aligner
+        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
+        ALIGNER_CI_DIR=/home/TestData/aligner
+
+        # Required by test that run git commands, e.g., determining GIT_ROOT
+        git config --global --add safe.directory $ALIGNER_REPO_DIR
+
+        # TODO: remove this before merging
+        #export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | sed 's|:*/usr/local/cuda-12/compat/lib\.real/*$||')
+
+        ${{ matrix.SCRIPT }}
