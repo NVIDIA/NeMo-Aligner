@@ -26,7 +26,10 @@ To get started, you need to obtain a pretrained model to align. Three models are
     .. tab-item:: LLaMa3-8B
         :sync: key2
 
-        1. Download the `Llama3-8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder.
+        1. Download the `Llama3-8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder. You can use the HuggingFace CLI for this:
+            .. code-block:: bash
+               huggingface-cli download meta-llama/Meta-Llama-3-8B --local-dir Meta-Llama-3-8B
+
         2. Convert the LLaMa3 LLM into ``.nemo`` format.
             .. code-block:: bash 
 
@@ -231,7 +234,11 @@ If using sequence packing, replace the data paths with the paths to your packed 
 
 It is not required to pack both the train and validation datasets. If packing only the train dataset, exclude ``+model.data.validation_ds.packed_sequence=True``.
 
-To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
+To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine. If you are running with a larger model, you may need to
+change the parallelism. If you run out of memory with Llama3-8b, add tensor parallelism to your config:
+
+.. code-block:: bash
+   model.tensor_model_parallel_size=2 \
 
 For this particular run on the 2B model, the final training loss is approximately 1.536. Once the training finishes, you’ll find a file called ``megatron_gpt_sft.nemo`` available for use.
 
@@ -385,6 +392,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner. Compare
 
 To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
 
+### TODO: UPDATE!!! ###
 For this particular run on the Llama3-8b model, the final val loss is around 1.17. Once the training finishes, you'll find a file called ``megatron_gpt_sft.nemo`` available for use.
 
 
