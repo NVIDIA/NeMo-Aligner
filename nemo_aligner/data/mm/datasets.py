@@ -18,6 +18,7 @@ import re
 import copy
 import json
 import gc
+import copy
 from dataclasses import dataclass
 from omegaconf import DictConfig
 import numpy as np
@@ -140,7 +141,7 @@ def maybe_process_prompt_and_media(
             current_num_images = len(image_list)
             if current_num_images < MIN_NUM_IMAGES:
                 image_list = []
-                image_list.append = torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float)            
+                image_list.append(torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float))
 
         # Release image memory
         del images
@@ -246,7 +247,7 @@ class MultimodalDPOModelDataset(Dataset):
     def __getitem__(self, idx):
         """Returns a pair of chosen/rejected pairs, their respective lengths, and labels.
         """
-        payload = self.data[idx]
+        payload = copy.deepcopy(self.data[idx])
         payload = maybe_process_prompt_and_media(
                     payload,
                     self.image_loader,
@@ -363,10 +364,6 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         "chosen_media": media,
         "rejected_media": media,
     }
-    
-    # Clear CUDA memory cache if using GPU
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
         
     return output
 
