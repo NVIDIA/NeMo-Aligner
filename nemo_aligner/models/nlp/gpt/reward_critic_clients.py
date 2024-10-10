@@ -19,9 +19,9 @@ from functools import partial
 
 import numpy as np
 import torch
-from math_grader import extract_answer, math_equal
 from omegaconf import DictConfig
 
+from nemo_aligner.models.nlp.gpt.math_grader import extract_answer, math_equal
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
