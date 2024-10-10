@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import re
+import subprocess
 from dataclasses import dataclass
 from functools import partial
 
@@ -313,14 +314,18 @@ class RemoteGPTMathClient:
             return 0
 
     def MATH_rewards(self, prompt, response, args):
+        subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.11.0"])
         ans = args["answer"]
+        correctness = 0
         try:
             prediction = extract_answer(response)
             correctness = math_equal(prediction, ans)
             print(f"prediction: {prediction}, answer: {answer}, correctness: {correctness}")
-            return int(correctness)
         except:
-            return 0
+            pass
+
+        subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.9.3"])
+        return correctness
 
     def infer_rm_critic(self, rollout_batch, model, args):
         response_tokens = rollout_batch["response_tokens"].cpu()
