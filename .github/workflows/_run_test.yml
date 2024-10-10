@@ -76,6 +76,7 @@ jobs:
             exit $EXIT_CODE
 
         - name: Run ld-library NO COMPAT
+          if: always()
           timeout-minutes: ${{ inputs.TIMEOUT }}
           run: |
             nvidia-smi
@@ -100,6 +101,7 @@ jobs:
             exit $EXIT_CODE
         
         - name: Run ld-library cuda compat
+          if: always()
           timeout-minutes: ${{ inputs.TIMEOUT }}
           run: |
             nvidia-smi
