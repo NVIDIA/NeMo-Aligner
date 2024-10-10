@@ -20,14 +20,18 @@ This script is for processing data from Attribute-conditioned SFT training forma
 import argparse
 import json
 
-from common import (
-    ALL_STEERLM_ATTRIBUTES,
-    ASSISTANT_TURN_TEMPLATE,
-    LABEL_PREFIX,
-    SYSTEM_PROMPT,
-    SYSTEM_PROMPT_TEMPLATE,
-    USER_TURN_TEMPLATE,
-)
+
+SYSTEM_PROMPT = ("[INST]Consider this conversation:\n\n---\n")
+
+SYSTEM_PROMPT_TEMPLATE = "<s>{value}"
+
+USER_TURN_TEMPLATE = "User: {value}\n\n"
+
+ASSISTANT_TURN_TEMPLATE = "Assistant: {value}\n\n"
+
+LABEL_PREFIX = "---\n\nFor the conversation above, output Likert5 labels for: hallucination,correctness,coherence,helpfulness.[/INST]"
+
+ALL_STEERLM_ATTRIBUTES = ["hallucination", "correctness", "coherence", "helpfulness"]
 
 
 def prepare_args():
@@ -68,7 +72,8 @@ def process_sample(line, fout):
         if "label" in turn and turn["label"]:  # label field is present and not None or empty
             out_text = text + LABEL_PREFIX
             given_attrs = parse(turn["label"])
-            labels = [float(given_attrs.get(a, -100)) for a in ALL_STEERLM_ATTRIBUTES]
+            convert = lambda x: 0.0 if x == "no" else 1.0 if x == "yes" else float(x)
+            labels = [convert(given_attrs.get(a, -100)) for a in ALL_STEERLM_ATTRIBUTES]
             newline = {"text": out_text, "label": labels}
 
             fout.write(json.dumps(newline, ensure_ascii=False) + "\n")

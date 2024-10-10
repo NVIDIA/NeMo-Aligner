@@ -13,19 +13,143 @@
 # limitations under the License.
 
 """Custom datasets for Multimodal training"""
+import gc
 import os
+import re
 import copy
 import numpy as np
 import torch
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple, Sequence
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
+from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.core import Dataset
 from nemo.utils import logging
-from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, process_image
-from PIL import Image
-from transformers import CLIPImageProcessor, SiglipImageProcessor
+from nemo.collections.multimodal.data.neva.neva_dataset import NevaDataset, TarOrFolderImageLoader, process_image
+import transformers
+from nemo_aligner.utils.multimodal import TensorList
+from dataclasses import dataclass
+from omegaconf import DictConfig
+
 
 MAX_NUM_IMAGES = 1
+MIN_NUM_IMAGES = 1
+IMAGE_PADDING_VAL = -100
+
+def _preprocess_media_tokens(conversation: str, 
+                            image_token: str = "[IMG]", 
+                            image_patch_token: str = "[IMG]", 
+                            im_start_token: str = "[IMG_BREAK]", 
+                            im_end_token: str = "[IMG_END]", 
+                            patch_size: int = 16, 
+                            image_sizes: list = None,
+):
+    if image_sizes is None:
+        return conversation
+    
+    # Calculate the number of pathes
+    replace_strings = []
+    for image_size in image_sizes:
+        height, width = image_size
+        num_height_tokens = height // patch_size
+        num_width_tokens = width // patch_size
+        replace_tokens = [
+                    [image_patch_token] * num_width_tokens + [im_start_token]
+                ] * num_height_tokens
+        # Flatten list
+        replace_tokens = [item for sublist in replace_tokens for item in sublist]
+        replace_tokens[-1] = im_end_token
+        replace_str = "".join(replace_tokens)
+        replace_strings.append(replace_str)
+        conversation = conversation.replace(image_token, "<placeholder>", 1)
+    
+    while "<placeholder>" in conversation:
+        replace_str = replace_strings.pop(0)
+        conversation = conversation.replace("<placeholder>", replace_str, 1)
+
+    return conversation
+
+def process_media_tokens(
+        text: str, 
+        media_token: str, 
+        media_patch_token: str, 
+        media_start_token: str, 
+        media_end_token: str, 
+        num_media_tokens: int, 
+        use_im_start_end: bool
+    ) -> Dict:
+    if use_im_start_end:
+        replace_token = media_patch_token * num_media_tokens
+    else:
+        replace_token = media_patch_token * (num_media_tokens - 2)
+    replace_token = media_start_token + replace_token + media_end_token
+    
+    text = text.replace(media_token, replace_token)
+    return text
+
+def maybe_process_prompt_and_media(
+        record,
+        image_loader, 
+        image_processor, 
+        image_token, 
+        image_patch_token, 
+        image_start_token, 
+        image_end_token, 
+        image_aspect_ratio, 
+        image_patch_dim, 
+        use_im_start_end, 
+        crop_size,
+        is_multimodal: bool = True
+    ):
+    #print("Call of maybe_process_prompt_and_media", record)
+
+    if "images" in record:
+        # logging.warning(f"Processing image: {record['images']}")
+        if not isinstance(record['images'], list):
+            record['images'] = [record['images']]
+        images = []
+        for image_file in record["images"]:
+            image = image_loader.open_image(image_file)
+            if image is None:
+                logging.warning(f"Image {image} could not be found!")
+            images.append(image)
+
+        if images:
+            # logging.warning(f"Calling the image processor for the image: {images}")
+            image_inputs = image_processor(images, return_tensors="pt")
+            
+            image_list, image_sizes = image_inputs["pixel_values"], image_inputs["image_sizes"]
+            if isinstance(image_list[0], list): # List of List of Images            
+                image_list = image_list[0]
+
+            if isinstance(image_sizes[0], list):
+                image_sizes = image_sizes[0]
+
+            record['text'] = _preprocess_media_tokens(
+                conversation=record['text'],
+                image_token=image_token,
+                image_patch_token=image_patch_token,
+                im_start_token=image_start_token,
+                im_end_token=image_end_token,
+                patch_size=image_patch_dim,
+                image_sizes=image_sizes
+            )
+
+        # image exist in the data
+        if is_multimodal:
+            # Image does not exist in the data, but the model is multimodal
+            # TODO, if there are different videos on T dimensions.
+            current_num_images = len(image_list)
+            if current_num_images < MIN_NUM_IMAGES:
+                image_list = []
+                print("I assume that the following code shouln't be executed. ")
+                image_list.append(torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float))
+        #print("Image list: ", image_list)
+        #print("Record: ", record)
+        record["images"] = image_list
+
+        #del images
+        #gc.collect()
+    return record
 
 class MultimodalChatDataset(NevaDataset):
     def __init__(
@@ -334,6 +458,7 @@ class MultimodalChatDataset(NevaDataset):
             # Image does not exist in the data, but the model is multimodal
             # TODO, if there are different videos on T dimensions.
             if media_tensors.shape[0] < MAX_NUM_IMAGES:
+                logging.warning("I assume that the following code shouln't be executed. We shouldn't be padding.")   
                 padding_size = MAX_NUM_IMAGES - media_tensors.shape[0]
                 zero_padding = torch.zeros((padding_size, 3, crop_size[0], crop_size[1]), dtype=torch.float)
                 media_tensors = torch.cat((media_tensors, zero_padding), dim=0)
@@ -344,4 +469,384 @@ class MultimodalChatDataset(NevaDataset):
                 data_dict['video'] = media_tensors
 
         return data_dict
+
+class MultimodalRewardModelDataset(Dataset):
+    """This class assumes that we only have 2 responses per prompt that is ranked. Chosen is the better
+        one(even index) whereas Rejected is the worse response(odd index)
+    """
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed,  image_processor, drop_last=True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.name = name
+        self.drop_last = drop_last
+        self.seq_length = seq_length
+        self.tokenizer = tokenizer
+
+        self.reset_position_ids = cfg.data.get("reset_position_ids", False)
+        self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
+        self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
+        self.eos_id = tokenizer.eos_id
+
+        # Multimodal
+        self.is_multimodal = cfg.data.get("is_multimodal", True)
+        self.media_type = cfg.data.get("media_type", "image") # Only image is supported for now
+        self.image_token = cfg.mm_cfg.get("image_token", "[IMG]")
+        self.image_patch_token = cfg.mm_cfg.get("image_patch_token", "[IMG]")
+        self.image_folder = cfg.data.get("image_folder", None)        
+        self.image_start_token = cfg.mm_cfg.get("im_start_token", "[IMG_BREAK]")
+        self.image_end_token = cfg.mm_cfg.get("im_end_token", "[IMG_END]")
+        self.add_extra_token = cfg.data.get("add_extra_token", 0) 
+        self.image_loader = TarOrFolderImageLoader(self.image_folder) if self.image_folder else None
+        self.image_processor = image_processor
+        self.image_aspect_ratio = cfg.data.image_aspect_ratio
+        self.image_patch_dim = cfg.mm_cfg.vision_encoder.patch_dim
+        self.use_im_start_end = cfg.mm_cfg.use_im_start_end
+        self.crop_size = cfg.mm_cfg.vision_encoder.crop_size
+
+        # Checks
+        assert np.min(documents) >= 0
+        assert np.max(documents) < len(data)
+
+        # save index mappings to a configurable dir
+        self.index_mapping_dir = cfg.data.get("index_mapping_dir", None)
+
+        img_pattern = r'<img\s+src=[\'"]([^\'"]+)[\'"](?:[^>]*)?/?>'
+        self.data = []
+        for record in data:
+            # This currently supports only a single image
+            # search for <img src="/absolute/path/to/image" in the conversation
+            #   add it as record['image'], remove src tag from the <img> tag
+            record['images'] = []
+            matches = re.finditer(img_pattern, record['text'])
+            for match in matches:
+                image_name = match.group(1).split("/")[-1]
+                image_path = os.path.join(self.image_folder, image_name)
+                if self.image_folder.endswith('.tar'):
+                    if image_name not in self.image_loader.tar_index:
+                        logging.warning(f"Image not found in tar: {image_name}")
+                        continue
+                else:
+                    image_path = os.path.join(self.image_folder, image_name)
+                    if not os.path.isfile(image_path):
+                        logging.warning(f"Image not found: {image_path}")
+                        continue
+                record['images'].append(image_name)  # url
+            record['text'] = re.sub(img_pattern, self.image_token, record['text'])
+            self.data.append(record)
+        
+        # create index_mapping_dir on rank 0
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            if torch.distributed.get_rank() == 0:
+                if self.index_mapping_dir is not None and not os.path.isdir(self.index_mapping_dir):
+                    os.makedirs(self.index_mapping_dir)
+            torch.distributed.barrier()
+
+    def __len__(self):
+        return len(self.data) // 2
+
+    def encode(self, text):
+        if self.cfg.data.get("apply_ftfy", False):
+            import ftfy
+
+            text = ftfy.fix_text(text)
+
+        text_ids = self.tokenizer.text_to_ids(text)
+
+        if len(text_ids) > 0 and self.cfg.data.get("append_eod", False):
+            text_ids.append(self.tokenizer.eos_id)
+
+        return text_ids, len(text_ids)
+
+    def __getitem__(self, idx, multiple=2):
+        """Returns a pair of chosen/rejected pairs, and their respective lengths.
+        """
+        found = False
+        while not found:
+            chosen = self.data[multiple * idx]
+            rejected = self.data[multiple * idx + 1]
+            items = []
+            for i in range(multiple):
+                item = self.data[multiple * idx + i]
+                # Process media-related items
+                item = maybe_process_prompt_and_media(
+                    item,
+                    self.image_loader,
+                    self.image_processor,
+                    self.image_token,
+                    self.image_patch_token,
+                    self.image_start_token,
+                    self.image_end_token,
+                    self.image_aspect_ratio,
+                    self.image_patch_dim,
+                    self.use_im_start_end,
+                    self.crop_size,
+                    self.is_multimodal,
+                )
+                items.append(item)
+
+            chosen, rejected = items
+            chosen_media   = rearrange(chosen["image"]  , "T c h w -> T 1 c h w")
+            rejected_media = rearrange(rejected["image"], "T c h w -> T 1 c h w")
+
+            if self.cfg.data.data_impl.startswith("json"):
+                chosen, _ = self.encode(chosen["text"])
+                rejected, _ = self.encode(rejected["text"])
+
+            if len(chosen) > self.seq_length or len(rejected) > self.seq_length:
+                idx += multiple
+                continue
+            found = True
+        
+        # in the future, we should pad to the max seq len of the mini-batch instead of model.seq_length
+        # max_curr_seq_len = max(len(chosen), len(rejected))
+
+        chosen_np = np.array(chosen, dtype=np.int64)
+        chosen_np_pad = np.pad(
+            chosen_np, (0, max(0, self.seq_length - chosen_np.shape[0])), mode="constant", constant_values=self.eos_id
+        )
+        rejected_np = np.array(rejected, dtype=np.int64)
+        rejected_np_pad = np.pad(
+            rejected_np,
+            (0, max(0, self.seq_length - rejected_np.shape[0])),
+            mode="constant",
+            constant_values=self.eos_id,
+        )
+
+        chosen_tokens = torch.tensor(chosen_np_pad)
+        rejected_tokens = torch.tensor(rejected_np_pad)
+
+        attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
+            chosen_tokens, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
+        )
+
+        # Negative index comes when we pad the last batch in MegatronPretrainingBatchSampler
+        # We make the loss_mask zero to mask out loss from these samples
+        if idx == -1:
+            logging.info("WARNING: Got -1 as item index. Masking loss from this sample")
+            loss_mask = torch.zeros_like(loss_mask)
+
+        output = {
+            "chosen": chosen_tokens,
+            "rejected": rejected_tokens,
+            "chosen_media": chosen_media,
+            "rejected_media": rejected_media,
+            "chosen_length": chosen_np.shape[0],
+            "rejected_length": rejected_np.shape[0],
+            "attention_mask": attention_mask,
+            "loss_mask": loss_mask,
+            "position_ids": position_ids,
+        }
+        return output
+
+class MultimodalRegressionRewardModelDataset(MultimodalRewardModelDataset):
+    """This class assumes each line of the dataset file is a dictionary with "text" and "label" field, 
+        where "text" is a string representing the input prompt, and "label" is a list of float or int values. 
+        Note that when training the model with multiple datasets which contain different attributes,
+        we should set missing attributes to model.regression.loss_mask_val(according to training_rm.yaml)
+        in the dataset files so that their losses are masked. At least one attribute should be present for each sample.
+
+        WARNING: It's recommended to preprocess your data in advance to ensure all samples are within self.seq_length.
+                 Otherwise if all samples in a batch are longer than self.seq_length, you may get NaN loss.
+    """
+
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, image_processor, drop_last=True,
+    ):
+
+        assert cfg.data.data_impl.startswith(
+            "json"
+        ), f"data.data_impl must be either json or jsonl, but got {cfg.data.data_impl}"
+
+        super().__init__(
+            cfg=cfg,
+            tokenizer=tokenizer,
+            name=name,
+            data_prefix=data_prefix,
+            documents=documents,
+            data=data,
+            seq_length=seq_length,
+            seed=seed,
+            image_processor=image_processor,
+            drop_last=drop_last,
+        )
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        """
+        Returns one training sample, its label, and its respective length.
+        """
+
+        orig_idx = idx = idx % len(self)
+        while True:
+            #sample = self.data[idx]
+            # Process media-related items
+            #print("Calling maybe_process_prompt_and_media, sample: ", sample)
+
+            sample = maybe_process_prompt_and_media(
+                copy.deepcopy(self.data[idx]),      # avoid adding image tokens to the original array, as this would leak memory
+                self.image_loader,
+                self.image_processor,
+                self.image_token,
+                self.image_patch_token,
+                self.image_start_token,
+                self.image_end_token,
+                self.image_aspect_ratio,
+                self.image_patch_dim,
+                self.use_im_start_end,
+                self.crop_size,
+                self.is_multimodal,
+            )
+            sample_text, sample_length = self.encode(sample["text"])
+            sample_label = sample["label"]
+            if idx == orig_idx:
+                orig_length = sample_length
+            if sample_length <= self.seq_length:
+                break
+
+            idx = (idx + 1) % len(self)
+            if idx == orig_idx:
+                raise RuntimeError(f"All samples have length > {self.seq_length}")
+
+        assert isinstance(sample_label, list) and all(
+            isinstance(value, (float, int)) for value in sample_label
+        ), "label should be a list of float or int values"
+
+        sample_label = [float(value) for value in sample_label]
+
+        label_tensor = torch.tensor(sample_label, dtype=torch.float)
+
+        text_np = np.array(sample_text, dtype=np.int64)
+        text_np_pad = np.pad(
+            text_np, (0, max(0, self.seq_length - text_np.shape[0])), mode="constant", constant_values=self.eos_id
+        )
+
+        text_tensor = torch.tensor(text_np_pad)
+        attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
+            text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
+        )
+
+        # Negative index comes when we pad the last batch in MegatronPretrainingBatchSampler
+        # We make the loss_mask zero to mask out loss from these samples
+        if idx == -1:
+            logging.waring("WARNING: Got -1 as item index. Masking loss from this sample")
+            loss_mask = torch.zeros_like(loss_mask)
+
+        # Replace current sample (when it exceeds max length) with another sample but mask its loss
+        if idx != orig_idx:
+            logging.warning(
+                f"Sample {orig_idx} in dataset '{self.name}' has length "
+                f"{orig_length} > {self.seq_length} "
+                f"=> replacing it with sample {idx} and masking its loss"
+            )
+            loss_mask = torch.zeros_like(loss_mask)
+
+        # Rearrange the media tensor to accommodate video for future releases
+        #media_tensor = rearrange(sample["image"], "T c h w -> T 1 c h w")
+        media_tensor = sample["images"] # TensorList(sample["images"])
+
+
+        output = {
+            "inputs": text_tensor,
+            "media": media_tensor,
+            "lengths": text_np.shape[0],
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "loss_mask": loss_mask,
+            "labels": label_tensor,
+        }
+
+        return output
+
+def rm_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
+    inputs = [item["inputs"] for item in batch]
+    lengths = torch.LongTensor([item["lengths"] for item in batch])
+    labels = [item["labels"] for item in batch]
+
+    inputs = torch.nn.utils.rnn.pad_sequence(inputs, batch_first=True, padding_value=eos_id)
+    labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
+
+    attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
+        inputs, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+    )
+    assert attention_mask.ndim == 4, "attention_mask is incorrect shape for rm_custom_collate"
+    if attention_mask.shape[0] == 1:
+        # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+        # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
+        attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+
+    media = [torch.nested.nested_tensor(item['media']) for item in batch]
+    media = TensorList(media)
+
+    #del batch  # Explicitly delete batch to free memory
+    #gc.collect()  # Trigger garbage collection
     
+    output = {
+        "inputs": inputs,
+        "lengths": lengths,
+        "labels": labels,
+        "attention_mask": attention_mask,
+        "position_ids": position_ids,
+        "loss_mask": loss_mask,
+        "media": media,
+    }
+
+    # Clear CUDA memory cache if using GPU
+    #if torch.cuda.is_available():
+    #    torch.cuda.empty_cache()
+
+    return output
+
+
+@dataclass
+class DataCollatorForSupervisedDataset(object):
+    """Collate examples for supervised fine-tuning."""
+
+    model_cfg: DictConfig
+    tokenizer: transformers.PreTrainedTokenizer
+
+    def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
+        max_len = max(instance['tokens'].shape[0] for instance in instances)
+        max_len = (max_len - 1) // 64 * 64 + 64
+        for instance in instances:
+            pad_len = max_len - instance['tokens'].shape[0]
+            instance['tokens'] = F.pad(instance['tokens'], (0, pad_len), 'constant', 0)
+            instance['labels'] = F.pad(instance['labels'], (0, pad_len), 'constant', -1)
+
+        # Use default_collate for the tokens and labels
+        batch = default_collate([{k: v for k, v in instance.items() if k != 'images'} for instance in instances])
+
+        tokenizer = self.tokenizer
+        model_cfg = self.model_cfg
+
+        tokens = batch['tokens']
+        labels = batch['labels']
+
+        media = [torch.nested.nested_tensor(instance['images']) for instance in instances]
+        media = TensorList(media)
+
+        attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
+            data=tokens,
+            eod_token=tokenizer.eos_id,
+            eod_mask_loss=model_cfg.data.get("eod_mask_loss", False),
+            reset_attention_mask=False,
+            reset_position_ids=False,
+        )
+
+        loss_mask[labels == -1] = 0.0
+        tokens[tokens == -1] = 0
+        labels[labels == -1] = 0
+
+        batch = {
+            'tokens': tokens,
+            'labels': labels,
+            'attention_mask': attention_mask,
+            'loss_mask': loss_mask,
+            'position_ids': position_ids,
+            'media': media,
+        }
+
+        return batch
