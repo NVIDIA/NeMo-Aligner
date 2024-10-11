@@ -50,92 +50,32 @@ jobs:
             #docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
             docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
 
-        - name: tiny-test
+        - id: main
+          name: Run main script
+          timeout-minutes: ${{ inputs.TIMEOUT }}
           run: |
-            cmd=$(cat <<"RUN_TEST_EOF"
-            nvidia-smi || true
-            cudaCheck || true
-            python -c 'import torch; print(torch.cuda.current_device())' || true
+            nvidia-smi
+            mkdir -p ${{ github.run_id }}
+            cd ${{ github.run_id }}/
+            set +e
+            (
+              set -e
+
+              cmd=$(cat <<"RUN_TEST_EOF"
+            cudaCheck
+            ${{ inputs.SCRIPT }}
             RUN_TEST_EOF
             )
-            docker run --rm --runtime=nvidia --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }} bash -eux -o pipefail -c "$cmd"
+              #docker run --rm --runtime=nvidia --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} bash -eux -o pipefail -c "$cmd"
+              docker run --rm --runtime=nvidia --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }} bash -eux -o pipefail -c "$cmd"
+            ) 2> >(tee err.log)
 
-        #- id: main
-        #  name: Run main script
-        #  timeout-minutes: ${{ inputs.TIMEOUT }}
-        #  run: |
-        #    nvidia-smi
-        #    mkdir -p ${{ github.run_id }}
-        #    cd ${{ github.run_id }}/
-        #    set +e 
-        #    (  
-        #      set -e
-        #      
-        #      cmd=$(cat <<"RUN_TEST_EOF"
-        #    cudaCheck
-        #    ${{ inputs.SCRIPT }}
-        #    RUN_TEST_EOF
-        #    )
-        #      #docker run --rm --runtime=nvidia --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} bash -eux -o pipefail -c "$cmd"
-        #      docker run --rm --runtime=nvidia --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }} bash -eux -o pipefail -c "$cmd"
-        #    ) 2> >(tee err.log)
+            EXIT_CODE=$?
 
-        #    EXIT_CODE=$?
-        #    
-        #    echo "log=$(tail -c 2000 err.log |  base64 -w 0)" >> "$GITHUB_OUTPUT"
-        #    
-        #    exit $EXIT_CODE
-
-        #- name: Run ld-library NO COMPAT
-        #  if: always()
-        #  timeout-minutes: ${{ inputs.TIMEOUT }}
-        #  run: |
-        #    nvidia-smi
-        #    mkdir -p ${{ github.run_id }}
-        #    cd ${{ github.run_id }}/
-        #    set +e 
-        #    (  
-        #      set -e
-        #      
-        #      cmd=$(cat <<"RUN_TEST_EOF"
-        #    export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | sed 's|:*/usr/local/cuda-12/compat/lib\.real/*$||')
-        #    ${{ inputs.SCRIPT }}
-        #    RUN_TEST_EOF
-        #    )
-        #      docker run --rm --runtime=nvidia --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }} bash -eux -o pipefail -c "$cmd"
-        #    ) 2> >(tee err.log)
-
-        #    EXIT_CODE=$?
-        #    
-        #    echo "log=$(tail -c 2000 err.log |  base64 -w 0)" >> "$GITHUB_OUTPUT"
-        #    
-        #    exit $EXIT_CODE
-        
-        #- name: Run ld-library cuda compat
-        #  if: always()
-        #  timeout-minutes: ${{ inputs.TIMEOUT }}
-        #  run: |
-        #    nvidia-smi
-        #    mkdir -p ${{ github.run_id }}
-        #    cd ${{ github.run_id }}/
-        #    set +e 
-        #    (  
-        #      set -e
-        #      
-        #      cmd=$(cat <<"RUN_TEST_EOF"
-        #    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda/compat
-        #    ${{ inputs.SCRIPT }}
-        #    RUN_TEST_EOF
-        #    )
-        #      docker run --rm --runtime=nvidia --gpus all --shm-size=8g --env TRANSFORMERS_OFFLINE=0 --env HYDRA_FULL_ERROR=1 --volume /mnt/datadrive/TestData:/home/TestData:ro nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }} bash -eux -o pipefail -c "$cmd"
-        #    ) 2> >(tee err.log)
-
-        #    EXIT_CODE=$?
-        #    
-        #    echo "log=$(tail -c 2000 err.log |  base64 -w 0)" >> "$GITHUB_OUTPUT"
-        #    
-        #    exit $EXIT_CODE
+            echo "log=$(tail -c 2000 err.log |  base64 -w 0)" >> "$GITHUB_OUTPUT"
             
+            exit $EXIT_CODE
+
         - uses: "NVIDIA/NeMo/.github/actions/cancel-workflow@main"
           if: failure() && inputs.IS_OPTIONAL == false
         - name: after_script
