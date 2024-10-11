@@ -253,7 +253,6 @@ class TestDistributedFunctions:
             target_token_ids,
             None,
             labels,
-            False,
             kd_loss_weight,
             sft_loss_weight)
 

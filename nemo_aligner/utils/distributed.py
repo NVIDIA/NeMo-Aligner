@@ -434,7 +434,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         target_token_ids,
         target_log_sum_exp_logits,
         labels,
-        use_k_add_1_logits = False,
         kd_loss_weight = 1.,
         sft_loss_weight = 0,
     ):

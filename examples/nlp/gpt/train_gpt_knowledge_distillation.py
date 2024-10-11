@@ -45,7 +45,7 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 mp.set_start_method("spawn", force=True)
 
 
-def _collate_fn(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False, use_k_add_1_logits=False):
+def _collate_fn(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
         tokens = [item['tokens'] for item in batch]
         labels = [item['labels'] for item in batch]
         loss_mask = [item['loss_mask'] for item in batch]
@@ -65,12 +65,7 @@ def _collate_fn(batch, eos_id, reset_position_ids=False, reset_attention_mask=Fa
         assert len(topk_logits.shape) == 3, "topk_logits size should be [B, seq_length], got {topk_logits.shape}"
         assert len(topk_token_ids.shape) == 3, "topk_token_ids size should be [B, seq_length], got {topk_token_ids.shape}"
         
-        if use_k_add_1_logits:
-            log_sum_exp_logits = [item['log_sum_exp_logits'] for item in batch]
-            log_sum_exp_logits = torch.nn.utils.rnn.pad_sequence(log_sum_exp_logits, batch_first=True, padding_value=0)
-            assert len(log_sum_exp_logits.shape) == 2, "log_sum_exp_logits size should be [B, seq_length], got {log_sum_exp_logits.shape}"
-        else:
-            log_sum_exp_logits = torch.ones_like(topk_logits[..., 0])
+        log_sum_exp_logits = torch.ones_like(topk_logits[..., 0])
     
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
             tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
@@ -160,7 +155,6 @@ def main(cfg) -> None:
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-            use_k_add_1_logits=cfg.model.knowledge_distillation.get("use_k_add_1_logits", False),
         ),
     )
 
@@ -178,7 +172,6 @@ def main(cfg) -> None:
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-            use_k_add_1_logits=cfg.model.knowledge_distillation.get("use_k_add_1_logits", False),
         ),
         use_random_sampler=False,
     )
