@@ -1,13 +1,10 @@
-## TODO: integrate pytest, add to test_distributed.py
-## also maybe refactor so we don't have to duplicate code here?
+## TODO: refactor so we don't have to duplicate code here?
 
-## TODO: test on multiple GPUs
 import os
 import torch
 from nemo_aligner.utils.distributed import _TopKLogitsCrossEntropy
 from megatron.core import tensor_parallel
 from megatron.core.parallel_state import get_tensor_model_parallel_group
-#from nemo.collections.nlp.modules.common.megatron.megatron_init import initialize_model_parallel_for_nemo
 from megatron.core.parallel_state import get_tensor_model_parallel_rank, get_tensor_model_parallel_world_size, initialize_model_parallel
 from megatron.core.tensor_parallel.utils import VocabUtility
 
@@ -104,31 +101,8 @@ def naive_topk_loss_function(
     # compute the knowlodge distillation loss against the ground-truth logits
     topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
 
-
-    if False: #use_k_add_1_logits: ## TODO: add support
-        # When target_log_sum_exp_logits is not None. The objective is
-        # target_prob_k = exp(target_logits_k) / exp(target_log_sum_exp_logits), k=1,..., K
-        # target_prob_{K+1} = 1 - sum_{k=1}^K target_prob_k
-        # prob_k = exp(logits_k) / sum_{v=1}^V exp(logits_v), k=1,..., K
-        # prob_{K+1} = 1 - sum_{k=1}^K prob_k
-        # neg_loss = sum_{k=1}^{K+1} target_prob_k * log prob_{k}
-        
-        log_sum_exp_logits = torch.logsumexp(output_tensor, dim=-1)
-        # We can't use `gather_from_tensor_model_parallel_region` here since it discards
-        # gradients from other ranks - we need to all_reduce the gradients as well.
-        sum_exp_logits_subtract_topk_exp_logits = (log_sum_exp_logits.exp() - topk_logits.exp().sum(-1)).clamp(min=1e-10)
-        topk_logits = torch.cat([topk_logits, sum_exp_logits_subtract_topk_exp_logits.log().unsqueeze(-1)], -1)
-        
-        target_sum_exp_logits_subtract_topk_exp_logits = (target_log_sum_exp_logits.exp() - target_topk_logits.exp().sum(-1)).clamp(min=1e-10)
-        target_topk_logits_in_loss = torch.cat([target_topk_logits, target_sum_exp_logits_subtract_topk_exp_logits.log().unsqueeze(-1)], -1)
-    else:
-        # When not use_k_add_1_logits. The objective is 
-        # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
-        # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
-        # neg_loss = sum_{k=1}^{K} target_prob_k * log prob_{k} 
-        
-        log_sum_exp_logits = None
-        target_topk_logits_in_loss = target_topk_logits
+    log_sum_exp_logits = None
+    target_topk_logits_in_loss = target_topk_logits
         
     kd_loss = loss_func(topk_logits, target_topk_logits_in_loss, loss_mask=loss_mask)
     
@@ -197,8 +171,9 @@ def test_topk_logits(K = 3, batch_size = 4, seq_len = 8, partition_vocab_size = 
         False,
         kd_loss_weight,
         sft_loss_weight)
+    
     ## sum p(x)logp(x) - p(x) logq(x)
-    new_loss = torch.mean(new_loss) ## TODO -- at what point do we reduce?
+    new_loss = torch.mean(new_loss)
 
     torch.testing.assert_close(naive_loss, new_loss)
 

@@ -20,6 +20,7 @@ from nemo_aligner.utils.distributed import (
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
     masked_global_mean_var,
+    _TopKLogitsCrossEntropy,
 )
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 
@@ -48,6 +49,61 @@ def calculate_entropy_full(logits):
     return calculate_entropy(full_log_probs)
 
 
+### the functions below are copied & slightly modified (removing self.)
+### from  (https://github.com/NVIDIA/NeMo-Aligner/blob/8927528c20f0a16254e72fceeea0adf842e34c94/nemo_aligner/models/nlp/gpt/megatron_gpt_knowledge_distillation.py#L182)
+def naive_topk_loss_function(
+    output_tensor,
+    target_topk_logits,
+    target_topk_token_ids,
+    target_log_sum_exp_logits,
+    loss_mask,
+    labels,
+    kd_loss_weight = 1,
+    sft_loss_weight = 0,
+):
+
+    def loss_func(logits, target_logits, mask, kd_loss="bwd_kl", logits_scale=1., target_logits_scale=1.,):
+
+        logprobs = torch.nn.functional.log_softmax(logits_scale * logits, dim=-1)
+        target_logprobs = torch.nn.functional.log_softmax(target_logits_scale * target_logits, dim=-1)
+
+        if kd_loss == "bwd_kl":
+            loss = torch.sum(target_logprobs.exp() * (target_logprobs - logprobs), dim=-1)
+        elif kd_loss == "fwd_kl":
+            loss = torch.sum(logprobs.exp() * (logprobs - target_logprobs), dim=-1)
+        else:
+            raise ValueError(f"kd_loss {kd_loss} is not supported.")
+        return torch.sum(loss * mask) / torch.sum(mask).clamp(min=1.)
+
+    output_tensor_max = torch.max(output_tensor, dim=-1)[0]
+    torch.distributed.all_reduce(output_tensor_max,
+                                op=torch.distributed.ReduceOp.MAX,
+                                group=parallel_state.get_tensor_model_parallel_group())
+    output_tensor = output_tensor - output_tensor_max.unsqueeze(dim=-1).detach()
+    output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
+
+    # compute the knowledge distillation loss against the ground-truth logits
+    topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
+
+    log_sum_exp_logits = None
+    target_topk_logits_in_loss = target_topk_logits
+
+    kd_loss = loss_func(topk_logits, target_topk_logits_in_loss,  mask=loss_mask)
+
+    # compute the sft loss against the ground-truth labels
+    sft_loss = torch.zeros_like(kd_loss)
+    if sft_loss_weight != 0:
+        target_label_logits = torch.gather(output_tensor, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        if log_sum_exp_logits is None:
+            log_sum_exp_logits = torch.logsumexp(output_tensor, dim=-1)
+        target_label_logprobs = target_label_logits - log_sum_exp_logits
+        sft_loss = - torch.sum(target_label_logprobs * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
+
+    loss = kd_loss_weight * kd_loss + sft_loss_weight * sft_loss
+
+    return loss
+
+
 class TestDistributedFunctions:
     def _init_distributed(self, local_rank, main_address, main_port, nprocs):
         if torch.distributed.is_available() and not torch.distributed.is_initialized():
@@ -63,8 +119,7 @@ class TestDistributedFunctions:
 
     def _run_test(self, func, *args):
         nprocs = torch.cuda.device_count() if torch.cuda.is_available() else 1
-        for nproc in range(nprocs):
-            torch.multiprocessing.spawn(func, args=("localhost", 1234, nproc, *args), nprocs=nproc, join=True)
+        torch.multiprocessing.spawn(func, args=("localhost", 1234, nprocs, *args), nprocs=nprocs, join=True)
 
     def _test_masked_global_mean_var(self, *args, **kwargs):
         self._init_distributed(*args, **kwargs)
@@ -158,6 +213,64 @@ class TestDistributedFunctions:
             fake_output_grad_fast, fake_output_grad_slow, atol=atol, rtol=rtol
         ), "backward pass between fast and slow log prob calculation is not the same!"
 
+    def _test_topk_logits(self, local_rank, main_address, main_port, nprocs, K, batch_size, seq_len, partition_vocab_size, sft_loss_weight, kd_loss_weight):
+
+        self._init_distributed(local_rank, main_address, main_port, nprocs)
+        world_size = torch.distributed.get_world_size()
+        parallel_state.initialize_model_parallel(tensor_model_parallel_size=world_size)
+        rank = torch.distributed.get_rank()
+
+        torch.manual_seed(0)
+
+        true_logits = (torch.randint(low=0, high=100, size=(batch_size, seq_len, partition_vocab_size * world_size)) / 5).to(torch.cuda.current_device())
+        target_logits, target_token_ids = torch.topk(true_logits, 3)
+        target_log_sum_exp_logits = true_logits.exp().sum(-1)
+        loss_mask = torch.ones(target_logits.size()[:-1]).to(torch.cuda.current_device())
+        labels = torch.randint(low = 0, high = partition_vocab_size * world_size, size = (batch_size, seq_len)).to(torch.cuda.current_device())
+
+        torch.manual_seed(torch.cuda.current_device() + 10)
+        vocab_parallel_logits = torch.autograd.Variable((torch.randint(low=0, high=100, size=(batch_size, seq_len, partition_vocab_size)) / 5).to(torch.cuda.current_device()),  requires_grad=True)
+
+        ## test loss function
+        # test forward
+        ctx = torch.autograd.function.FunctionCtx()
+
+        naive_loss = naive_topk_loss_function(
+            vocab_parallel_logits,
+            target_logits,
+            target_token_ids,
+            target_log_sum_exp_logits,
+            loss_mask,
+            labels,
+            kd_loss_weight,
+            sft_loss_weight,
+        )
+
+        efficient_loss, kd, sft = _TopKLogitsCrossEntropy.forward(
+            ctx,
+            vocab_parallel_logits,
+            target_logits,
+            target_token_ids,
+            None,
+            labels,
+            False,
+            kd_loss_weight,
+            sft_loss_weight)
+
+        ## sum p(x)logp(x) - p(x) logq(x)
+        efficient_loss = torch.mean(efficient_loss)
+
+        torch.testing.assert_close(naive_loss, efficient_loss)
+
+        ctx.saved_tensors = ctx.to_save ## WAR for "AttributeError: 'FunctionCtx' object has no attribute 'saved_tensors'"
+
+        # test backward
+        naive_loss.backward()
+        naive_grad = vocab_parallel_logits.grad
+        new_grad = _TopKLogitsCrossEntropy.backward(ctx, 1. / (batch_size * seq_len) * torch.ones(batch_size, seq_len).to(torch.cuda.current_device()))[0]
+
+        torch.testing.assert_close(naive_grad, new_grad)
+
     def _test_distributed_entropy(self, local_rank, main_address, main_port, nprocs, batch_size, seed):
         """Test entropy against just using doing it on a single GPU
         """
@@ -227,3 +340,23 @@ class TestDistributedFunctions:
     @pytest.mark.parametrize("batch_size,seed", [(1, 5555), (4, 6666)])
     def test_distributed_entropy(self, batch_size, seed):
         self._run_test(self._test_distributed_entropy, batch_size, seed)
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "K,batch_size,seq_len,partition_vocab_size,sft_loss_weight,kd_loss_weight",
+        [
+            (3, 4, 8, 16, 0.5, 0.5),
+            (10, 2, 8, 16, 0, 1.),
+            (10, 2, 8, 32, 1., 0),
+        ],
+    )
+    def test_topk_logits(self, K, batch_size, seq_len, partition_vocab_size, sft_loss_weight, kd_loss_weight):
+        self._run_test(
+            self._test_topk_logits,
+            K,
+            batch_size,
+            seq_len,
+            partition_vocab_size,
+            sft_loss_weight,
+            kd_loss_weight
+        )

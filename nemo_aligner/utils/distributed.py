@@ -446,11 +446,8 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # labels: Tensor of [B, seq_len]. True labels.
         ## NOTE: "target" refers to the teacher top-k logits while "label" refers to the true label for the given example 
 
-        ### variables for K+1-class softmax
-        prob_K_add_1, target_prob_K_add_1 = None, None
-
         ## variables for SFT loss
-        exp_logits, label_mask, masked_label_1d, vocab_size = None, None, None, 0.
+        exp_logits, label_mask, masked_labels_1d, vocab_size = None, None, None, 0.
         
         # Maximum value along vocab dimension across all GPUs.
         logits_max = torch.max(vocab_parallel_logits, dim=-1)[0]
@@ -472,10 +469,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         masked_target_token_ids = target_token_ids.clone() - vocab_start_index
         masked_target_token_ids[target_mask] = 0
 
-        # Get predicted-logits = logits[target]. Shape is [B, seq_len, K]. 
-        # Some of them (based on target_mask) needs to be masked.
-        #predicted_logits = torch.gather(vocab_parallel_logits, dim=-1, index=masked_target_token_ids)
-
         logits_2d = vocab_parallel_logits.view(-1, partition_vocab_size)
         masked_target_1d = masked_target_token_ids.view(-1)
         K = target_logits.size()[-1]
@@ -491,76 +484,37 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             predicted_logits_topk, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
         )
 
-        # When target_log_sum_exp_logits is None. The objective is 
+        # The objective is
         # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
         # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
         # neg_loss = sum_{k=1}^{K} target_prob_k * log prob_{k} 
         #          = sum_{k=1}^{K} target_prob_k * logits_k - sum_{k=1}^{K} target_prob_k * log sum_{k=1}^K exp(logits_k)
         #          = sum_{k=1}^{K} target_prob_k * logits_k - log sum_{k=1}^K exp(logits_k)
         # neg_loss will be Tensor of shape [B, seq_len]
-        if not use_k_add_1_logits:
-            target_exp_logits = target_logits.exp()
-            target_sum_exp_logits = target_exp_logits.sum(-1, keepdims=True)
-            target_probs = target_exp_logits / target_sum_exp_logits
-            del target_exp_logits
-            neg_loss = (target_probs * predicted_logits_topk).sum(-1, keepdims=False)
+        target_exp_logits = target_logits.exp()
+        target_sum_exp_logits = target_exp_logits.sum(-1, keepdims=True)
+        target_probs = target_exp_logits / target_sum_exp_logits
+        del target_exp_logits
+        neg_loss = (target_probs * predicted_logits_topk).sum(-1, keepdims=False)
 
-            # compute the logsumexp of all K logits
-            exp_logits_topk = predicted_logits_topk.exp()
-            exp_logits_topk[target_mask] = 0.0
-            sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=False)
-            torch.distributed.all_reduce(
-                sum_exp_logits_topk, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
-            )
-            log_sum_exp_logits_topk = sum_exp_logits_topk.log()
-           
-            log_sum_exp = target_sum_exp_logits.log()
-            const = (target_probs * (target_logits - log_sum_exp)).sum(-1)
+        # compute the logsumexp of all K logits
+        exp_logits_topk = predicted_logits_topk.exp()
+        exp_logits_topk[target_mask] = 0.0
+        sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=False)
+        torch.distributed.all_reduce(
+            sum_exp_logits_topk, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
+        )
+        log_sum_exp_logits_topk = sum_exp_logits_topk.log()
+        
+        log_sum_exp = target_sum_exp_logits.log()
+        const = (target_probs * (target_logits - log_sum_exp)).sum(-1)
 
-            kd_loss = - neg_loss + log_sum_exp_logits_topk + const
-        
-            # Store softmax, target-softmax, target-mask and masked-target for backward pass.
-            probs = exp_logits_topk / sum_exp_logits_topk.unsqueeze(dim=-1)
-            vocab_size = exp_logits_topk.size(-1)
-
-        # When target_log_sum_exp_logits is not None. The objective is
-        # target_prob_k = exp(target_logits_k) / exp(target_log_sum_exp_logits), k=1,..., K
-        # target_prob_{K+1} = 1 - sum_{k=1}^K target_prob_k
-        # prob_k = exp(logits_k) / sum_{v=1}^V exp(logits_v), k=1,..., K
-        # prob_{K+1} = 1 - sum_{k=1}^K prob_k
-        # neg_loss = sum_{k=1}^{K+1} target_prob_k * log prob_{k}
-        # neg_loss will be Tensor of shape [B, seq_len]
-        else:
-            raise NotImplementedError
-            target_probs = (target_logits - target_log_sum_exp_logits).exp()
-            target_prob_K_add_1 = 1 - target_probs.sum(-1, keepdims=False)
-            
-            # compute the logsumexp of the logits over the whole Vocab. Tensor of shape [B, seq_len, 1]
-            log_sum_exp_logits = compute_distributed_log_sum_exp_logits(vocab_parallel_logits).unsqueeze(-1)
-            predicted_logprobs = predicted_logits - log_sum_exp_logits
-            
-            neg_loss = (target_probs * predicted_logprobs).sum(-1, keepdims=False)
-            neg_loss[target_mask] = 0.0
-        
-            # All reduce is needed to get the chunks from other GPUs.
-            torch.distributed.all_reduce(
-                neg_loss, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
-            )
-        
-            # this should be computed on one TP only. We do this in rank=0
-            sum_predicted_probs = predicted_logprobs.exp().sum(dim=-1, keepdims=False)
-            torch.distributed.all_reduce(
-                sum_predicted_probs, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
-            )
-            logprob_K_add_1 = (1 - sum_predicted_probs).log()
-            kd_loss = - neg_loss - target_prob_K_add_1 * logprob_K_add_1
+        kd_loss = - neg_loss + log_sum_exp_logits_topk + const
     
-            # Store softmax, target-mask and masked-target for backward pass.
-            probs = predicted_logprobs.exp()
-            prob_K_add_1 = logprob_K_add_1.exp()
-            vocab_size = exp_logits.size(-1)
+        # Store softmax, target-softmax, target-mask and masked-target for backward pass.
+        probs = exp_logits_topk / sum_exp_logits_topk.unsqueeze(dim=-1)
+        vocab_size = exp_logits_topk.size(-1)
 
-        ## adding SFT loss here to minimize the number of collective ops we have to perform
         sft_loss = torch.zeros_like(kd_loss)
         if sft_loss_weight > 0:
             # Create a mask of valid vocab ids (1 means it needs to be masked).
@@ -580,8 +534,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             )
 
             # Sum of exponential of logits along vocab dimension across all GPUs.
-            #exp_logits = vocab_parallel_logits
-            #torch.exp(vocab_parallel_logits, out=exp_logits)
             exp_logits = vocab_parallel_logits.exp()
             sum_exp_logits = exp_logits.sum(dim=-1)
             torch.distributed.all_reduce(
@@ -599,20 +551,18 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         loss = kd_loss_weight * kd_loss + sft_loss_weight * sft_loss
 
         ctx.save_for_backward(
-            probs, prob_K_add_1, target_probs, target_prob_K_add_1,
+            probs, target_probs,
             target_mask, target_token_ids_1d, torch.LongTensor([partition_vocab_size]),
             torch.Tensor([kd_loss_weight, sft_loss_weight]), exp_logits, label_mask, masked_labels_1d, ## <-- variables for SFT loss
         )
 
         return loss, kd_loss, sft_loss
 
-    ## TODO support K+1-class softmax
     @staticmethod
     def backward(ctx, grad_output, *_):
 
         # Retreive tensors from the forward path.
-        (probs, prob_K_add_1, target_probs, target_prob_K_add_1, target_mask, 
-         target_token_ids_1d, partition_vocab_size,
+        (probs, target_probs, target_mask, target_token_ids_1d, partition_vocab_size,
          loss_weights, full_softmax, label_mask, masked_labels_1d) = ctx.saved_tensors
 
         K = probs.size()[-1]
@@ -640,7 +590,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         kd_loss_weight = loss_weights[0]
         sft_loss_weight = loss_weights[1]
-        #grad_input_sft = torch.zeros_like(grad_input)
         grad_2d *= kd_loss_weight
 
         if sft_loss_weight > 0:
