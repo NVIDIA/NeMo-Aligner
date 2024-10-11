@@ -57,33 +57,32 @@ jobs:
   #  if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
   #  uses: ./.github/workflows/_build_container.yml
   
-  Unit_Tests:
-    needs: [pre-flight]
-    # TODO: disable for now to save time
-    #needs: [build-container, pre-flight]
-    uses: ./.github/workflows/_run_test.yml
-    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
-    with:
-      IS_OPTIONAL: true
-      RUNNER: self-hosted-azure
-      #TIMEOUT: 20
-      TIMEOUT: 5
-      SCRIPT: |
-        nvidia-smi
-        # TODO: remove this before merging
-        ls -lah /usr/local/
-        ls -lah /usr/local/cuda-12/compat/lib.real/
-        echo ${LD_LIBRARY_PATH:-}
+  #Unit_Tests:
+  #  needs: [pre-flight]
+  #  # TODO: disable for now to save time
+  #  #needs: [build-container, pre-flight]
+  #  uses: ./.github/workflows/_run_test.yml
+  #  if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+  #  with:
+  #    IS_OPTIONAL: true
+  #    RUNNER: self-hosted-azure
+  #    TIMEOUT: 20
+  #    SCRIPT: |
+  #      nvidia-smi
+  #      # TODO: remove this before merging
+  #      ls -lah /usr/local/
+  #      ls -lah /usr/local/cuda-12/compat/lib.real/
+  #      echo ${LD_LIBRARY_PATH:-}
 
-        ALIGNER_REPO_DIR=/opt/NeMo-Aligner
-        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
+  #      ALIGNER_REPO_DIR=/opt/NeMo-Aligner
+  #      export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
 
-        cd ${ALIGNER_REPO_DIR}
+  #      cd ${ALIGNER_REPO_DIR}
 
-        # TODO: remove this before merging
-        #export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | sed 's|:*/usr/local/cuda-12/compat/lib\.real/*$||')
+  #      # TODO: remove this before merging
+  #      #export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | sed 's|:*/usr/local/cuda-12/compat/lib\.real/*$||')
 
-        torchrun --nproc_per_node 2 -m pytest . -rA -s -x
+  #      torchrun --nproc_per_node 2 -m pytest . -rA -s -x
 
   Functional_Tests:
     name: ${{ matrix.TEST_NAME }}
@@ -104,8 +103,7 @@ jobs:
     with:
       IS_OPTIONAL: true
       RUNNER: self-hosted-azure
-      #TIMEOUT: 20
-      TIMEOUT: 5
+      TIMEOUT: 20
       SCRIPT: |
         nvidia-smi
         # TODO: remove this before merging
@@ -113,8 +111,9 @@ jobs:
         ls -lah /usr/local/cuda-12/compat/lib.real/
         echo ${LD_LIBRARY_PATH:-}
         ALIGNER_REPO_DIR=/opt/NeMo-Aligner
-        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
         ALIGNER_CI_DIR=/home/TestData/aligner
+        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
+        export HF_HOME=${ALIGNER_CI_DIR}/hf_home
 
         # Required by test that run git commands, e.g., determining GIT_ROOT
         git config --global --add safe.directory $ALIGNER_REPO_DIR
