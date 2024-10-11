@@ -96,6 +96,7 @@ jobs:
        include:
         - TEST_NAME: ppo
           SCRIPT: |
+            # ALIGNER_CI_DIR is defined in _run_test.yml
             RM_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/llama3--nlayers4-hidden64-ffn224-dummy_rm-megatron_gpt.nemo \
             ACTOR_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo \
             bash ${ALIGNER_REPO_DIR}/tests/functional/ppo.sh
@@ -111,9 +112,7 @@ jobs:
         ls -lah /usr/local/cuda-12/compat/lib.real/
         echo ${LD_LIBRARY_PATH:-}
         ALIGNER_REPO_DIR=/opt/NeMo-Aligner
-        ALIGNER_CI_DIR=/home/TestData/aligner
         export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
-        export HF_HOME=${ALIGNER_CI_DIR}/hf_home
 
         # Required by test that run git commands, e.g., determining GIT_ROOT
         git config --global --add safe.directory $ALIGNER_REPO_DIR
