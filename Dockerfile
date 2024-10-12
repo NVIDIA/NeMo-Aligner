@@ -16,7 +16,7 @@ ARG PYTRITON_VERSION=0.5.10
 ARG NEMO_TAG=19668e5320a2e2af0199b6d5e0b841993be3a634  # On: main
 ARG MLM_TAG=25059d3bbf68be0751800f3644731df12a88f3f3   # On: main
 ARG ALIGNER_COMMIT=main
-ARG TRTLLM_VERSION=v0.12.0
+ARG TRTLLM_VERSION=v0.13.0
 ARG PROTOBUF_VERSION=4.24.4
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.07-py3
 
@@ -130,10 +130,12 @@ git fetch -a
 # 148543d6e9c66ff1f8562e84484448202249811d: feat: Migrate GPTSession refit path in Nemo export to ModelRunner for Aligner NeMo#10654
 # 0c92fe17df4642ffc33d5d8c0c83fda729e3910c: [fix] Ensures disabling exp_manager with exp_manager=null does not error NeMo#10651
 # 60e677423667c029dd05875da72bf0719774f844: [feat] Update get_model_parallel_src_rank to support tp-pp-dp ordering NeMo#10652
+# 576af38594e62c27723a95959de754695c845d36: fix[export]: update API for disabling device reassignment in TRTLLM for Aligner NeMo#10863
 for pr_and_commit in \
   "10654 148543d6e9c66ff1f8562e84484448202249811d" \
   "10651 0c92fe17df4642ffc33d5d8c0c83fda729e3910c" \
   "10652 60e677423667c029dd05875da72bf0719774f844" \
+  "10863 576af38594e62c27723a95959de754695c845d36" \
 ; do
   pr=$(cut -f1 -d' ' <<<"$pr_and_commit")
   head_pr_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")

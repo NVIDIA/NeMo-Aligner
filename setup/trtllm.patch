@@ -1,8 +1,8 @@
 diff --git a/tensorrt_llm/builder.py b/tensorrt_llm/builder.py
-index 1038b7b16..6c78c45a8 100644
+index 527f8ccfd..222c69fc6 100644
 --- a/tensorrt_llm/builder.py
 +++ b/tensorrt_llm/builder.py
-@@ -597,10 +597,14 @@ class EngineConfig:
+@@ -660,10 +660,14 @@ class EngineConfig:
      @classmethod
      def from_json_file(cls, config_file):
          with open(config_file) as f:
@@ -21,12 +21,15 @@ index 1038b7b16..6c78c45a8 100644
  
      def to_dict(self):
          build_config = self.build_config.to_dict()
-@@ -683,6 +687,12 @@ class Engine:
+@@ -770,6 +774,15 @@ class Engine:
  
-         return cls(config, engine_buffer)
+         return cls(config, engine_buffer, managed_weights)
  
 +    @classmethod
-+    def from_buffer(cls, engine_buffer: str, json_config_str: str, rank: int = 0):
++    def from_buffer(cls,
++                    engine_buffer: Union[trt.IHostMemory, bytes],
++                    json_config_str: str,
++                    rank: int = 0):
 +        config = EngineConfig.from_json_str(json_config_str)
 +        config.pretrained_config.set_rank(rank)
 +        return cls(config, engine_buffer)
@@ -35,33 +38,35 @@ index 1038b7b16..6c78c45a8 100644
  def get_engine_version(engine_dir: str) -> Union[None, str]:
      engine_dir = Path(engine_dir)
 diff --git a/tensorrt_llm/runtime/generation.py b/tensorrt_llm/runtime/generation.py
-index 8a9deb6e2..016c1d7d8 100755
+index 983d458b8..af8eceb7f 100755
 --- a/tensorrt_llm/runtime/generation.py
 +++ b/tensorrt_llm/runtime/generation.py
-@@ -206,10 +206,10 @@ class _Runtime(object):
-     input_tensor_names: Set[str]
-     output_tensor_names: Set[str]
+@@ -15,6 +15,7 @@
  
--    def __init__(self, engine_buffer, mapping: Mapping):
-+    def __init__(self, engine_buffer, mapping: Mapping, _disable_torch_cuda_device_set: bool = False):
-         self.address = None
-         self.device_memory_size = 0
--        self.__prepare(mapping, engine_buffer)
-+        self.__prepare(mapping, engine_buffer, _disable_torch_cuda_device_set)
+ import copy
+ import math
++import os
+ import platform
+ from collections import Counter
+ from dataclasses import dataclass, field
+@@ -47,6 +48,10 @@ from ..quantization import QuantMode
+ from .kv_cache_manager import GenerationSequence, KVCacheUpdater
+ from .session import _scoped_stream
  
-     def _serialize_engine(self) -> trt.IHostMemory:
-         return self.engine.serialize()
-@@ -240,11 +240,14 @@ class _Runtime(object):
-             self.ctx_context.profiler = self.profiler
-             self.ctx_context.enqueue_emits_profile = False
++# When variable is set, this will disable torch.cuda.set_device(...) calls
++# Useful in situations where device is already assigned by another library, i.e., megatron.
++DISABLE_TORCH_DEVICE_SET = os.environ.get("DISABLE_TORCH_DEVICE_SET", False)
++
  
--    def __prepare(self, mapping: Mapping, engine_buffer):
-+    def __prepare(self, mapping: Mapping, engine_buffer, _disable_torch_cuda_device_set: bool):
+ def decode_words_list(word_dict: List[List[str]],
+                       tokenizer=None,
+@@ -247,8 +252,11 @@ class _Runtime(object):
+     def __prepare(self, mapping: Mapping, engine_buffer):
          self.runtime_rank = mapping.rank
          local_rank = self.runtime_rank % mapping.gpus_per_node
 -        torch.cuda.set_device(local_rank)
 -        CUASSERT(cudart.cudaSetDevice(local_rank))
-+        if _disable_torch_cuda_device_set:
++        if DISABLE_TORCH_DEVICE_SET:
 +            CUASSERT(cudart.cudaSetDevice(torch.cuda.current_device()))
 +        else:
 +            torch.cuda.set_device(local_rank)
@@ -69,24 +74,28 @@ index 8a9deb6e2..016c1d7d8 100755
  
          self.runtime = trt.Runtime(logger.trt_logger)
          self.engine = self.runtime.deserialize_cuda_engine(engine_buffer)
-@@ -688,14 +691,19 @@ class GenerationSession(object):
-                  debug_mode=False,
-                  debug_tensors_to_save=None,
-                  cuda_graph_mode=False,
--                 stream: torch.cuda.Stream = None):
-+                 stream: torch.cuda.Stream = None,
-+                 _disable_torch_cuda_device_set: bool = False):
-         assert isinstance(model_config, ModelConfig)
+@@ -535,8 +543,10 @@ class SamplingConfig:
+     sink_token_length: Optional[int] = field(default=None)
+     output_sequence_lengths: bool = field(default=False)
+     return_dict: bool = field(default=False)
+-    stop_words_list: Optional[torch.Tensor] = field(default=None)
+-    bad_words_list: Optional[torch.Tensor] = field(default=None)
++    stop_words_list: Optional[Union[list, np.ndarray,
++                                    torch.Tensor]] = field(default=None)
++    bad_words_list: Optional[Union[list, np.ndarray,
++                                   torch.Tensor]] = field(default=None)
+ 
+     temperature: Union[float, torch.Tensor] = field(default=1.0)
+     top_k: Union[int, torch.Tensor] = field(default=1)
+@@ -698,9 +708,12 @@ class GenerationSession(object):
          self._model_config = model_config
          self.mapping = mapping
--        self.runtime = _Runtime(engine_buffer, mapping)
+         self.runtime = _Runtime(engine_buffer, mapping)
 -        self.device = torch.device(
 -            f'cuda:{self.runtime.runtime_rank % mapping.gpus_per_node}')
 -        torch.cuda.set_device(self.device)
-+        self.runtime = _Runtime(engine_buffer, mapping, _disable_torch_cuda_device_set=_disable_torch_cuda_device_set)
-+        if _disable_torch_cuda_device_set:
-+            self.device = torch.device(
-+                f'cuda:{torch.cuda.current_device()}')
++        if DISABLE_TORCH_DEVICE_SET:
++            self.device = torch.device(f'cuda:{torch.cuda.current_device()}')
 +        else:
 +            self.device = torch.device(
 +                f'cuda:{self.runtime.runtime_rank % mapping.gpus_per_node}')
@@ -95,79 +104,72 @@ index 8a9deb6e2..016c1d7d8 100755
          self.stream = stream
          if self.stream is None:
 diff --git a/tensorrt_llm/runtime/model_runner.py b/tensorrt_llm/runtime/model_runner.py
-index dfbcd0533..886dca1a0 100644
+index d2ba7edfa..e02310c3a 100644
 --- a/tensorrt_llm/runtime/model_runner.py
 +++ b/tensorrt_llm/runtime/model_runner.py
-@@ -436,7 +436,8 @@ class ModelRunner(ModelRunnerMixin):
-             medusa_choices: List[List[int]] = None,
-             stream: torch.cuda.Stream = None,
-             gpu_weights_percent: float = 1,
--            enable_context_fmha_fp32_acc: Optional[bool] = None
-+            enable_context_fmha_fp32_acc: Optional[bool] = None,
-+            _disable_torch_cuda_device_set: Optional[bool] = None
-     ) -> 'ModelRunner':
-         pretrained_config = engine.config.pretrained_config
-         build_config = engine.config.build_config
-@@ -518,12 +519,16 @@ class ModelRunner(ModelRunnerMixin):
+@@ -31,10 +31,10 @@ from ..builder import Engine, EngineConfig, get_engine_version
+ from ..logger import logger
+ from ..mapping import Mapping
+ from ..quantization import QuantMode
+-from .generation import (ChatGLMGenerationSession, GenerationSession,
+-                         LogitsProcessor, LoraManager, ModelConfig,
+-                         QWenForCausalLMGenerationSession, SamplingConfig,
+-                         StoppingCriteria, to_word_list_format)
++from .generation import (DISABLE_TORCH_DEVICE_SET, ChatGLMGenerationSession,
++                         GenerationSession, LogitsProcessor, LoraManager,
++                         ModelConfig, QWenForCausalLMGenerationSession,
++                         SamplingConfig, StoppingCriteria, to_word_list_format)
+ 
+ 
+ def get_engine_name(model: str, dtype: str, tp_size: int, pp_size: int,
+@@ -554,7 +554,8 @@ class ModelRunner(ModelRunnerMixin):
  
          if MpiComm.size() > runtime_mapping.gpus_per_node:
              assert MpiComm.local_size() == runtime_mapping.gpus_per_node
 -        torch.cuda.set_device(rank % runtime_mapping.gpus_per_node)
-+        # Set this env var to non-empty string to disable runtime updating the device of this process.
-+        # Useful in situations where device is already assigned by another library, i.e., megatron.
-+        if not _disable_torch_cuda_device_set:
++        if not DISABLE_TORCH_DEVICE_SET:
 +            torch.cuda.set_device(rank % runtime_mapping.gpus_per_node)
          session = session_cls(model_config,
                                engine_buffer,
                                runtime_mapping,
-                               debug_mode=debug_mode,
--                              stream=stream)
-+                              stream=stream,
-+                              _disable_torch_cuda_device_set=_disable_torch_cuda_device_set)
-         if session.runtime.engine.streamable_weights_size:
-             session.runtime._set_weight_streaming(gpu_weights_percent)
- 
-@@ -557,7 +562,8 @@ class ModelRunner(ModelRunnerMixin):
-             medusa_choices: List[List[int]] = None,
-             stream: torch.cuda.Stream = None,
-             gpu_weights_percent: float = 1,
--            enable_context_fmha_fp32_acc: Optional[bool] = None
-+            enable_context_fmha_fp32_acc: Optional[bool] = None,
-+            _disable_torch_cuda_device_set: Optional[bool] = None
-     ) -> 'ModelRunner':
-         """
-         Create a ModelRunner instance from an engine directory.
-@@ -616,12 +622,16 @@ class ModelRunner(ModelRunnerMixin):
+@@ -656,7 +657,8 @@ class ModelRunner(ModelRunnerMixin):
                  assert model_config.max_medusa_tokens > 0, \
                      "medusa_choice is specified but model_config.max_medusa_tokens is 0."
  
 -            torch.cuda.set_device(rank % runtime_mapping.gpus_per_node)
-+            # Set this env var to non-empty string to disable runtime updating the device of this process.
-+            # Useful in situations where device is already assigned by another library, i.e., megatron.
-+            if not _disable_torch_cuda_device_set:
++            if not DISABLE_TORCH_DEVICE_SET:
 +                torch.cuda.set_device(rank % runtime_mapping.gpus_per_node)
              session = session_cls(model_config,
                                    engine_buffer,
                                    runtime_mapping,
-                                   debug_mode=debug_mode,
--                                  stream=stream)
-+                                  stream=stream,
-+                                  _disable_torch_cuda_device_set=_disable_torch_cuda_device_set)
-             if session.use_lora_plugin:
-                 lora_manager = LoraManager()
-                 if lora_dir is not None:
-@@ -797,10 +807,12 @@ class ModelRunner(ModelRunnerMixin):
+@@ -840,12 +842,24 @@ class ModelRunner(ModelRunnerMixin):
          batch_input_ids, input_lengths = self._prepare_inputs(
              batch_input_ids, sampling_config.pad_id)
  
 -        if sampling_config.bad_words_list is not None:
-+        if sampling_config.bad_words_list is not None and \
-+            not isinstance(sampling_config.stop_words_list, (np.ndarray, torch.Tensor)):
-             sampling_config.bad_words_list = to_word_list_format(
-                 sampling_config.bad_words_list)
+-            sampling_config.bad_words_list = to_word_list_format(
+-                sampling_config.bad_words_list)
 -        if sampling_config.stop_words_list is not None:
-+        if sampling_config.stop_words_list is not None and \
-+            not isinstance(sampling_config.stop_words_list, (np.ndarray, torch.Tensor)):
-             sampling_config.stop_words_list = to_word_list_format(
-                 sampling_config.stop_words_list)
+-            sampling_config.stop_words_list = to_word_list_format(
+-                sampling_config.stop_words_list)
++        def maybe_convert_to_words_list_format(
++            words_list: Optional[Union[list, np.ndarray, torch.Tensor]]
++        ) -> Optional[np.ndarray]:
++            if words_list is None or isinstance(words_list, np.ndarray):
++                return words_list
++            elif isinstance(words_list, torch.Tensor):
++                return words_list.numpy()
++            elif isinstance(words_list, list):
++                return to_word_list_format(words_list)
++            else:
++                raise TypeError(
++                    f"Unexpected words_list type={type(words_list)}. Only list, np.ndarray, and torch.Tensor are supported."
++                )
++
++        sampling_config.bad_words_list = maybe_convert_to_words_list_format(
++            sampling_config.bad_words_list)
++        sampling_config.stop_words_list = maybe_convert_to_words_list_format(
++            sampling_config.stop_words_list)
  
+         if not self.kv_cache_type and sampling_config.max_new_tokens > 1:
+             raise RuntimeError(
