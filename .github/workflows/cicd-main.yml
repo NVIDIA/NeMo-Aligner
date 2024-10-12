@@ -52,15 +52,12 @@ jobs:
         run: |
           echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT"
   
-  # TODO: disable for now to save time
-  #build-container:
-  #  if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
-  #  uses: ./.github/workflows/_build_container.yml
+  build-container:
+    if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
+    uses: ./.github/workflows/_build_container.yml
   
   Unit_Tests:
-    needs: [pre-flight]
-    # TODO: disable for now to save time
-    #needs: [build-container, pre-flight]
+    needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
     if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
     with:
@@ -74,9 +71,7 @@ jobs:
 
   Functional_Tests:
     name: ${{ matrix.TEST_NAME }}
-    # TODO: disable for now to save time
-    #needs: [build-container, pre-flight]
-    needs: [pre-flight]
+    needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
     if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
     strategy:
