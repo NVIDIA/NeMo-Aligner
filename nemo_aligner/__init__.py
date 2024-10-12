@@ -14,8 +14,11 @@
 
 import os
 from nemo.utils import logging
+
 os.environ["DISABLE_TORCH_DEVICE_SET"] = "1"
-logging.info(f"Importing NeMo-Aligner sets DISABLE_TORCH_DEVICE_SET=1 to disable device reassignment within TensorRT-LLM")
+logging.info(
+    f"Importing NeMo-Aligner sets DISABLE_TORCH_DEVICE_SET=1 to disable device reassignment within TensorRT-LLM"
+)
 breakpoint()
 
 
@@ -46,4 +49,3 @@ __all__ = [
     "__shortversion__",
     "__version__",
 ]
-
