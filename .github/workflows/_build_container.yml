@@ -17,13 +17,18 @@ on:
     inputs:
       ref: 
         description: Git ref to checkout
-        default: ${{ github.sha }}
+        default: ${{ github.event.pull_request.head.sha || github.sha }}
         required: false
         type: string
 
 defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
+
+env:
+  TRTLLM_VERSION: v0.10.0
+  TE_TAG: 7d576ed25266a17a7b651f2c12e8498f67e0baea
+  ALIGNER_COMMIT: ${{ inputs.ref }}
 
 jobs:
   main:
@@ -33,7 +38,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: ${{ github.run_id }}
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.ALIGNER_COMMIT }}
 
       - name: Clean runner cache
         run: | 
@@ -42,37 +47,66 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with: 
-          # We use `docker` driver as this speeds things up for 
-          # trivial (non-multi-stage) builds.
-          driver: docker
+          # We use `docker-container` driver for better caching of
+          # multi-stage builds.
+          driver: docker-container
 
-      - name: Pull cache images
+      - name: Set cache-to
+        id: cache-to
         run: |
-          docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }} || true
-          docker pull nemoci.azurecr.io/nemo_aligner_container:buildcache || true
+          CACHE="nemoci.azurecr.io/nemo_aligner_container_cache:${{ github.event.pull_request.number || 'noop' }}"
 
+          if [[ "${{ github.ref }}" == "refs/head/main" ]]; then
+            CACHE=$(eche -E "$CACHE\nnemoci.azurecr.io/nemo_aligner_container_cache:main")
+          fi
+
+          echo "$CACHE"
+
+          echo "CACHE<<EOF" >> $GITHUB_ENV
+          echo "$CACHE" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+      
+      - name: Build and push TRTLLM
+        uses: docker/build-push-action@v5
+        with:
+          file: Dockerfile
+          push: true
+          target: trtllm-build
+          build-args: 
+            MAX_JOBS=32
+            ALIGNER_COMMIT=${{ env.ALIGNER_COMMIT }}
+            TRTLLM_VERSION=${{ env.TRTLLM_VERSION }}
+          cache-from: nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:${{ env.TRTLLM_VERSION }}
+          cache-to: nemoci.azurecr.io/nemo_aligner_container_trtllm_build_cache:${{ env.TRTLLM_VERSION }}
+          tags: nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${{ env.TRTLLM_VERSION }}
+
+      - name: Build and push TE
+        uses: docker/build-push-action@v5
+        with:
+          file: Dockerfile
+          push: true
+          target: te-build
+          build-args: 
+            MAX_JOBS=32
+            ALIGNER_COMMIT=${{ env.ALIGNER_COMMIT }}
+            TE_TAG=${{ env.TE_TAG }}
+          cache-from: nemoci.azurecr.io/nemo_aligner_container_te_build_cache:${{ env.TE_TAG }}
+          cache-to: nemoci.azurecr.io/nemo_aligner_container_te_build_cache:${{ env.TE_TAG }}
+          tags: nemoci.azurecr.io/nemo_aligner_container_te_build:${{ env.TE_TAG }}
+      
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           file: Dockerfile
           push: true
+          target: final
           build-args: |
             MAX_JOBS=32
-            ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
+            ALIGNER_COMMIT=${{ env.ALIGNER_COMMIT }}
+            TRT_PROXY_IMAGE=nemoci.azurecr.io/nemo_aligner_container_trtllm_build:${{ env.TRTLLM_VERSION }}
+            TE_PROXY_IMAGE=nemoci.azurecr.io/nemo_aligner_container_te_build:${{ env.TE_TAG }}
           cache-from: |
-            nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }}
-            nemoci.azurecr.io/nemo_aligner_container:buildcache
-          cache-to: type=inline
+            nemoci.azurecr.io/nemo_aligner_container_cache:${{ github.event.pull_request.number || 'noop' }}
+            nemoci.azurecr.io/nemo_aligner_container_cache:main
+          cache-to: ${{ env.CACHE }}
           tags: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
-
-      - name: Update PR image
-        if: github.event_name == 'pull_request'
-        run: |
-          docker tag nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
-          docker push nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
-
-      - name: Update buildcache image
-        if: github.ref == 'refs/heads/main'
-        run: |
-          docker tag nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} nemoci.azurecr.io/nemo_aligner_container:buildcache
-          docker push nemoci.azurecr.io/nemo_aligner_container:buildcache
