@@ -14,7 +14,6 @@
 
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 
@@ -24,6 +23,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.train_utils import set_sync_funcs
 
 

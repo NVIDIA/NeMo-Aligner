@@ -17,13 +17,12 @@ from functools import partial
 
 import numpy as np
 import torch
-from megatron.core import parallel_state
 from omegaconf import DictConfig
 
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
-
 
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
     over to the remote PyTrition server
@@ -44,7 +43,9 @@ def get_future_result(future, *keys):
         if output is not None:
             result = torch.tensor(output[key], device=torch.cuda.current_device())
 
-        results.append(broadcast_2d_tensor_within_mp(result))
+        ten = broadcast_2d_tensor_within_mp(result)
+
+        results.append(ten)
 
     if len(results) == 1:
         return results[0]
@@ -71,8 +72,17 @@ class RMCriticFutureResult(FutureResult):
 
         self.critic_future = None
         self.rm_future = None
+        return rewards.flatten(), values
 
-        return rewards, values
+
+class RMFutureResult(FutureResult):
+    def __init__(self, rm_future):
+        self.rm_future = rm_future
+
+    def result(self):
+        rewards = get_future_result(self.rm_future, "rewards")
+
+        return rewards
 
 
 class SaveFuture(FutureResult):
@@ -127,13 +137,13 @@ class RemoteGPTRMCriticClient:
         }
 
         critic_future = run_if_model_parallel_src(
-            self.communicator.send_data_to_server, server_name=self.cfg.critic.name.infer, data=send_data
+            self.communicator.send_data_to_server, server_name=self.cfg.critic.name.infer, data=send_data,
         )
 
         rm_future = None
         if not self.combine_rm_and_critic_server:
             rm_future = run_if_model_parallel_src(
-                self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data
+                self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data,
             )
 
         return RMCriticFutureResult(critic_future, rm_future, self.combine_rm_and_critic_server, og_seq_length)
@@ -148,9 +158,9 @@ class RemoteGPTRMCriticClient:
         )
 
         send_data["tokens"] = func(ppo_rollout_data["response_tokens"], dtype=torch.int64)
-        send_data["returns"] = func(ppo_rollout_data["returns"])
-        send_data["prev_values"] = func(ppo_rollout_data["values"])
-        send_data["mask"] = func(ppo_rollout_data["mask"])
+        send_data["returns"] = func(ppo_rollout_data["returns"], dtype=torch.float32)
+        send_data["prev_values"] = func(ppo_rollout_data["values"], dtype=torch.float32)
+        send_data["mask"] = func(ppo_rollout_data["mask"], dtype=torch.float32)
 
         future = None
         if torch.distributed.get_rank() == 0:
@@ -170,3 +180,40 @@ class RemoteGPTRMCriticClient:
             )
 
         return SaveFuture(save_future)
+
+
+@dataclass
+class RemoteGPTRMClient:
+    cfg: DictConfig
+
+    def __post_init__(self):
+        cfg = self.cfg
+
+        server_dict = {cfg.reward_model.name: (cfg.reward_model.ip, cfg.reward_model.port)}
+
+        self.communicator = HTTPCommunicator.create_http_communicator_from_dict(server_dict)
+        self.communicator.print_server_dict()
+        self.pad_to_length = self.cfg.pad_to_length
+
+    def infer_rm(self, rollout_batch):
+        response_tokens = rollout_batch["response_tokens"].cpu()
+        og_seq_length = response_tokens.size(-1)
+
+        if self.pad_to_length is not None:
+            assert (
+                og_seq_length <= self.pad_to_length
+            ), f"original shape before padding {og_seq_length} is higher than {self.pad_to_length}"
+            response_tokens = torch.nn.functional.pad(
+                response_tokens, (0, self.pad_to_length - response_tokens.size(-1)), value=0
+            )
+
+        send_data = {
+            "tokens": response_tokens.numpy(),
+            "sequence_lengths": rollout_batch["response_lengths"].unsqueeze(1).cpu().numpy(),
+        }
+
+        rm_future = run_if_model_parallel_src(
+            self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data
+        )
+
+        return RMFutureResult(rm_future)

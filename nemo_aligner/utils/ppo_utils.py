@@ -14,7 +14,10 @@
 
 """helper functions for PPO training"""
 
+import operator
+
 import torch
+
 from nemo_aligner.utils.utils import masked_mean
 
 
@@ -59,10 +62,13 @@ def calculate_entropy(log_probs, mask=None):
 
 def calculate_ppo_rewards(values, rewards, response_lengths, init_policy_kl, penalty_factor=0.0):
     """the reward should be defined on the last valid action"""
+
     rewards_sequence = torch.zeros_like(values)
 
     idx = (response_lengths - 2).clamp(min=0, max=None)
+
     rewards_sequence[torch.arange(rewards_sequence.size(0)), idx] = rewards.flatten()
+
     return rewards_sequence - penalty_factor * init_policy_kl
 
 
@@ -81,9 +87,28 @@ def create_mask(values, prompt_lengths, response_lengths):
     This results in removing the prompt tokens, and removing the padding at the end of the sequence.
     """
     mask = torch.zeros_like(values)
-
     for i in range(mask.size(0)):
         # Do prompt_length - 1 to remove the first log prob. But keep sentence_length
         # as it is because we want to include one EOS token.
         mask[i, prompt_lengths[i] - 1 : response_lengths[i] - 1] = 1.0
     return mask
+
+
+def select_topk(batch, num_select=1):
+    """
+    Function to select the topk responses for each unique prompt in a batch. 
+    Please note that this function samples the same top response for each identical prompt.
+    Duplicate prompts in the same batch may cause unexpected behavior.
+    """
+    unique_prompts = torch.unique(batch["prompt_tokens"], dim=0)
+    selected_idx = []
+
+    for i in range(len(unique_prompts)):
+        is_matching_prompt = (batch["prompt_tokens"] == unique_prompts[i]).all(1)
+        prompt_idx = torch.arange(len(batch["prompt_tokens"]))[is_matching_prompt]
+        sorted_idx = zip(prompt_idx, batch["rewards"][is_matching_prompt])
+        sorted_idx = sorted(sorted_idx, key=operator.itemgetter(1))
+        selected_idx += [x[0].item() for x in sorted_idx[-1 * num_select :]]
+
+    selected_batch = {k: batch[k][selected_idx] for k in batch.keys()}
+    return selected_batch

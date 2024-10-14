@@ -59,7 +59,9 @@ model:
   megatron_amp_O2: True
 
   dpo:
-    log_prob_forward_micro_batch_size: 1
+    # This default value ensures there are no numeric differences beween trained and reference policies when computing log probs.
+    # A higher value can be used to speed-up log probs computations, but may cause numeric differences.
+    log_prob_forward_micro_batch_size: ${model.micro_batch_size}
     ref_policy_kl_penalty: 0.2
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
@@ -114,7 +116,6 @@ model:
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True
     num_workers: 0
-    dataloader_type: single # cyclic
     reset_position_ids: False # Reset position ids after end-of-document token
     reset_attention_mask: False # Reset attention mask after end-of-document token
     eod_mask_loss: False # Mask loss for the end of document tokens

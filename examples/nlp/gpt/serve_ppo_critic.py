@@ -19,6 +19,8 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.critic_server_trainer import CriticServerTrainer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_critic import MegatronGPTCriticModel
+from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.text_generation_utils import tokenize_batch
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -29,9 +31,9 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import (
+    copy_model_states_to_cpu,
     load_and_override_model_config,
     load_from_nemo,
-    retrieve_model_state_dict_in_cpu,
     set_autocast_gpu_dtype,
 )
 
@@ -66,10 +68,10 @@ def main(cfg) -> None:
         # to run the critic and RM together
         # we move to CPU and swap them
         # so we need to retrieve the state here before PTL load
-        rm_state_dict = retrieve_model_state_dict_in_cpu(
-            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
+        rm_state_dict_cpu = copy_model_states_to_cpu(
+            ptl_model, cpu_dict=None, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False), sync=True,
         )
-        ptl_model.rm_state_dict = rm_state_dict
+        ptl_model.rm_state_dict_cpu = rm_state_dict_cpu
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
@@ -86,6 +88,15 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
+    def tokenize_func(sentences):
+        return tokenize_batch(
+            sentences=sentences,
+            tokenizer=ptl_model.tokenizer,
+            max_len=ptl_model.cfg.encoder_seq_length,
+            add_BOS=False,
+            add_EOS=False,
+        )
+
     critic_trainer = CriticServerTrainer(
         cfg=cfg.trainer.ppo,
         model=ptl_model,
@@ -93,7 +104,9 @@ def main(cfg) -> None:
         scheduler=scheduler,
         logger=logger,
         ckpt_callback=ckpt_callback,
+        tokenize_func=tokenize_func,
         gbs=cfg.model.global_batch_size,
+        model_forward_micro_batch_size=cfg.model.get("forward_micro_batch_size", cfg.model.micro_batch_size),
     )
 
     if custom_trainer_state_dict is not None:
