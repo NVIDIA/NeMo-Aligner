@@ -47,8 +47,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with: 
-          # We use `docker` driver as this speeds things up for 
-          # trivial (non-multi-stage) builds.
+          # We use `docker-container` driver for better caching of
+          # multi-stage builds.
           driver: docker-container
 
       - name: Set cache-to
