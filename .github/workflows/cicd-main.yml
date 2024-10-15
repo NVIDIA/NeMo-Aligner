@@ -87,19 +87,11 @@ jobs:
           - ppo-pp-llama3
           - dpo-llama3
     with:
-      RUNNER: self-hosted
-      TIMEOUT: 10
-      SCRIPT: |
-         export PYTHONPATH=/opt/NeMo-Aligner:${PYTHONPATH:-}
-         git config --global --add safe.directory /opt/NeMo-Aligner
-         bash tests/functional/test_cases/${{ matrix.test_case }}.sh
-
-    with:
       IS_OPTIONAL: true
       RUNNER: self-hosted-azure
       # Fairly aggresive timeout that all functional tests should try to adhere to
-      TIMEOUT: 8
+      TIMEOUT: 10
       SCRIPT: |
-        nvidia-smi
-
-        ${{ matrix.SCRIPT }}
+        export PYTHONPATH=/opt/NeMo-Aligner:${PYTHONPATH:-}
+         git config --global --add safe.directory /opt/NeMo-Aligner
+         bash tests/functional/test_cases/${{ matrix.test_case }}.sh
