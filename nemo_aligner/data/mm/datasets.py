@@ -409,7 +409,7 @@ class MultimodalChatDataset(Dataset):
             # Search for <img src="/absolute/path/to/image" in the conversation
             #   add it as record['image'], remove src tag from the <img> tag
             record['images'] = []
-            img_pattern = r'<img\s+src=[\'"]([^\'"]+)[\'"](?:[^>]*)?/?>'
+            img_pattern = r'<data-img\s+src=[\'"]([^\'"]+)[\'"](?:[^>]*)?/?>'
             for turn in record['conversations']:
                 matches = re.finditer(img_pattern, turn['value'])
                 for match in matches:
