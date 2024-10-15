@@ -20,9 +20,6 @@ on:
       - 'r**'
       - 'dev'
     types: [labeled]
-  push:
-    branches:
-      - 'main'
   workflow_dispatch:
     inputs:
       test_to_run:
@@ -30,6 +27,9 @@ on:
         default: all
         type: string
         description: Comma-separated list of tests to run. Use "all" to run the full test suite.
+  push:
+    branches:
+      - 'main'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
