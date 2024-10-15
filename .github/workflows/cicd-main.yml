@@ -18,7 +18,15 @@ on:
     branches:
       - 'main'
       - 'r**'
-    types: [ labeled ]
+      - 'dev'
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      test_to_run:
+        required: false
+        default: all
+        type: string
+        description: Comma-separated list of tests to run. Use "all" to run the full test suite.
   push:
     branches:
       - 'main'
@@ -34,7 +42,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-jobs: 
+jobs:
   pre-flight:
     runs-on: ubuntu-latest
     outputs:
@@ -49,63 +57,49 @@ jobs:
       - name: Parse all
         id: all
         run: |
-          echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT" 
-        
+          echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT"
+  
   build-container:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
     uses: ./.github/workflows/_build_container.yml
-
+  
   Unit_Tests:
-     needs: [build-container, pre-flight]
-     uses: ./.github/workflows/_run_test.yml
-     if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'Unit_Tests') || needs.pre-flight.outputs.all == 'true'
-     with:
-       RUNNER: self-hosted-azure
-       TIMEOUT: 20
-       SCRIPT: |
-          cd /opt/NeMo-Aligner/
-          # PYTHONPATH=$(pwd) pytest tests/
+    needs: [build-container, pre-flight]
+    uses: ./.github/workflows/_run_test.yml
+    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+    with:
+      IS_OPTIONAL: true
+      RUNNER: self-hosted-azure
+      TIMEOUT: 20
+      SCRIPT: |
+        nvidia-smi
+        cd ${ALIGNER_REPO_DIR}
+        torchrun --nproc_per_node 2 -m pytest . -rA -s -x
 
-  PPO:
+  Functional_Tests:
     needs: [build-container]
     uses: ./.github/workflows/_run_test.yml
+    # TODO: re-enable
     #if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'Unit_Tests') || needs.pre-flight.outputs.all == 'true'
-    env:
-      ALIGNER_CI_DIR: /home/TestData/aligner/checkpoints
     strategy:
      matrix:
-       script:
-         - |
-           RM_NEMO_FILE=${ALIGNER_CI_DIR}/llama3--nlayers4-hidden64-ffn224-dummy_rm-megatron_gpt.nemo \
-           ACTOR_NEMO_FILE=${ALIGNER_CI_DIR}/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo \
-           bash /opt/NeMo-Aligner/tests/functional/ppo.sh
-
-           RM_NEMO_FILE=/home/TestData/aligner/checkpoints/llama3--nlayers4-hidden64-ffn224-dummy_rm-megatron_gpt.nemo ACTOR_NEMO_FILE=/home/TestData/aligner/checkpoints/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo bash /opt/NeMo-Aligner/tests/functional/ppo.sh
+       test_case:
+         - ppo-pp-llama3
+         - dpo-llama3
     with:
       RUNNER: self-hosted
-      TIMEOUT: 20
+      TIMEOUT: 10
       SCRIPT: |
          export PYTHONPATH=/opt/NeMo-Aligner:${PYTHONPATH:-}
          git config --global --add safe.directory /opt/NeMo-Aligner
-         ${{ matrix.script }}
-
-  DPO:
-    needs: [build-container]
-    uses: ./.github/workflows/_run_test.yml
-    #if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'Unit_Tests') || needs.pre-flight.outputs.all == 'true'
-    env:
-      ALIGNER_CI_DIR: /home/TestData/aligner/checkpoints
-    strategy:
-     matrix:
-       script:
-         - |
-           PRETRAINED_CHECKPOINT_NEMO_FILE=${ALIGNER_CI_DIR}//tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo \
-           bash /opt/NeMo-Aligner/tests/functional/dpo.sh
+         bash ${{ matrix.test_case }}.sh
 
     with:
-      RUNNER: self-hosted
-      TIMEOUT: 20
+      IS_OPTIONAL: true
+      RUNNER: self-hosted-azure
+      # Fairly aggresive timeout that all functional tests should try to adhere to
+      TIMEOUT: 8
       SCRIPT: |
-         export PYTHONPATH=/opt/NeMo-Aligner:${PYTHONPATH:-}
-         git config --global --add safe.directory /opt/NeMo-Aligner
-         ${{ matrix.script }}
+        nvidia-smi
+
+        ${{ matrix.SCRIPT }}
