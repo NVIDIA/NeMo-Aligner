@@ -108,6 +108,7 @@ def maybe_process_prompt_and_media(
         if not isinstance(record['images'], list):
             record['images'] = [record['images']]
         images = []
+        image_list = []
         for image_file in record["images"]:
             image = image_loader.open_image(image_file)
             if image is None:
@@ -145,6 +146,9 @@ def maybe_process_prompt_and_media(
         
         record["images"] = image_list
     return record
+
+def is_remote_image(img_src):
+    return img_src.startswith("http://") or img_src.startswith("https://")
 
 class MultimodalDPOModelDataset(Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
@@ -208,19 +212,26 @@ class MultimodalDPOModelDataset(Dataset):
             #   add it as record['image'], remove src tag from the <img> tag
             record['images'] = []
             matches = re.finditer(img_pattern, record['prompt'])
+            
             for match in matches:
-                image_name = match.group(1).split("/")[-1]
-                image_path = os.path.join(self.image_folder, image_name)
+                img_src = match.group(1)
+                
+                # Skip remote URLs
+                if is_remote_image(img_src):
+                    logging.info(f"Skiping remote image URL: {img_src}")
+                    continue
+                
+                image_path = os.path.join(self.image_folder, img_src)
                 if self.image_folder.endswith('.tar'):
-                    if image_name not in self.image_loader.tar_index:
-                        logging.warning(f"Image not found in tar: {image_name}")
+                    if img_src not in self.image_loader.tar_index:
+                        logging.warning(f"Image not found in tar: {img_src}")
                         continue
                 else:
-                    image_path = os.path.join(self.image_folder, image_name)
+                    image_path = os.path.join(self.image_folder, img_src)
                     if not os.path.isfile(image_path):
                         logging.warning(f"Image not found: {image_path}")
                         continue
-                record['images'].append(image_name)  # url
+                record['images'].append(img_src)  # url
             record['prompt'] = re.sub(img_pattern, self.image_token, record['prompt'])
             self.data.append(record)
 
