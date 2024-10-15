@@ -77,10 +77,10 @@ jobs:
         torchrun --nproc_per_node 2 -m pytest . -rA -s -x
 
   Functional_Tests:
-    needs: [build-container]
+    name: ${{ matrix.TEST_NAME }}
+    needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
-    # TODO: re-enable
-    #if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'Unit_Tests') || needs.pre-flight.outputs.all == 'true'
+    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
     strategy:
       matrix:
         test_case:
@@ -93,5 +93,5 @@ jobs:
       TIMEOUT: 10
       SCRIPT: |
         export PYTHONPATH=/opt/NeMo-Aligner:${PYTHONPATH:-}
-         git config --global --add safe.directory /opt/NeMo-Aligner
-         bash tests/functional/test_cases/${{ matrix.test_case }}.sh
+        git config --global --add safe.directory /opt/NeMo-Aligner
+        bash tests/functional/test_cases/${{ matrix.test_case }}.sh
