@@ -1,0 +1,20 @@
+Algorithms:
+- nemo_aligner/algorithms/*
+
+Data:
+- nemo_aligner/data/*
+
+Utils:
+- nemo_aligner/utils/*
+
+Models:
+- nemo_aligner/models/*
+
+Servers:
+- nemo_aligner/servers/*
+
+documentation:
+- docs/**
+
+CI:
+- .github/**/*

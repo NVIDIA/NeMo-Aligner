@@ -1,0 +1,124 @@
+defaults:
+  - optional tp_overlap@model.ub_tp_comm_overlap_cfg:
+
+trainer:
+  num_nodes: 1
+  devices: 8
+  accelerator: gpu
+  precision: bf16
+
+  ppo:
+    port: 5556
+
+    # run rm and critic together
+    combine_rm_and_critic_server: True
+
+    # used to set the learning rate scheduler
+    max_steps: 10000
+    gradient_clip_val: 1.0
+
+    # a PyTriton parameter to specify
+    # the max time a request will be delayed in the scheduling queue
+    # to wait for additional requests for batching
+    # for more info see: https://github.com/triton-inference-server/pytriton/blob/9e789db73880ecc667845455bbd2c19601e6279b/pytriton/model_config/common.py#L76
+    max_queue_delay_microseconds: 2000
+
+    # strips the padded sequence length from requests that come in
+    # when requests are sent with token, sequence length format
+    # we will look at the sequence length and see if we can strip
+    # the request to a lower sequence length that is a multiple of
+    # the specified below
+    strip_sequence_length_to_multiple: null
+
+    # this parameter tells PyTriton what our preferred batch sizes are
+    # for request batching. This parameter is distinct from
+    # the model.forward_micro_batch_size to optimize for cases where Pipeline Parallelism
+    # is enabled. Because in that case we will want PyTriton to give us
+    # a very large batch, but then in the model we will cut it into smaller
+    # batches (determined by model.forward_micro_batch_size) to fill the pipe better.
+    # NOTE: this parameter can be a list as well, in that case we will give a list of preferred batch
+    # sizes to PyTriton
+    inference_micro_batch_size: ${model.forward_micro_batch_size}
+
+  # do not change these trainer args
+  logger: False # logger provided by exp_manager
+  enable_checkpointing: False
+  use_distributed_sampler: False
+  max_epochs: null
+  max_steps: ${.ppo.max_steps}
+
+
+pretrained_checkpoint:
+  restore_from_path: null
+
+exp_manager:
+  explicit_log_dir: /results
+  exp_dir: null
+  name: megatron_gpt_critic
+  create_wandb_logger: False
+  wandb_logger_kwargs:
+    project: nemo_aligner_ppo
+    name: gpt3_ppo_2b
+  resume_if_exists: True
+  resume_ignore_no_checkpoint: True
+  create_checkpoint_callback: True
+  checkpoint_callback_params:
+    monitor: step
+    save_top_k: 0 # no need to save the best critic
+    mode: max
+    always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
+    save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
+    filename: 'megatron_gpt-{step}'
+    model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
+
+model:
+  # critic args
+  loss_clip_val: 0.2
+  offload_adam_states: False
+  output_sequence: True # Whether to output a single scalar or a sequence of scalars.
+  reward_standardization:
+    enable: False
+    mean: null
+    std: null 
+
+  # if the inference microbatch size is big, it's possible
+  # to split it using forward mbs and run inference iteratively
+  forward_micro_batch_size: ${.micro_batch_size}
+
+  # RM args
+  use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model
+  force_head_dtype: float32  # enforce specific dtype for the final projection in the model head
+  reward_model_type: binary_ranking # ["binary_ranking, "regression"]
+  regression:
+    num_attributes: 1 # dimension of regression head
+    merge_attributes: True # whether to merge attribute values into a scalar
+    attribute_weights: null # apply these weights to each attributes when merging them into a scalar
+
+  micro_batch_size: 1
+  global_batch_size: 64
+  megatron_amp_O2: True # Enable O2-level automatic mixed precision using master parameters
+
+  # model architecture
+  encoder_seq_length: 4096
+  max_position_embeddings: ${.encoder_seq_length}
+
+  # miscellaneous
+  seed: 1234
+
+  optim:
+    name: distributed_fused_adam
+    bucket_cap_mb: 200
+    overlap_grad_sync: False
+    contiguous_grad_buffer: True
+    lr: 9e-6
+    weight_decay: 0.1 
+    betas: 
+    - 0.9
+    - 0.98
+    sched:
+      name: CosineAnnealing
+      warmup_steps: 10
+      constant_steps: 1000
+      min_lr: 9e-7
+
+  precision: ${trainer.precision}

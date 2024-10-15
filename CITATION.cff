@@ -1,0 +1,39 @@
+cff-version: 1.0.0
+message: "If you use this software, please cite it as below."
+title: "NeMo-Aligner: a toolkit for model alignment"
+repository-code: https://github.com/NVIDIA/NeMo-Aligner
+authors:
+  - family-names: Shen
+    given-names: Gerald
+  - family-names: Delalleau
+    given-names: Olivier
+  - family-names: Jian
+    given-names: Sahil
+  - family-names: Zhang
+    given-names: Jimmy
+  - family-names: Zeng
+    given-names: Jiaqi
+  - family-names: Egert
+    given-names: Daniel
+  - family-names: Wang
+    given-names: Zhilin
+  - family-names: Yan
+    given-names: Zijie
+  - family-names: Dong
+    given-names: Yi
+  - family-names: Markel 
+    given-names: Ausin
+  - family-names: Taghibakhshi
+    given-names: Ali
+  - family-names: Tao
+    given-names: Li
+  - family-names: Hu
+    given-names: Jian
+  - family-names: Yao
+    given-names: Xin
+  - family-names: Liu
+    given-names: Hongbin
+  - family-names: Aithal
+    given-names: Ashwath
+  - family-names: Kuchaiev
+    given-names: Oleksii

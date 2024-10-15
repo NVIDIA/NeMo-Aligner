@@ -1,0 +1,312 @@
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import re
+from contextlib import nullcontext
+from enum import Enum
+
+import torch
+from megatron.core.num_microbatches_calculator import get_num_microbatches, reconfigure_microbatch_calculator
+from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.transformer.module import Float16Module
+from omegaconf.dictconfig import DictConfig
+from pytorch_lightning.trainer.trainer import Trainer
+
+from nemo.collections.nlp.modules.common.megatron.utils import (
+    average_losses_across_data_parallel_group,
+    get_iterator_k_split,
+    get_ltor_masks_and_position_ids,
+)
+from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo.utils import AppState
+from nemo_aligner.models.alignable_interface import CriticModelInterface
+from nemo_aligner.models.nlp.gpt.megatron_gpt_reward_model import MegatronGPTRewardModel
+from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.train_utils import set_sync_funcs
+from nemo_aligner.utils.utils import copy_model_states_to_cpu, masked_mean, offload_distributed_adam
+
+
+def extract_dialogue_llama(text):
+    user_pattern = r"<\|start_header_id\|>user<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+    assistant_pattern = r"<\|start_header_id\|>assistant<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+
+    user_text = re.findall(user_pattern, text, re.DOTALL)
+    assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
+
+    return user_text, assistant_text
+
+
+class HelpsteerTemplate:
+    def get_first_turn_template(self, text):
+        return f"""<extra_id_0>System\nA chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
+<extra_id_1>User\n{text}"""
+
+    def get_assistant_turn_template(self, text):
+        return f"""\n<extra_id_1>Assistant\n{text}"""
+
+    def get_user_turn_template(self, text):
+        return f"""\n<extra_id_1>User\n{text}"""
+
+    def add_ending(self, text):
+        return f"""{text}\n<extra_id_2>"""
+
+
+def chat_template(user_text, assistant_text, template):
+    formatter = HelpsteerTemplate()
+
+    text = ""
+    for i in range(len(user_text)):
+        if i == 0:
+            text += formatter.get_first_turn_template(user_text[i])
+        else:
+            text += formatter.get_user_turn_template(user_text[i])
+        text += formatter.get_assistant_turn_template(assistant_text[i])
+    text = formatter.add_ending(text)
+    return text
+
+
+class StateDictState(Enum):
+    """Enum to determine which model state is loaded
+    """
+
+    CRITIC = 0
+    REWARD = 1
+
+
+class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
+    def __init__(self, cfg: DictConfig, trainer: Trainer):
+        super().__init__(cfg, trainer=trainer)
+
+        # must be populated by the examples script
+        self.rm_state_dict_cpu = None
+
+        self.critic_state_dict_cpu = copy_model_states_to_cpu(
+            self, cpu_dict=None, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
+        )
+
+        # for distributed adam offload
+        self.distributed_adam_offload_manager = None
+
+        self.loaded_state_dict = StateDictState.CRITIC
+        self.to_offload_adam_states = self.cfg.get("offload_adam_states")
+        self.clip_val = self.cfg.get("loss_clip_val")
+
+    def on_load_checkpoint(self, *args, **kwargs):
+        super().on_load_checkpoint(*args, **kwargs)
+        self.critic_state_dict_cpu = copy_model_states_to_cpu(
+            self, cpu_dict=self.critic_state_dict_cpu, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
+        )
+
+    def prepare_for_inference(self):
+        super().prepare_for_inference()
+        self.offload_adam_states()
+
+    def prepare_for_training(self):
+        app_state = AppState()
+        reconfigure_microbatch_calculator(
+            rank=app_state.global_rank,
+            rampup_batch_size=None,
+            global_batch_size=self.cfg.global_batch_size,
+            micro_batch_size=self.cfg.micro_batch_size,
+            data_parallel_size=parallel_state.get_data_parallel_world_size(),
+        )
+        self.onload_adam_states()
+        self._load_critic()
+
+    def get_loss_and_metrics(self, batch, forward_only):
+        sequence_length = batch["tokens"].size(-1)
+        data_iter = get_iterator_k_split(batch, get_num_microbatches())
+
+        set_sync_funcs(self, forward_only)
+
+        fwd_bwd_function = get_forward_backward_func()
+
+        losses_reduced_per_micro_batch = fwd_bwd_function(
+            forward_step_func=self.get_forward_output_and_loss_func(),
+            data_iterator=self._make_data_iterator_list(data_iter),
+            model=self.model,
+            num_microbatches=get_num_microbatches(),
+            forward_only=forward_only,
+            seq_length=sequence_length,
+            micro_batch_size=self.cfg.micro_batch_size,
+        )
+
+        # only the last stages of the pipeline return losses
+        if losses_reduced_per_micro_batch:
+            # average loss across micro batches
+            loss_tensors_list = [loss_reduced["avg"] for loss_reduced in losses_reduced_per_micro_batch]
+            loss_tensor = torch.concat(loss_tensors_list)
+            loss_mean = loss_tensor.mean()
+        else:
+            loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
+
+        # we can only log on one rank if it is rank zero so we broadcast from last rank
+        torch.distributed.broadcast(loss_mean, get_last_rank())
+        metrics = {
+            "loss": loss_mean.item(),
+        }
+
+        return loss_mean.item(), metrics
+
+    def get_forward_output_and_loss_func(self):
+        # validation step is not used
+        def fwd_output_and_loss_func(data_iterator, model):
+            batch = next(data_iterator)
+            tokens = batch["tokens"].cuda()
+            returns = batch["returns"]
+            prev_values = batch["prev_values"]
+            mask = batch["mask"]
+
+            attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+                tokens, self.tokenizer.eos_id, False, True, False,
+            )
+
+            attention_mask = attention_mask[0:1]
+
+            # when using PP, set the unused variables to None just to be safe
+            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+                if parallel_state.is_pipeline_first_stage():
+                    returns, prev_values, mask = None, None, None
+
+                    tokens, position_ids = map(lambda x: x.cuda(non_blocking=True), (tokens, position_ids))
+
+                elif parallel_state.is_pipeline_last_stage():
+                    tokens, position_ids = None, None
+
+                    # loss needs these 3 values
+                    prev_values, mask, returns = map(lambda x: x.cuda(non_blocking=True), (prev_values, mask, returns))
+
+                else:
+                    # intermediates don't need anything
+                    tokens, position_ids, returns, prev_values, mask = [None] * 5
+
+            output = model(
+                input_ids=tokens, lengths=None, position_ids=position_ids, attention_mask=attention_mask, labels=None,
+            )
+
+            if not parallel_state.is_pipeline_last_stage():
+                output = output.to(dtype=self.autocast_dtype)
+
+            def loss_func(curr_values):
+                curr_values = curr_values[:, :-1].contiguous()
+
+                # Standardize values to subtract a bias.
+                if self.enable_standardization:
+                    curr_values = (curr_values - self.rew_mean) / self.rew_std
+
+                # Critic loss. Uses clipped version of the loss.
+                clip_val = self.clip_val
+
+                if clip_val > 0.0:
+                    values_clipped = prev_values + (curr_values - prev_values).clamp(-clip_val, clip_val)
+                    v_loss1 = (values_clipped - returns) ** 2
+                else:
+                    v_loss1 = torch.tensor(0.0).cuda()
+                v_loss2 = (curr_values - returns) ** 2
+
+                # Critic loss
+                loss = 0.5 * masked_mean(torch.max(v_loss1, v_loss2), mask)
+
+                reduced_loss = average_losses_across_data_parallel_group([loss])
+                return loss, {"avg": reduced_loss}
+
+            return output, loss_func
+
+        return fwd_output_and_loss_func
+
+    def offload_adam_states(self):
+        if self.distributed_adam_offload_manager is None:
+
+            self.distributed_adam_offload_manager = (
+                offload_distributed_adam(self._optimizer.state_dict(state_dict_format=1, gather_on_root=False))
+                if self.to_offload_adam_states and self.with_distributed_adam
+                else nullcontext()
+            )
+
+            # offload onto cpu
+            self.distributed_adam_offload_manager.__enter__()
+
+    def onload_adam_states(self):
+        if self.distributed_adam_offload_manager is not None:
+            # load back onto GPU
+            self.distributed_adam_offload_manager.__exit__(None, None, None)
+
+        self.distributed_adam_offload_manager = None
+
+    def infer_rm_critic(self, *args, **kwargs):
+        call_order = (self._infer_rm, self._infer_critic)
+
+        original_state = self.loaded_state_dict
+
+        if original_state == StateDictState.CRITIC:
+            # if we have the critic model already do that first
+            # so we don't need to load again
+            call_order = reversed(call_order)
+
+        outputs = []
+        for fn in call_order:
+            output = fn(*args, **kwargs)
+            outputs.append(output)
+
+        if original_state == StateDictState.CRITIC:
+            # reverse the output back
+            outputs = reversed(outputs)
+
+        return tuple(outputs)
+
+    def set_output_sequence_flag(self, value_to_set):
+        if isinstance(self.model, Float16Module):
+            base_module = self.model.module
+        else:
+            base_module = self.model
+
+        if hasattr(base_module, "rm_head"):
+            base_module.rm_head.output_sequence = value_to_set
+
+    def _load_critic(self):
+        if self.loaded_state_dict == StateDictState.REWARD:
+            self.load_state_dict(self.critic_state_dict_cpu)
+
+            self.set_output_sequence_flag(True)
+            self.loaded_state_dict = StateDictState.CRITIC
+
+    def _load_rm(self):
+        if self.loaded_state_dict == StateDictState.CRITIC:
+            self.load_state_dict(self.rm_state_dict_cpu)
+
+            self.set_output_sequence_flag(False)
+            self.loaded_state_dict = StateDictState.REWARD
+
+    def _infer_critic(self, *args, **kwargs):
+        self._load_critic()
+        return self.infer(*args, **kwargs)
+
+    def _infer_rm(self, *args, **kwargs):
+        self._load_rm()
+        context_tokens_tensor, lengths = kwargs["inputs"]
+
+        texts = []
+
+        for text, length in zip(context_tokens_tensor.tolist(), lengths.tolist()):
+            text = self.tokenizer.ids_to_text(text[:length])
+
+            user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
+            text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
+            texts.append(text)
+
+        return self.infer(texts)
+
+    def finish_training(self):
+        self.critic_state_dict_cpu = copy_model_states_to_cpu(
+            self, cpu_dict=self.critic_state_dict_cpu, megatron_amp_O2=self.cfg.megatron_amp_O2, sync=True
+        )
