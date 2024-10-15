@@ -92,7 +92,7 @@ jobs:
       SCRIPT: |
          export PYTHONPATH=/opt/NeMo-Aligner:${PYTHONPATH:-}
          git config --global --add safe.directory /opt/NeMo-Aligner
-         bash ${{ matrix.test_case }}.sh
+         bash tests/functional/test_cases/${{ matrix.test_case }}.sh
 
     with:
       IS_OPTIONAL: true
