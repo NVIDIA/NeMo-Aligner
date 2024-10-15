@@ -82,10 +82,10 @@ jobs:
     # TODO: re-enable
     #if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'Unit_Tests') || needs.pre-flight.outputs.all == 'true'
     strategy:
-     matrix:
-       test_case:
-         - ppo-pp-llama3
-         - dpo-llama3
+      matrix:
+        test_case:
+          - ppo-pp-llama3
+          - dpo-llama3
     with:
       RUNNER: self-hosted
       TIMEOUT: 10
