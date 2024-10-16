@@ -78,9 +78,4 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_dp
 }
 
 log_file=$(mktemp /tmp/dpo-log-XXXXXX)
-dpo | tee $log_file || true
-
-echo "Waiting for backgrounded processes to finish..."
-wait
-set +x
-echo "[Finished] $0"
+dpo | tee $log_file
