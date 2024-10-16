@@ -37,6 +37,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("not", lambda x: not x, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
@@ -110,6 +111,7 @@ def main(cfg) -> None:
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+            pad_length_to_multiple_of=cfg.model.data.get("pad_length_to_multiple_of", None),
         ),
     )
 
@@ -127,6 +129,7 @@ def main(cfg) -> None:
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+            pad_length_to_multiple_of=cfg.model.data.get("pad_length_to_multiple_of", None),
         ),
         use_random_sampler=False,
     )
