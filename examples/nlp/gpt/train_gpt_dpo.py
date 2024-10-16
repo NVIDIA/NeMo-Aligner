@@ -111,6 +111,7 @@ def main(cfg) -> None:
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+            pad_length_to_multiple_of=cfg.model.data.get("pad_length_to_multiple_of", None),
         ),
     )
 
@@ -128,6 +129,7 @@ def main(cfg) -> None:
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+            pad_length_to_multiple_of=cfg.model.data.get("pad_length_to_multiple_of", None),
         ),
         use_random_sampler=False,
     )
