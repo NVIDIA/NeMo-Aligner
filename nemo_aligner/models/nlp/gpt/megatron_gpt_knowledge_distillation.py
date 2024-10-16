@@ -16,7 +16,7 @@ from typing import List, Optional, Tuple, Union
 
 import hydra
 import torch
-from apex.transformer.pipeline_parallel.utils import get_micro_batch_size, get_num_microbatches
+from megatron.core.num_microbatches_calculator import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.parallel_state import get_tensor_model_parallel_group
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
@@ -121,7 +121,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                                              op=torch.distributed.ReduceOp.MAX,
                                              group=get_tensor_model_parallel_group())
                 output_tensor = output_tensor - output_tensor_max.unsqueeze(dim=-1).detach()
-                kd_loss = self.loss_func(topk_logits, target_topk_logits_in_loss, loss_mask=loss_mask)
 
                 ## bwd kl
                 loss, kd_loss, sft_loss = _TopKLogitsCrossEntropy.apply(
@@ -153,28 +152,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
             return output_tensor, loss_func
 
         return fwd_output_and_loss_func
-
-    def loss_func(self, logits, target_logits, loss_mask):
-        """The cross entropy function between two categorical distributions. 
-        logits: Tensor of [B, seq_len, K].
-        target_logits: Tensor of [B, seq_len, K].
-        loss_mask: Tensor of [B, seq_len].
-        """
-        logprobs = torch.nn.functional.log_softmax(self.logits_scale * logits, dim=-1)
-        target_logprobs = torch.nn.functional.log_softmax(self.target_logits_scale * target_logits, dim=-1)
-        
-        if self.kd_loss == "bwd_kl":
-            loss = torch.sum(target_logprobs.exp() * (target_logprobs - logprobs), dim=-1)
-        elif self.kd_loss == "fwd_kl":
-            loss = torch.sum(logprobs.exp() * (logprobs - target_logprobs), dim=-1)
-        elif self.kd_loss == "jsd":
-            weighted_logprobs = (self.jsd_weight * target_logprobs.exp() + (1 - self.jsd_weight) * logprobs.exp()).log()
-            bwd_kl = torch.sum(target_logprobs.exp() * (target_logprobs - weighted_logprobs), dim=-1)
-            fwd_kl = torch.sum(logprobs.exp() * (logprobs - weighted_logprobs), dim=-1)
-            loss = self.jsd_weight * bwd_kl + (1 - self.jsd_weight) * fwd_kl
-        else:
-            raise ValueError(f"kd_loss {self.kd_loss} is not supported.")
-        return torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
 
     def get_loss_and_metrics(self, batch, forward_only):
         """Take a data_iter which is an interator over the microbatches

@@ -102,13 +102,14 @@ def main(cfg) -> None:
             continue
         
         # prepare the batch
+        ## TODO: fix
         batch = [dataset[j] for j in indices]
         batch = dataset.collate_fn(batch)
         
         # compute the topk logits
         with torch.no_grad():
             topk_logits, topk_token_ids, log_sum_exp_logits = compute_topk_logits_in_batched_sequence(
-                ptl_model.model, batch["tokens"], batch["position_ids"], batch["attention_mask"], 
+                ptl_model.model, batch["tokens"].to(torch.cuda.current_device()), batch["position_ids"].to(torch.cuda.current_device()), batch["attention_mask"].to(torch.cuda.current_device()),
                 cfg.top_k, cfg.trainer.precision, forward_micro_batch_size=cfg.forward_micro_batch_size)
         
         # write the results

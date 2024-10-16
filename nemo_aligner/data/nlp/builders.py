@@ -63,7 +63,7 @@ class ChunkedJsonl:
         # get the maximum number of chunks
         max_n_chunks = 0
         for i in range(n_chunks):
-            max_n_chunks = i
+            max_n_chunks = i+1 ## fix zero-indexing
             if not os.path.exists(self.path_placeholder.replace(self.CHUNK_ID_STRING, str(i))):
                 break
         assert max_n_chunks > 0, f"no files match the required path {path_placeholder}"
