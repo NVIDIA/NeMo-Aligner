@@ -22,6 +22,7 @@ from functools import partial
 
 import numpy as np
 import torch
+import torch.utils.data
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
@@ -97,7 +98,15 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
 
 
 def build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer,
+    cls,
+    cfg,
+    data_prefix,
+    data_impl,
+    splits_string,
+    train_valid_test_num_samples,
+    seq_length,
+    seed,
+    tokenizer,
 ):
     if isinstance(data_prefix, DictConfig):
         assert (
@@ -123,7 +132,7 @@ def build_train_valid_test_datasets(
             cfg=cfg,
             data_prefix=data_prefix["validation"],
             data_impl=data_impl,
-            num_samples=int(train_valid_test_num_samples[0]),
+            num_samples=int(train_valid_test_num_samples[1]),
             seq_length=seq_length,
             seed=seed,
             tokenizer=tokenizer,
@@ -134,7 +143,7 @@ def build_train_valid_test_datasets(
             cfg=cfg,
             data_prefix=data_prefix["test"],
             data_impl=data_impl,
-            num_samples=int(train_valid_test_num_samples[0]),
+            num_samples=int(train_valid_test_num_samples[2]),
             seq_length=seq_length,
             seed=seed,
             tokenizer=tokenizer,
@@ -202,7 +211,15 @@ def build_train_valid_test_datasets(
 
 
 def _build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer,
+    cls,
+    cfg,
+    data_prefix,
+    data_impl,
+    splits_string,
+    train_valid_test_num_samples,
+    seq_length,
+    seed,
+    tokenizer,
 ):
     """Build train, valid, and test datasets."""
 
@@ -318,8 +335,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
 
 
 def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_masks_and_position_ids=True):
-    """collate function that pads each sequence to the max in the batch
-    """
+    """collate function that pads each sequence to the max in the batch"""
     return partial(
         collate_with_batch_max_sequence_length,
         response_token_length=max_seqlen,
