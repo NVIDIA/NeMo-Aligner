@@ -433,18 +433,21 @@ def compute_topk_logits_in_batched_sequence(
 
     return topk_logits, topk_token_ids, log_sum_exp_logits
 
-
+## how to handle conditionals?
+## separate implementations for forward and backward KL?
 class _TopKLogitsCrossEntropy(torch.autograd.Function):
+
     @staticmethod
     def forward(
         ctx,
         vocab_parallel_logits,
         target_logits,
         target_token_ids,
-        target_log_sum_exp_logits,
+        target_log_sum_exp_logits, ## TODO: make use of this!!! we already have it computed!
         labels,
         kd_loss_weight = 1.,
         sft_loss_weight = 0,
+        forward_kl = False,
     ):
 
         # vocab_parallel_logits: logits
@@ -492,35 +495,44 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             predicted_logits_topk, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
         )
 
-        # The objective is
-        # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
-        # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
-        # neg_loss = sum_{k=1}^{K} target_prob_k * log prob_{k} 
-        #          = sum_{k=1}^{K} target_prob_k * logits_k - sum_{k=1}^{K} target_prob_k * log sum_{k=1}^K exp(logits_k)
-        #          = sum_{k=1}^{K} target_prob_k * logits_k - log sum_{k=1}^K exp(logits_k)
-        # neg_loss will be Tensor of shape [B, seq_len]
         target_exp_logits = target_logits.exp()
         target_sum_exp_logits = target_exp_logits.sum(-1, keepdims=True)
         target_probs = target_exp_logits / target_sum_exp_logits
         del target_exp_logits
-        neg_loss = (target_probs * predicted_logits_topk).sum(-1, keepdims=False)
 
         # compute the logsumexp of all K logits
         exp_logits_topk = predicted_logits_topk.exp()
         exp_logits_topk[target_mask] = 0.0
-        sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=False)
+        sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=True)
         torch.distributed.all_reduce(
             sum_exp_logits_topk, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
         )
         log_sum_exp_logits_topk = sum_exp_logits_topk.log()
         
         log_sum_exp = target_sum_exp_logits.log()
-        const = (target_probs * (target_logits - log_sum_exp)).sum(-1)
 
-        kd_loss = - neg_loss + log_sum_exp_logits_topk + const
+        probs = exp_logits_topk / sum_exp_logits_topk
+
+        if forward_kl:
+            # The objective is
+            # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
+            # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
+            # loss = sum_{k=1}^{K} prob_k * (log prob_{k}  - log target_prob_k)
+            kd_loss = (probs * (predicted_logits_topk - log_sum_exp_logits_topk - target_logits + log_sum_exp)).sum(-1)
+
+        else: ## backward_kl
+            # The objective is
+            # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
+            # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
+            # neg_loss = sum_{k=1}^{K} target_prob_k * log prob_{k} 
+            #          = sum_{k=1}^{K} target_prob_k * logits_k - sum_{k=1}^{K} target_prob_k * log sum_{k=1}^K exp(logits_k)
+            #          = sum_{k=1}^{K} target_prob_k * logits_k - log sum_{k=1}^K exp(logits_k)
+            # neg_loss will be Tensor of shape [B, seq_len]
+            neg_loss = (target_probs * predicted_logits_topk).sum(-1, keepdims=False)
+
+            const = (target_probs * (target_logits - log_sum_exp)).sum(-1)
+            kd_loss = - neg_loss + log_sum_exp_logits_topk.squeeze() + const
     
-        # Store softmax, target-softmax, target-mask and masked-target for backward pass.
-        probs = exp_logits_topk / sum_exp_logits_topk.unsqueeze(dim=-1)
         vocab_size = exp_logits_topk.size(-1)
 
         sft_loss = torch.zeros_like(kd_loss)
@@ -560,7 +572,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         ctx.save_for_backward(
             probs, target_probs,
-            target_mask, target_token_ids_1d, torch.LongTensor([partition_vocab_size]),
+            target_mask, target_token_ids_1d, torch.LongTensor([partition_vocab_size]), torch.Tensor([forward_kl]),
             torch.Tensor([kd_loss_weight, sft_loss_weight]), exp_logits, label_mask, masked_labels_1d, ## <-- variables for SFT loss
         )
 
@@ -571,7 +583,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         # Retreive tensors from the forward path.
         (probs, target_probs, target_mask, target_token_ids_1d, partition_vocab_size,
-         loss_weights, full_softmax, label_mask, masked_labels_1d) = ctx.saved_tensors
+         forward_kl, loss_weights, full_softmax, label_mask, masked_labels_1d) = ctx.saved_tensors
 
         K = probs.size()[-1]
 
@@ -584,20 +596,32 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         ## slot in the non-zero gradients
         inv_target_mask = ~target_mask
+        original_probs_shape = probs.shape
         probs = probs[inv_target_mask]
+
         target_probs = target_probs[inv_target_mask]
         arange_1d = arange_1d[inv_target_mask.view(-1)]
         target_token_ids_1d = target_token_ids_1d[inv_target_mask.view(-1)]
-        grad_2d[arange_1d, target_token_ids_1d] = probs.view(-1)
 
-        softmax_update = torch.zeros_like(grad_2d)
-
-        softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1)
-
-        grad_2d -= softmax_update
-
+        forward_kl = forward_kl.item()
         kd_loss_weight = loss_weights[0]
         sft_loss_weight = loss_weights[1]
+
+        if forward_kl:
+            probs_3d = probs.view(original_probs_shape)
+            target_probs_3d = target_probs.view(original_probs_shape)
+            log_prob_ratio = probs_3d.log() -  target_probs_3d.log()
+            const = ((probs_3d) * log_prob_ratio).sum(-1, keepdims=True)
+            nonzero_grad = probs_3d * (log_prob_ratio - const)
+
+            grad_2d[arange_1d, target_token_ids_1d] = nonzero_grad.view(-1)
+
+        else: ## backward KL
+            grad_2d[arange_1d, target_token_ids_1d] = probs.view(-1)
+            softmax_update = torch.zeros_like(grad_2d)
+            softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1)
+            grad_2d -= softmax_update
+        
         grad_2d *= kd_loss_weight
 
         if sft_loss_weight > 0:

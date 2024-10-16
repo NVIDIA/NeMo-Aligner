@@ -9,7 +9,7 @@ resulting in a small model with comparable capabilities to the large model. Ther
 In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model. We train the 2B student to match the logits of the 8N teacher. Compared to standard SFT which trains the model to predict the next token,
 this approach allows more calibrated information passing from the teacher to the student.
 
-Step 1: Obtain the fine0tuned teacher and pre-trained student models
+Step 1: Obtain the fine-tuned teacher and pre-trained student models
 ####################################################################
 To start, we must first download the fine-tuned teacher and pre-trained student models 
 
@@ -234,7 +234,7 @@ Once the data has been prepared, you are ready to fine-tune the student model:
                exp_manager.resume_if_exists=True \
                exp_manager.resume_ignore_no_checkpoint=True \
                exp_manager.checkpoint_callback_params.monitor=val_loss \
-               exp_manager.checkpoint_callback_params.save_nemo_on_train_end=False
+               exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True
 
 
     .. tab-item:: Slurm
@@ -316,7 +316,7 @@ Once the data has been prepared, you are ready to fine-tune the student model:
                   exp_manager.resume_if_exists=True \
                   exp_manager.resume_ignore_no_checkpoint=True \
                   exp_manager.checkpoint_callback_params.monitor=val_loss \
-                  exp_manager.checkpoint_callback_params.save_nemo_on_train_end=False
+                  exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True
             EOF
 
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
