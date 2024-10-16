@@ -57,6 +57,7 @@ model:
   micro_batch_size: 1
   global_batch_size: 64
   megatron_amp_O2: True
+  variable_seq_lengths: ${not:model.data.pad_length_to_multiple_of}
 
   dpo:
     # This default value ensures there are no numeric differences beween trained and reference policies when computing log probs.
@@ -114,6 +115,7 @@ model:
     data_impl: jsonl
     splits_string: null
     seq_length: ${model.encoder_seq_length}
+    pad_length_to_multiple_of: null  # Use if sequence_parallel is enabled to ensure seq_length is divisible by the ...
     skip_warmup: True
     num_workers: 0
     reset_position_ids: False # Reset position ids after end-of-document token
