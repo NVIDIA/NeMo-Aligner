@@ -184,11 +184,10 @@ You can also generate the teacher logits for the validation dataset by replacing
 with
 .. code-block:: bash
 
-   data.data.file_path=data/oasst/train.jsonl \
+   data.data.file_path=data/oasst/val.jsonl \
    end_at_idx=2937 \
-   output_path=data/oasst/train_with_logits_0.jsonl
-
-## TODO: check below!     
+   output_path=data/oasst/val_with_logits_0.jsonl
+ 
 Note that storing the teacher's logits cam be quite memory intensive. To avoid going out of memory when loading the data,
 the data is loaded into memory in chunks. The example above uses a single chunk. To use multiple chunks, run the code multiple times, changing the ``start_from_idx`` and ``end_at_idx`` indices to
 exhaust the entire dataset:
@@ -339,10 +338,8 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
-The final validation loss for this example should be around ## TODO: add validation loss ##.
-
-If running with multiple chunks, modify ``data.n_chunks`` and ``data.n_examples_per_chunk`` accordingly. ### TODO: add details
-## TODO: add details on CHUNK_ID string
+If running with multiple chunks, modify ``data.n_chunks`` and ``data.n_examples_per_chunk`` accordingly. The data prefixes (for example, ``data/oasst/train_with_logits_CHUNK_ID.jsonl``) should remain unchanged.
+``CHUNK_ID`` gets replaced with the current chunk index at data load time.
 
 ### TODO: add details on how to evaluate model following training
 
