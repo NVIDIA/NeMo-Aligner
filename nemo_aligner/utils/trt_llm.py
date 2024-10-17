@@ -8,13 +8,12 @@ from nemo.export.trt_llm import tensorrt_llm_run
 from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, broadcast_tensor_within_pp
 from nemo_aligner.utils.utils import log_memory
 
 try:
-    from tensorrt_llm.bindings import GptSession
+    import tensorrt_llm
 
-    GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
     HAVE_TRTLLM = True
 except (ImportError, ModuleNotFoundError) as e:
     logging.info(f"got error message {e} when importing trt-llm dependencies, disabling")
@@ -116,8 +115,11 @@ class GPTGenerateTRTLLM:
                 offsets = append_and_repad_list(offsets, max(offsets) + 1, pad_id=-1)
 
         assert max(offsets) == len(ids), "offset and stop token length are mismatched"
-        stop_list = torch.as_tensor([ids, offsets], dtype=torch.int32, device=torch.cuda.current_device()).repeat(
-            self.generation_batch_size, 1, 1
+        # TRT-LLM expects stop_list to be a numpy array
+        stop_list = (
+            torch.as_tensor([ids, offsets], dtype=torch.int32, device="cpu")
+            .repeat(self.generation_batch_size, 1, 1)
+            .numpy()
         )
 
         self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
@@ -179,9 +181,15 @@ class GPTGenerateTRTLLM:
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
         )
 
+        # TRTLLM returns the output_ids and sequence_lengths only on the first PP rank, and None otherwise, so we need to broadcast
+        output_ids = broadcast_tensor_within_pp(output_dict["output_ids"] if output_dict else None, from_last=False)
+        response_lengths = broadcast_tensor_within_pp(
+            output_dict["sequence_lengths"] if output_dict else None, from_last=False
+        )
+
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
-        output_ids = torch.squeeze(output_dict["output_ids"], dim=1).long()
-        response_lengths = torch.squeeze(output_dict["sequence_lengths"], dim=1).long()
+        output_ids = torch.squeeze(output_ids, dim=1).long()
+        response_lengths = torch.squeeze(response_lengths, dim=1).long()
         max_length = response_lengths.max().item()
 
         # TRTLLM with PP erroneously inserts padding:
@@ -242,7 +250,7 @@ class GPTGenerateTRTLLM:
 
         return output
 
-    def free(self, force_unload=False):
-        if force_unload or self.unload_engine_train:
-            tensorrt_llm_run.tensorrt_llm_worker_context.decoder = None
-            tensorrt_llm_run.tensorrt_llm_worker_context = tensorrt_llm_run.TensorrtLLMWorkerContext()
+    def free(self):
+        if not self.unload_engine_train:
+            return
+        self.trt_llm_exporter.unload_engine()

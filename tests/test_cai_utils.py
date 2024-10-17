@@ -15,9 +15,7 @@
 import os
 import sys
 
-sys.path.append(os.path.abspath("../examples/nlp/cai"))
-
-from cai_utils import ChatTemplateHelper, PromptTemplate, UserAssistantPromptTemplate
+from examples.nlp.cai.cai_utils import ChatTemplateHelper, PromptTemplate, UserAssistantPromptTemplate
 
 
 def test_extra_id_format_single_user_prompt():
