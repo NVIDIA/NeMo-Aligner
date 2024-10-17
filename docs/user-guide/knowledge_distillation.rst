@@ -6,7 +6,7 @@ SFT with Knowledge Distillation
 Knowledge distillation is a technique in which a smaller (student) model learns from a larger (teacher) model. The goal is to "distill" information from the teacher to the student,
 resulting in a small model with comparable capabilities to the large model. There are many variants of knowledge distillation, see `<here> TODO: ADD LINK`__ for an overview.
 
-In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model. We train the 2B student to match the logits of the 8N teacher. Compared to standard SFT which trains the model to predict the next token,
+In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model. We train the 2B student to match the logits of the 8B teacher. Compared to standard SFT which trains the model to predict the next token,
 this approach allows more calibrated information passing from the teacher to the student.
 
 Step 1: Obtain the fine-tuned teacher and pre-trained student models
@@ -69,7 +69,14 @@ In this example, you use the `OpenAssistant dataset <https://huggingface.co/data
 Step 3: Cache the teacher's logits
 ##################################
 
-Next, we augment the dataset with the logits from the teacher. This step takes around 50 minutes on 8 H100 80G GPUs.
+Next, we augment the dataset with the logits from the teacher. For the purposes of this tutorial, we save the teacher's top four logits by setting
+
+.. code-block:: bash
+   top_k=4
+
+In practice, ``k`` is usually set to something larger, such as 100.
+
+. This step takes around 50 minutes on 8 H100 80G GPUs.
 
 .. tab-set::
 
