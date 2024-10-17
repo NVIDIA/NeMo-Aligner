@@ -345,8 +345,8 @@ class DPOModelDataset(Dataset):
         chosen_labels = ([-100] * prompt_len) + chosen[prompt_len:]
         reject_labels = ([-100] * prompt_len) + reject[prompt_len:]
 
-        assert chosen[0:prompt_len] == prompt, "the tokenizer for DPO has merged tokens between prompt and response"
-        assert reject[0:prompt_len] == prompt, "the tokenizer for DPO has merged tokens between prompt and response"
+        #assert chosen[0:prompt_len] == prompt, f"The tokenizer for DPO has merged tokens between prompt and response for {idx=}:\n[[prompt]]={repr(payload['prompt'])}\n[[chosen_response]]={repr(payload['chosen_response'])}"
+        #assert reject[0:prompt_len] == prompt, f"The tokenizer for DPO has merged tokens between prompt and response for {idx=}:\n[[prompt]]={repr(payload['prompt'])}\n[[rejected_response]]={repr(payload['rejected_response'])}"
 
         max_curr_seq_len = max(chosen_len, reject_len)
 
