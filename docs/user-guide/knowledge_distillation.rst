@@ -11,7 +11,7 @@ this approach allows more calibrated information passing from the teacher to the
 
 Step 1: Obtain the fine-tuned teacher and pre-trained student models
 ####################################################################
-To start, we must first download the fine-tuned teacher and pre-trained student models 
+To start, we must first download both the pre-trained student and fine-tuned teacher models
 
 .. tab-set::
 
@@ -20,6 +20,17 @@ To start, we must first download the fine-tuned teacher and pre-trained student 
 
         #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
         #. Extract the NeMo File to a folder with ``mkdir student_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C student_checkpoint``
+        #. Update the ``data_prefix`` field to support dictionary format. This change allows us to use different datasets for train, validation and test, rather than generating the splits from a single user-provided dataset.
+           The "placeholder" lines will be overwritten from the run command later in the tutorial.
+            .. code-block:: bash
+
+               cd student_checkpoint
+               sed -i '/the_pile/d;/0.033/d' model_config.yaml ## remove the old prefixes
+               prefixes="\    train:\n      PLACEHOLDER\n    validation:\n      PLACEHOLDER\n    test:\n      PLACEHOLDER\n"
+               sed -i "/data_prefix/a $prefixes" model_config.yaml ## replace the old prefixes with the format we will use in this tutorial
+               cd ..
+
+
         #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/66646b83737d9a0facb1d8d714e0424fc86ec21a/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             .. code-block:: bash 
 
@@ -34,7 +45,7 @@ To start, we must first download the fine-tuned teacher and pre-trained student 
             .. code-block:: bash
                huggingface-cli download nvidia/nemotron-3-8b-chat-4k-sft --local-dir teacher_checkpoint
 
-After these steps you should have a files ``2b_student.nemo`` and ``teacher_checkpoint/Nemotron-3-8B-Chat-4k-SFT.nemo`` to use in NeMo-Aligner.
+After these steps you should have files ``2b_student.nemo`` and ``teacher_checkpoint/Nemotron-3-8B-Chat-4k-SFT.nemo`` to use in NeMo-Aligner.
 
 .. note::
    Mcore models use TransformerEngine as a backend, and it tries to find efficient kernels. But depending on the GPU you have it may not find them. If you ever face errors that relate to kernel finding set these variables on top of your script.
@@ -58,7 +69,7 @@ In this example, you use the `OpenAssistant dataset <https://huggingface.co/data
 Step 3: Cache the teacher's logits
 ##################################
 
-Next, we augment the dataset with the logits from the teacher. ## TODO: note that this might take ~1hr
+Next, we augment the dataset with the logits from the teacher. This step takes around 50 minutes on 8 H100 80G GPUs.
 
 .. tab-set::
 
@@ -75,7 +86,7 @@ Next, we augment the dataset with the logits from the teacher. ## TODO: note tha
                trainer.precision=bf16 \
                pretrained_checkpoint.restore_from_path=teacher_checkpoint/Nemotron-3-8B-Chat-4k-SFT.nemo \
                model.megatron_amp_O2=True \
-               model.tensor_model_parallel_size=8 \ ## TODO: test
+               model.tensor_model_parallel_size=1 \
                data.chat=True \
                data.sample=True \
                data.num_workers=0 \
@@ -84,11 +95,12 @@ Next, we augment the dataset with the logits from the teacher. ## TODO: note tha
                data.data.add_eos=False \
                data.data.hf_dataset=True \
                top_k=4 \
-               batch_size=8 \ ## TODO: tune!
-               forward_micro_batch_size=1 \
+               model.global_batch_size=16 \
+               batch_size=16 \
+               forward_micro_batch_size=2 \
                start_from_idx=0 \
-               end_at_idx=56399 \
-               output_path=data/oasst/train_with_logits.jsonl
+               end_at_idx=56439 \
+               output_path=data/oasst/train_with_logits_0.jsonl
 
 
     .. tab-item:: Slurm
@@ -104,7 +116,7 @@ Next, we augment the dataset with the logits from the teacher. ## TODO: note tha
             #SBATCH -A <<YOUR ACCOUNT>>
             #SBATCH -p <<<YOUR PARTITION>>>
             #SBATCH -N 1
-            #SBATCH -t 4:00:00
+            #SBATCH -t 2:00:00
             #SBATCH -J <<<JOB NAME>>>
             #SBATCH --ntasks-per-node=8
             #SBATCH --gpus-per-node=8
@@ -130,20 +142,18 @@ Next, we augment the dataset with the logits from the teacher. ## TODO: note tha
             read -r -d '' cmd <<EOF
             echo "*******STARTING********" \
             && echo "---------------" \
-            && echo "Starting training" \
+            && echo "Starting..." \
             && cd ${GPFS} \
             && export PYTHONPATH="${GPFS}:${PYTHONPATH}" \
             && export HYDRA_FULL_ERROR=1 \
             && python examples/nlp/synthetic_data_gen/compute_topk_logits.py \
                   trainer.num_nodes=\${SLURM_JOB_NUM_NODES} \
                   trainer.devices=\${SLURM_NTASKS_PER_NODE} \
-                  trainer.precision=bf16 \
-                  trainer.num_nodes=1 \
                   trainer.devices=8 \
                   trainer.precision=bf16 \
                   pretrained_checkpoint.restore_from_path=teacher_checkpoint/Nemotron-3-8B-Chat-4k-SFT.nemo \
                   model.megatron_amp_O2=True \
-                  model.tensor_model_parallel_size=8 \ ## TODO: test
+                  model.tensor_model_parallel_size=1 \
                   data.chat=True \
                   data.sample=True \
                   data.num_workers=0 \
@@ -152,22 +162,35 @@ Next, we augment the dataset with the logits from the teacher. ## TODO: note tha
                   data.data.add_eos=False \
                   data.data.hf_dataset=True \
                   top_k=4 \
-                  batch_size=8 \ ## TODO: tune!
-                  forward_micro_batch_size=1 \
+                  model.global_batch_size=16 \
+                  batch_size=16 \
+                  forward_micro_batch_size=2 \
                   start_from_idx=0 \
-                  end_at_idx=56399 \
+                  end_at_idx=56439 \
                   output_path=data/oasst/train_with_logits_0.jsonl
             EOF
 
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
-## TODO: run the same code for validation and test datasets
-## note how long it code should take to run
+
+You can also generate the teacher logits for the validation dataset by replacing these lines
+.. code-block:: bash
+
+   data.data.file_path=data/oasst/train.jsonl \
+   end_at_idx=56399 \
+   output_path=data/oasst/train_with_logits_0.jsonl
+
+with
+.. code-block:: bash
+
+   data.data.file_path=data/oasst/train.jsonl \
+   end_at_idx=2937 \
+   output_path=data/oasst/train_with_logits_0.jsonl
 
 ## TODO: check below!     
-Note that storing the teacher's logits cam be quite memory intensive. To avoid going out of memory when loading the data, a chunked approach is used in which
-data is loaded into memory in chunks. The example above uses a single chunk. To use multiple chunks, run the code multiple times, changing the ``start_from_idx`` and ``end_at_idx`` indices to
+Note that storing the teacher's logits cam be quite memory intensive. To avoid going out of memory when loading the data,
+the data is loaded into memory in chunks. The example above uses a single chunk. To use multiple chunks, run the code multiple times, changing the ``start_from_idx`` and ``end_at_idx`` indices to
 exhaust the entire dataset:
 
 .. code-block:: bash
@@ -181,13 +204,7 @@ Each time the code is run, a single chunk will be produced. Note that the output
 Step 4: Fine-tune the student
 #############################
 
-## TODO: update this with the script that worked on eos
-## right now, hitting errors when trying to build the KD dataset
-## I don't think aligner is compatible with a single dataset
-## but I need to use a single dataset if using the 2b model because we can only overwrite list types with 
-## other list types .. can't replace the prefix path with a dict
-## try with just removing num_samples ??
-Once the data has been prepared, you are ready to fine-tune the student model:
+Once the data has been prepared, you are ready to fine-tune the student model.  This step takes around 50 minutes on 8 H100 80G GPUs.
 
 .. tab-set::
 
@@ -206,7 +223,7 @@ Once the data has been prepared, you are ready to fine-tune the student model:
                trainer.knowledge_distillation.max_steps=100 \
                trainer.knowledge_distillation.val_check_interval=1000 \
                trainer.knowledge_distillation.save_interval=1000 \
-               pretrained_checkpoint.restore_from_path=test_untar \
+               pretrained_checkpoint.restore_from_path=2b_student.nemo \
                model.megatron_amp_O2=True \
                ++model.tensor_model_parallel_size=1 \
                ++model.pipeline_model_parallel_size=1 \
@@ -221,7 +238,7 @@ Once the data has been prepared, you are ready to fine-tune the student model:
                model.knowledge_distillation.sft_loss_weight=0.4 \
                model.knowledge_distillation.kd_loss_weight=1 \
                model.knowledge_distillation.kd_loss=bwd_kl \
-               "model.data.data_prefix={train: [data/oasst/train_with_logits_CHUNK_ID.jsonl], validation: [data/oasst/train_with_logits_CHUNK_ID.jsonl], test: [data/oasst/train_with_logits_CHUNK_ID.jsonl]}" \
+               "model.data.data_prefix={train: [data/oasst/train_with_logits_CHUNK_ID.jsonl], validation: [data/oasst/val_with_logits_CHUNK_ID.jsonl], test: [data/oasst/val_with_logits_CHUNK_ID.jsonl]}" \
                ++model.data.data_impl=chunked_jsonl \
                ++model.data.n_chunks=1 \
                ++model.data.n_examples_per_chunk=56440 \
@@ -288,7 +305,7 @@ Once the data has been prepared, you are ready to fine-tune the student model:
                   trainer.knowledge_distillation.max_steps=100 \
                   trainer.knowledge_distillation.val_check_interval=1000 \
                   trainer.knowledge_distillation.save_interval=1000 \
-                  pretrained_checkpoint.restore_from_path=test_untar \
+                  pretrained_checkpoint.restore_from_path=2b_student.nemo \
                   model.megatron_amp_O2=True \
                   ++model.tensor_model_parallel_size=1 \
                   ++model.pipeline_model_parallel_size=1 \
@@ -303,7 +320,7 @@ Once the data has been prepared, you are ready to fine-tune the student model:
                   model.knowledge_distillation.sft_loss_weight=0.4 \
                   model.knowledge_distillation.kd_loss_weight=1 \
                   model.knowledge_distillation.kd_loss=bwd_kl \
-                  "model.data.data_prefix={train: [data/oasst/train_with_logits_CHUNK_ID.jsonl], validation: [data/oasst/train_with_logits_CHUNK_ID.jsonl], test: [data/oasst/train_with_logits_CHUNK_ID.jsonl]}" \
+                  "model.data.data_prefix={train: [data/oasst/train_with_logits_CHUNK_ID.jsonl], validation: [data/oasst/val_with_logits_CHUNK_ID.jsonl], test: [data/oasst/val_with_logits_CHUNK_ID.jsonl]}" \
                   ++model.data.data_impl=chunked_jsonl \
                   ++model.data.n_chunks=1 \
                   ++model.data.n_examples_per_chunk=56440 \
@@ -328,5 +345,8 @@ If running with multiple chunks, modify ``data.n_chunks`` and ``data.n_examples_
 ## TODO: add details on CHUNK_ID string
 
 ### TODO: add details on how to evaluate model following training
-### also add results with 15B model
 
+
+Results
+#######
+### also add results with real model

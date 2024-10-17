@@ -443,7 +443,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         vocab_parallel_logits,
         target_logits,
         target_token_ids,
-        target_log_sum_exp_logits, ## TODO: make use of this!!! we already have it computed!
         labels,
         kd_loss_weight = 1.,
         sft_loss_weight = 0,
@@ -483,7 +482,9 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         logits_2d = vocab_parallel_logits.view(-1, partition_vocab_size)
         masked_target_1d = masked_target_token_ids.view(-1)
         K = target_logits.size()[-1]
-        ## we want to select K tokens per example
+
+        ## Get the logits for the top-K teacher tokens
+        ## uase repeat_interleave as we want to select K tokens per example
         arange_1d_topk = torch.arange(start=0, end=logits_2d.size()[0], device=logits_2d.device).repeat_interleave(K)
         target_token_ids_1d = masked_target_token_ids.view(-1) ## B * seq_length * K
         predicted_logits_1d_topk = logits_2d[arange_1d_topk, target_token_ids_1d]
@@ -495,12 +496,14 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             predicted_logits_topk, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
         )
 
+        ## get target probabilities for top-K classes
         target_exp_logits = target_logits.exp()
         target_sum_exp_logits = target_exp_logits.sum(-1, keepdims=True)
         target_probs = target_exp_logits / target_sum_exp_logits
         del target_exp_logits
+        log_sum_exp = target_sum_exp_logits.log()
 
-        # compute the logsumexp of all K logits
+        # compute the logsumexp of all K predicted logits
         exp_logits_topk = predicted_logits_topk.exp()
         exp_logits_topk[target_mask] = 0.0
         sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=True)
@@ -508,9 +511,8 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             sum_exp_logits_topk, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
         )
         log_sum_exp_logits_topk = sum_exp_logits_topk.log()
-        
-        log_sum_exp = target_sum_exp_logits.log()
 
+        ## compute the predicted probabilitites
         probs = exp_logits_topk / sum_exp_logits_topk
 
         if forward_kl:
@@ -524,9 +526,9 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             # The objective is
             # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
             # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
-            # neg_loss = sum_{k=1}^{K} target_prob_k * log prob_{k} 
-            #          = sum_{k=1}^{K} target_prob_k * logits_k - sum_{k=1}^{K} target_prob_k * log sum_{k=1}^K exp(logits_k)
-            #          = sum_{k=1}^{K} target_prob_k * logits_k - log sum_{k=1}^K exp(logits_k)
+            # neg_loss = sum_{k=1}^{K} target_prob_k * log prob_{k} - sum_{k=1}^{K} target_prob_k * log target_prob_k
+            #          = sum_{k=1}^{K} target_prob_k * (logits_k - log sum_{k=1}^K exp(logits_k)) - const
+            #          = (sum_{k=1}^{K} target_prob_k * logits_k) - log sum_{k=1}^K exp(logits_k) - const
             # neg_loss will be Tensor of shape [B, seq_len]
             neg_loss = (target_probs * predicted_logits_topk).sum(-1, keepdims=False)
 
@@ -565,8 +567,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
             # Store softmax, target-mask and masked-target for backward pass.
             exp_logits.div_(sum_exp_logits.unsqueeze(dim=-1))
-
-            vocab_size = exp_logits.size(-1)
 
         loss = kd_loss_weight * kd_loss + sft_loss_weight * sft_loss
 

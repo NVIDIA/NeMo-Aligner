@@ -254,7 +254,6 @@ class TestDistributedFunctions:
             vocab_parallel_logits,
             target_logits,
             target_token_ids,
-            None,
             labels,
             kd_loss_weight,
             sft_loss_weight,

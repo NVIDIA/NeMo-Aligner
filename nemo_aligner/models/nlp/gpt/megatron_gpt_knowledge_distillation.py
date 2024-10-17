@@ -90,7 +90,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
             loss_mask = batch["loss_mask"].clamp(min=0, max=1)
             target_topk_logits = batch["topk_logits"]
             target_topk_token_ids = batch["topk_token_ids"]
-            target_log_sum_exp_logits = batch["log_sum_exp_logits"]
             # Model forward pass
             forward_args = {
                 "input_ids": tokens,
@@ -127,7 +126,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     output_tensor,
                     target_topk_logits,
                     target_topk_token_ids,
-                    target_log_sum_exp_logits,
                     labels,
                     self.kd_loss_weight,
                     self.sft_loss_weight
