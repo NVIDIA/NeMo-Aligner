@@ -16,22 +16,22 @@ from typing import List, Optional, Tuple, Union
 
 import hydra
 import torch
-from megatron.core.num_microbatches_calculator import get_micro_batch_size, get_num_microbatches
 from megatron.core import parallel_state, tensor_parallel
+from megatron.core.num_microbatches_calculator import get_micro_batch_size, get_num_microbatches
 from megatron.core.parallel_state import get_tensor_model_parallel_group
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
-from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
-from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
-from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
 )
+from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
+from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo_aligner.models.alignable_interface import SupervisedInterface
+from nemo_aligner.utils.distributed import _TopKLogitsCrossEntropy
 from nemo_aligner.utils.train_utils import (
     finish_validation_step,
     grad_reductions,
@@ -39,18 +39,15 @@ from nemo_aligner.utils.train_utils import (
     prepare_for_validation_step,
     set_sync_funcs,
 )
-from nemo_aligner.utils.distributed import _TopKLogitsCrossEntropy
 
 
 class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
-
-
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
 
         self.target_logits_scale = self.cfg.knowledge_distillation.get("target_logits_scale", 1.0)
         self.logits_scale = self.cfg.knowledge_distillation.get("logits_scale", 1.0)
-        
+
         self.kd_loss = self.cfg.knowledge_distillation.get("kd_loss", "bwd_kl")
         self.jsd_weight = self.cfg.knowledge_distillation.get("jsd_weight", 0.5)
         self.kd_loss_weight = self.cfg.knowledge_distillation.get("kd_loss_weight", 1)
@@ -59,7 +56,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
             self.kd_loss_weight != 0 or self.sft_loss_weight != 0
         ), "sft loss weight and knowledge distillation loss weight cannot both be 0"
 
-        
     def get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
             batch = next(dataloader_iter)
@@ -116,9 +112,9 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
 
             def loss_func(output_tensor):
                 output_tensor_max = torch.max(output_tensor, dim=-1)[0]
-                torch.distributed.all_reduce(output_tensor_max,
-                                             op=torch.distributed.ReduceOp.MAX,
-                                             group=get_tensor_model_parallel_group())
+                torch.distributed.all_reduce(
+                    output_tensor_max, op=torch.distributed.ReduceOp.MAX, group=get_tensor_model_parallel_group()
+                )
                 output_tensor = output_tensor - output_tensor_max.unsqueeze(dim=-1).detach()
 
                 ## bwd kl
@@ -128,23 +124,21 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     target_topk_token_ids,
                     labels,
                     self.kd_loss_weight,
-                    self.sft_loss_weight
+                    self.sft_loss_weight,
                 )
 
                 ## reduce losses
-                loss = torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
-                kd_loss = torch.sum(kd_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
-                sft_loss = torch.sum(sft_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.)
+                loss = torch.sum(loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.0)
+                kd_loss = torch.sum(kd_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.0)
+                sft_loss = torch.sum(sft_loss * loss_mask) / torch.sum(loss_mask).clamp(min=1.0)
 
-                reduced_loss, reduced_kd_loss, reduced_sft_loss = average_losses_across_data_parallel_group([loss, kd_loss, sft_loss])
-                
+                reduced_loss, reduced_kd_loss, reduced_sft_loss = average_losses_across_data_parallel_group(
+                    [loss, kd_loss, sft_loss]
+                )
+
                 return (
                     loss,
-                    {
-                        "avg": reduced_loss,
-                        "avg_sft_loss": reduced_sft_loss,
-                        "avg_kd_loss": reduced_kd_loss,
-                    },
+                    {"avg": reduced_loss, "avg_sft_loss": reduced_sft_loss, "avg_kd_loss": reduced_kd_loss,},
                 )
 
             return output_tensor, loss_func
@@ -181,16 +175,13 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         if parallel_state.is_pipeline_last_stage():
             # average loss across micro batches
             loss_mean = torch.as_tensor(
-                [loss_reduced["avg"] for loss_reduced in losses_reduced],
-                device=torch.cuda.current_device(),
+                [loss_reduced["avg"] for loss_reduced in losses_reduced], device=torch.cuda.current_device(),
             ).mean()
             sft_loss_mean = torch.as_tensor(
-                [loss_reduced["avg_sft_loss"] for loss_reduced in losses_reduced],
-                device=torch.cuda.current_device(),
+                [loss_reduced["avg_sft_loss"] for loss_reduced in losses_reduced], device=torch.cuda.current_device(),
             ).mean()
             kd_loss_mean = torch.as_tensor(
-                [loss_reduced["avg_kd_loss"] for loss_reduced in losses_reduced],
-                device=torch.cuda.current_device(),
+                [loss_reduced["avg_kd_loss"] for loss_reduced in losses_reduced], device=torch.cuda.current_device(),
             ).mean()
         else:
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())

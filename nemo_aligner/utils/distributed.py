@@ -26,11 +26,9 @@ import torch
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-    
+
+from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.parts import utils_funcs
-from nemo.collections.nlp.modules.common.megatron.utils import (
-    get_iterator_k_split,
-)
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.utils.parallel_state import get_model_parallel_group, get_model_parallel_src_rank
 from nemo_aligner.utils.ppo_utils import calculate_entropy
@@ -334,8 +332,14 @@ def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distri
 
 @torch.no_grad()
 def compute_topk_logits_in_batched_sequence(
-    model: MCoreGPTModel, tokens: torch.Tensor, position_ids: torch.Tensor, 
-    attention_mask: torch.Tensor, top_k: int, precision: str, forward_micro_batch_size: int = 1):
+    model: MCoreGPTModel,
+    tokens: torch.Tensor,
+    position_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    top_k: int,
+    precision: str,
+    forward_micro_batch_size: int = 1,
+):
     """
     Compute the topk predictive logits of the model at each token in a batch of sequences.
     
@@ -350,7 +354,7 @@ def compute_topk_logits_in_batched_sequence(
 
     def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
         batch = next(dataloader_iter)
-        
+
         tokens = batch["tokens"]
         # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
         # these two lines ensure your position_ids and attn_mask are always B=1
@@ -366,29 +370,36 @@ def compute_topk_logits_in_batched_sequence(
             output_tensor = output_tensor.to(dtype=utils_funcs.torch_dtype_from_precision(precision))
 
         def fake_loss_func(output_tensor, non_loss_data=True):
-            # gather the output_tensor across tensor parallel ranks. 
+            # gather the output_tensor across tensor parallel ranks.
             # The resulting tensor is [batch_size, sequence_length, n_vocab_size]
             output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
 
             # subtract the logits with its maximum, to ensure stability when computing log probs.
             logits_max = torch.amax(output_tensor, dim=-1, keepdim=True)
             output_tensor = output_tensor - logits_max
-                
+
             # compute the log sum exp logits
             log_sum_exp_logits = output_tensor.exp().sum(-1, keepdim=False).log().float()
-            
+
             # compute the top_k logits and topk token_ids
             topk_logits, topk_token_ids = torch.topk(output_tensor, top_k)
-            
-            return {"topk_logits": topk_logits, "topk_token_ids": topk_token_ids, "log_sum_exp_logits": log_sum_exp_logits}
+
+            return {
+                "topk_logits": topk_logits,
+                "topk_token_ids": topk_token_ids,
+                "log_sum_exp_logits": log_sum_exp_logits,
+            }
+
         return output_tensor, fake_loss_func
 
     seq_length = tokens.shape[1]
-    assert tokens.shape[0] % forward_micro_batch_size == 0, f"batch size {tokens.shape[0]} / forward_micro_batch_size {forward_micro_batch_size} is not divisible."
+    assert (
+        tokens.shape[0] % forward_micro_batch_size == 0
+    ), f"batch size {tokens.shape[0]} / forward_micro_batch_size {forward_micro_batch_size} is not divisible."
     num_microbatches = int(tokens.shape[0] // forward_micro_batch_size)
     data_iter = get_iterator_k_split(
-        {"tokens":  tokens, "position_ids": position_ids, "attention_mask": attention_mask},
-        num_microbatches)
+        {"tokens": tokens, "position_ids": position_ids, "attention_mask": attention_mask}, num_microbatches
+    )
     fwd_bwd_function = get_forward_backward_func()
     losses_reduced_per_micro_batch = fwd_bwd_function(
         forward_step_func=fwd_output_and_loss_func,
@@ -416,27 +427,27 @@ def compute_topk_logits_in_batched_sequence(
             topk_logits,
             parallel_state.get_pipeline_model_parallel_last_rank(),
             parallel_state.get_pipeline_model_parallel_group(),
-            ndim=3
+            ndim=3,
         )
         topk_token_ids = broadcast_tensor(
             topk_token_ids,
             parallel_state.get_pipeline_model_parallel_last_rank(),
             parallel_state.get_pipeline_model_parallel_group(),
-            ndim=3
+            ndim=3,
         )
         log_sum_exp_logits = broadcast_tensor(
             log_sum_exp_logits,
             parallel_state.get_pipeline_model_parallel_last_rank(),
             parallel_state.get_pipeline_model_parallel_group(),
-            ndim=2
+            ndim=2,
         )
 
     return topk_logits, topk_token_ids, log_sum_exp_logits
 
+
 ## how to handle conditionals?
 ## separate implementations for forward and backward KL?
 class _TopKLogitsCrossEntropy(torch.autograd.Function):
-
     @staticmethod
     def forward(
         ctx,
@@ -444,9 +455,9 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         target_logits,
         target_token_ids,
         labels,
-        kd_loss_weight = 1.,
-        sft_loss_weight = 0,
-        forward_kl = False,
+        kd_loss_weight=1.0,
+        sft_loss_weight=0,
+        forward_kl=False,
     ):
 
         # vocab_parallel_logits: logits
@@ -454,11 +465,11 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # target_token_ids: Tensor of [B, seq_len, K]. Token ids of the target tokens.
         # target_log_sum_exp_logits: Union[None, Tensor[B, seq_len], 1]. If not None, logsumexp of target logits over the whole vocab.
         # labels: Tensor of [B, seq_len]. True labels.
-        ## NOTE: "target" refers to the teacher top-k logits while "label" refers to the true label for the given example 
+        ## NOTE: "target" refers to the teacher top-k logits while "label" refers to the true label for the given example
 
         ## variables for SFT loss
-        exp_logits, label_mask, masked_labels_1d, vocab_size = None, None, None, 0.
-        
+        exp_logits, label_mask, masked_labels_1d, vocab_size = None, None, None, 0.0
+
         # Maximum value along vocab dimension across all GPUs.
         logits_max = torch.max(vocab_parallel_logits, dim=-1)[0]
         torch.distributed.all_reduce(
@@ -466,7 +477,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         )
         # Subtract the maximum value.
         vocab_parallel_logits = vocab_parallel_logits - logits_max.unsqueeze(dim=-1)
-        
+
         # Get the partition's vocab indices
         get_vocab_range = tensor_parallel.utils.VocabUtility.vocab_range_from_per_partition_vocab_size
         partition_vocab_size = vocab_parallel_logits.size()[-1]
@@ -486,14 +497,16 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         ## Get the logits for the top-K teacher tokens
         ## uase repeat_interleave as we want to select K tokens per example
         arange_1d_topk = torch.arange(start=0, end=logits_2d.size()[0], device=logits_2d.device).repeat_interleave(K)
-        target_token_ids_1d = masked_target_token_ids.view(-1) ## B * seq_length * K
+        target_token_ids_1d = masked_target_token_ids.view(-1)  ## B * seq_length * K
         predicted_logits_1d_topk = logits_2d[arange_1d_topk, target_token_ids_1d]
         predicted_logits_1d_topk = predicted_logits_1d_topk.clone().contiguous()
         predicted_logits_topk = predicted_logits_1d_topk.view_as(target_logits)
         predicted_logits_topk[target_mask] = 0.0
         # All reduce is needed to get the chunks from other GPUs.
         torch.distributed.all_reduce(
-            predicted_logits_topk, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
+            predicted_logits_topk,
+            op=torch.distributed.ReduceOp.SUM,
+            group=parallel_state.get_tensor_model_parallel_group(),
         )
 
         ## get target probabilities for top-K classes
@@ -508,7 +521,9 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         exp_logits_topk[target_mask] = 0.0
         sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=True)
         torch.distributed.all_reduce(
-            sum_exp_logits_topk, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
+            sum_exp_logits_topk,
+            op=torch.distributed.ReduceOp.SUM,
+            group=parallel_state.get_tensor_model_parallel_group(),
         )
         log_sum_exp_logits_topk = sum_exp_logits_topk.log()
 
@@ -522,7 +537,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             # loss = sum_{k=1}^{K} prob_k * (log prob_{k}  - log target_prob_k)
             kd_loss = (probs * (predicted_logits_topk - log_sum_exp_logits_topk - target_logits + log_sum_exp)).sum(-1)
 
-        else: ## backward_kl
+        else:  ## backward_kl
             # The objective is
             # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
             # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
@@ -533,8 +548,8 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             neg_loss = (target_probs * predicted_logits_topk).sum(-1, keepdims=False)
 
             const = (target_probs * (target_logits - log_sum_exp)).sum(-1)
-            kd_loss = - neg_loss + log_sum_exp_logits_topk.squeeze() + const
-    
+            kd_loss = -neg_loss + log_sum_exp_logits_topk.squeeze() + const
+
         vocab_size = exp_logits_topk.size(-1)
 
         sft_loss = torch.zeros_like(kd_loss)
@@ -552,14 +567,18 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             predicted_logits[label_mask] = 0.0
             # All reduce is needed to get the chunks from other GPUs.
             torch.distributed.all_reduce(
-                predicted_logits, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
+                predicted_logits,
+                op=torch.distributed.ReduceOp.SUM,
+                group=parallel_state.get_tensor_model_parallel_group(),
             )
 
             # Sum of exponential of logits along vocab dimension across all GPUs.
             exp_logits = vocab_parallel_logits.exp()
             sum_exp_logits = exp_logits.sum(dim=-1)
             torch.distributed.all_reduce(
-                sum_exp_logits, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group()
+                sum_exp_logits,
+                op=torch.distributed.ReduceOp.SUM,
+                group=parallel_state.get_tensor_model_parallel_group(),
             )
 
             # Loss = log(sum(exp(logits))) - predicted-logit.
@@ -571,9 +590,16 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         loss = kd_loss_weight * kd_loss + sft_loss_weight * sft_loss
 
         ctx.save_for_backward(
-            probs, target_probs,
-            target_mask, target_token_ids_1d, torch.LongTensor([partition_vocab_size]), torch.Tensor([forward_kl]),
-            torch.Tensor([kd_loss_weight, sft_loss_weight]), exp_logits, label_mask, masked_labels_1d, ## <-- variables for SFT loss
+            probs,
+            target_probs,
+            target_mask,
+            target_token_ids_1d,
+            torch.LongTensor([partition_vocab_size]),
+            torch.Tensor([forward_kl]),
+            torch.Tensor([kd_loss_weight, sft_loss_weight]),
+            exp_logits,
+            label_mask,
+            masked_labels_1d,  ## <-- variables for SFT loss
         )
 
         return loss, kd_loss, sft_loss
@@ -582,8 +608,18 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
     def backward(ctx, grad_output, *_):
 
         # Retreive tensors from the forward path.
-        (probs, target_probs, target_mask, target_token_ids_1d, partition_vocab_size,
-         forward_kl, loss_weights, full_softmax, label_mask, masked_labels_1d) = ctx.saved_tensors
+        (
+            probs,
+            target_probs,
+            target_mask,
+            target_token_ids_1d,
+            partition_vocab_size,
+            forward_kl,
+            loss_weights,
+            full_softmax,
+            label_mask,
+            masked_labels_1d,
+        ) = ctx.saved_tensors
 
         K = probs.size()[-1]
 
@@ -610,18 +646,18 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         if forward_kl:
             probs_3d = probs.view(original_probs_shape)
             target_probs_3d = target_probs.view(original_probs_shape)
-            log_prob_ratio = probs_3d.log() -  target_probs_3d.log()
+            log_prob_ratio = probs_3d.log() - target_probs_3d.log()
             const = ((probs_3d) * log_prob_ratio).sum(-1, keepdims=True)
             nonzero_grad = probs_3d * (log_prob_ratio - const)
 
             grad_2d[arange_1d, target_token_ids_1d] = nonzero_grad.view(-1)
 
-        else: ## backward KL
+        else:  ## backward KL
             grad_2d[arange_1d, target_token_ids_1d] = probs.view(-1)
             softmax_update = torch.zeros_like(grad_2d)
             softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1)
             grad_2d -= softmax_update
-        
+
         grad_2d *= kd_loss_weight
 
         if sft_loss_weight > 0:
@@ -645,7 +681,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         grad_input.mul_(grad_output.unsqueeze(dim=-1))
 
         return grad_input, None, None, None, None, None, None, None
-    
+
 
 class SyncTimer(NamedTimer):
     """Wrapper around NamedTimer to sync across DP ranks
