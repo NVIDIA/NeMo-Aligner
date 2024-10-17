@@ -46,47 +46,47 @@ mp.set_start_method("spawn", force=True)
 
 
 def _collate_fn(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
-        tokens = [item['tokens'] for item in batch]
-        labels = [item['labels'] for item in batch]
-        loss_mask = [item['loss_mask'] for item in batch]
-        
-        topk_logits = [item['topk_logits'] for item in batch]
-        topk_token_ids = [item['topk_token_ids'] for item in batch]
+    tokens = [item["tokens"] for item in batch]
+    labels = [item["labels"] for item in batch]
+    loss_mask = [item["loss_mask"] for item in batch]
 
-        tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
-        labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=eos_id)
-        loss_mask = torch.nn.utils.rnn.pad_sequence(loss_mask, batch_first=True, padding_value=0)
-        assert len(tokens.shape) == 2, "tokens size should be [B, seq_length], got {tokens.shape}"
-        assert len(labels.shape) == 2, "labels size should be [B, seq_length], got {labels.shape}"
-        assert len(loss_mask.shape) == 2, "loss_mask size should be [B, seq_length], got {loss_mask.shape}"
-        
-        topk_logits = torch.nn.utils.rnn.pad_sequence(topk_logits, batch_first=True, padding_value=0)
-        topk_token_ids = torch.nn.utils.rnn.pad_sequence(topk_token_ids, batch_first=True, padding_value=eos_id)
-        assert len(topk_logits.shape) == 3, "topk_logits size should be [B, seq_length], got {topk_logits.shape}"
-        assert len(topk_token_ids.shape) == 3, "topk_token_ids size should be [B, seq_length], got {topk_token_ids.shape}"
-        
-        log_sum_exp_logits = torch.ones_like(topk_logits[..., 0])
-    
-        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-            tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
-        )
-        assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
-        if attention_mask.shape[0] == 1:
-            # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
-            # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
-            attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
-            
-        output = {
-            "tokens": tokens,
-            "labels": labels,
-            "loss_mask": loss_mask,
-            "topk_logits": topk_logits,
-            "topk_token_ids": topk_token_ids,
-            "log_sum_exp_logits": log_sum_exp_logits,
-            "attention_mask": attention_mask,
-            "position_ids": position_ids,
-        }
-        return output
+    topk_logits = [item["topk_logits"] for item in batch]
+    topk_token_ids = [item["topk_token_ids"] for item in batch]
+
+    tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
+    labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=eos_id)
+    loss_mask = torch.nn.utils.rnn.pad_sequence(loss_mask, batch_first=True, padding_value=0)
+    assert len(tokens.shape) == 2, "tokens size should be [B, seq_length], got {tokens.shape}"
+    assert len(labels.shape) == 2, "labels size should be [B, seq_length], got {labels.shape}"
+    assert len(loss_mask.shape) == 2, "loss_mask size should be [B, seq_length], got {loss_mask.shape}"
+
+    topk_logits = torch.nn.utils.rnn.pad_sequence(topk_logits, batch_first=True, padding_value=0)
+    topk_token_ids = torch.nn.utils.rnn.pad_sequence(topk_token_ids, batch_first=True, padding_value=eos_id)
+    assert len(topk_logits.shape) == 3, "topk_logits size should be [B, seq_length], got {topk_logits.shape}"
+    assert len(topk_token_ids.shape) == 3, "topk_token_ids size should be [B, seq_length], got {topk_token_ids.shape}"
+
+    log_sum_exp_logits = torch.ones_like(topk_logits[..., 0])
+
+    attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+        tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+    )
+    assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
+    if attention_mask.shape[0] == 1:
+        # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+        # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
+        attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+
+    output = {
+        "tokens": tokens,
+        "labels": labels,
+        "loss_mask": loss_mask,
+        "topk_logits": topk_logits,
+        "topk_token_ids": topk_token_ids,
+        "log_sum_exp_logits": log_sum_exp_logits,
+        "attention_mask": attention_mask,
+        "position_ids": position_ids,
+    }
+    return output
 
 
 @hydra_runner(config_path="conf", config_name="gpt_knowledge_distillation")
@@ -110,7 +110,7 @@ def main(cfg) -> None:
     )
 
     init_peft(ptl_model, cfg.model)
-    
+
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
 
@@ -124,7 +124,7 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-     # use the entire dataset
+    # use the entire dataset
     train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
 
     train_ds, validation_ds, _ = build_train_valid_test_knowledge_distillation_datasets(
@@ -182,7 +182,7 @@ def main(cfg) -> None:
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
-    
+
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
     kd_trainer = SupervisedTrainer(
         cfg=cfg.trainer.knowledge_distillation,

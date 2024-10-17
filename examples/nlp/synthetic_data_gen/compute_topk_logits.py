@@ -12,29 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from functools import partial
-import json
-import numpy as np
 
+import numpy as np
 import torch
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
+from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
-from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
-
 from nemo_aligner.data.nlp.builders import build_sft_dataset
+from nemo_aligner.utils.distributed import compute_topk_logits_in_batched_sequence
 from nemo_aligner.utils.train_script_utils import CustomLoggerWrapper, init_distributed
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
-from nemo_aligner.utils.distributed import compute_topk_logits_in_batched_sequence
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 
 mp.set_start_method("spawn", force=True)
+
 
 def write_generations(output_path, indices, batch, topk_logits, topk_token_ids, log_sum_exp_logits):
     # save the results to the file
@@ -42,16 +42,16 @@ def write_generations(output_path, indices, batch, topk_logits, topk_token_ids, 
     topk_token_ids = topk_token_ids.tolist()
     log_sum_exp_logits = log_sum_exp_logits.tolist()
     batch = {k: v if isinstance(v, (list, dict, str, int, float)) else v.tolist() for k, v in batch.items()}
-    with open(output_path, 'a', encoding='utf-8') as write_file:
+    with open(output_path, "a", encoding="utf-8") as write_file:
         for i in range(len(batch["tokens"])):
             obj = {k: v[i] for k, v in batch.items()}
             obj["topk_logits"] = topk_logits[i]
             obj["topk_token_ids"] = topk_token_ids[i]
             obj["log_sum_exp_logits"] = log_sum_exp_logits[i]
             obj["index"] = indices[i]
-            write_file.write(json.dumps(obj, ensure_ascii=False) + '\n')
+            write_file.write(json.dumps(obj, ensure_ascii=False) + "\n")
         write_file.flush()
-    
+
 
 @hydra_runner(config_path="conf", config_name="compute_topk_logits")
 def main(cfg) -> None:
@@ -63,7 +63,7 @@ def main(cfg) -> None:
     trainer = MegatronTrainerBuilder(cfg).create_trainer()
     logger = CustomLoggerWrapper(trainer.loggers)
     logger.log_hyperparams(OmegaConf.to_container(cfg))
-    
+
     # load the model
     ptl_model = load_from_nemo(
         MegatronGPTModel,
@@ -91,36 +91,43 @@ def main(cfg) -> None:
     processed_indices = set()
     if os.path.exists(cfg.output_path):
         processed_indices = set([json.loads(l)["index"] for l in open(cfg.output_path)])
-        
+
     start_from_idx = cfg.get("start_from_idx", 0)
     end_at_idx = cfg.get("end_at_idx", len(dataset) - 1)
     for i in range(start_from_idx, end_at_idx + 1, cfg.batch_size):
-        end_i = min(end_at_idx, i + cfg.batch_size-1)
+        end_i = min(end_at_idx, i + cfg.batch_size - 1)
         logging.info(f"Processing {i}:{end_i} items / till {end_at_idx}.")
-        indices = [j for j in range(i, end_i+1) if j not in processed_indices]
+        indices = [j for j in range(i, end_i + 1) if j not in processed_indices]
         if len(indices) == 0:
             continue
-        
+
         # prepare the batch
         ## TODO: fix
         batch = [dataset[j] for j in indices]
         batch = dataset.collate_fn(batch)
-        
+
         # compute the topk logits
         with torch.no_grad():
             topk_logits, topk_token_ids, log_sum_exp_logits = compute_topk_logits_in_batched_sequence(
-                ptl_model.model, batch["tokens"].to(torch.cuda.current_device()), batch["position_ids"].to(torch.cuda.current_device()), batch["attention_mask"].to(torch.cuda.current_device()),
-                cfg.top_k, cfg.trainer.precision, forward_micro_batch_size=cfg.forward_micro_batch_size)
-        
+                ptl_model.model,
+                batch["tokens"].to(torch.cuda.current_device()),
+                batch["position_ids"].to(torch.cuda.current_device()),
+                batch["attention_mask"].to(torch.cuda.current_device()),
+                cfg.top_k,
+                cfg.trainer.precision,
+                forward_micro_batch_size=cfg.forward_micro_batch_size,
+            )
+
         # write the results
         if (not torch.distributed.is_initialized()) or torch.distributed.get_rank() == 0:
             batch.pop("position_ids")
             batch.pop("attention_mask")
-            write_generations(cfg.output_path, indices, batch, 
-                              topk_logits.cpu(), topk_token_ids.cpu(), log_sum_exp_logits.cpu())
+            write_generations(
+                cfg.output_path, indices, batch, topk_logits.cpu(), topk_token_ids.cpu(), log_sum_exp_logits.cpu()
+            )
 
-        
     logging.info("Finish generations.")
+
 
 if __name__ == "__main__":
     main()

@@ -58,11 +58,11 @@ class KnowledgeDistillationDataset(Dataset):
         for key in ["topk_logits", "log_sum_exp_logits"]:
             assert key in payload, f"{key} not in the data"
             payload[key] = torch.tensor(payload[key], dtype=torch.float32)
-        
+
         if self.cfg.data.top_k is not None:
-            payload["topk_logits"] = payload["topk_logits"][..., :self.cfg.data.top_k]
-            payload["topk_token_ids"] = payload["topk_token_ids"][..., :self.cfg.data.top_k]
-        
+            payload["topk_logits"] = payload["topk_logits"][..., : self.cfg.data.top_k]
+            payload["topk_token_ids"] = payload["topk_token_ids"][..., : self.cfg.data.top_k]
+
         length = len(payload["tokens"])
         if length > self.seq_length:
             logging.warning(
@@ -73,7 +73,7 @@ class KnowledgeDistillationDataset(Dataset):
             for key in ["tokens", "labels", "topk_logits", "topk_token_ids", "log_sum_exp_logits"]:
                 payload[key] = payload[key][: self.nograd_length]
             payload["loss_mask"] = torch.zeros_like(payload["tokens"])
-        
+
         return payload
 
 
