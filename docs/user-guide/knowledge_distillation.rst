@@ -187,7 +187,7 @@ with
    end_at_idx=2937 \
    output_path=data/oasst/val_with_logits_0.jsonl
  
-Note that storing the teacher's logits cam be quite memory intensive. To avoid going out of memory when loading the data,
+Note that storing the teacher's logits can be quite memory intensive. To avoid going out of memory when loading the data,
 the data is loaded into memory in chunks. The example above uses a single chunk. To use multiple chunks, run the code multiple times, changing the ``start_from_idx`` and ``end_at_idx`` indices to
 exhaust the entire dataset:
 
