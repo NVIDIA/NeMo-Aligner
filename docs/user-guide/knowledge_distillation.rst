@@ -22,6 +22,7 @@ To start, we must first download both the pre-trained student and fine-tuned tea
         #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
         #. Extract the NeMo File to a folder with ``mkdir student_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C student_checkpoint``
         #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/66646b83737d9a0facb1d8d714e0424fc86ec21a/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
+            
             .. code-block:: bash 
 
                python convert_gpt_nemo_to_mcore.py \
@@ -32,6 +33,7 @@ To start, we must first download both the pre-trained student and fine-tuned tea
         :sync: key2
 
         #. Download the `Llama3-8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder. You can use the HuggingFace CLI for this:
+            
             .. code-block:: bash
                huggingface-cli download nvidia/nemotron-3-8b-chat-4k-sft --local-dir teacher_checkpoint
 
@@ -73,7 +75,7 @@ In practice, ``k`` is usually set to something larger, such as 100.
     .. tab-item:: Terminal
         :sync: key3
 
-         To run SFT on the terminal directly, use the following command. For successful execution, ensure that the NeMo-Aligner repository is set as your current working directory.
+         To run fine-tuning on the terminal directly, use the following command. For successful execution, ensure that the NeMo-Aligner repository is set as your current working directory.
 
          .. code-block:: bash 
 
@@ -209,7 +211,7 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
     .. tab-item:: Terminal
         :sync: key3
 
-         To run SFT on the terminal directly, use the following command. For successful execution, ensure that the NeMo-Aligner repository is set as your current working directory.
+         To run fune-tuning on the terminal directly, use the following command. For successful execution, ensure that the NeMo-Aligner repository is set as your current working directory.
 
          .. code-block:: bash 
 
