@@ -2,6 +2,7 @@ import secrets
 
 import tensorrt_llm
 import torch
+import torch.distributed
 
 from nemo.export.tensorrt_llm import TensorRTLLM
 from nemo.export.trt_llm import tensorrt_llm_run
@@ -9,7 +10,7 @@ from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, broadcast_tensor_within_pp
-from nemo_aligner.utils.utils import log_memory
+from nemo_aligner.utils.utils import log_memory, clear_memory
 
 try:
     import tensorrt_llm
@@ -141,7 +142,7 @@ class GPTGenerateTRTLLM:
 
     def refit(self, model):
         if not self._trtllm_model_compiled:
-            log_memory("memory before TRT-LLM engine build")
+            log_memory("Before TRT-LLM engine build")
             global_devices = [None for _ in range(torch.distributed.get_world_size())]
             torch.distributed.all_gather_object(global_devices, torch.cuda.current_device())
             gpus_per_node = max(global_devices) + 1
@@ -159,11 +160,11 @@ class GPTGenerateTRTLLM:
                 reshard_model=self.reshard_model,
             )
             self._trtllm_model_compiled = True
-            log_memory("memory after TRT-LLM engine build")
+            log_memory("After TRT-LLM engine build")
         else:
-            log_memory("memory before TRT-LLM engine refit")
+            log_memory("Before TRT-LLM engine refit")
             self.trt_llm_exporter.refit(model, self.model_cfg)
-            log_memory("memory after TRT-LLM engine refit")
+            log_memory("After TRT-LLM engine refit")
 
     def generate(self, inputs):
         prompt_tokens, prompt_lengths = inputs
@@ -253,4 +254,7 @@ class GPTGenerateTRTLLM:
     def free(self):
         if not self.unload_engine_train:
             return
+        log_memory("Before TRT-LLM engine unload")
         self.trt_llm_exporter.unload_engine()
+        clear_memory()
+        log_memory("After TRT-LLM engine unload")

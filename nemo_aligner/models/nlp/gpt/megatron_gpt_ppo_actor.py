@@ -375,13 +375,14 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         with context_mgr:
             return self.get_inference_log_probs(response_tokens)
 
-    def finish_inference(self):
+    def finish_inference(self, timer: ScopedTimer | nullcontext = nullcontext):
         # training will onload the adam states, no need to onload it here
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
 
         if self.use_trtllm_generation:
-            self.trtllm_generate.free()
+            with timer("unload_engine"):
+                self.trtllm_generate.free()
 
         set_train(self)
 

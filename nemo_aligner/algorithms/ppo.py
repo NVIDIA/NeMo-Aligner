@@ -418,7 +418,7 @@ class PPOTrainer:
         ppo_rollout_data, ppo_rollout_metrics = self.generate_ppo_data(rollout_batch)
 
         with self.timer("finish_inference"):
-            self.model.finish_inference()
+            self.model.finish_inference(timer=self.timer)
 
         return (
             ppo_rollout_data,
