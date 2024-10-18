@@ -36,14 +36,14 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 mp.set_start_method("spawn", force=True)
 
 
-def write_generations(output_path, indices, batch, topk_logits, topk_token_ids, log_sum_exp_logits):
+def write_generations(output_path, indices, batch, topk_logits, topk_token_ids, log_sum_exp_logits, num_padding):
     # save the results to the file
     topk_logits = topk_logits.tolist()
     topk_token_ids = topk_token_ids.tolist()
     log_sum_exp_logits = log_sum_exp_logits.tolist()
     batch = {k: v if isinstance(v, (list, dict, str, int, float)) else v.tolist() for k, v in batch.items()}
     with open(output_path, "a", encoding="utf-8") as write_file:
-        for i in range(len(batch["tokens"])):
+        for i in range(len(batch["tokens"]) - num_padding): ## do not write the dummy padding examples to disc
             obj = {k: v[i] for k, v in batch.items()}
             obj["topk_logits"] = topk_logits[i]
             obj["topk_token_ids"] = topk_token_ids[i]
@@ -94,15 +94,22 @@ def main(cfg) -> None:
 
     start_from_idx = cfg.get("start_from_idx", 0)
     end_at_idx = cfg.get("end_at_idx", len(dataset) - 1)
+
     for i in range(start_from_idx, end_at_idx + 1, cfg.batch_size):
         end_i = min(end_at_idx, i + cfg.batch_size - 1)
+        num_padding = cfg.batch_size - (end_i - i + 1)
+
         logging.info(f"Processing {i}:{end_i} items / till {end_at_idx}.")
         indices = [j for j in range(i, end_i + 1) if j not in processed_indices]
+
+        ## pad to batch size using the last example
+        if num_padding:
+            indices = indices + [indices[-1]] * num_padding
+
         if len(indices) == 0:
             continue
 
         # prepare the batch
-        ## TODO: fix
         batch = [dataset[j] for j in indices]
         batch = dataset.collate_fn(batch)
 
@@ -123,7 +130,7 @@ def main(cfg) -> None:
             batch.pop("position_ids")
             batch.pop("attention_mask")
             write_generations(
-                cfg.output_path, indices, batch, topk_logits.cpu(), topk_token_ids.cpu(), log_sum_exp_logits.cpu()
+                cfg.output_path, indices, batch, topk_logits.cpu(), topk_token_ids.cpu(), log_sum_exp_logits.cpu(), num_padding
             )
 
     logging.info("Finish generations.")
