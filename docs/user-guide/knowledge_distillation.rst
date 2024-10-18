@@ -172,6 +172,7 @@ In practice, ``k`` is usually set to something larger, such as 100.
 
 
 You can also generate the teacher logits for the validation dataset by replacing these lines
+
 .. code-block:: bash
 
    data.data.file_path=data/oasst/train.jsonl \
@@ -179,6 +180,7 @@ You can also generate the teacher logits for the validation dataset by replacing
    output_path=data/oasst/train_with_logits_0.jsonl
 
 with
+
 .. code-block:: bash
 
    data.data.file_path=data/oasst/val.jsonl \
@@ -336,7 +338,7 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
             set +x
 
 If running with multiple chunks, modify ``data.n_chunks`` and ``data.n_examples_per_chunk`` accordingly. The data prefixes (for example, ``data/oasst/train_with_logits_CHUNK_ID.jsonl``) should remain unchanged.
-``CHUNK_ID`` gets replaced with the current chunk index at data load time.
+``CHUNK_ID`` gets replafced with the current chunk index at data load time.
 
 Results
 #######
