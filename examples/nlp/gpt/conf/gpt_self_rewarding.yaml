@@ -7,10 +7,10 @@ trainer:
   accelerator: gpu
   precision: bf16
   
-  # spin specific args
-  spin:
-    max_iterations: 3   # the number of iterations (rounds) for which the SPIN "game" is played. This is T in the original paper
-    max_epochs: 1       # the number of epochs to use per iteration. In the paper, they do 3 iterations with 2 epochs per iteration
+  # self-rewarding specific args
+  self_rewarding:
+    max_iterations: 3   # the number of iterations to conduct self-rewarding for, with the reference policy updated on each iteration
+    max_epochs: 1       # the number of epochs to use per iteration
     max_steps: -1
     val_check_interval: 0.1
     save_interval: 100
@@ -23,16 +23,15 @@ trainer:
     # Accelerate training times by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
-      # reshard is not supported in SPIN
+      # reshard is not supported in Self-Rewarding
 
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
-      max_input_tokens: ${multiply:${trainer.spin.trt_llm.max_input_len}, ${model.spin.rollout_micro_batch_size}}
+      generation_batch_size: ${model.spin.rollout_micro_batch_size}
+      max_input_tokens: ${multiply:${trainer.self_rewarding.trt_llm.max_input_len}, ${trainer.self_rewarding.trt_llm.generation_batch_size}}
 
-      # the seed to use for trt-llm generation
-      seed: ${model.seed}
-      model_type: llama
+      model_type: gptnext
 
       # Unload and reload the TRTLLM engine before and after the training stage 
       # Reloading the engine incurs a constant time overhead
@@ -43,8 +42,8 @@ trainer:
   enable_checkpointing: False
   use_distributed_sampler: False
   max_time: null
-  max_epochs: ${.spin.max_epochs}
-  max_steps: ${.spin.max_steps}
+  max_epochs: ${.self_rewarding.max_epochs}
+  max_steps: ${.self_rewarding.max_steps}
 
 exp_manager:
   explicit_log_dir: /results
@@ -76,12 +75,97 @@ model:
   micro_batch_size: 1
   global_batch_size: 64
   megatron_amp_O2: True
+  dist_ckpt_format: zarr
 
   spin:
-    log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, 2}
+    log_prob_forward_micro_batch_size: ${model.micro_batch_size}
     rollout_micro_batch_size: 32
-    ref_policy_kl_penalty: 0.2   # Can also be a list of elements == max_iterations, where each element will be the KL penalty used for that iteration
+    ref_policy_kl_penalty: 0.1   # Can also be a list of elements == max_iterations, where each element will be the KL penalty used for that iteration
     offload_adam_states: True
+    num_responses_to_gen: 4
+    num_evals_to_average: 3
+    length_control: 0.0
+    use_meta_judge: False
+    meta_judge_pcnt: -1
+    first_iteration_sft: False
+    preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
+    sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
+    gt_reward_scale: 1. # the scale of the rewards in RPO
+    preference_loss: dpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
+    preference_loss_weight: 1 # the coefficient of the preference loss
+    sft_loss_weight: 0 # the coefficient of the SFT loss
+    judge_score_low: 0  # the lowest score which the LLM-as-a-judge can aware, as per your llm_judge_prompt
+    judge_score_high: 5  # the highest score which the LLM-as-a-judge can aware, as per your llm_judge_prompt
+    meta_max_relative_pcnt: 0.4
+
+    judge_reward_regex: "(?i)(?:Score|Points): {{ reward }}"
+    meta_judge_reward_regex: "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
+
+    llm_judge_prompt: |
+      <extra_id_0>System
+      
+      <extra_id_1>User
+      Review the user's question and the corresponding response using the additive 5-point
+      scoring system described below. Points are accumulated based on the satisfaction of each
+      criterion:
+      - Add 1 point if the response is relevant and provides some information related to
+      the user's inquiry, even if it is incomplete or contains some irrelevant content.
+      - Add another point if the response addresses a substantial portion of the user's question,
+      but does not completely resolve the query or provide a direct answer.
+      - Award a third point if the response answers the basic elements of the user's question in a
+      useful way, regardless of whether it seems to have been written by an AI Assistant or if it
+      has elements typically found in blogs or search results.
+      - Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
+      addressing the user's question directly and comprehensively, and is well-organized and
+      helpful, even if there is slight room for improvement in clarity, conciseness or focus.
+      - Bestow a fifth point for a response that is impeccably tailored to the user's question
+      by an AI Assistant, without extraneous information, reflecting expert knowledge, and
+      demonstrating a high-quality, engaging, and insightful answer.
+      
+      <prompt>{{ prompt }}</prompt>
+      <response>{{ response }}</response>
+      
+      After examining the user's instruction and the response:
+      - Briefly justify your total score, up to 100 words.
+      - Conclude with the score using the format: "Score: <total points>"
+      Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
+      necessary. To evaluate the response in alignment with this additive scoring model, we'll
+      systematically attribute points based on the outlined criteria.
+      <extra_id_1>Assistant
+
+    llm_meta_judge_prompt: |
+      <extra_id_0>System
+      
+      <extra_id_1>User
+      Review the user's question and the corresponding response, along with two judgments.
+      Determine which judgment is more accurate according to the rubric provided below. The
+      rubric used for the initial judgments is as follows:
+      - Add 1 point if the response is relevant and provides some information related to
+      the user's inquiry, even if it is incomplete or contains some irrelevant content.
+      - Add another point if the response addresses a substantial portion of the user's question,
+      but does not completely resolve the query or provide a direct answer.
+      - Award a third point if the response answers the basic elements of the user's question in a
+      useful way, regardless of whether it seems to have been written by an AI Assistant or if it
+      has elements typically found in blogs or search results.
+      - Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
+      addressing the user's question directly and comprehensively, and is well-organized and helpful,
+      even if there is slight room for improvement in clarity, conciseness or focus.
+      - Bestow a fifth point for a response that is impeccably tailored to the user's question
+      by an AI Assistant, without extraneous information, reflecting expert knowledge, and
+      demonstrating a high-quality, engaging, and insightful answer.
+      
+      <prompt>{{ prompt }}<prompt>
+      <response>{{ response }}<response>
+      <judgement A>{{ judgement_a }}<judgement A>
+      <judgement B>{{ judgement_b }}<judgement B>
+      
+      After examining the original question, response, and both judgments:
+      - Explain which judgment is more accurate according to the original rubric and why.
+      Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
+      consistency in applying the criteria.
+      - Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
+      <extra_id_1>Assistant
+
 
     # params for generation
     sampling_params:
@@ -136,6 +220,7 @@ model:
 
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
     num_workers: 0
+    dataloader_type: single  # only supports single
     reset_position_ids: False # Reset position ids after end-of-document token
     reset_attention_mask: False # Reset attention mask after end-of-document token
     eod_mask_loss: False # Mask loss for the end of document tokens
