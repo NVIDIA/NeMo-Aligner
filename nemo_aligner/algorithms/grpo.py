@@ -31,13 +31,15 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_sp
 from nemo.utils import logging
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import SyncTimer, all_reduce_dict, masked_global_mean_var, rebalance_nd_tensor
+from nemo_aligner.utils.distributed import SyncTimer, all_reduce_dict, masked_global_mean_var, rebalance_nd_tensor, run_if_model_parallel_src, broadcast_2d_tensor_within_mp
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.utils.ppo_utils import calculate_ppo_rewards, create_mask
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict
 
+def sandbox_call(sandbox, answers):
+    return [sandbox.is_output_correct(*item) for item in answers]
 
 class PPORolloutBatch(UserDict):
     @classmethod
@@ -207,7 +209,13 @@ class GRPOTrainer:
         grouped_reward_mean = grouped_rewards.mean(-1, keepdim=True)
         grouped_reward_std = grouped_rewards.std(-1, keepdim=True)
 
-        advantages = ((grouped_rewards - grouped_reward_mean) / (grouped_reward_std.add(1e-8))).flatten()
+
+        advantages = grouped_rewards - grouped_reward_mean
+                      
+        if self.cfg.normalize_rewards:
+            advantages = advantages / grouped_reward_std.add(1e-8)
+        
+        advantages = advantages.flatten()
 
         # advantage estimation
         advantages = calculate_ppo_rewards(logprobs, advantages, response_lengths,)
@@ -234,6 +242,7 @@ class GRPOTrainer:
         ppo_rollout_metrics = all_reduce_dict(
             ppo_rollout_metrics, group=parallel_state.get_data_parallel_group(), op=torch.distributed.ReduceOp.SUM
         )
+
         num_samples = ppo_rollout_metrics.pop("num_samples")
         ppo_rollout_metrics = {k: v / num_samples for k, v in ppo_rollout_metrics.items()}
         ppo_rollout_metrics["grouped_reward_mean"] *= self.cfg.num_responses_per_prompt
@@ -288,7 +297,10 @@ class GRPOTrainer:
                 ]
                 answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
                 # TODO: need to make this async for real
-                all_rewards.extend([self.sandbox.is_output_correct(*item) for item in answers])
+                output = run_if_model_parallel_src(sandbox_call, self.sandbox, answers)
+                if output is not None:
+                    all_rewards.extend(output)
+
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -314,12 +326,17 @@ class GRPOTrainer:
             rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens)
             balanced_local_batch["init_logprobs"] = rollout_init_logprobs
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
+        
+        if len(all_rewards) > 0:
+            all_rewards = torch.as_tensor(
+                all_rewards, dtype=torch.float32, device=torch.cuda.current_device()
+            ).view(-1, 1)
+        
+        all_rewards = broadcast_2d_tensor_within_mp(all_rewards).flatten()
 
         balanced_local_batch.update(
             {
-                "rewards": torch.as_tensor(
-                    all_rewards, dtype=torch.float32, device=torch.cuda.current_device()
-                ).flatten()
+                "rewards": all_rewards
             }
         )
         # gather the global rollout batch

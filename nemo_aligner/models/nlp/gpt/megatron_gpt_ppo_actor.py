@@ -99,7 +99,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 repetition_penalty=self.cfg.ppo.sampling_params["repetition_penalty"],
                 use_greedy=self.cfg.ppo.sampling_params.get("use_greedy", False),
                 tokenizer=self.tokenizer,
-                # seed=self.cfg.ppo.trt_llm.get("seed", self.cfg.seed),
+                seed=self.cfg.ppo.trt_llm.get("seed", self.cfg.seed),
             )
 
     # training calls

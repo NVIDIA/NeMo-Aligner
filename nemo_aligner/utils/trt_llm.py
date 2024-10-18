@@ -79,7 +79,7 @@ class GPTGenerateTRTLLM:
         self._trtllm_model_compiled = False
 
         rng_generator = torch.Generator(device="cpu")
-        seed = secrets.randbits(32) if seed is None else seed
+        seed = secrets.randbits(8) if seed is None else seed
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
