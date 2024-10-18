@@ -16,6 +16,7 @@ import megatron.core.parallel_state as mcore_parallel_state
 import numpy as np
 import pytest
 import torch
+import torch.distributed
 from megatron.core import tensor_parallel
 
 from nemo_aligner.utils import parallel_state
@@ -270,4 +271,5 @@ def test_broadcast_within_pp(init_model_parallel, tp_size, pp_size, from_last, s
         torch.testing.assert_close(out_tensor.to("cpu"), expected.to("cpu").type(torch.float32))
     else:
         out_tensor = broadcast_tensor_within_pp(tensor, from_last=from_last)
+        assert out_tensor.dtype == dtype
         torch.testing.assert_close(out_tensor.to("cpu"), expected.to("cpu"))
