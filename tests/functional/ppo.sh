@@ -30,7 +30,7 @@ mkdir -p $RESULTS_DIR
 GPFS=$(git rev-parse --show-toplevel)
 
 # W&B Logging
-PROJECT=terryk_llama3_test
+PROJECT=llama3_ppo_test
 
 CRITIC_CONFIG_PATH="$GPFS/examples/nlp/gpt/conf/"
 CRITIC_CONFIG_NAME="gpt_ppo_critic"
