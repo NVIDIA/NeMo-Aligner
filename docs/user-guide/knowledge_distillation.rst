@@ -20,17 +20,6 @@ To start, we must first download both the pre-trained student and fine-tuned tea
 
         #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
         #. Extract the NeMo File to a folder with ``mkdir student_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C student_checkpoint``
-        #. Update the ``data_prefix`` field to support dictionary format. This change allows us to use different datasets for train, validation and test, rather than generating the splits from a single user-provided dataset.
-           The "placeholder" lines will be overwritten from the run command later in the tutorial.
-            .. code-block:: bash
-
-               cd student_checkpoint
-               sed -i '/the_pile/d;/0.033/d' model_config.yaml ## remove the old prefixes
-               prefixes="\    train:\n      PLACEHOLDER\n    validation:\n      PLACEHOLDER\n    test:\n      PLACEHOLDER\n"
-               sed -i "/data_prefix/a $prefixes" model_config.yaml ## replace the old prefixes with the format we will use in this tutorial
-               cd ..
-
-
         #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/66646b83737d9a0facb1d8d714e0424fc86ec21a/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             .. code-block:: bash 
 
