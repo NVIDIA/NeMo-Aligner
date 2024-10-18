@@ -7,7 +7,7 @@ Obtain a Pretrained Model
 
 The NeMo Framework supports efficient model alignment using the NeMo-Aligner codebase. All algorithms in NeMo-Aligner will work with any NeMo GPT-based model. To see a collection of scripts that convert popular models from Hugging Face to ``.nemo`` format, go `here <https://github.com/NVIDIA/NeMo/tree/main/scripts/nlp_language_modeling>`__.
 
-To get started, you need to obtain a pretrained model to align. Three models are recommended: 2B GPT, LLama2-7B, or Nemotron-340B. For demonstration purposes, the smaller 2B model will be used, but you can follow the rest of the tutorial with either model.
+To get started, you need to obtain a pretrained model to align. Three models are recommended: 2B GPT, LLama3-8B, or Nemotron-340B. For demonstration purposes, the smaller 2B model will be used, but you can follow the rest of the tutorial with any of thes three models.
 
 .. tab-set::
 
@@ -23,11 +23,14 @@ To get started, you need to obtain a pretrained model to align. Three models are
                   --input_name_or_path ./model_checkpoint \
                   --output_path ./mcore_gpt.nemo
 
-    .. tab-item:: LLaMa2-7B
+    .. tab-item:: LLaMa3-8B
         :sync: key2
 
-        1. Download the `Llama2-7B LLM model and tokenizer <https://huggingface.co/meta-llama/Llama-2-7b-hf>`__ into the model's folder.
-        2. Convert the LLaMa2 LLM into ``.nemo`` format.
+        1. Download the `Llama3-8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder. You can use the HuggingFace CLI for this:
+            .. code-block:: bash
+               huggingface-cli download meta-llama/Meta-Llama-3-8B --local-dir Meta-Llama-3-8B
+
+        2. Convert the LLaMa3 LLM into ``.nemo`` format.
             .. code-block:: bash 
 
                python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py \
@@ -64,6 +67,9 @@ Model Alignment by Supervised Fine-Tuning (SFT)
 1. **Prompt-Response**. In the *Prompt-Response* format, each example contains an input prompt and the annotated response. SFT fine-tunes the base model to follow the prompt instruction and answer in the style of the annotated responses. The prompt-response format can be used in various problems like Question Answering (Q&A) and Summarization.
 
 2. **Chat**. In the *Chat* format, each example contains a multi-turn conversation between different roles (e.g., *User* and *Assistant*). Fine-tuning the base model on a chat format dataset is useful to align a chatbot.
+
+.. note::
+   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
 
 Fine-Tune with a Prompt-Response Dataset
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -145,7 +151,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
                exp_manager.resume_if_exists=True \
                exp_manager.resume_ignore_no_checkpoint=True \
                exp_manager.create_checkpoint_callback=True \
-               exp_manager.checkpoint_callback_params.monitor=validation_loss
+               exp_manager.checkpoint_callback_params.monitor=val_loss
 
     .. tab-item:: Slurm
         :sync: key4
@@ -217,7 +223,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
                exp_manager.resume_ignore_no_checkpoint=True \
                exp_manager.create_checkpoint_callback=True \
                exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True \
-               exp_manager.checkpoint_callback_params.monitor=validation_loss
+               exp_manager.checkpoint_callback_params.monitor=val_loss
             EOF
 
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
@@ -231,7 +237,11 @@ If using sequence packing, replace the data paths with the paths to your packed 
 
 It is not required to pack both the train and validation datasets. If packing only the train dataset, exclude ``+model.data.validation_ds.packed_sequence=True``.
 
-To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
+To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine. If you are running with a larger model, you may need to
+change the parallelism. If you run out of memory with Llama3-8b, add tensor parallelism to your config:
+
+.. code-block:: bash
+   model.tensor_model_parallel_size=2 \
 
 For this particular run on the 2B model, the final training loss is approximately 1.536. Once the training finishes, you’ll find a file called ``megatron_gpt_sft.nemo`` available for use.
 
@@ -385,7 +395,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner. Compare
 
 To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
 
-For this particular run on the Llama2-7b model, the final val loss is around 1.201. Once the training finishes, you'll find a file called ``megatron_gpt_sft.nemo`` available for use.
+For this particular run on the Llama3-8b model, the final val loss is around 1.546. Once the training finishes, you'll find a file called ``megatron_gpt_sft.nemo`` available for use.
 
 
 Step 3: Run inference or further fine-tuning
