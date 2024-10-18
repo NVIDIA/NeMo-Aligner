@@ -4,10 +4,11 @@ SFT with Knowledge Distillation
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 Knowledge distillation is a technique in which a smaller (student) model learns from a larger (teacher) model. The goal is to "distill" information from the teacher to the student,
-resulting in a small model with comparable capabilities to the large model. There are many variants of knowledge distillation, see `<here> TODO: ADD LINK`__ for an overview.
+resulting in a small model with comparable capabilities to the large model. Compared to standard SFT which trains the model to predict the next token,
+knowledge distillation allows more calibrated information passing from the teacher to the student.
+The two primary benefits of knowledge distillation are faster convergence and improved accuracy than standard SFT training.
 
-In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model. We train the 2B student to match the logits of the 8B teacher. Compared to standard SFT which trains the model to predict the next token,
-this approach allows more calibrated information passing from the teacher to the student.
+There are many variants of knowledge distillation. NeMo Aligner supports training the student model to match the top-K logits of the teacher model. In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model.
 
 Step 1: Obtain the fine-tuned teacher and pre-trained student models
 ####################################################################
@@ -337,9 +338,18 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
 If running with multiple chunks, modify ``data.n_chunks`` and ``data.n_examples_per_chunk`` accordingly. The data prefixes (for example, ``data/oasst/train_with_logits_CHUNK_ID.jsonl``) should remain unchanged.
 ``CHUNK_ID`` gets replaced with the current chunk index at data load time.
 
-### TODO: add details on how to evaluate model following training
-
-
 Results
 #######
-### also add results with real model
+
+The following table exemplifies the advantage of knowledge distillation. A pre-trained ``Nemotron-4 15B model <https://arxiv.org/pdf/2402.16819>``__ was fine-tuned using vanilla SFT loss and using a combination
+of SFT loss and knowledge distillation loss. Knowledge distillation was performed using a Nemotron-4 340B SFT model. Fine-tuning was performed using a math/code dataset.
+
+With only a minimal drop in throughput, knowledge distillation yields better accuracy than SFT while requiring fewer training steps to converge.
+
+=============== ================== ============ ============= ================== ======================= ============= =================== ==================
+Base Model      Training objective Train steps  MMLU (5-shot) MMLU (0-shot)      HumanEval (0-shot)      MBPP (0-shot) GSM8K (0-shot)      MATH (0-shot) 
+=============== ================== ============ ============= ================== ======================= ============= =================== ==================
+Nemotron 15B    SFT loss           600,000      65.3          56.9               64.6                    71.7          84.2                30.12
+Nemotron 15B    KD + SFT loss      420,000      65.3          57.3               70.1                    73.3          85.2                35.84
+Nemotron 15B    KD + SFT loss      600,000      65.3          57.6               72                      73.8          84.8                36.6
+=============== ================== ============ ============= ================== ======================= ============= =================== ==================
