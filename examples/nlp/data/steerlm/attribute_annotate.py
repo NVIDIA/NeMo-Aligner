@@ -71,7 +71,8 @@ def get_reward(
         reward_out = output_dict["rewards"].flatten().tolist()
 
         all_rewards.append(reward_out)
-        all_exceeded += output_dict["exceeded"].tolist()
+        if output_dict.get('exceeded', None) is not None:
+            all_exceeded += output_dict["exceeded"].tolist()
 
     return all_rewards, all_exceeded
 
