@@ -130,6 +130,8 @@ pretrained_checkpoint:
   restore_from_path: null
 
 model:
+  # TODO: document perf implications
+  # use_tp_pp_dp_mapping: true
 
   ppo:
     # training generation mbs
