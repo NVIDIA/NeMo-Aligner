@@ -5,6 +5,9 @@
 Fine-tuning Stable Diffusion with DRaFT+
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
+.. note::
+   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+
 In this tutorial, we will go through the step-by-step guide for fine-tuning Stable Diffusion model using DRaFT+ algorithm by NVIDIA. 
 DRaFT+ is an improvement over the `DRaFT <https://arxiv.org/pdf/2309.17400.pdf>`__ algorithm by alleviating the mode collapse and improving diversity through regularization. 
 For more technical details on the DRaFT+ algorithm, check out our technical blog.

@@ -1,3 +1,6 @@
+
+.. _model-aligner-intro:
+
 Model Alignment
 !!!!!!!!!!!!!!!
 
@@ -25,3 +28,16 @@ To use a pre-built container, run the following code:
         docker run -it --gpus=all  --shm-size=8g --workdir /opt/NeMo-Aligner nvcr.io/nvidia/nemo:24.09
 
     Please use the latest tag in the form yy.mm.(patch).
+
+Notes and Tips
+##############
+
+Some of the subsequent tutorials require accessing gated Hugging Face models. To download these models, you must first request access to the model by following the link provided in the tutorial.
+After access has been granted, make sure you have a Hugging Face access token (if you do not, follow `this tutorial <https://huggingface.co/docs/hub/en/security-tokens#how-to-manage-user-access-tokens>`__ to generate one).
+Finally, be sure to set the `HF_TOKEN` variable in your environment:
+
+.. code-block:: bash
+   
+   export HF_TOKEN=<your_access_token>
+
+
