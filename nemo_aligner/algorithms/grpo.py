@@ -334,9 +334,16 @@ class GRPOTrainer:
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
         if len(all_rewards) > 0:
-            all_rewards = torch.as_tensor(all_rewards, dtype=torch.float32, device=torch.cuda.current_device()).view(
-                -1, 1
-            )
+            new_all_rewards = []
+
+            for item in all_rewards:
+                if item is None:
+                    item = 0.0
+                new_all_rewards.append(item)
+
+            all_rewards = torch.as_tensor(
+                new_all_rewards, dtype=torch.float32, device=torch.cuda.current_device()
+            ).view(-1, 1)
 
         all_rewards = broadcast_2d_tensor_within_mp(all_rewards).flatten()
 
