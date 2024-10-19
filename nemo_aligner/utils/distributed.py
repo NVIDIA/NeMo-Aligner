@@ -338,7 +338,7 @@ def compute_topk_logits_in_batched_sequence(
     attention_mask: torch.Tensor,
     top_k: int,
     precision: str,
-    forward_micro_batch_size: int = 1,
+    forward_micro_batch_size: int = 1, ## TODO: make this match with model micro_batch_size
 ):
     """
     Compute the topk predictive logits of the model at each token in a batch of sequences.
@@ -447,6 +447,8 @@ def compute_topk_logits_in_batched_sequence(
 
 ## how to handle conditionals?
 ## separate implementations for forward and backward KL?
+
+## TODO: check topk_student
 class _TopKLogitsCrossEntropy(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -458,6 +460,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         kd_loss_weight=1.0,
         sft_loss_weight=0,
         forward_kl=False,
+        topk_student=False,
     ):
 
         # vocab_parallel_logits: logits
@@ -465,6 +468,10 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # target_token_ids: Tensor of [B, seq_len, K]. Token ids of the target tokens.
         # target_log_sum_exp_logits: Union[None, Tensor[B, seq_len], 1]. If not None, logsumexp of target logits over the whole vocab.
         # labels: Tensor of [B, seq_len]. True labels.
+        # forward_kl: Whether to use forward-kl divergence instead of backward KL
+        # topk_student: Whether to use the student's top-k logits from the loss calculation.
+        #    rather than using the logits corresponding to the teacher's top-k logits.
+        #    can be used when the teacher and student use different tokenizers.
         ## NOTE: "target" refers to the teacher top-k logits while "label" refers to the true label for the given example
 
         ## variables for SFT loss
@@ -484,30 +491,53 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         rank = parallel_state.get_tensor_model_parallel_rank()
         world_size = parallel_state.get_tensor_model_parallel_world_size()
         vocab_start_index, vocab_end_index = get_vocab_range(partition_vocab_size, rank, world_size)
+        vocab_size = partition_vocab_size * world_size
 
-        # Create a mask of valid vocab ids (1 means it needs to be masked).
-        target_mask = (target_token_ids < vocab_start_index) | (target_token_ids >= vocab_end_index)
-        masked_target_token_ids = target_token_ids.clone() - vocab_start_index
-        masked_target_token_ids[target_mask] = 0
-
-        logits_2d = vocab_parallel_logits.view(-1, partition_vocab_size)
-        masked_target_1d = masked_target_token_ids.view(-1)
         K = target_logits.size()[-1]
 
-        ## Get the logits for the top-K teacher tokens
-        ## uase repeat_interleave as we want to select K tokens per example
-        arange_1d_topk = torch.arange(start=0, end=logits_2d.size()[0], device=logits_2d.device).repeat_interleave(K)
-        target_token_ids_1d = masked_target_token_ids.view(-1)  ## B * seq_length * K
-        predicted_logits_1d_topk = logits_2d[arange_1d_topk, target_token_ids_1d]
-        predicted_logits_1d_topk = predicted_logits_1d_topk.clone().contiguous()
-        predicted_logits_topk = predicted_logits_1d_topk.view_as(target_logits)
-        predicted_logits_topk[target_mask] = 0.0
-        # All reduce is needed to get the chunks from other GPUs.
-        torch.distributed.all_reduce(
-            predicted_logits_topk,
-            op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_tensor_model_parallel_group(),
-        )
+        if topk_student: ## naively grab the top-k logits from the student
+            predicted_logits_full = torch.zeros((vocab_parallel_logits.shape[:-1], vocab_size))
+            prediced_logits_full[vocab_start_index, vocab_end_index] =  vocab_parallel_logits
+            torch.distributed.all_reduce(
+                predicted_logits_full,
+                op=torch.distributed.ReduceOp.SUM,
+                group=parallel_state.get_tensor_model_parallel_group(),
+            )
+            ## shape [bs, sl, K], ids in [0, VS)
+            predicted_logits_topk, predicted_topk_ids = torch.topk(predicted_logits_full, K)
+
+            predicted_logits_topk = predicted_logits_topk.view_as(target_logits) ## TODO: is this necessary?
+            # Create a mask of valid vocab ids for this rank (1 means it needs to be masked).
+            target_mask = (predicted_topk_ids < vocab_start_index) | (predicted_topk_ids >= vocab_end_index)
+            predicted_topk_ids = predicted_topk_ids.clone() - vocab_start_index
+            predicted_topk_ids[target_mask] = 0
+            ids_for_loss = predicted_topk_ids.view(-1)
+
+
+        else:
+            # Create a mask of valid vocab ids (1 means it needs to be masked).
+            target_mask = (target_token_ids < vocab_start_index) | (target_token_ids >= vocab_end_index)
+            masked_target_token_ids = target_token_ids.clone() - vocab_start_index
+            masked_target_token_ids[target_mask] = 0
+
+            logits_2d = vocab_parallel_logits.view(-1, partition_vocab_size)
+
+            ## Get the logits for the top-K teacher ids
+            ## use repeat_interleave as we want to select K tokens per example
+            arange_1d_topk = torch.arange(start=0, end=logits_2d.size()[0], device=logits_2d.device).repeat_interleave(K)
+            target_token_ids_1d = masked_target_token_ids.view(-1)  ## B * seq_length * K
+            predicted_logits_1d_topk = logits_2d[arange_1d_topk, target_token_ids_1d]
+            predicted_logits_1d_topk = predicted_logits_1d_topk.clone().contiguous()
+            predicted_logits_topk = predicted_logits_1d_topk.view_as(target_logits)
+            predicted_logits_topk[label_mask] = 0.0
+            # All reduce is needed to get the chunks from other GPUs.
+            torch.distributed.all_reduce(
+                predicted_logits_topk,
+                op=torch.distributed.ReduceOp.SUM,
+                group=parallel_state.get_tensor_model_parallel_group(),
+            )
+
+            ids_for_loss = target_token_ids_1d
 
         ## get target probabilities for top-K classes
         target_exp_logits = target_logits.exp()
@@ -518,13 +548,17 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         # compute the logsumexp of all K predicted logits
         exp_logits_topk = predicted_logits_topk.exp()
-        exp_logits_topk[target_mask] = 0.0
+        sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=True)
+
+        ## TODO: I don't think the extra all-reduce is needed since all ranks already have the correct predicted_topk_logits
+        ## verify this
+        """exp_logits_topk[target_mask] = 0.0
         sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=True)
         torch.distributed.all_reduce(
             sum_exp_logits_topk,
             op=torch.distributed.ReduceOp.SUM,
             group=parallel_state.get_tensor_model_parallel_group(),
-        )
+        )"""
         log_sum_exp_logits_topk = sum_exp_logits_topk.log()
 
         ## compute the predicted probabilitites
@@ -549,8 +583,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
             const = (target_probs * (target_logits - log_sum_exp)).sum(-1)
             kd_loss = -neg_loss + log_sum_exp_logits_topk.squeeze() + const
-
-        vocab_size = exp_logits_topk.size(-1)
 
         sft_loss = torch.zeros_like(kd_loss)
         if sft_loss_weight > 0:
@@ -593,7 +625,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             probs,
             target_probs,
             target_mask,
-            target_token_ids_1d,
+            ids_for_loss, ## either student or teacher top-k indices depending on whether topk_student is True
             torch.LongTensor([partition_vocab_size]),
             torch.Tensor([forward_kl]),
             torch.Tensor([kd_loss_weight, sft_loss_weight]),
