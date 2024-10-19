@@ -338,7 +338,7 @@ def compute_topk_logits_in_batched_sequence(
     attention_mask: torch.Tensor,
     top_k: int,
     precision: str,
-    forward_micro_batch_size: int = 1, ## TODO: make this match with model micro_batch_size
+    forward_micro_batch_size: int = 1,  ## TODO: make this match with model micro_batch_size
 ):
     """
     Compute the topk predictive logits of the model at each token in a batch of sequences.
@@ -495,9 +495,9 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         K = target_logits.size()[-1]
 
-        if topk_student: ## naively grab the top-k logits from the student
+        if topk_student:  ## naively grab the top-k logits from the student
             predicted_logits_full = torch.zeros((vocab_parallel_logits.shape[:-1], vocab_size))
-            prediced_logits_full[vocab_start_index, vocab_end_index] =  vocab_parallel_logits
+            prediced_logits_full[vocab_start_index, vocab_end_index] = vocab_parallel_logits
             torch.distributed.all_reduce(
                 predicted_logits_full,
                 op=torch.distributed.ReduceOp.SUM,
@@ -506,13 +506,12 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             ## shape [bs, sl, K], ids in [0, VS)
             predicted_logits_topk, predicted_topk_ids = torch.topk(predicted_logits_full, K)
 
-            predicted_logits_topk = predicted_logits_topk.view_as(target_logits) ## TODO: is this necessary?
+            predicted_logits_topk = predicted_logits_topk.view_as(target_logits)  ## TODO: is this necessary?
             # Create a mask of valid vocab ids for this rank (1 means it needs to be masked).
             target_mask = (predicted_topk_ids < vocab_start_index) | (predicted_topk_ids >= vocab_end_index)
             predicted_topk_ids = predicted_topk_ids.clone() - vocab_start_index
             predicted_topk_ids[target_mask] = 0
             ids_for_loss = predicted_topk_ids.view(-1)
-
 
         else:
             # Create a mask of valid vocab ids (1 means it needs to be masked).
@@ -524,7 +523,9 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
             ## Get the logits for the top-K teacher ids
             ## use repeat_interleave as we want to select K tokens per example
-            arange_1d_topk = torch.arange(start=0, end=logits_2d.size()[0], device=logits_2d.device).repeat_interleave(K)
+            arange_1d_topk = torch.arange(start=0, end=logits_2d.size()[0], device=logits_2d.device).repeat_interleave(
+                K
+            )
             target_token_ids_1d = masked_target_token_ids.view(-1)  ## B * seq_length * K
             predicted_logits_1d_topk = logits_2d[arange_1d_topk, target_token_ids_1d]
             predicted_logits_1d_topk = predicted_logits_1d_topk.clone().contiguous()
@@ -625,7 +626,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             probs,
             target_probs,
             target_mask,
-            ids_for_loss, ## either student or teacher top-k indices depending on whether topk_student is True
+            ids_for_loss,  ## either student or teacher top-k indices depending on whether topk_student is True
             torch.LongTensor([partition_vocab_size]),
             torch.Tensor([forward_kl]),
             torch.Tensor([kd_loss_weight, sft_loss_weight]),

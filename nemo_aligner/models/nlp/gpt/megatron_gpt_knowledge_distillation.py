@@ -126,7 +126,7 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     self.kd_loss_weight,
                     self.sft_loss_weight,
                     self.kd_loss == "fwd_kl",
-                    False ## do not use top-k student logits
+                    False,  ## do not use top-k student logits
                 )
 
                 ## reduce losses
