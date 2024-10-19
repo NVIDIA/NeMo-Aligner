@@ -46,7 +46,7 @@ from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
-
+import time, sleep
 
 class PPORolloutBatch(UserDict):
     @classmethod
@@ -216,10 +216,7 @@ class ReinforceTrainer:
         init_policy_kl = rollout_batch["init_policy_kl"]
         baseline = rollout_batch["baseline"]
 
-        print("RKL", rewards_with_kl)
-        print("_"*50)
-        print("baseline", baseline)
-        print("*"*50)
+
         # collect everything we need to train Reinforce
         ppo_rollout_data["mask"] = mask
         ppo_rollout_data["baseline"] = baseline
@@ -374,9 +371,12 @@ class ReinforceTrainer:
             balanced_local_batch["mask"] = mask
             balanced_local_batch["init_policy_kl"] = init_policy_kl
 
-        return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
+        if is_validation:
+            return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch, save_val_responses=True)), timer_metrics
+        else:
+            return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
 
-    def compute_rollout_metrics(self, rollout_batch):
+    def compute_rollout_metrics(self, rollout_batch, save_val_responses=False):
         table = {}
 
         prompt_lengths = rollout_batch["prompt_lengths"]
@@ -396,6 +396,32 @@ class ReinforceTrainer:
         table["response"] = self.model.tokenizer.tokenizer.decode(
             response_token[prompt_length:response_length].tolist()
         )
+
+        if save_val_responses:
+            save_data = []
+            for i in len(rewards):
+                reward = rewards[i]
+                prompt_length = prompt_lengths[i]
+                response_length = response_lengths[i]
+                response_token = response_tokens[i]
+
+                prompt = self.model.tokenizer.tokenizer.decode(response_token[:prompt_length].tolist())
+                response = self.model.tokenizer.tokenizer.decode(
+                    response_token[prompt_length:response_length].tolist()
+                )
+                save_data.append(
+                    {
+                        "prompt": prompt,
+                        "response": response,
+                        "reward": reward.item()
+                    }
+                )
+            
+            with open(f"../gen_results/{self.step}.jsonl", "w") as f:
+                for item in save_data:
+                    f.write(json.dumps(item) + '\n')
+            
+
 
         metrics = {
             "table": table,
