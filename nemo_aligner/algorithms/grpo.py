@@ -276,6 +276,8 @@ class GRPOTrainer:
         rollout_batches, all_rewards = [], []
         timer_metrics = {}
 
+        num_responses = 1 if is_validation else self.cfg.num_responses_per_prompt
+
         with reshard_context():
             # dataloader must be built within the reshard context because it uses DP rank and size
             dataloader = dataloader_builder(consumed_samples=consumed_samples)
@@ -283,11 +285,7 @@ class GRPOTrainer:
 
             self.timer.start("batch_iterator_init")
             batch_iterator = self.batch_iterator_cls(
-                sampler_iter,
-                dataloader.dataset,
-                self.collate_fn,
-                1 if is_validation else self.cfg.num_responses_per_prompt,
-                self.cfg.rollout_micro_batch_size,
+                sampler_iter, dataloader.dataset, self.collate_fn, num_responses, self.cfg.rollout_micro_batch_size,
             )
             timer_metrics["batch_iterator_init"] = self.timer.stop_and_get_time("batch_iterator_init")
 
@@ -350,9 +348,13 @@ class GRPOTrainer:
         balanced_local_batch.update({"rewards": all_rewards})
         # gather the global rollout batch
         global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
-        return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
+        return (
+            balanced_local_batch,
+            cpu_dict(self.compute_rollout_metrics(global_rollout_batch, num_responses)),
+            timer_metrics,
+        )
 
-    def compute_rollout_metrics(self, rollout_batch):
+    def compute_rollout_metrics(self, rollout_batch, num_responses):
         table = {}
 
         prompt_lengths = rollout_batch["prompt_lengths"]
@@ -373,7 +375,7 @@ class GRPOTrainer:
 
         metrics = {
             "table": table,
-            "rollout_size": prompt_lengths.size(0) // self.cfg.num_responses_per_prompt,
+            "rollout_size": prompt_lengths.size(0) // num_responses,
             "response_lengths": response_lengths.float().mean().item(),
             "prompt_lengths": prompt_lengths.float().mean().item(),
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
