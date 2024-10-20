@@ -492,12 +492,13 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         world_size = parallel_state.get_tensor_model_parallel_world_size()
         vocab_start_index, vocab_end_index = get_vocab_range(partition_vocab_size, rank, world_size)
         vocab_size = partition_vocab_size * world_size
+        logits_2d = vocab_parallel_logits.view(-1, partition_vocab_size)
 
         K = target_logits.size()[-1]
 
         if topk_student:  ## naively grab the top-k logits from the student
-            predicted_logits_full = torch.zeros((vocab_parallel_logits.shape[:-1], vocab_size))
-            prediced_logits_full[vocab_start_index, vocab_end_index] = vocab_parallel_logits
+            predicted_logits_full = torch.zeros((*vocab_parallel_logits.shape[:-1], vocab_size), device=torch.cuda.current_device())
+            predicted_logits_full[:,vocab_start_index:vocab_end_index] = vocab_parallel_logits
             torch.distributed.all_reduce(
                 predicted_logits_full,
                 op=torch.distributed.ReduceOp.SUM,
@@ -519,18 +520,17 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             masked_target_token_ids = target_token_ids.clone() - vocab_start_index
             masked_target_token_ids[target_mask] = 0
 
-            logits_2d = vocab_parallel_logits.view(-1, partition_vocab_size)
-
             ## Get the logits for the top-K teacher ids
             ## use repeat_interleave as we want to select K tokens per example
             arange_1d_topk = torch.arange(start=0, end=logits_2d.size()[0], device=logits_2d.device).repeat_interleave(
                 K
             )
+
             target_token_ids_1d = masked_target_token_ids.view(-1)  ## B * seq_length * K
             predicted_logits_1d_topk = logits_2d[arange_1d_topk, target_token_ids_1d]
             predicted_logits_1d_topk = predicted_logits_1d_topk.clone().contiguous()
             predicted_logits_topk = predicted_logits_1d_topk.view_as(target_logits)
-            predicted_logits_topk[label_mask] = 0.0
+            predicted_logits_topk[target_mask] = 0.0
             # All reduce is needed to get the chunks from other GPUs.
             torch.distributed.all_reduce(
                 predicted_logits_topk,
@@ -553,8 +553,8 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         ## TODO: I don't think the extra all-reduce is needed since all ranks already have the correct predicted_topk_logits
         ## verify this
-        """exp_logits_topk[target_mask] = 0.0
-        sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=True)
+        exp_logits_topk[target_mask] = 0.0
+        """sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=True)
         torch.distributed.all_reduce(
             sum_exp_logits_topk,
             op=torch.distributed.ReduceOp.SUM,

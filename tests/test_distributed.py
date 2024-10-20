@@ -62,6 +62,7 @@ def naive_topk_loss_function(
     kd_loss_weight=1,
     sft_loss_weight=0,
     kd_loss="bwd_kl",
+    topk_student=False,
 ):
     def loss_func(
         logits, target_logits, mask, kd_loss="bwd_kl", logits_scale=1.0, target_logits_scale=1.0,
@@ -85,8 +86,11 @@ def naive_topk_loss_function(
     output_tensor = output_tensor - output_tensor_max.unsqueeze(dim=-1).detach()
     output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
 
-    # compute the knowledge distillation loss against the ground-truth logits
-    topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
+    if topk_student:
+        topk_logits, _ = torch.topk(output_tensor, target_topk_token_ids.shape[-1])
+    else:
+        # compute the knowledge distillation loss against the ground-truth logits
+        topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
 
     log_sum_exp_logits = None
     target_topk_logits_in_loss = target_topk_logits
@@ -229,6 +233,7 @@ class TestDistributedFunctions:
         sft_loss_weight,
         kd_loss_weight,
         forward_kl,
+        topk_student,
     ):
 
         self._init_distributed(local_rank, main_address, main_port, nprocs)
@@ -270,6 +275,7 @@ class TestDistributedFunctions:
             kd_loss_weight,
             sft_loss_weight,
             "fwd_kl" if forward_kl else "bwd_kl",
+            topk_student,
         )
 
         efficient_loss, kd, sft = _TopKLogitsCrossEntropy.forward(
@@ -281,6 +287,7 @@ class TestDistributedFunctions:
             kd_loss_weight,
             sft_loss_weight,
             forward_kl,
+            topk_student,
         )
 
         ## sum p(x)logp(x) - p(x) logq(x)
@@ -373,17 +380,27 @@ class TestDistributedFunctions:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
-        "K,batch_size,seq_len,partition_vocab_size,sft_loss_weight,kd_loss_weight,forward_kl",
+        "K,batch_size,seq_len,partition_vocab_size,sft_loss_weight,kd_loss_weight,forward_kl,topk_student",
         [
-            (3, 4, 8, 16, 0.5, 0.5, False),
-            (3, 2, 8, 16, 0, 1.0, False),
-            (3, 2, 8, 32, 1.0, 0, False),
-            (3, 4, 8, 16, 0.5, 0.5, True),
-            (3, 2, 8, 16, 0, 1.0, True),
+            (3, 4, 8, 16, 0.5, 0.5, False, False),
+            (3, 2, 8, 16, 0, 1.0, False, False),
+            (3, 2, 8, 32, 1.0, 0, False, False),
+            (3, 4, 8, 16, 0.5, 0.5, True, False),
+            (3, 2, 8, 16, 0, 1.0, True, False),
+            (3, 4, 8, 16, 0.5, 0.5, False, True),
+
         ],
     )
     def test_topk_logits(
-        self, K, batch_size, seq_len, partition_vocab_size, sft_loss_weight, kd_loss_weight, forward_kl
+        self,
+        K,
+        batch_size,
+        seq_len,
+        partition_vocab_size,
+        sft_loss_weight,
+        kd_loss_weight,
+        forward_kl,
+        topk_student,
     ):
         self._run_test(
             self._test_topk_logits,
@@ -394,4 +411,5 @@ class TestDistributedFunctions:
             sft_loss_weight,
             kd_loss_weight,
             forward_kl,
+            topk_student,
         )
