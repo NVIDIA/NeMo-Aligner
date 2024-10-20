@@ -399,7 +399,7 @@ class ReinforceTrainer:
 
         if save_val_responses:
             save_data = []
-            for i in len(rewards):
+            for i in range(len(rewards)):
                 reward = rewards[i]
                 prompt_length = prompt_lengths[i]
                 response_length = response_lengths[i]
