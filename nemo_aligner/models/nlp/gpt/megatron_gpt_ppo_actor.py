@@ -320,7 +320,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             clear_memory()
 
     @torch.no_grad()
-    def infer(self, inference_batch):
+    def infer(self, inference_batch, use_greedy=False):
         prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
@@ -330,7 +330,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         )
 
         if self.use_trtllm_generation:
-            actor_output = self.trtllm_generate.generate(inputs)
+            actor_output = self.trtllm_generate.generate(inputs, use_greedy=use_greedy)
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
         else:

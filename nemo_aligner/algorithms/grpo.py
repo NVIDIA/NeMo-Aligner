@@ -292,7 +292,8 @@ class GRPOTrainer:
             self.timer.start("generate")
 
             for batch in batch_iterator:
-                rollout_batch = self.model.infer(batch)
+                # during val we want to use greedy sampling
+                rollout_batch = self.model.infer(batch, use_greedy=is_validation)
                 rollout_batches.append(rollout_batch)
 
                 # futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
