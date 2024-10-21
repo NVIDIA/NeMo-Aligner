@@ -495,8 +495,10 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         K = target_logits.size()[-1]
 
         if topk_student:  ## naively grab the top-k logits from the student
-            predicted_logits_full = torch.zeros((*vocab_parallel_logits.shape[:-1], vocab_size), device=torch.cuda.current_device())
-            predicted_logits_full[...,vocab_start_index:vocab_end_index] = vocab_parallel_logits
+            predicted_logits_full = torch.zeros(
+                (*vocab_parallel_logits.shape[:-1], vocab_size), device=torch.cuda.current_device()
+            )
+            predicted_logits_full[..., vocab_start_index:vocab_end_index] = vocab_parallel_logits
             torch.distributed.all_reduce(
                 predicted_logits_full,
                 op=torch.distributed.ReduceOp.SUM,
@@ -655,7 +657,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         ## these values are only needed when computing using KL
         if forward_kl:
-            log_prob_ratio = probs.log() - target_probs.log() ## shape = (bs, sl)
+            log_prob_ratio = probs.log() - target_probs.log()  ## shape = (bs, sl)
             fwd_kl_const = (probs * log_prob_ratio).sum(-1, keepdims=True).repeat_interleave(K, -1)
             fwd_kl_const = fwd_kl_const[inv_target_mask]
             log_prob_ratio = log_prob_ratio[inv_target_mask]
