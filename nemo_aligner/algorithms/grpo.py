@@ -301,6 +301,8 @@ class GRPOTrainer:
 
             self.timer.start("generate")
 
+            futures = []
+
             for batch in batch_iterator:
                 # during val we want to use greedy sampling
                 rollout_batch = self.model.infer(batch, use_greedy=is_validation)
@@ -308,14 +310,15 @@ class GRPOTrainer:
 
                 # futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
                 texts = [
-                    self.model.tokenizer.ids_to_text(item[length:].tolist())
-                    for item, length in zip(rollout_batch["response_tokens"], batch["length"])
+                    self.model.tokenizer.ids_to_text(item[:length].tolist())
+                    for item, length in zip(rollout_batch["response_tokens"], rollout_batch["response_lengths"])
                 ]
-                answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
+                futures.append(self.rm_critic.infer_rm(texts))
+                # answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
                 # TODO: need to make this async for real
-                output = run_if_model_parallel_src(sandbox_call, self.sandbox, answers)
-                if output is not None:
-                    all_rewards.extend(output)
+                # output = run_if_model_parallel_src(sandbox_call, self.sandbox, answers)
+                # if stub is not None:
+                #     all_rewards.extend(stub)
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -342,21 +345,15 @@ class GRPOTrainer:
             balanced_local_batch["init_logprobs"] = rollout_init_logprobs
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
-        if len(all_rewards) > 0:
-            new_all_rewards = []
+        all_rewards = []
 
-            for item in all_rewards:
-                if item is None:
-                    item = 0.0
-                new_all_rewards.append(item)
+        for future in futures:
+            _, reward = future.result()
+            all_rewards.extend(reward.flatten())
 
-            all_rewards = torch.as_tensor(
-                new_all_rewards, dtype=torch.float32, device=torch.cuda.current_device()
-            ).view(-1, 1)
-
-        all_rewards = broadcast_2d_tensor_within_mp(all_rewards).flatten()
-
+        all_rewards = torch.as_tensor(all_rewards)
         balanced_local_batch.update({"rewards": all_rewards})
+
         # gather the global rollout batch
         global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
         return (
