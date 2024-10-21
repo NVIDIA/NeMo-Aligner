@@ -222,10 +222,13 @@ class GRPOTrainer:
         num_reward_non_zero = (grouped_rewards > 0).sum(-1).count_nonzero()
         num_std_zero = (grouped_reward_std == 0).count_nonzero()
 
-        advantages = grouped_rewards - grouped_reward_mean
+        if self.cfg.use_raw_rewards:
+            advantages = rewards
+        else:
+            advantages = grouped_rewards - grouped_reward_mean
 
-        if self.cfg.normalize_rewards:
-            advantages = advantages / grouped_reward_std.add(1e-8)
+            if self.cfg.normalize_rewards:
+                advantages = advantages / grouped_reward_std.add(1e-8)
 
         # TODO: consider normalizing the advantages
         advantages = advantages.flatten()
