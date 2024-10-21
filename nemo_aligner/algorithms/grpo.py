@@ -227,6 +227,7 @@ class GRPOTrainer:
         if self.cfg.normalize_rewards:
             advantages = advantages / grouped_reward_std.add(1e-8)
 
+        # TODO: consider normalizing the advantages
         advantages = advantages.flatten()
 
         # advantage estimation
@@ -243,15 +244,15 @@ class GRPOTrainer:
         if "init_logprobs" in rollout_batch:
             ppo_rollout_data["init_logprobs"] = rollout_batch["init_logprobs"]
 
-        # for the critic
-        # compute metrics
         ppo_rollout_metrics["num_samples"] = prompt_lengths.size(0)
 
-        ppo_rollout_metrics["num_prompt_with_positive_reward"] = num_reward_non_zero
-        ppo_rollout_metrics["num_prompt_with_zero_std"] = num_std_zero
-
-        ppo_rollout_metrics["grouped_reward_mean"] = grouped_reward_mean.sum()
-        ppo_rollout_metrics["grouped_reward_std"] = grouped_reward_std.sum()
+        # group statistics
+        ppo_rollout_metrics["num_prompt_with_positive_reward"] = (
+            num_reward_non_zero * self.cfg.num_responses_per_prompt
+        )
+        ppo_rollout_metrics["num_prompt_with_zero_std"] = num_std_zero * self.cfg.num_responses_per_prompt
+        ppo_rollout_metrics["grouped_reward_mean"] = grouped_reward_mean.sum() * self.cfg.num_responses_per_prompt
+        ppo_rollout_metrics["grouped_reward_std"] = grouped_reward_std.sum() * self.cfg.num_responses_per_prompt
 
         # now the metrics are global
         ppo_rollout_metrics = all_reduce_dict(
