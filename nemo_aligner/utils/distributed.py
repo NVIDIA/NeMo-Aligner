@@ -219,18 +219,6 @@ def _compute_distributed_log_softmax(vocab_parallel_logits):
     return vocab_parallel_logits - sum_exp_logits.log_().to(vocab_parallel_logits.dtype)
 
 
-def compute_distributed_log_sum_exp_logits(vocab_parallel_logits):
-    """Expects a size B x S x V//TP tensor, return shape B x S which is the logsumexp of the logits along the 
-    last dimension across all TPs.
-    """
-    sum_exp_logits = vocab_parallel_logits.exp().sum(-1, keepdim=False).float()
-
-    torch.distributed.all_reduce(
-        sum_exp_logits, op=torch.distributed.ReduceOp.SUM, group=parallel_state.get_tensor_model_parallel_group(),
-    )
-    return sum_exp_logits.log_().to(vocab_parallel_logits.dtype)
-
-
 class DistributedLogprob(torch.autograd.Function):
     """Function to get logprobs out and differentiate through it
     """
