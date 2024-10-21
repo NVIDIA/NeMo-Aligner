@@ -447,8 +447,6 @@ def compute_topk_logits_in_batched_sequence(
 
 ## how to handle conditionals?
 ## separate implementations for forward and backward KL?
-
-## TODO: check topk_student
 class _TopKLogitsCrossEntropy(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -498,7 +496,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         if topk_student:  ## naively grab the top-k logits from the student
             predicted_logits_full = torch.zeros((*vocab_parallel_logits.shape[:-1], vocab_size), device=torch.cuda.current_device())
-            predicted_logits_full[:,vocab_start_index:vocab_end_index] = vocab_parallel_logits
+            predicted_logits_full[...,vocab_start_index:vocab_end_index] = vocab_parallel_logits
             torch.distributed.all_reduce(
                 predicted_logits_full,
                 op=torch.distributed.ReduceOp.SUM,
@@ -550,16 +548,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # compute the logsumexp of all K predicted logits
         exp_logits_topk = predicted_logits_topk.exp()
         sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=True)
-
-        ## TODO: I don't think the extra all-reduce is needed since all ranks already have the correct predicted_topk_logits
-        ## verify this
-        exp_logits_topk[target_mask] = 0.0
-        """sum_exp_logits_topk = exp_logits_topk.sum(dim=-1, keepdims=True)
-        torch.distributed.all_reduce(
-            sum_exp_logits_topk,
-            op=torch.distributed.ReduceOp.SUM,
-            group=parallel_state.get_tensor_model_parallel_group(),
-        )"""
         log_sum_exp_logits_topk = sum_exp_logits_topk.log()
 
         ## compute the predicted probabilitites
@@ -663,11 +651,17 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # Add the gradient from matching classes.
         arange_1d = torch.arange(start=0, end=grad_2d.size()[0], device=grad_2d.device).repeat_interleave(K)
 
-        ## slot in the non-zero gradients
         inv_target_mask = ~target_mask
-        original_probs_shape = probs.shape
-        probs = probs[inv_target_mask]
 
+        ## these values are only needed when computing using KL
+        if forward_kl:
+            log_prob_ratio = probs.log() - target_probs.log() ## shape = (bs, sl)
+            fwd_kl_const = (probs * log_prob_ratio).sum(-1, keepdims=True).repeat_interleave(K, -1)
+            fwd_kl_const = fwd_kl_const[inv_target_mask]
+            log_prob_ratio = log_prob_ratio[inv_target_mask]
+
+        ## grab only the probs on this rank
+        probs = probs[inv_target_mask]
         target_probs = target_probs[inv_target_mask]
         arange_1d = arange_1d[inv_target_mask.view(-1)]
         target_token_ids_1d = target_token_ids_1d[inv_target_mask.view(-1)]
@@ -677,12 +671,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         sft_loss_weight = loss_weights[1]
 
         if forward_kl:
-            probs_3d = probs.view(original_probs_shape)
-            target_probs_3d = target_probs.view(original_probs_shape)
-            log_prob_ratio = probs_3d.log() - target_probs_3d.log()
-            const = ((probs_3d) * log_prob_ratio).sum(-1, keepdims=True)
-            nonzero_grad = probs_3d * (log_prob_ratio - const)
-
+            nonzero_grad = probs * (log_prob_ratio - fwd_kl_const)
             grad_2d[arange_1d, target_token_ids_1d] = nonzero_grad.view(-1)
 
         else:  ## backward KL
