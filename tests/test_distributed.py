@@ -92,7 +92,6 @@ def naive_topk_loss_function(
         # compute the knowledge distillation loss against the ground-truth logits
         topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
 
-    log_sum_exp_logits = None
     target_topk_logits_in_loss = target_topk_logits
 
     kd_loss = loss_func(topk_logits, target_topk_logits_in_loss, mask=loss_mask, kd_loss=kd_loss)
@@ -101,8 +100,7 @@ def naive_topk_loss_function(
     sft_loss = torch.zeros_like(kd_loss)
     if sft_loss_weight != 0:
         target_label_logits = torch.gather(output_tensor, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-        if log_sum_exp_logits is None:
-            log_sum_exp_logits = torch.logsumexp(output_tensor, dim=-1)
+        log_sum_exp_logits = torch.logsumexp(output_tensor, dim=-1)
         target_label_logprobs = target_label_logits - log_sum_exp_logits
         sft_loss = -torch.sum(target_label_logprobs * loss_mask) / torch.sum(loss_mask).clamp(min=1.0)
 
@@ -246,8 +244,8 @@ class TestDistributedFunctions:
         true_logits = (
             torch.randint(low=0, high=100, size=(batch_size, seq_len, partition_vocab_size * world_size)) / 5
         ).to(torch.cuda.current_device())
-        target_logits, target_token_ids = torch.topk(true_logits, 3)
-        target_log_sum_exp_logits = true_logits.exp().sum(-1)
+        target_logits, target_token_ids = torch.topk(true_logits, K)
+        target_log_sum_exp_logits = true_logits.exp().sum(-1).log()
         loss_mask = torch.ones(target_logits.size()[:-1]).to(torch.cuda.current_device())
         labels = torch.randint(low=0, high=partition_vocab_size * world_size, size=(batch_size, seq_len)).to(
             torch.cuda.current_device()
@@ -348,7 +346,7 @@ class TestDistributedFunctions:
             grad_full_slice, grad_distributed
         ), "grad of entropy between distributed and full path are different!"
 
-    """@pytest.mark.run_only_on("GPU")
+    @pytest.mark.run_only_on("GPU")
     def test_distributed_masked_global_mean_var(self):
         self._run_test(self._test_masked_global_mean_var)
 
@@ -376,7 +374,7 @@ class TestDistributedFunctions:
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("batch_size,seed", [(1, 5555), (4, 6666)])
     def test_distributed_entropy(self, batch_size, seed):
-        self._run_test(self._test_distributed_entropy, batch_size, seed)"""
+        self._run_test(self._test_distributed_entropy, batch_size, seed)
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
