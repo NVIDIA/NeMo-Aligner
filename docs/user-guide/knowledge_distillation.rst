@@ -3,10 +3,9 @@
 SFT with Knowledge Distillation
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-Knowledge distillation is a technique in which a smaller (student) model learns from a larger (teacher) model. The goal is to "distill" information from the teacher to the student,
-resulting in a small model with comparable capabilities to the large model. Compared to standard SFT which trains the model to predict the next token,
-knowledge distillation allows more calibrated information passing from the teacher to the student.
-The two primary benefits of knowledge distillation are faster convergence and improved accuracy than standard SFT training.
+Knowledge distillation is a technique in which a smaller (student) model learns from a larger (teacher) model. The goal is to "distill" information from the teacher to the student.
+Compared to standard SFT which trains the model to predict the next token, knowledge distillation allows more calibrated information passing from the teacher to the student.
+The two primary benefits of knowledge distillation compared to standard supervised fine-tuning: (1) convergence in fewer training tokens, and (2) improved accuracy.
 
 There are many variants of knowledge distillation. NeMo Aligner supports training the student model to match the top-K logits of the teacher model. In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model.
 
@@ -61,14 +60,18 @@ In this example, you use the `OpenAssistant dataset <https://huggingface.co/data
 Step 3: Cache the teacher's logits
 ##################################
 
-Next, we augment the dataset with the logits from the teacher. For the purposes of this tutorial, we save the teacher's top four logits by setting
+Next, we augment the dataset with the logits from the teacher. Note that this code will generate the top-k logits in descending order. For the purposes of this tutorial, we save the teacher's top four logits by setting
+
+.. important::
+   Failing to save the teacher's logits in descending order may affect convergence. If you choose to compute the teacher's logits using a different script than the one provided in this example, make sure the resulting dataset still has the teacher's logits in descending order.
 
 .. code-block:: bash
    top_k=4
 
 In practice, ``k`` is usually set to something larger, such as 100.
 
-. This step takes around 50 minutes on 8 H100 80G GPUs.
+
+This step takes around 50 minutes on 8 H100 80G GPUs.
 
 .. tab-set::
 
@@ -340,7 +343,9 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
             set +x
 
 If running with multiple chunks, modify ``data.n_chunks`` and ``data.n_examples_per_chunk`` accordingly. The data prefixes (for example, ``data/oasst/train_with_logits_CHUNK_ID.jsonl``) should remain unchanged.
-``CHUNK_ID`` gets replafced with the current chunk index at data load time.
+For example, if ``data.n_chunks=10`` and ``data.n_examples_per_chunk=100``, we should have 10 files with names ``data/oasst/train_with_logits_0.jsonl, ..., data/oasst/train_with_logits_9.jsonl``.
+Each of the files should have 100 examples. The file template ``data/oasst/train_with_logits_CHUNK_ID.jsonl`` should be passed to ``modle.data.data_prefix`` as shown in the example above.
+The ``CHUNK_ID`` will be replaced with ``0`` to ``data.n_chunks-1`` at data load time.
 
 Results
 #######
