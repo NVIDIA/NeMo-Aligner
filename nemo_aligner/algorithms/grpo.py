@@ -215,10 +215,12 @@ class GRPOTrainer:
         # TODO: switch this to RLOO like! this adds bias
         # compute advantages
         grouped_rewards = rewards.view(-1, self.cfg.num_responses_per_prompt)
-        num_non_zero = (grouped_rewards > 0).sum(-1).count_nonzero()
 
         grouped_reward_mean = grouped_rewards.mean(-1, keepdim=True)
         grouped_reward_std = grouped_rewards.std(-1, keepdim=True)
+
+        num_reward_non_zero = (grouped_rewards > 0).sum(-1).count_nonzero()
+        num_std_zero = (grouped_reward_std == 0).count_nonzero()
 
         advantages = grouped_rewards - grouped_reward_mean
 
@@ -245,7 +247,9 @@ class GRPOTrainer:
         # compute metrics
         ppo_rollout_metrics["num_samples"] = prompt_lengths.size(0)
 
-        ppo_rollout_metrics["prompt_non_zero"] = num_non_zero
+        ppo_rollout_metrics["num_prompt_with_positive_reward"] = num_reward_non_zero
+        ppo_rollout_metrics["num_prompt_with_zero_std"] = num_std_zero
+
         ppo_rollout_metrics["grouped_reward_mean"] = grouped_reward_mean.sum()
         ppo_rollout_metrics["grouped_reward_std"] = grouped_reward_std.sum()
 
