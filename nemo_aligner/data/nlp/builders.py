@@ -115,7 +115,9 @@ def build_dataset_generic(
             assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
             data_payload = ChunkedJsonl(current_data_prefix, n_chunks, n_examples_per_chunk)
         else:
-            raise RuntimeError(f"data.data_impl must be one of mmap, json, jsonl or chunked_jsonl, but got {data_impl}")
+            raise RuntimeError(
+                f"data.data_impl must be one of mmap, json, jsonl or chunked_jsonl, but got {data_impl}"
+            )
         total_num_of_documents = len(data_payload)
 
         # Print stats about the splits.
