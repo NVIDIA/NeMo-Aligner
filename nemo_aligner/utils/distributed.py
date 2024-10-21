@@ -219,18 +219,6 @@ def _compute_distributed_log_softmax(vocab_parallel_logits):
     return vocab_parallel_logits - sum_exp_logits.log_().to(vocab_parallel_logits.dtype)
 
 
-def subtract_distributed_logits_with_max(vocab_parallel_logits):
-    """Expects a size B x S x V//TP tensor, return the tensor which is substracted by the maximum value along its last dimension.
-    This allows for more stable computation in softmax.
-    """
-    logits_max = torch.amax(vocab_parallel_logits, dim=-1, keepdim=True)
-    torch.distributed.all_reduce(
-        logits_max, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_tensor_model_parallel_group()
-    )
-    # Subtract the maximum value.
-    return vocab_parallel_logits - logits_max
-
-
 def compute_distributed_log_sum_exp_logits(vocab_parallel_logits):
     """Expects a size B x S x V//TP tensor, return shape B x S which is the logsumexp of the logits along the 
     last dimension across all TPs.

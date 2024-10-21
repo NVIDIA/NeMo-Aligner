@@ -49,7 +49,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         self.logits_scale = self.cfg.knowledge_distillation.get("logits_scale", 1.0)
 
         self.kd_loss = self.cfg.knowledge_distillation.get("kd_loss", "bwd_kl")
-        self.jsd_weight = self.cfg.knowledge_distillation.get("jsd_weight", 0.5)
         self.kd_loss_weight = self.cfg.knowledge_distillation.get("kd_loss_weight", 1)
         self.sft_loss_weight = self.cfg.knowledge_distillation.get("sft_loss_weight", 0)
         assert (
@@ -111,12 +110,6 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
             def loss_func(output_tensor):
-                output_tensor_max = torch.max(output_tensor, dim=-1)[0]
-                torch.distributed.all_reduce(
-                    output_tensor_max, op=torch.distributed.ReduceOp.MAX, group=get_tensor_model_parallel_group()
-                )
-                output_tensor = output_tensor - output_tensor_max.unsqueeze(dim=-1).detach()
-
                 ## bwd kl
                 loss, kd_loss, sft_loss = _TopKLogitsCrossEntropy.apply(
                     output_tensor,

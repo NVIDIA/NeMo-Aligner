@@ -95,7 +95,6 @@ model:
     kd_loss_weight: 1.0
     sft_loss_weight: 0.0
     kd_loss: bwd_kl ## the knowledge distillation loss function to use. Should be one of "bwd_kl" or "fwd_kl"
-    jsd_weight: 0.5
     
   data:
     data_impl: chunked_jsonl ## use chunked_jsonl rather than jsonl to save memory
