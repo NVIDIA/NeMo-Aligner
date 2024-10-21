@@ -33,6 +33,7 @@ from nemo.utils.timers import NamedTimer
 from nemo_aligner.utils.parallel_state import get_model_parallel_group, get_model_parallel_src_rank
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 
+
 def rebalance_nd_tensor(tensor, group):
     """
     Takes tensors with variable leading sizes (at dim=0) and then stack them into a single tensor.
@@ -366,7 +367,9 @@ def compute_topk_logits_in_batched_sequence(
 
             def gather_tensors(in_tensor):
                 out_tensor = torch.zeros(
-                    (in_tensor.shape[0]*dp_world_size, *in_tensor.shape[1:]), dtype=in_tensor.dtype, device=torch.cuda.current_device()
+                    (in_tensor.shape[0] * dp_world_size, *in_tensor.shape[1:]),
+                    dtype=in_tensor.dtype,
+                    device=torch.cuda.current_device(),
                 )
                 torch.distributed.all_gather_into_tensor(out_tensor, in_tensor, group=group)
                 return out_tensor
@@ -374,7 +377,6 @@ def compute_topk_logits_in_batched_sequence(
             topk_logits_gathered = gather_tensors(topk_logits)
             topk_token_ids_gathered = gather_tensors(topk_token_ids)
             log_sum_exp_logits_gathered = gather_tensors(log_sum_exp_logits)
-
 
             return {
                 "topk_logits": topk_logits_gathered,

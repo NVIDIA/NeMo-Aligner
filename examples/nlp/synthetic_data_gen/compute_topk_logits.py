@@ -19,9 +19,8 @@ from functools import partial
 import numpy as np
 import torch
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf
-
 from megatron.core import parallel_state
+from omegaconf.omegaconf import OmegaConf
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
@@ -119,13 +118,13 @@ def main(cfg) -> None:
         if num_padding:
             indices = indices + [indices[-1]] * num_padding
 
-        #indices_on_this_dp_rank = indices[start_idx_on_this_rank:end_idx_on_this_rank]
+        # indices_on_this_dp_rank = indices[start_idx_on_this_rank:end_idx_on_this_rank]
 
         # prepare the batch
         batch = [dataset[j] for j in indices]
         batch = dataset.collate_fn(batch)
 
-        batch_on_this_dp_rank = {k: v[start_idx_on_this_rank:end_idx_on_this_rank] for k,v in batch.items()}
+        batch_on_this_dp_rank = {k: v[start_idx_on_this_rank:end_idx_on_this_rank] for k, v in batch.items()}
 
         # compute the topk logits
         with torch.no_grad():
