@@ -71,7 +71,7 @@ Next, we augment the dataset with the logits from the teacher. Note that this co
 In practice, ``k`` is usually set to something larger, such as 100.
 
 
-This step takes around 50 minutes on 8 H100 80G GPUs.
+This step takes around 20 minutes on 8 H100 80G GPUs.
 
 .. tab-set::
 
