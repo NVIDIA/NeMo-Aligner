@@ -33,7 +33,6 @@ from nemo.utils.timers import NamedTimer
 from nemo_aligner.utils.parallel_state import get_model_parallel_group, get_model_parallel_src_rank
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 
-
 def rebalance_nd_tensor(tensor, group):
     """
     Takes tensors with variable leading sizes (at dim=0) and then stack them into a single tensor.
@@ -332,6 +331,7 @@ def compute_topk_logits_in_batched_sequence(
         batch = next(dataloader_iter)
 
         tokens = batch["tokens"]
+
         # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
         # these two lines ensure your position_ids and attn_mask are always B=1
         # position_ids = batch["position_ids"][0:1]
@@ -360,10 +360,26 @@ def compute_topk_logits_in_batched_sequence(
             # compute the top_k logits and topk token_ids
             topk_logits, topk_token_ids = torch.topk(output_tensor, top_k)
 
+            dp_world_size = parallel_state.get_data_parallel_world_size()
+            group = parallel_state.get_data_parallel_group()
+            rank = torch.distributed.get_rank(group=group)
+
+            def gather_tensors(in_tensor):
+                out_tensor = torch.zeros(
+                    (in_tensor.shape[0]*dp_world_size, *in_tensor.shape[1:]), dtype=in_tensor.dtype, device=torch.cuda.current_device()
+                )
+                torch.distributed.all_gather_into_tensor(out_tensor, in_tensor, group=group)
+                return out_tensor
+
+            topk_logits_gathered = gather_tensors(topk_logits)
+            topk_token_ids_gathered = gather_tensors(topk_token_ids)
+            log_sum_exp_logits_gathered = gather_tensors(log_sum_exp_logits)
+
+
             return {
-                "topk_logits": topk_logits,
-                "topk_token_ids": topk_token_ids,
-                "log_sum_exp_logits": log_sum_exp_logits,
+                "topk_logits": topk_logits_gathered,
+                "topk_token_ids": topk_token_ids_gathered,
+                "log_sum_exp_logits": log_sum_exp_logits_gathered,
             }
 
         return output_tensor, fake_loss_func
@@ -372,7 +388,7 @@ def compute_topk_logits_in_batched_sequence(
     assert (
         tokens.shape[0] % forward_micro_batch_size == 0
     ), f"batch size {tokens.shape[0]} / forward_micro_batch_size {forward_micro_batch_size} is not divisible."
-    num_microbatches = int(tokens.shape[0] // forward_micro_batch_size)
+    num_microbatches = int(tokens.shape[0] / forward_micro_batch_size)
     data_iter = get_iterator_k_split(
         {"tokens": tokens, "position_ids": position_ids, "attention_mask": attention_mask}, num_microbatches
     )

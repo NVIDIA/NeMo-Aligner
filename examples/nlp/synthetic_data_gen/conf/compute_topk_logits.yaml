@@ -3,8 +3,6 @@ name: megatron_gpt_infer_topk_logits
 start_from_idx: null
 end_at_idx: null
 output_path: null 
-batch_size: 1
-forward_micro_batch_size: ${.batch_size}
 top_k: 100
 
 trainer:
@@ -82,8 +80,6 @@ data:
     # Example of how each dataset is formatted
     # {'input': 'John von Neumann\nVon Neumann made fundamental contributions .... Q: What did the math of artificial viscosity do?', 'output': 'smoothed the shock transition without sacrificing basic physics'}
     file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
-    global_batch_size: 64
-    micro_batch_size: 1
     shuffle: True
     memmap_workers: null
     max_seq_length: ${model.encoder_seq_length}

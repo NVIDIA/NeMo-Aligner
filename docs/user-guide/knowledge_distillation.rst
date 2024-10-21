@@ -98,8 +98,7 @@ This step takes around 50 minutes on 8 H100 80G GPUs.
                data.data.hf_dataset=True \
                top_k=4 \
                model.global_batch_size=16 \
-               batch_size=16 \
-               forward_micro_batch_size=2 \
+               model.micro_batch_size=2 \
                start_from_idx=0 \
                end_at_idx=56439 \
                output_path=data/oasst/train_with_logits_0.jsonl

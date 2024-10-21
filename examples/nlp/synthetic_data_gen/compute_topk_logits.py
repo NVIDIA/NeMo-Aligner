@@ -21,6 +21,8 @@ import torch
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
+from megatron.core import parallel_state
+
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
@@ -49,6 +51,7 @@ def write_generations(output_path, indices, batch, topk_logits, topk_token_ids, 
             obj["topk_token_ids"] = topk_token_ids[i]
             obj["log_sum_exp_logits"] = log_sum_exp_logits[i]
             obj["index"] = indices[i]
+
             write_file.write(json.dumps(obj, ensure_ascii=False) + "\n")
         write_file.flush()
 
@@ -95,40 +98,52 @@ def main(cfg) -> None:
     start_from_idx = cfg.get("start_from_idx", 0)
     end_at_idx = cfg.get("end_at_idx", len(dataset) - 1)
 
-    for i in range(start_from_idx, end_at_idx + 1, cfg.batch_size):
-        end_i = min(end_at_idx, i + cfg.batch_size - 1)
-        num_padding = cfg.batch_size - (end_i - i + 1)
+    data_parallel_rank = parallel_state.get_data_parallel_rank()
+    data_parallel_size = parallel_state.get_data_parallel_world_size()
+
+    assert cfg.model.global_batch_size % (cfg.model.micro_batch_size * data_parallel_size) == 0
+    start_idx_on_this_rank = int(data_parallel_rank / data_parallel_size * cfg.model.global_batch_size)
+    end_idx_on_this_rank = int((data_parallel_rank + 1) / data_parallel_size * cfg.model.global_batch_size)
+
+    for i in range(start_from_idx, end_at_idx + 1, cfg.model.global_batch_size):
+        end_i = min(end_at_idx, i + cfg.model.global_batch_size - 1)
+        num_padding = cfg.model.global_batch_size - (end_i - i + 1)
 
         logging.info(f"Processing {i}:{end_i} items / till {end_at_idx}.")
         indices = [j for j in range(i, end_i + 1) if j not in processed_indices]
+
+        if len(indices) == 0:
+            continue
 
         ## pad to batch size using the last example
         if num_padding:
             indices = indices + [indices[-1]] * num_padding
 
-        if len(indices) == 0:
-            continue
+        #indices_on_this_dp_rank = indices[start_idx_on_this_rank:end_idx_on_this_rank]
 
         # prepare the batch
         batch = [dataset[j] for j in indices]
         batch = dataset.collate_fn(batch)
 
+        batch_on_this_dp_rank = {k: v[start_idx_on_this_rank:end_idx_on_this_rank] for k,v in batch.items()}
+
         # compute the topk logits
         with torch.no_grad():
             topk_logits, topk_token_ids, log_sum_exp_logits = compute_topk_logits_in_batched_sequence(
                 ptl_model.model,
-                batch["tokens"].to(torch.cuda.current_device()),
-                batch["position_ids"].to(torch.cuda.current_device()),
-                batch["attention_mask"].to(torch.cuda.current_device()),
+                batch_on_this_dp_rank["tokens"].to(torch.cuda.current_device()),
+                batch_on_this_dp_rank["position_ids"].to(torch.cuda.current_device()),
+                batch_on_this_dp_rank["attention_mask"].to(torch.cuda.current_device()),
                 cfg.top_k,
                 cfg.trainer.precision,
-                forward_micro_batch_size=cfg.forward_micro_batch_size,
+                forward_micro_batch_size=cfg.model.micro_batch_size,
             )
 
-        # write the results
+        # write the resultis
         if (not torch.distributed.is_initialized()) or torch.distributed.get_rank() == 0:
             batch.pop("position_ids")
             batch.pop("attention_mask")
+
             write_generations(
                 cfg.output_path,
                 indices,
