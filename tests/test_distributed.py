@@ -388,19 +388,10 @@ class TestDistributedFunctions:
             (3, 4, 8, 16, 0.5, 0.5, True, False),
             (3, 2, 8, 16, 0, 1.0, True, False),
             (3, 4, 8, 16, 0.5, 0.5, False, True),
-
         ],
     )
     def test_topk_logits(
-        self,
-        K,
-        batch_size,
-        seq_len,
-        partition_vocab_size,
-        sft_loss_weight,
-        kd_loss_weight,
-        forward_kl,
-        topk_student,
+        self, K, batch_size, seq_len, partition_vocab_size, sft_loss_weight, kd_loss_weight, forward_kl, topk_student,
     ):
         self._run_test(
             self._test_topk_logits,
