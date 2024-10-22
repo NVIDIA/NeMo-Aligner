@@ -32,7 +32,6 @@ from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorM
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     ScopedTimer,
-    SyncTimer,
     all_reduce_dict,
     masked_global_mean_var,
     normalize_tensor,
