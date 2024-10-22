@@ -92,8 +92,8 @@ model:
   knowledge_distillation:
     target_logits_scale: 1.0
     logits_scale: 1.0
-    kd_loss_weight: 1.0
-    sft_loss_weight: 0.0
+    kd_loss_weight: 1.0 # weight for KD loss term in overall loss
+    sft_loss_weight: 0.0 # weight for SFT loss term in overall loss
     kd_loss: bwd_kl ## the knowledge distillation loss function to use. Should be one of "bwd_kl" or "fwd_kl"
     
   data:

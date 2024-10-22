@@ -109,10 +109,15 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
             if not parallel_state.is_pipeline_last_stage():
                 output_tensor = output_tensor.to(dtype=self.autocast_dtype)
 
-            def loss_func(output_tensor):
-                ## bwd kl
+            def loss_func(predicted_logits):
+
+                predicted_logits = self.logits_scale * predicted_logits
+                target_topk_logits = self.target_logits_scale * target_topk_logits
+
+                target_logprobs = torch.nn.functional.log_softmax(self.target_logits_scale * target_logits, dim=-1)
+
                 loss, kd_loss, sft_loss = _TopKLogitsCrossEntropy.apply(
-                    output_tensor,
+                    predicted_logits,
                     target_topk_logits,
                     target_topk_token_ids,
                     labels,
