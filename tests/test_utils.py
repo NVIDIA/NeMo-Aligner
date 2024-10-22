@@ -15,6 +15,7 @@
 import torch
 
 from nemo_aligner.utils.utils import calculate_response_lengths, select_log_probs
+from nemo_aligner.utils.text_generation_utils import tokenize_batch
 
 
 def test_calculate_response_lengths():
@@ -54,3 +55,37 @@ def test_select_log_probs():
     # hand derived solution
     assert log_probs[0] == [1, 7], f"expected log probs at idx 0 to be [1,7] but got {log_probs[0]}"
     assert log_probs[1] == [16, 22], f"expected log probs at idx 1 to be [16,22] but got {log_probs[1]}"
+
+
+class _MockTokenizer:
+  def __init__(self):
+    self.vocab = dict()
+    self.bos_id = 0
+    self.eos_id = 1
+    self.vocab['<bos>'] = self.bos_id
+    self.vocab['<eos>'] = self.eos_id
+
+  def text_to_ids(self, text):
+    tokens = list(text)
+    ids = [self.vocab.get(token, len(self.vocab)) for token in tokens]
+    return ids
+
+def test_tokenize_batch():
+  sentences = ['I went to the store.', 'I bought a zoo.']
+  tokenizer = _MockTokenizer()
+  max_len = 30
+  context_tokens_tensor, context_length_tensor = tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False)
+  assert context_tokens_tensor.shape == (2, 30), f"expected context_tokens_tensor shape to be (2, 30) but got {context_tokens_tensor.shape}"
+  assert context_length_tensor.shape == (2,), f"expected context_length_tensor shape to be (2,) but got {context_length_tensor.shape}"
+  assert context_length_tensor.tolist() == [20, 15], f"expected context_length_tensor to be [20, 15] but got {context_length_tensor.tolist()}"
+
+def test_tokenize_batch_with_sentence_longer_than_max_len():
+  sentences = ['I went to the store.', 'I bought a zoo.']
+  tokenizer = _MockTokenizer()
+  max_len = 10
+  context_tokens_tensor, context_length_tensor = tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False)
+  assert context_tokens_tensor.shape == (2, 10), f"expected context_tokens_tensor shape to be (2, 30) but got {context_tokens_tensor.shape}"
+  assert context_length_tensor.shape == (2,), f"expected context_length_tensor shape to be (2,) but got {context_length_tensor.shape}"
+  assert context_length_tensor.tolist() == [10, 10], f"expected context_length_tensor to be [20, 15] but got {context_length_tensor.tolist()}"
+
+
