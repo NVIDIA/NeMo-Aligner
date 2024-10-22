@@ -46,13 +46,6 @@ jobs:
           # trivial (non-multi-stage) builds.
           driver: docker
 
-      - name: Print PR details
-        run: |
-          echo "Pull Request Object:"
-          cat <<"EOF"
-          ${{ toJson(github.event.pull_request) }}
-          EOF
-
       - name: Pull cache images
         run: |
           docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }} || true
