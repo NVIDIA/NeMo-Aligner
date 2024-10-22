@@ -24,6 +24,7 @@ ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.03-py3
 
 FROM ${BASE_IMAGE} AS aligner-bump
 ARG ALIGNER_COMMIT
+ARG ALIGNER_GIT_URL
 WORKDIR /opt
 # NeMo Aligner
 RUN <<"EOF" bash -exu
