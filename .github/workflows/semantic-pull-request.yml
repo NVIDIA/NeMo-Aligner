@@ -7,10 +7,19 @@ on:
       - edited
       - synchronize
       - reopened
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
 
 defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
+
+permissions:
+  pull-requests: read
 
 jobs:
   semantic-pull-request:
