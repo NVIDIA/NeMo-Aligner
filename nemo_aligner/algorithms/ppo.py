@@ -21,6 +21,8 @@ import pandas as pd
 import torch
 from megatron.core import parallel_state as mcore_parallel_state
 from megatron.core.utils import divide
+from nemo_skills.code_execution.math_grader import extract_answer
+from nemo_skills.code_execution.sandbox import get_sandbox
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 from typing_extensions import Self
@@ -32,9 +34,11 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     SyncTimer,
     all_reduce_dict,
+    broadcast_2d_tensor_within_mp,
     masked_global_mean_var,
     normalize_tensor,
     rebalance_nd_tensor,
+    run_if_model_parallel_src,
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.utils.ppo_utils import (
@@ -47,6 +51,10 @@ from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean, masked_var
+
+
+def sandbox_call(sandbox, answers):
+    return [sandbox.is_output_correct(*item) for item in answers]
 
 
 class PPORolloutBatch(UserDict):
@@ -163,6 +171,10 @@ class PPOTrainer:
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
+
+        self.sandbox = get_sandbox()
+        # sanity check
+        assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
 
         self.trtllm_reshard = "trt_llm" in cfg and cfg.trt_llm.enable and cfg.trt_llm.reshard
         self.critic_warmup_steps = cfg.get("critic_warmup_steps", 0)
@@ -333,6 +345,8 @@ class PPOTrainer:
 
             self.timer.start("generate")
 
+            all_rewards = []
+
             for batch in batch_iterator:
                 num_loopy = 1 if is_validation else self.cfg.num_responses_per_prompt
 
@@ -341,6 +355,16 @@ class PPOTrainer:
                     rollout_batches.append(rollout_batch)
 
                     futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
+
+                    texts = [
+                        self.model.tokenizer.ids_to_text(item[length:].tolist())
+                        for item, length in zip(rollout_batch["response_tokens"], batch["length"])
+                    ]
+                    answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
+                    output = run_if_model_parallel_src(sandbox_call, self.sandbox, answers)
+
+                    if output is not None:
+                        all_rewards.extend(output)
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -372,13 +396,28 @@ class PPOTrainer:
             balanced_local_batch["init_logprobs"] = rollout_init_logprobs
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
+        if len(all_rewards) > 0:
+            new_all_rewards = []
+
+            for item in all_rewards:
+                if item is None:
+                    item = 0.0
+                new_all_rewards.append(item)
+
+            all_rewards = torch.as_tensor(
+                new_all_rewards, dtype=torch.float32, device=torch.cuda.current_device()
+            ).view(-1, 1)
+
+        all_rewards = broadcast_2d_tensor_within_mp(all_rewards).flatten()
+
         # we send the request in sharded context, so we need to keep this sharding and then undo it
         with reshard_context():
             self.timer.start("critic_wait")
             rm_value_rollout_batches = []
-            for future in futures:
-                rewards, values = future.result() if isinstance(future, FutureResult) else future
-                rm_value_rollout_batches.append({"rewards": rewards, "values": values})
+            for future, rwd in zip(futures, all_rewards.chunk(len(futures))):
+                _, values = future.result() if isinstance(future, FutureResult) else future
+                rm_value_rollout_batches.append({"rewards": rwd, "values": values})
+
             timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
 
             unbalanced_rm_value_batch = PPORolloutBatch.from_rollout_batches(
