@@ -27,11 +27,11 @@ mkdir -p $RESULTS_DIR
 GPFS=$(git rev-parse --show-toplevel)
 
 # W&B Logging
-PROJECT=llama3_dpo_test
+PROJECT=llama3_kd_test
 
 # START HETEROGENEUS JOB 3
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
-CONF_NAME="gpt_dpo"
+CONF_NAME="gpt_kd"
 
 CHECKPOINT_DIR="${RESULTS_DIR}/checkpoints"
 TENSOBOARD_DIR="${RESULTS_DIR}/tensorboard"
@@ -60,9 +60,8 @@ mpirun -np 2 python -u ${GPFS}/examples/nlp/synthetic_data_gen/compute_topk_logi
     data.data.add_eos=False \
     data.data.hf_dataset=True \
     top_k=4 \
-    model.global_batch_size=4 \
-    batch_size=4 \
-    forward_micro_batch_size=2 \
+    model.global_batch_size=16 \
+    model.micro_batch_size=2 \
     start_from_idx=0 \
     end_at_idx=49 \
     output_path=${LOGITS_DATA_DIR}/train_with_logits_0.jsonl
