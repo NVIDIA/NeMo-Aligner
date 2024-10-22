@@ -30,6 +30,8 @@ jobs:
     # This allows follow-up actions, like automated changelog-generation.
     # Also, standardized and beautiful commit messages!
     runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Semantic PR title
         uses: amannn/action-semantic-pull-request@v5
@@ -37,7 +39,6 @@ jobs:
       - name: PR title length
         env:
           PR_NUMBER: ${{ github.event.number }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
         run: |
           PR=$(curl -L \
