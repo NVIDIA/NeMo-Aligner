@@ -26,7 +26,7 @@ jobs:
     
   build-and-test-wheel:
     needs: build-container
-    runs-on: self-hosted-builder
+    runs-on: self-hosted-azure-builder
     container: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
     steps:
       - name: Checkout repository
