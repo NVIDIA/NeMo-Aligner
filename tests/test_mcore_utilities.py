@@ -48,7 +48,7 @@ class Utils:
             master_port = os.getenv("MASTER_PORT", "6000")
             init_method += master_ip + ":" + master_port
             rendezvous_iterator = rendezvous(init_method, Utils.rank, Utils.world_size, timeout=timedelta(minutes=1))
-            store, rank, world_size = next(rendezvous_iterator)
+            store, _, _ = next(rendezvous_iterator)
             store.set_timeout(timedelta(minutes=1))
 
             # Use a PrefixStore to avoid accidental overrides of keys used by
