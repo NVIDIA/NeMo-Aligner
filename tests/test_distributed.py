@@ -346,7 +346,7 @@ class TestDistributedFunctions:
             grad_full_slice, grad_distributed
         ), "grad of entropy between distributed and full path are different!"
 
-    '''@pytest.mark.run_only_on("GPU")
+    """@pytest.mark.run_only_on("GPU")
     def test_distributed_masked_global_mean_var(self):
         self._run_test(self._test_masked_global_mean_var)
 
@@ -374,7 +374,7 @@ class TestDistributedFunctions:
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("batch_size,seed", [(1, 5555), (4, 6666)])
     def test_distributed_entropy(self, batch_size, seed):
-        self._run_test(self._test_distributed_entropy, batch_size, seed)'''
+        self._run_test(self._test_distributed_entropy, batch_size, seed)"""
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
