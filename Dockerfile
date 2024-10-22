@@ -16,6 +16,7 @@ ARG PYTRITON_VERSION=0.5.10
 ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
 ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
 ARG ALIGNER_COMMIT=main
+ARG ALIGNER_GIT_URL=https://github.com/NVIDIA/NeMo-Aligner.git
 ARG TRTLLM_VERSION=v0.10.0
 ARG PROTOBUF_VERSION=4.24.4
 
@@ -27,7 +28,7 @@ WORKDIR /opt
 # NeMo Aligner
 RUN <<"EOF" bash -exu
 if [[ ! -d NeMo-Aligner ]]; then
-    git clone https://github.com/NVIDIA/NeMo-Aligner.git
+    git clone ${ALIGNER_GIT_URL} NeMo-Aligner
 fi
 cd NeMo-Aligner
 git fetch -a
@@ -40,7 +41,7 @@ git pull --rebase || true
 pip install --no-deps -e .
 EOF
 
-FROM ${BASE_IMAGE} as final
+FROM ${BASE_IMAGE} AS final
 WORKDIR /opt
 # needed in case git complains that it can't detect a valid email, this email is fake but works
 RUN git config --global user.email "worker@nvidia.com"
