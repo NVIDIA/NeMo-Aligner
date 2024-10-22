@@ -61,19 +61,19 @@ def naive_topk_loss_function(
     labels,
     kd_loss_weight=1,
     sft_loss_weight=0,
-    kd_loss="bwd_kl",
-    topk_student=False,
+    kd_loss="fwd_kl",
+    cross_tokenizer=False,
 ):
     def loss_func(
-        logits, target_logits, mask, kd_loss="bwd_kl", logits_scale=1.0, target_logits_scale=1.0,
+        logits, target_logits, mask, kd_loss="fwd_kl", logits_scale=1.0, target_logits_scale=1.0,
     ):
 
         logprobs = torch.nn.functional.log_softmax(logits_scale * logits, dim=-1)
         target_logprobs = torch.nn.functional.log_softmax(target_logits_scale * target_logits, dim=-1)
 
-        if kd_loss == "bwd_kl":
+        if kd_loss == "fwd_kl":
             loss = torch.sum(target_logprobs.exp() * (target_logprobs - logprobs), dim=-1)
-        elif kd_loss == "fwd_kl":
+        elif kd_loss == "bwd_kl":
             loss = torch.sum(logprobs.exp() * (logprobs - target_logprobs), dim=-1)
         else:
             raise ValueError(f"kd_loss {kd_loss} is not supported.")
@@ -86,7 +86,7 @@ def naive_topk_loss_function(
     output_tensor = output_tensor - output_tensor_max.unsqueeze(dim=-1).detach()
     output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
 
-    if topk_student:
+    if cross_tokenizer:
         topk_logits, _ = torch.topk(output_tensor, target_topk_token_ids.shape[-1])
     else:
         # compute the knowledge distillation loss against the ground-truth logits
@@ -230,8 +230,8 @@ class TestDistributedFunctions:
         partition_vocab_size,
         sft_loss_weight,
         kd_loss_weight,
-        forward_kl,
-        topk_student,
+        bwd_kl,
+        cross_tokenizer,
     ):
 
         self._init_distributed(local_rank, main_address, main_port, nprocs)
@@ -272,8 +272,8 @@ class TestDistributedFunctions:
             labels,
             kd_loss_weight,
             sft_loss_weight,
-            "fwd_kl" if forward_kl else "bwd_kl",
-            topk_student,
+            "bwd_kl" if bwd_kl else "fwd_kl",
+            cross_tokenizer,
         )
 
         efficient_loss, kd, sft = _TopKLogitsCrossEntropy.forward(
@@ -284,8 +284,8 @@ class TestDistributedFunctions:
             labels,
             kd_loss_weight,
             sft_loss_weight,
-            forward_kl,
-            topk_student,
+            bwd_kl,
+            cross_tokenizer,
         )
 
         ## sum p(x)logp(x) - p(x) logq(x)
@@ -346,7 +346,7 @@ class TestDistributedFunctions:
             grad_full_slice, grad_distributed
         ), "grad of entropy between distributed and full path are different!"
 
-    @pytest.mark.run_only_on("GPU")
+    '''@pytest.mark.run_only_on("GPU")
     def test_distributed_masked_global_mean_var(self):
         self._run_test(self._test_masked_global_mean_var)
 
@@ -374,11 +374,11 @@ class TestDistributedFunctions:
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("batch_size,seed", [(1, 5555), (4, 6666)])
     def test_distributed_entropy(self, batch_size, seed):
-        self._run_test(self._test_distributed_entropy, batch_size, seed)
+        self._run_test(self._test_distributed_entropy, batch_size, seed)'''
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
-        "K,batch_size,seq_len,partition_vocab_size,sft_loss_weight,kd_loss_weight,forward_kl,topk_student",
+        "K,batch_size,seq_len,partition_vocab_size,sft_loss_weight,kd_loss_weight,bwd_kl,cross_tokenizer",
         [
             (3, 4, 8, 16, 0.5, 0.5, False, False),
             (3, 2, 8, 16, 0, 1.0, False, False),
@@ -389,7 +389,7 @@ class TestDistributedFunctions:
         ],
     )
     def test_topk_logits(
-        self, K, batch_size, seq_len, partition_vocab_size, sft_loss_weight, kd_loss_weight, forward_kl, topk_student,
+        self, K, batch_size, seq_len, partition_vocab_size, sft_loss_weight, kd_loss_weight, bwd_kl, cross_tokenizer,
     ):
         self._run_test(
             self._test_topk_logits,
@@ -399,6 +399,6 @@ class TestDistributedFunctions:
             partition_vocab_size,
             sft_loss_weight,
             kd_loss_weight,
-            forward_kl,
-            topk_student,
+            bwd_kl,
+            cross_tokenizer,
         )

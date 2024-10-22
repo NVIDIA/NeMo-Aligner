@@ -451,8 +451,8 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         labels,
         kd_loss_weight=1.0,
         sft_loss_weight=0,
-        forward_kl=False,
-        topk_student=False,
+        bwd_kl=False,
+        cross_tokenizer=False,
     ):
 
         # vocab_parallel_logits: logits
@@ -460,8 +460,8 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # target_token_ids: Tensor of [B, seq_len, K]. Token ids of the target tokens.
         # target_log_sum_exp_logits: Union[None, Tensor[B, seq_len], 1]. If not None, logsumexp of target logits over the whole vocab.
         # labels: Tensor of [B, seq_len]. True labels.
-        # forward_kl: Whether to use forward-kl divergence instead of backward KL
-        # topk_student: Whether to use the student's top-k logits from the loss calculation.
+        # bwd_kl: Whether to use backward KL divergence instead of foward KL
+        # cross_tokenizer: Whether to use the student's top-k logits from the loss calculation.
         #    rather than using the logits corresponding to the teacher's top-k logits.
         #    can be used when the teacher and student use different tokenizers.
         ## NOTE: "target" refers to the teacher top-k logits while "label" refers to the true label for the given example
@@ -488,7 +488,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         K = target_logits.size()[-1]
 
-        if topk_student:  ## naively grab the top-k logits from the student
+        if cross_tokenizer:  ## naively grab the top-k logits from the student
             predicted_logits_full = torch.zeros(
                 (*vocab_parallel_logits.shape[:-1], vocab_size), device=torch.cuda.current_device()
             )
@@ -505,7 +505,6 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             # Create a mask of valid vocab ids for this rank (1 means it needs to be masked).
             target_mask = (predicted_topk_ids < vocab_start_index) | (predicted_topk_ids >= vocab_end_index)
             predicted_topk_ids = predicted_topk_ids.clone() - vocab_start_index
-            predicted_topk_ids[target_mask] = 0
             ids_for_loss = predicted_topk_ids.view(-1)
 
         else:
@@ -549,14 +548,14 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         ## compute the predicted probabilitites
         probs = exp_logits_topk / sum_exp_logits_topk
 
-        if forward_kl:
+        if bwd_kl:
             # The objective is
             # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
             # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
             # loss = sum_{k=1}^{K} prob_k * (log prob_{k}  - log target_prob_k)
             kd_loss = (probs * (predicted_logits_topk - log_sum_exp_logits_topk - target_logits + log_sum_exp)).sum(-1)
 
-        else:  ## backward_kl
+        else:  ## forward_kl
             # The objective is
             # target_prob_k = exp(target_logits_k) / sum_{k=1}^K exp(target_logits_k)
             # prob_k = exp(logits_k) / sum_{k=1}^K exp(logits_k)
@@ -610,9 +609,9 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             probs,
             target_probs,
             target_mask,
-            ids_for_loss,  ## either student or teacher top-k indices depending on whether topk_student is True
+            ids_for_loss,  ## either student or teacher top-k indices depending on whether cross_tokenizer is True
             torch.LongTensor([partition_vocab_size]),
-            torch.Tensor([forward_kl]),
+            torch.Tensor([bwd_kl]),
             torch.Tensor([kd_loss_weight, sft_loss_weight]),
             exp_logits,
             label_mask,
@@ -631,7 +630,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             target_mask,
             target_token_ids_1d,
             partition_vocab_size,
-            forward_kl,
+            bwd_kl,
             loss_weights,
             full_softmax,
             label_mask,
@@ -649,11 +648,12 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         inv_target_mask = ~target_mask
 
-        ## these values are only needed when computing using KL
-        if forward_kl:
+        bwd_kl = bwd_kl.item()
+        ## these values are only needed when computing bwd KL
+        if bwd_kl:
             log_prob_ratio = probs.log() - target_probs.log()  ## shape = (bs, sl)
-            fwd_kl_const = (probs * log_prob_ratio).sum(-1, keepdims=True).repeat_interleave(K, -1)
-            fwd_kl_const = fwd_kl_const[inv_target_mask]
+            bwd_kl_const = (probs * log_prob_ratio).sum(-1, keepdims=True).repeat_interleave(K, -1)
+            bwd_kl_const = bwd_kl_const[inv_target_mask]
             log_prob_ratio = log_prob_ratio[inv_target_mask]
 
         ## grab only the probs on this rank
@@ -662,15 +662,14 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         arange_1d = arange_1d[inv_target_mask.view(-1)]
         target_token_ids_1d = target_token_ids_1d[inv_target_mask.view(-1)]
 
-        forward_kl = forward_kl.item()
         kd_loss_weight = loss_weights[0]
         sft_loss_weight = loss_weights[1]
 
-        if forward_kl:
-            nonzero_grad = probs * (log_prob_ratio - fwd_kl_const)
+        if bwd_kl:
+            nonzero_grad = probs * (log_prob_ratio - bwd_kl_const)
             grad_2d[arange_1d, target_token_ids_1d] = nonzero_grad.view(-1)
 
-        else:  ## backward KL
+        else:  ## forward KL
             grad_2d[arange_1d, target_token_ids_1d] = probs.view(-1)
             softmax_update = torch.zeros_like(grad_2d)
             softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1)

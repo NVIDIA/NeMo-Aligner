@@ -94,7 +94,8 @@ model:
     logits_scale: 1.0
     kd_loss_weight: 1.0 # weight for KD loss term in overall loss
     sft_loss_weight: 0.0 # weight for SFT loss term in overall loss
-    kd_loss: bwd_kl ## the knowledge distillation loss function to use. Should be one of "bwd_kl" or "fwd_kl"
+    kd_loss: fwd_kl ## the knowledge distillation loss function to use. Should be one of "fwd_kl" or "bwd_kl"
+    cross_tokenizer: False ## whether the teacher and student use different tokenizers
     
   data:
     data_impl: chunked_jsonl ## use chunked_jsonl rather than jsonl to save memory

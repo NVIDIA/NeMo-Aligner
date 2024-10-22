@@ -48,9 +48,10 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
         self.target_logits_scale = self.cfg.knowledge_distillation.get("target_logits_scale", 1.0)
         self.logits_scale = self.cfg.knowledge_distillation.get("logits_scale", 1.0)
 
-        self.kd_loss = self.cfg.knowledge_distillation.get("kd_loss", "bwd_kl")
+        self.kd_loss = self.cfg.knowledge_distillation.get("kd_loss", "fwd_kl")
         self.kd_loss_weight = self.cfg.knowledge_distillation.get("kd_loss_weight", 1)
         self.sft_loss_weight = self.cfg.knowledge_distillation.get("sft_loss_weight", 0)
+        self.cross_tokenizer = self.cfg.knowledge_distillation.get("cross_tokenizer", False)
         assert (
             self.kd_loss_weight != 0 or self.sft_loss_weight != 0
         ), "sft loss weight and knowledge distillation loss weight cannot both be 0"
@@ -118,8 +119,8 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     labels,
                     self.kd_loss_weight,
                     self.sft_loss_weight,
-                    self.kd_loss == "fwd_kl",
-                    False,  ## do not use top-k student logits
+                    self.kd_loss == "bwd_kl",
+                    self.cross_tokenizer,
                 )
 
                 ## reduce losses
