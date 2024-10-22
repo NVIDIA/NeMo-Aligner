@@ -111,14 +111,9 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
 
             def loss_func(predicted_logits):
 
-                predicted_logits = self.logits_scale * predicted_logits
-                target_topk_logits = self.target_logits_scale * target_topk_logits
-
-                target_logprobs = torch.nn.functional.log_softmax(self.target_logits_scale * target_logits, dim=-1)
-
                 loss, kd_loss, sft_loss = _TopKLogitsCrossEntropy.apply(
-                    predicted_logits,
-                    target_topk_logits,
+                    self.logits_scale * predicted_logits,
+                    self.target_logits_scale * target_topk_logits,
                     target_topk_token_ids,
                     labels,
                     self.kd_loss_weight,
