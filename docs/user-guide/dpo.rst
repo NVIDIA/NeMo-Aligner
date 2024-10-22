@@ -17,7 +17,7 @@ For full-parameter DPO, there exists an actor and a reference model. The actor i
 For LoRA-based DPO, the actor is initialized by the reference model plus LoRA weights, where only the LoRA weights are trainable. Therefore, it allows us to switch between the actor/reference models by simply enabling or disabling LoRA. In addition, there is no need to store two sets of LLM weights.
 
 RPO and IPO Variations
-#######################
+######################
 
 Besides the vanilla DPO algorithm, we support other variants of DPO algorithms, including Identity preference optimization (IPO) and Reward-aware preference optimization (RPO).
 
@@ -26,7 +26,7 @@ The algorithm is identified with the ``dpo.preference_loss`` config variable. We
 To use the RPO algorithm, each dataset example should have chosen_reward and rejected_reward, which might come from human labelers or reward models. If chosen_reward and rejected_reward are not existent in the data, dpo.default_chosen_reward and dpo.default_rejected_reward are used.
 
 Obtain a Pretrained Model
-############################
+#########################
 To start, we must first get a pretrained model to align. There are two models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes, we will use the smaller 2B model. 
 
 .. tab-set::
@@ -76,7 +76,7 @@ Instruction Following Taught by Supervised Fine-Tuning (SFT)
 For best DPO training performance, it is recommended that you start with a SFT model, rather than the base model. For a full guide on how to perform SFT on a Megatron GPT model, please refer to the :ref:`SFT guide <sft>`.
 
 DPO Model Training
-#####################
+##################
 
 Before running the core DPO training, you must prepare your training and validation data to the format required for DPO training. DPO expects .jsonl files where each line is a JSON dict corresponding to a single, complete sample, as shown below::
 
@@ -183,6 +183,8 @@ For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` correspond
 
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
+
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 The default DPO training tunes all parameters. To use LoRA, we can set ``model.peft.peft_scheme=lora`` and use different parameters in ``model.peft.lora_tuning``. Please check the parameters in `the config file <https://github.com/NVIDIA/NeMo-Aligner/blob/main/examples/nlp/gpt/conf/gpt_dpo.yaml>`__.
 

@@ -139,6 +139,7 @@ To launch reward model training, you must start with a pretrained or SFT-trained
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 *Remark: Currently, the example training script does not automatically run evaluation on the provided test set. This may change in a future release.* 
 
@@ -196,6 +197,8 @@ To launch the server:
       ++model.offload_adam_states=True \
       ++model.mcore_gpt=True
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
+
 The above example launches the reward model Critic server on 8 GPUs and 1 node. Please make sure to change ``trainer.devices``, ``trainer.num_nodes`` depending on your model size and scale. NeMo-Aligner will work on any scale. In addition, make sure to tune the `trainer.ppo.inference_micro_batch_size` argument as this determines the batch size the PPO Actor is allowed to send to the Critic per DP rank.
 
 Launching the Initial Policy and PPO Actor Training
@@ -234,6 +237,8 @@ The PPO Actor training job contains the master controller that makes the HTTP ca
       exp_manager.explicit_log_dir=/rlhf/actor_test \
       ++model.ppo.entropy_bonus=0.0 \
       remote_critic_rm.pad_to_length=2048
+
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 The above script launches the initial and Actor server on 1 node with 8 GPUs.
 
@@ -354,6 +359,8 @@ You can use Slurm to launch both jobs and coordinate them together in a full RLH
    srun --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_ppo}" &
 
    wait
+
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 The above script runs the reward model Critic server on 1 node and the Actor on 1 node.
 

@@ -223,6 +223,8 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
+
 If using sequence packing, replace the data paths with the paths to your packed datasets. For each packed dataset, you should also set ``packed_sequence=True`` in the config:
 
 .. code-block:: python
@@ -382,6 +384,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner. Compare
             srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
+For more information on handling potential errors, see :ref:`Known Errors and Resolutions <known_errors_and_resolutions>`.
 
 To scale to thousands of GPUs, adjust the ``trainer.num_nodes`` and ``trainer.devices`` accordingly based on the size of your machine.
 
