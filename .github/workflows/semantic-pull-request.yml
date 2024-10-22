@@ -37,6 +37,7 @@ jobs:
         uses: amannn/action-semantic-pull-request@v5
 
       - name: PR title length
+        if: always()
         env:
           PR_NUMBER: ${{ github.event.number }}
           REPOSITORY: ${{ github.repository }}
