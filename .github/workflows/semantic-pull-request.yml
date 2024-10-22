@@ -1,0 +1,44 @@
+name: Validate PR title
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
+
+jobs:
+  semantic-pull-request:
+    # This job validates that the title of this pull-request matches the 
+    # [conventional-commit-types](https://github.com/commitizen/conventional-commit-types/blob/master/index.json).
+    # We use squash-based merging, so the PRs semantic title will become
+    # the squashed commit message's title.
+    # This allows follow-up actions, like automated changelog-generation.
+    # Also, standardized and beautiful commit messages!
+    runs-on: ubuntu-latest
+    steps:
+      - name: Semantic PR title
+        uses: amannn/action-semantic-pull-request@v5
+
+      - name: PR title length
+        env:
+          PR_NUMBER: ${{ github.event.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          PR=$(curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/$REPOSITORY/pulls/$PR_NUMBER)
+
+          if [[ $(echo -E $PR | jq '.title | length') -le 80 ]]; then
+            exit 0
+          else
+            exit 1
+        
