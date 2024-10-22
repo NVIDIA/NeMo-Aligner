@@ -169,13 +169,6 @@ def main(cfg) -> None:
 
             answer = run_if_model_parallel_src(sandbox_call, answers)
 
-            prompts = [
-                item[:length]
-                for item, length in zip(
-                    ptl_model.tokenizer.ids_to_text(batch["text"].tolist()), batch["length"].tolist()
-                )
-            ]
-
             prompts = ptl_model.tokenizer.ids_to_text(batch["text"].tolist())
 
             src_rank = get_model_parallel_src_rank()
