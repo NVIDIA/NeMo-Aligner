@@ -212,12 +212,23 @@ class GRPOTrainer:
         logprobs = rollout_batch["logprobs"]
         is_end = rollout_batch["is_end"]
 
+        num_responses = self.cfg.num_responses_per_prompt
+
         # TODO: switch this to RLOO like! this adds bias
         # compute advantages
-        grouped_rewards = rewards.view(-1, self.cfg.num_responses_per_prompt)
+        grouped_rewards = rewards.view(-1, num_responses)
 
-        grouped_reward_mean = grouped_rewards.mean(-1, keepdim=True)
-        grouped_reward_std = grouped_rewards.std(-1, keepdim=True)
+        # leave one out estimate
+        grouped_reward_mean = (
+            grouped_rewards
+            @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
+        ) / (num_responses - 1)
+
+        grouped_square_mean = (
+            grouped_rewards.square()
+            @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
+        ) / (num_responses - 1)
+        grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt()
 
         num_reward_non_zero = (grouped_rewards > 0).sum(-1).count_nonzero()
         num_std_zero = (grouped_reward_std == 0).count_nonzero()
@@ -228,7 +239,7 @@ class GRPOTrainer:
             advantages = grouped_rewards - grouped_reward_mean
 
             if self.cfg.normalize_rewards:
-                advantages = advantages / grouped_reward_std.add(1e-8)
+                advantages = advantages / (grouped_reward_std + 1e-8)
 
         # TODO: consider normalizing the advantages
         advantages = advantages.flatten()
