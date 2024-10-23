@@ -246,8 +246,8 @@ class GRPOTrainer:
         advantages = advantages.flatten()
 
         # advantage estimation
-        advantages = calculate_ppo_rewards(logprobs, advantages, response_lengths)
         mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
+        advantages = (torch.zeros_like(logprobs) + advantages.view(-1, 1)) * mask
 
         # collect everything we need to train PPO
         ppo_rollout_data["mask"] = mask
