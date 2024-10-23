@@ -69,7 +69,9 @@ class GPTGenerateTRTLLM:
         ), f"We require tokenizers to have a different {tokenizer.pad_id=} than {tokenizer.eos_id=} when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
         assert max_input_len > 0
         assert max_generation_length > 0
-        assert max_input_len + max_generation_length <= model_cfg.encoder_seq_length, f"We require max_input_len ({max_input_len}) + max_generation_length ({max_generation_length}) <= model_cfg.encoder_sequence_length ({model_cfg.encoder_seq_length})"
+        assert (
+            max_input_len + max_generation_length <= model_cfg.encoder_seq_length
+        ), f"We require max_input_len ({max_input_len}) + max_generation_length ({max_generation_length}) <= model_cfg.encoder_sequence_length ({model_cfg.encoder_seq_length})"
 
         if use_greedy and sample_top_k != 1:
             logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
