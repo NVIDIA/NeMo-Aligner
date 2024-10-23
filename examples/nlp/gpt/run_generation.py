@@ -172,15 +172,13 @@ def main(cfg) -> None:
 
                 answer = run_if_model_parallel_src(sandbox_call, answers)
 
-                prompts = ptl_model.tokenizer.ids_to_text(batch["text"].tolist())
+                # prompts = ptl_model.tokenizer.ids_to_text(batch["text"].tolist())
 
                 src_rank = get_model_parallel_src_rank()
                 if torch.distributed.get_rank() == src_rank:
 
-                    for a, resp, prompt, idx in zip(answer, texts, prompts, batch["idx"]):
-                        outputs.append(
-                            {"response": resp, "answer": a, "prompt:": prompt, "idx": idx, **validation_ds.data[idx]}
-                        )
+                    for a, resp, idx in zip(answer, texts, batch["idx"]):
+                        outputs.append({"response": resp, "answer": a, "idx": idx, **validation_ds.data[idx]})
 
     src_rank = get_model_parallel_src_rank()
     if torch.distributed.get_rank() == src_rank:
