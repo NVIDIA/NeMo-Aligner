@@ -157,25 +157,30 @@ def main(cfg) -> None:
 
     outputs = []
 
+    num_responses_per_prompt = cfg.trainer.ppo.num_responses_per_prompt
+
     with torch.no_grad():
         for batch in tqdm(val_dataloader_builder(consumed_samples=0)):
-            rollout_batch = ptl_model.infer(batch, use_greedy=True)
+            for _ in range(num_responses_per_prompt):
+                rollout_batch = ptl_model.infer(batch, use_greedy=False)
 
-            texts = [
-                ptl_model.tokenizer.ids_to_text(item[length:].tolist())
-                for item, length in zip(rollout_batch["response_tokens"], batch["length"])
-            ]
-            answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
+                texts = [
+                    ptl_model.tokenizer.ids_to_text(item[length:].tolist())
+                    for item, length in zip(rollout_batch["response_tokens"], batch["length"])
+                ]
+                answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
 
-            answer = run_if_model_parallel_src(sandbox_call, answers)
+                answer = run_if_model_parallel_src(sandbox_call, answers)
 
-            prompts = ptl_model.tokenizer.ids_to_text(batch["text"].tolist())
+                prompts = ptl_model.tokenizer.ids_to_text(batch["text"].tolist())
 
-            src_rank = get_model_parallel_src_rank()
-            if torch.distributed.get_rank() == src_rank:
+                src_rank = get_model_parallel_src_rank()
+                if torch.distributed.get_rank() == src_rank:
 
-                for a, resp, prompt, idx in zip(answer, texts, prompts, batch["idx"]):
-                    outputs.append({"response": resp, "answer": a, "prompt:": prompt, **validation_ds.data[idx]})
+                    for a, resp, prompt, idx in zip(answer, texts, prompts, batch["idx"]):
+                        outputs.append(
+                            {"response": resp, "answer": a, "prompt:": prompt, "idx": idx, **validation_ds.data[idx]}
+                        )
 
     src_rank = get_model_parallel_src_rank()
     if torch.distributed.get_rank() == src_rank:
