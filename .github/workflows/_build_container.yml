@@ -31,7 +31,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        id: checkout
         with:
           path: ${{ github.run_id }}
           ref: ${{ inputs.ref }}
