@@ -92,10 +92,10 @@ def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False):
         return output
 
     context_tokens = list(map(tokenize, sentences))
+    context_tokens = [x[:max_len] for x in context_tokens]
     max_sequence_length = max(len(x) for x in context_tokens)
 
     context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.eos_id, max_len - max_sequence_length)
-    context_tokens = [x[:max_len] for x in context_tokens]
     context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
     context_length_tensor = torch.cuda.LongTensor(context_lengths)
     return context_tokens_tensor, context_length_tensor
