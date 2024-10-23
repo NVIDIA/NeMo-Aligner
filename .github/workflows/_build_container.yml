@@ -31,6 +31,7 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        id: checkout
         with:
           path: ${{ github.run_id }}
           ref: ${{ inputs.ref }}
@@ -58,7 +59,7 @@ jobs:
           push: true
           build-args: |
             MAX_JOBS=32
-            ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
+            ALIGNER_COMMIT=${{ steps.checkout.outputs.commit }}
           cache-from: |
             nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }}
             nemoci.azurecr.io/nemo_aligner_container:buildcache
