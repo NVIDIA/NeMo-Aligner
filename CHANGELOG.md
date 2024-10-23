@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [Next Version]
 
 ### New Features and Optimizations
+- Added support for Megatron’s distributed optimizer, which can be configured using `++model.optim.name=mcore_distributed_optim`.
 
 ### Breaking Changes
 

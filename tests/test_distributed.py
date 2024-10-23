@@ -14,8 +14,9 @@
 
 import pytest
 import torch
-from nemo_aligner.utils import parallel_state, tensor_parallel
+from megatron.core import tensor_parallel
 
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
@@ -63,8 +64,7 @@ class TestDistributedFunctions:
 
     def _run_test(self, func, *args):
         nprocs = torch.cuda.device_count() if torch.cuda.is_available() else 1
-        for nproc in range(nprocs):
-            torch.multiprocessing.spawn(func, args=("localhost", 1234, nproc, *args), nprocs=nproc, join=True)
+        torch.multiprocessing.spawn(func, args=("localhost", 1234, nprocs, *args), nprocs=nprocs, join=True)
 
     def _test_masked_global_mean_var(self, *args, **kwargs):
         self._init_distributed(*args, **kwargs)
