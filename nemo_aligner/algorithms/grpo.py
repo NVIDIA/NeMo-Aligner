@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 import torch
+import torch.distributed
 from megatron.core import parallel_state as mcore_parallel_state
 from megatron.core.utils import divide
 from nemo_skills.code_execution.math_grader import extract_answer
@@ -265,8 +266,12 @@ class GRPOTrainer:
             num_reward_non_zero * self.cfg.num_responses_per_prompt
         )
         ppo_rollout_metrics["num_prompt_with_zero_std"] = num_std_zero * self.cfg.num_responses_per_prompt
-        ppo_rollout_metrics["grouped_reward_mean"] = grouped_reward_mean.mean(-1) * self.cfg.num_responses_per_prompt
-        ppo_rollout_metrics["grouped_reward_std"] = grouped_reward_std.mean(-1) * self.cfg.num_responses_per_prompt
+        ppo_rollout_metrics["grouped_reward_mean"] = (
+            grouped_reward_mean.mean(-1).sum() * self.cfg.num_responses_per_prompt
+        )
+        ppo_rollout_metrics["grouped_reward_std"] = (
+            grouped_reward_std.mean(-1).sum() * self.cfg.num_responses_per_prompt
+        )
 
         # now the metrics are global
         ppo_rollout_metrics = all_reduce_dict(
@@ -285,6 +290,19 @@ class GRPOTrainer:
             )
             ppo_rollout_metrics[f"{key}_mean"] = global_mean.item()
             ppo_rollout_metrics[f"{key}_std"] = global_var.sqrt().item()
+
+            max_tensor = tensor[mask.bool()].max().item()
+            min_tensor = tensor[mask.bool()].min().item()
+            reduce_tensor = torch.as_tensor(
+                [-min_tensor, max_tensor], device=torch.cuda.current_device(), dtype=torch.float32
+            )
+            torch.distributed.all_reduce(
+                reduce_tensor, torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
+            )
+            min_tensor, max_tensor = reduce_tensor.tolist()
+            min_tensor = -min_tensor
+            ppo_rollout_metrics[f"{key}_min"] = min_tensor
+            ppo_rollout_metrics[f"{key}_max"] = max_tensor
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
 
