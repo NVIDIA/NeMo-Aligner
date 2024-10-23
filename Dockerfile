@@ -30,9 +30,9 @@ if [[ ! -d NeMo-Aligner ]]; then
     git clone https://github.com/NVIDIA/NeMo-Aligner.git
 fi
 cd NeMo-Aligner
-git fetch -a
+git fetch -a origin $ALIGNER_COMMIT:ALIGNER_COMMIT
 # -f since git status may not be clean
-git checkout -f $ALIGNER_COMMIT
+git checkout -f ALIGNER_COMMIT
 # case 1: ALIGNER_COMMIT is a local branch so we have to apply remote changes to it
 # case 2: ALIGNER_COMMIT is a commit, so git-pull is expected to fail
 git pull --rebase || true
