@@ -56,7 +56,7 @@ jobs:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
     uses: ./.github/workflows/_build_container.yml
     with: 
-      ref: refs/pull/${{ github.event.number }}/merge
+      ref: ${{ GITHUB.SHA }}
   
   Unit_Tests:
     needs: [build-container, pre-flight]
