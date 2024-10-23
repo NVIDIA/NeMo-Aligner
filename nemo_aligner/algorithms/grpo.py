@@ -48,7 +48,7 @@ from nemo_aligner.utils.utils import clear_memory, cpu_dict
 
 
 def sandbox_call(sandbox, answers):
-    return [sandbox.is_output_correct(*item) for item in answers]
+    return answers.flatten().tolist()
 
 
 class PPORolloutBatch(UserDict):
@@ -336,13 +336,15 @@ class GRPOTrainer:
                 rollout_batches.append(rollout_batch)
 
                 # futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
-                texts = [
-                    self.model.tokenizer.ids_to_text(item[length:].tolist())
-                    for item, length in zip(rollout_batch["response_tokens"], batch["length"])
-                ]
-                answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
+                # texts = [
+                #     self.model.tokenizer.ids_to_text(item[length:].tolist())
+                #     for item, length in zip(rollout_batch["response_tokens"], batch["length"])
+                # ]
+                # answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
                 # TODO: need to make this async for real
-                output = run_if_model_parallel_src(sandbox_call, self.sandbox, answers)
+                output = run_if_model_parallel_src(
+                    sandbox_call, self.sandbox, rollout_batch["response_lengths"].cpu() - batch["length"].cpu()
+                )
                 if output is not None:
                     all_rewards.extend(output)
 
