@@ -29,13 +29,6 @@ jobs:
   main:
     runs-on: self-hosted-azure-builder
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        id: checkout
-        with:
-          path: ${{ github.run_id }}
-          ref: ${{ inputs.ref }}
-
       - name: Clean runner cache
         run: | 
           docker system prune --filter "until=24h" --force
@@ -59,7 +52,7 @@ jobs:
           push: true
           build-args: |
             MAX_JOBS=32
-            ALIGNER_COMMIT=${{ steps.checkout.outputs.commit }}
+            ALIGNER_COMMIT=${{ inputs.ref }}
           cache-from: |
             nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }}
             nemoci.azurecr.io/nemo_aligner_container:buildcache
