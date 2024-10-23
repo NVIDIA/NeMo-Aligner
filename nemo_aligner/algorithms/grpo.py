@@ -265,8 +265,8 @@ class GRPOTrainer:
             num_reward_non_zero * self.cfg.num_responses_per_prompt
         )
         ppo_rollout_metrics["num_prompt_with_zero_std"] = num_std_zero * self.cfg.num_responses_per_prompt
-        ppo_rollout_metrics["grouped_reward_mean"] = grouped_reward_mean.sum() * self.cfg.num_responses_per_prompt
-        ppo_rollout_metrics["grouped_reward_std"] = grouped_reward_std.sum() * self.cfg.num_responses_per_prompt
+        ppo_rollout_metrics["grouped_reward_mean"] = grouped_reward_mean.mean(-1) * self.cfg.num_responses_per_prompt
+        ppo_rollout_metrics["grouped_reward_std"] = grouped_reward_std.mean(-1) * self.cfg.num_responses_per_prompt
 
         # now the metrics are global
         ppo_rollout_metrics = all_reduce_dict(
