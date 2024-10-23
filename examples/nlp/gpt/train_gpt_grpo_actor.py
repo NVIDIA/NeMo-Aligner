@@ -92,7 +92,7 @@ class MathDataset:
             "length": sample_tensor.shape[0],
             "answer": answer,
             "loss_multiplier": True,
-            "idx":, idx,
+            "idx": idx,
         }
         return output
 
