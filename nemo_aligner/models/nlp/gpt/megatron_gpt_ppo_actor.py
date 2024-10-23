@@ -168,7 +168,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 with torch.no_grad():
                     ppo_ratio = masked_mean(ratios.detach(), mask)
                     ppo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
-                    scaled_entropy = scaled_entropy.detach()
+                    # scaled_entropy = scaled_entropy.detach()
+                    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask).detach()
 
                 (
                     reduced_actor_loss,
