@@ -492,8 +492,8 @@ class PPOTrainer:
                 critic_train_loop_amount = self.critic_warmup_steps + 1 if self.step == 0 else 1
 
                 for _ in range(critic_train_loop_amount):
+                    clear_memory()
                     with self.timer("rollout_time"):
-                        clear_memory()
                         ppo_rollout_data, metrics, rollout_timer_metrics = self.generate_rollouts()
                     # Consume rollout_time
                     timing_metrics.update(self.timer.consume_durations())
@@ -555,7 +555,7 @@ class PPOTrainer:
                 if run_val:
                     with self.timer("validation_time"):
                         val_metrics = self.run_validation()
-                    # TODO(terryk): is it okay to log validation_time one step behind?
+                    # Note: validation_time is logged one step behind (val step 5 means we've completed step 4)
                     timing_metrics.update(self.timer.consume_durations())
 
                     val_table_metrics = val_metrics.pop("table")

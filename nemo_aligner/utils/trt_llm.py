@@ -48,7 +48,6 @@ class GPTGenerateTRTLLM:
         repetition_penalty=1.0,
         max_generation_length=1024,
         max_input_len=1024,
-        max_input_tokens=4096,
         generation_batch_size=4,
         use_greedy=False,
         trt_model_type="GPTForCausalLM",
@@ -68,6 +67,9 @@ class GPTGenerateTRTLLM:
         assert (
             tokenizer.pad_id != tokenizer.eos_id
         ), f"We require tokenizers to have a different {tokenizer.pad_id=} than {tokenizer.eos_id=} when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
+        assert max_input_len > 0
+        assert max_generation_length > 0
+        assert max_input_len + max_generation_length <= model_cfg.encoder_seq_length, f"We require max_input_len ({max_input_len}) + max_generation_length ({max_generation_length}) <= model_cfg.encoder_sequence_length ({model_cfg.encoder_seq_length})"
 
         if use_greedy and sample_top_k != 1:
             logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
@@ -77,7 +79,6 @@ class GPTGenerateTRTLLM:
         self.tokenizer = tokenizer
         self.max_generation_length = max_generation_length
         self.max_input_len = max_input_len
-        self.max_input_tokens = max_input_tokens
         self.generation_batch_size = generation_batch_size
         self.unload_engine_train = unload_engine_train
         self.trt_model_type = trt_model_type
