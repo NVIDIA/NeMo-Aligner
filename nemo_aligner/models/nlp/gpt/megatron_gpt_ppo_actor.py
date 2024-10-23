@@ -140,8 +140,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 )
 
                 scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
-                if self.entropy_bonus > 0:
-                    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask) * self.entropy_bonus
+                scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask)
 
                 kl = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
 
@@ -154,7 +153,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
                 if is_end_mask.sum() > 0:
                     actor_loss = masked_mean(torch.max(loss1, loss2), is_end_mask)
-                    loss = actor_loss - scaled_entropy
+                    loss = actor_loss - (scaled_entropy * self.entropy_bonus)
 
                     if self.cfg.ppo.initial_policy_kl_penalty > 0:
                         # TODO: add kl penalty here
@@ -168,8 +167,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 with torch.no_grad():
                     ppo_ratio = masked_mean(ratios.detach(), mask)
                     ppo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
-                    # scaled_entropy = scaled_entropy.detach()
-                    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask).detach()
+                    scaled_entropy = scaled_entropy.detach()
 
                 (
                     reduced_actor_loss,
