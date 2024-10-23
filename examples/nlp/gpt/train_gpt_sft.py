@@ -166,6 +166,7 @@ def main(cfg) -> None:
             num_samples = cfg.trainer.sft.max_steps * train_data_cfg.global_batch_size
     else:
         num_samples = None
+
     train_ds = build_sft_dataset(
         train_data_cfg,
         ptl_model.tokenizer,
