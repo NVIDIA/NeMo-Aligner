@@ -154,4 +154,3 @@ wandb
 
 # Checkpoints, config files and temporary files created in tutorials.
 .hydra/
-*.jsonl
