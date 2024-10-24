@@ -90,6 +90,8 @@ However, please be aware that most Megatron GPT models adhere to a strict format
 
 Always follow the prompt-response template format used during your SFT training for DPO, as failure to do so will produce a model which outputs garbage text. You should create one jsonl file in the format above for your training data and one jsonl for your validation data.
 
+Your JSONL file must contain at least as many samples as the Global Batch Size (GBS) you plan to use during training. For example, if GBS = 64, ensure that both your training and validation files include at least 64 samples. Using a file with fewer samples than the GBS will result in a crash.
+
 Once your data is processed into the correct format, you are ready to begin DPO training. You must start with a pretrained or SFT trained model. For this section, we will use the SFT model trained in the previous step to train the DPO model.
 For the purposes of the following sections, we assume that your training jsonl file is located in ``/path/to/train_dpo_format.jsonl`` and your validation jsonl file is located in ``/path/to/valid_dpo_format.jsonl``.
 
