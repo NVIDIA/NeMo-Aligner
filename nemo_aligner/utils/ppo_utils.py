@@ -27,6 +27,7 @@ def calculate_advantages_and_returns(values, rewards, discount_factor, gae_lambd
     Args:
         values, rewards (torch.Tensor): shape of B x (S-1)
     """
+
     if mask is not None:
         # need the masking here because our sentence might not span the entire sequence length
         values = values * mask
