@@ -1,7 +1,8 @@
 import pytest
 import torch
-from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
+
 from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 
 
 @pytest.mark.mpi
@@ -18,9 +19,9 @@ def test_trtllm_does_not_insert_padding(dummy_actor_gpt_model_with_pp):
     batch_size = 4
     max_seq_len = dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length
     prompt_tokens = torch.ones((batch_size, max_seq_len), dtype=torch.int32)
-    prompt_lengths = torch.tensor([10,20,30,40])
+    prompt_lengths = torch.tensor([10, 20, 30, 40])
 
-    output_ids, response_lengths= trtllm_generate._generate([prompt_tokens, prompt_lengths])
+    output_ids, response_lengths = trtllm_generate._generate([prompt_tokens, prompt_lengths])
     max_length = response_lengths.max().item()
 
     # TRTLLM with PP has sometimes erroneously inserts padding:

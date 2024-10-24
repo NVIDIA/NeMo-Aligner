@@ -167,7 +167,6 @@ class GPTGenerateTRTLLM:
             self.trt_llm_exporter.refit(model, self.model_cfg)
             log_memory("After TRT-LLM engine refit")
 
-
     def _generate(self, inputs: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Internal API to make it easier to validate raw TRT-LLM outputs
