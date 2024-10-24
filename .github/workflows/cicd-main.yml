@@ -57,17 +57,23 @@ jobs:
     uses: ./.github/workflows/_build_container.yml
   
   Unit_Tests:
+    name: ${{ matrix.test_case }}
     needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
     if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+    strategy:
+      matrix:
+        test_case:
+          - run_unit.sh
+          - run_mpi_unit.sh
     with:
       IS_OPTIONAL: true
       RUNNER: self-hosted-azure
-      TIMEOUT: 20
+      TIMEOUT: 10
       SCRIPT: |
         nvidia-smi
         cd ${ALIGNER_REPO_DIR}
-        torchrun --nproc_per_node 2 -m pytest . -rA -s -x
+        bash tests/${{ matrix.test_case }}
 
   Functional_Tests:
     name: ${{ matrix.test_case }}

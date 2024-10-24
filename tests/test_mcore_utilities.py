@@ -33,10 +33,20 @@ class TestModel(torch.nn.Module):
 
 class Utils:
 
-    world_size = torch.cuda.device_count()
-    rank = int(os.environ["LOCAL_RANK"])
     inited = False
     store = None
+
+    @classmethod
+    @property
+    def world_size(cls):
+        """Lazily grab device count"""
+        return torch.cuda.device_count()
+
+    @classmethod
+    @property
+    def rank(cls):
+        """Lazily grab rank"""
+        return int(os.environ["LOCAL_RANK"])
 
     @staticmethod
     def initialize_distributed():

@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import itertools
 from collections import UserDict
 from contextlib import nullcontext
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 import pandas as pd
 import torch
@@ -406,7 +405,8 @@ class PPOTrainer:
     @torch.no_grad()
     def generate_rollouts(self):
         with self.timer("prepare_for_inference"):
-            self.model.prepare_for_inference(timer=self.timer)
+            # Timing includes build if first step and refit if step > 1
+            self.model.prepare_for_inference()
 
         rollout_batch, rollout_metrics = self._run_inference(
             self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False
@@ -417,7 +417,8 @@ class PPOTrainer:
         ppo_rollout_data, ppo_rollout_metrics = self.generate_ppo_data(rollout_batch)
 
         with self.timer("finish_inference"):
-            self.model.finish_inference(timer=self.timer)
+            # Timing includes engine unloading if enabled
+            self.model.finish_inference()
 
         return (
             ppo_rollout_data,

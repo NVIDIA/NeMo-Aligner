@@ -35,7 +35,6 @@ from nemo.utils import logging
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
-    ScopedTimer,
     broadcast_2d_tensor_within_pp,
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
@@ -289,7 +288,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         return logprobs
 
-    def prepare_for_inference(self, timer: ScopedTimer | nullcontext = nullcontext):
+    def prepare_for_inference(self):
         """normally we would configure the micro batch calculator here
             but the nemo generation already does the configuration"""
         self._reset_activation_checkpointing_args()
@@ -298,10 +297,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self.offload_adam_states()
 
         if self.use_trtllm_generation:
-            with timer("refit"):
-                # TODO this might be optimized to avoid calling `refit()` twice in a row after a validation step
-                self.trtllm_generate.refit(self.model)
-                clear_memory()
+            # TODO this might be optimized to avoid calling `refit()` twice in a row after a validation step
+            self.trtllm_generate.refit(self.model)
+            clear_memory()
 
     @torch.no_grad()
     def infer(self, inference_batch):
@@ -374,14 +372,13 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         with context_mgr:
             return self.get_inference_log_probs(response_tokens)
 
-    def finish_inference(self, timer: ScopedTimer | nullcontext = nullcontext):
+    def finish_inference(self):
         # training will onload the adam states, no need to onload it here
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
 
         if self.use_trtllm_generation:
-            with timer("unload_engine"):
-                self.trtllm_generate.free()
+            self.trtllm_generate.free()
 
         set_train(self)
 
