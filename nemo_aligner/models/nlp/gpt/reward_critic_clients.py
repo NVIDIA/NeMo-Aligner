@@ -320,7 +320,7 @@ class RemoteGPTMathClient:
         correctness = 0
         try:
             prediction = extract_answer(response)
-            correctness = math_equal(prediction, ans)
+            correctness = int(math_equal(prediction, ans))
             print(f"prediction: {prediction}, answer: {answer}, correctness: {correctness}")
         except:
             pass
