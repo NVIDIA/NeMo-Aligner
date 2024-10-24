@@ -18,10 +18,15 @@ import pytest
 def pytest_addoption(parser):
     """
     Additional command-line arguments passed to pytest.
-        --cpu: use CPU during testing (DEFAULT: GPU)
     """
     parser.addoption(
         "--cpu", action="store_true", help="pass that argument to use CPU during testing (DEFAULT: False = GPU)"
+    )
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "run_only_on(device): runs the test only on a given device [CPU | GPU]",
     )
 
 
@@ -39,9 +44,3 @@ def run_only_on_device_fixture(request, device):
     if request.node.get_closest_marker("run_only_on"):
         if request.node.get_closest_marker("run_only_on").args[0] != device:
             pytest.skip("skipped on this device: {}".format(device))
-
-
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers", "run_only_on(device): runs the test only on a given device [CPU | GPU]",
-    )
