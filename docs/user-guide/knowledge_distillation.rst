@@ -239,7 +239,7 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
                model.knowledge_distillation.logits_scale=1.0 \
                model.knowledge_distillation.sft_loss_weight=0.4 \
                model.knowledge_distillation.kd_loss_weight=1 \
-               model.knowledge_distillation.kd_loss=bwd_kl \
+               model.knowledge_distillation.kd_loss=fwd_kl \
                "model.data.data_prefix={train: [data/oasst/train_with_logits_CHUNK_ID.jsonl], validation: [data/oasst/val_with_logits_CHUNK_ID.jsonl], test: [data/oasst/val_with_logits_CHUNK_ID.jsonl]}" \
                ++model.data.data_impl=chunked_jsonl \
                ++model.data.n_chunks=1 \
