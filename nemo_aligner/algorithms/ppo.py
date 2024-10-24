@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import itertools
 from collections import UserDict
 from contextlib import nullcontext
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 
 import pandas as pd
 import torch
@@ -28,9 +27,10 @@ from typing_extensions import Self
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingRandomSampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
+from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
-    SyncTimer,
+    ScopedTimer,
     all_reduce_dict,
     masked_global_mean_var,
     normalize_tensor,
@@ -134,7 +134,7 @@ class PPOTrainer:
     def __init__(
         self,
         cfg: DictConfig,
-        model,
+        model: MegatronGPTActorModel,
         optimizer,
         scheduler,
         train_dataloader_builder,
@@ -194,9 +194,7 @@ class PPOTrainer:
         self.train_df = pd.DataFrame(columns=["step", "prompt", "response", "reward"])
         self.val_df = pd.DataFrame(columns=["step", "prompt", "response", "reward"])
 
-        self.timer = SyncTimer(
-            reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
-        )
+        self.timer = ScopedTimer(reduction="mean", sync_cuda=True, buffer_size=1)
 
     def generate_ppo_data(self, rollout_batch):
         """generate ppo specific data for training
@@ -285,7 +283,6 @@ class PPOTrainer:
         reshard_context = trt_llm_reshard_region if self.trtllm_reshard else nullcontext
 
         rollout_batches, futures = [], []
-        timer_metrics = {}
 
         with reshard_context():
             # dataloader must be built within the reshard context because it uses DP rank and size
@@ -296,20 +293,17 @@ class PPOTrainer:
             # so the DP groups are correct
             num_microbatches = compute_num_rollout_microbatches(dataloader)
 
-            self.timer.start("batch_iterator_init")
-            batch_iterator = self.batch_iterator_cls(
-                sampler_iter, num_microbatches, dataloader.dataset, self.collate_fn
-            )
-            timer_metrics["batch_iterator_init"] = self.timer.stop_and_get_time("batch_iterator_init")
+            with self.timer("batch_iterator_init"):
+                batch_iterator = self.batch_iterator_cls(
+                    sampler_iter, num_microbatches, dataloader.dataset, self.collate_fn
+                )
 
-            self.timer.start("generate")
-            for batch in batch_iterator:
-                rollout_batch = self.model.infer(batch)
-                rollout_batches.append(rollout_batch)
+            with self.timer("generate"):
+                for batch in batch_iterator:
+                    rollout_batch = self.model.infer(batch)
+                    rollout_batches.append(rollout_batch)
 
-                futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
-
-            timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
+                    futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
 
             unbalanced_local_batch = PPORolloutBatch.from_rollout_batches(
                 rollout_batches,
@@ -329,26 +323,23 @@ class PPOTrainer:
         # since we compute the logprobs in nemo we need to disable the resharding
         batched_response_tokens = balanced_local_batch["response_tokens"]
 
-        self.timer.start("logprobs")
-        rollout_logprobs = self.model.get_inference_log_probs(batched_response_tokens)
-        balanced_local_batch["logprobs"] = rollout_logprobs
-        timer_metrics["logprobs"] = self.timer.stop_and_get_time("logprobs")
+        with self.timer("logprobs"):
+            rollout_logprobs = self.model.get_inference_log_probs(batched_response_tokens)
+            balanced_local_batch["logprobs"] = rollout_logprobs
 
         compute_init_policy_kl = not is_validation and self.compute_init_policy_kl
         if compute_init_policy_kl:
-            self.timer.start("init_logprobs")
-            rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens)
-            balanced_local_batch["init_logprobs"] = rollout_init_logprobs
-            timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
+            with self.timer("init_logprobs"):
+                rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens)
+                balanced_local_batch["init_logprobs"] = rollout_init_logprobs
 
         # we send the request in sharded context, so we need to keep this sharding and then undo it
         with reshard_context():
-            self.timer.start("critic_wait")
-            rm_value_rollout_batches = []
-            for future in futures:
-                rewards, values = future.result() if isinstance(future, FutureResult) else future
-                rm_value_rollout_batches.append({"rewards": rewards, "values": values})
-            timer_metrics["critic_wait"] = self.timer.stop_and_get_time("critic_wait")
+            with self.timer("critic_wait"):
+                rm_value_rollout_batches = []
+                for future in futures:
+                    rewards, values = future.result() if isinstance(future, FutureResult) else future
+                    rm_value_rollout_batches.append({"rewards": rewards, "values": values})
 
             unbalanced_rm_value_batch = PPORolloutBatch.from_rollout_batches(
                 rm_value_rollout_batches,
@@ -369,7 +360,7 @@ class PPOTrainer:
 
         global_rollout_batch.update(global_rm_value_batch)
 
-        return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
+        return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch))
 
     def compute_rollout_metrics(self, rollout_batch):
         table = {}
@@ -406,22 +397,18 @@ class PPOTrainer:
     def run_validation(self):
         self.model.prepare_for_inference()
 
-        _, rollout_metrics, _ = self._run_inference(
-            self.val_dataloader_builder, consumed_samples=0, is_validation=True
-        )
+        _, rollout_metrics = self._run_inference(self.val_dataloader_builder, consumed_samples=0, is_validation=True)
 
         self.model.finish_inference()
         return rollout_metrics
 
     @torch.no_grad()
     def generate_rollouts(self):
-        timing_metrics = {}
+        with self.timer("prepare_for_inference"):
+            # Timing includes build if first step and refit if step > 1
+            self.model.prepare_for_inference()
 
-        self.timer.start("prepare_for_inference")
-        self.model.prepare_for_inference()
-        timing_metrics["prepare_for_inference"] = self.timer.stop_and_get_time("prepare_for_inference")
-
-        rollout_batch, rollout_metrics, timer_metrics = self._run_inference(
+        rollout_batch, rollout_metrics = self._run_inference(
             self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False
         )
 
@@ -429,23 +416,20 @@ class PPOTrainer:
 
         ppo_rollout_data, ppo_rollout_metrics = self.generate_ppo_data(rollout_batch)
 
-        self.timer.start("finish_inference")
-        self.model.finish_inference()
-        timing_metrics["finish_inference"] = self.timer.stop_and_get_time("finish_inference")
-
-        timing_metrics.update(timer_metrics)
+        with self.timer("finish_inference"):
+            # Timing includes engine unloading if enabled
+            self.model.finish_inference()
 
         return (
             ppo_rollout_data,
             rollout_metrics | ppo_rollout_metrics | {"consumed_samples": self.consumed_samples},
-            timing_metrics,
+            self.timer.consume_durations(),
         )
 
     def run_training(self, dataloader_iter):
         self.model.prepare_for_training()
 
         for batch in dataloader_iter:
-            self.timer.start("train_step_time")
             self.optimizer.zero_grad()
 
             self.model.prepare_for_training_step()
@@ -466,7 +450,6 @@ class PPOTrainer:
                 metrics["lr"] = lr
 
             metrics.update({"loss": loss_mean, "optim_step": self.ppo_optimization_step})
-            metrics["train_step_time"] = self.timer.stop_and_get_time("train_step_time")
 
             self.logger.log_metrics(
                 metrics, step=self.step, prefix="train_optim/",
@@ -510,17 +493,18 @@ class PPOTrainer:
                 critic_train_loop_amount = self.critic_warmup_steps + 1 if self.step == 0 else 1
 
                 for _ in range(critic_train_loop_amount):
-                    self.timer.start("rollout_time")
                     clear_memory()
-                    ppo_rollout_data, metrics, timer_metrics = self.generate_rollouts()
-                    timing_metrics["rollout_time"] = self.timer.stop_and_get_time("rollout_time")
+                    with self.timer("rollout_time"):
+                        ppo_rollout_data, metrics, rollout_timer_metrics = self.generate_rollouts()
+                    # Consume rollout_time
+                    timing_metrics.update(self.timer.consume_durations())
 
                     # send critic train
                     clear_memory()
                     self.rm_critic.train(ppo_rollout_data)
 
-                    timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
-                    timing_metrics.update(timer_metrics)
+                    rollout_timer_metrics = all_reduce_dict(rollout_timer_metrics, op=torch.distributed.ReduceOp.MAX)
+                    timing_metrics.update(rollout_timer_metrics)
 
                     # logging
                     table_metrics = metrics.pop("table")
@@ -550,11 +534,12 @@ class PPOTrainer:
                 )
                 # start training
                 clear_memory()
-                self.timer.start("train_time")
-                self.run_training(rollout_dataloader_iter)
-                timing_metrics["train_time"] = self.timer.stop_and_get_time("train_time")
+                with self.timer("train_time"):
+                    self.run_training(rollout_dataloader_iter)
 
-                self.logger.log_metrics(timing_metrics, step=self.step, prefix="timers/")
+                self.logger.log_metrics(
+                    timing_metrics | self.timer.consume_durations(), step=self.step, prefix="timers/"
+                )
 
                 self.step += 1
 
@@ -569,9 +554,10 @@ class PPOTrainer:
                 )
 
                 if run_val:
-                    self.timer.start("validation_time")
-                    val_metrics = self.run_validation()
-                    timing_metrics["validation_time"] = self.timer.stop_and_get_time("validation_time")
+                    with self.timer("validation_time"):
+                        val_metrics = self.run_validation()
+                    # Note: validation_time is logged one step behind (val step 5 means we've completed step 4)
+                    timing_metrics.update(self.timer.consume_durations())
 
                     val_table_metrics = val_metrics.pop("table")
 

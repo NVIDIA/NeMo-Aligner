@@ -45,10 +45,8 @@ trainer:
       enable: False
       reshard: False # if True then reshard the model into TP only for inference
 
-      # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is the difference between the model sequence length and the max number of tokens to generate
       max_input_len: ${subtract:${model.encoder_seq_length}, ${model.ppo.length_params.max_length}}
-      max_input_tokens: ${multiply:${.max_input_len}, ${model.ppo.rollout_micro_batch_size}}
 
       # the seed to use for trt-llm generation
       seed: ${model.seed}
@@ -72,6 +70,9 @@ trainer:
     # *do not change this*
     model_gbs: ${model.global_batch_size}
     model_mbs: ${model.micro_batch_size}
+
+    # Default set to an ephemeral location within the container
+    trt_model_dir: /tmp/trt_llm_model
 
   # no need to change these
   logger: False # logger provided by exp_manager
@@ -130,6 +131,8 @@ pretrained_checkpoint:
   restore_from_path: null
 
 model:
+  # TODO: document perf implications
+  # use_tp_pp_dp_mapping: true
 
   ppo:
     # training generation mbs
@@ -174,7 +177,6 @@ model:
 
     trt_llm: ${trainer.ppo.trt_llm}
 
-  #peft 
   peft:
     peft_scheme: "none"  # ["lora", "none"]
     restore_from_path: null
