@@ -33,40 +33,40 @@ jobs:
         run: | 
           docker system prune --filter "until=24h" --force
       
-      #- name: Set up Docker Buildx
-      #  uses: docker/setup-buildx-action@v3
-      #  with: 
-      #    # We use `docker` driver as this speeds things up for 
-      #    # trivial (non-multi-stage) builds.
-      #    driver: docker
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with: 
+          # We use `docker` driver as this speeds things up for 
+          # trivial (non-multi-stage) builds.
+          driver: docker
 
-      #- name: Pull cache images
-      #  run: |
-      #    docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }} || true
-      #    docker pull nemoci.azurecr.io/nemo_aligner_container:buildcache || true
+      - name: Pull cache images
+        run: |
+          docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }} || true
+          docker pull nemoci.azurecr.io/nemo_aligner_container:buildcache || true
 
-      #- name: Build and push
-      #  uses: docker/build-push-action@v5
-      #  with:
-      #    file: Dockerfile
-      #    push: true
-      #    build-args: |
-      #      MAX_JOBS=32
-      #      ALIGNER_COMMIT=${{ inputs.ref }}
-      #    cache-from: |
-      #      nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }}
-      #      nemoci.azurecr.io/nemo_aligner_container:buildcache
-      #    cache-to: type=inline
-      #    tags: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          file: Dockerfile
+          push: true
+          build-args: |
+            MAX_JOBS=32
+            ALIGNER_COMMIT=${{ inputs.ref }}
+          cache-from: |
+            nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number || 'buildcache' }}
+            nemoci.azurecr.io/nemo_aligner_container:buildcache
+          cache-to: type=inline
+          tags: nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
 
-      #- name: Update PR image
-      #  if: github.event_name == 'pull_request'
-      #  run: |
-      #    docker tag nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
-      #    docker push nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
+      - name: Update PR image
+        if: github.event_name == 'pull_request'
+        run: |
+          docker tag nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
+          docker push nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
 
-      #- name: Update buildcache image
-      #  if: github.ref == 'refs/heads/main'
-      #  run: |
-      #    docker tag nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} nemoci.azurecr.io/nemo_aligner_container:buildcache
-      #    docker push nemoci.azurecr.io/nemo_aligner_container:buildcache
+      - name: Update buildcache image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker tag nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} nemoci.azurecr.io/nemo_aligner_container:buildcache
+          docker push nemoci.azurecr.io/nemo_aligner_container:buildcache

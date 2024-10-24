@@ -47,7 +47,7 @@ jobs:
 
         - name: Docker pull image
           run: |
-            docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }}
+            docker pull nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }}
 
         - name: Start container
           run: |
@@ -59,7 +59,7 @@ jobs:
               --env ALIGNER_REPO_DIR=/opt/NeMo-Aligner \
               --volume /mnt/datadrive/TestData/aligner/checkpoints:/home/TestData/aligner/checkpoints:ro \
               --volume /mnt/datadrive/TestData/aligner/hf_home/hub:/home/TestData/aligner/hf_home/hub:ro \
-              nemoci.azurecr.io/nemo_aligner_container:${{ github.event.pull_request.number }} \
+              nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} \
               bash -c "sleep $(( ${{ inputs.TIMEOUT }} * 60 + 60 ))"
   
         - id: main
