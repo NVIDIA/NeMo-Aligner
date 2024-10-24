@@ -240,18 +240,19 @@ class GRPOTrainer:
             advantages = grouped_rewards - grouped_reward_mean
 
             if self.cfg.normalize_rewards:
-                advantages = advantages / (grouped_reward_std + 1e-8)
+                # don't sharpen the ones with no variation
+                # advantages = advantages / grouped_reward_std
+                mask = grouped_reward_std > 0
+                advantages[mask] = advantages[mask] / grouped_reward_std[mask]
 
         # TODO: consider normalizing the advantages
         advantages = advantages.flatten()
 
         # advantage estimation
         mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
-        advantages = (torch.zeros_like(logprobs) + advantages.view(-1, 1)) * mask
 
         # collect everything we need to train PPO
         ppo_rollout_data["mask"] = mask
-        ppo_rollout_data["advantages"] = advantages
         ppo_rollout_data["prev_logprobs"] = logprobs
         ppo_rollout_data["response_tokens"] = response_tokens
         ppo_rollout_data["is_end"] = is_end
@@ -282,17 +283,22 @@ class GRPOTrainer:
         ppo_rollout_metrics = {k: v / num_samples for k, v in ppo_rollout_metrics.items()}
 
         mask = ppo_rollout_data["mask"]
+
         for key in ["advantages"]:
-            tensor = ppo_rollout_data[key]
+            tensor = advantages
 
             global_mean, global_var = masked_global_mean_var(
-                tensor, mask, group=parallel_state.get_data_parallel_group(),
+                tensor, torch.ones_like(tensor), group=parallel_state.get_data_parallel_group(),
             )
+
+            if self.cfg.normalize_advantages:
+                advantages = (advantages - global_mean) / global_var.sqrt()
+
             ppo_rollout_metrics[f"{key}_mean"] = global_mean.item()
             ppo_rollout_metrics[f"{key}_std"] = global_var.sqrt().item()
 
-            max_tensor = tensor[mask.bool()].max().item()
-            min_tensor = tensor[mask.bool()].min().item()
+            max_tensor = tensor.max().item()
+            min_tensor = tensor.min().item()
             reduce_tensor = torch.as_tensor(
                 [-min_tensor, max_tensor], device=torch.cuda.current_device(), dtype=torch.float32
             )
@@ -303,6 +309,9 @@ class GRPOTrainer:
             min_tensor = -min_tensor
             ppo_rollout_metrics[f"{key}_min"] = min_tensor
             ppo_rollout_metrics[f"{key}_max"] = max_tensor
+
+        ppo_rollout_data["advantages"] = advantages
+        advantages = (torch.zeros_like(logprobs) + advantages.view(-1, 1)) * mask
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
 

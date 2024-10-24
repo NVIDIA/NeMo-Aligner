@@ -31,6 +31,7 @@ trainer:
     gae_lambda: 0.95
     normalize_rewards: True
     use_raw_rewards: False
+    normalize_advantages: False
 
     # the sequence length to pad the rollout batch for training to
     # reduce fragmentation at the cost of using more

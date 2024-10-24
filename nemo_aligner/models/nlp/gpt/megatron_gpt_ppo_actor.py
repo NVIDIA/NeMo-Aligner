@@ -140,7 +140,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 )
 
                 scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
-                scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask)
+                # scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask)
 
                 kl = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
 
