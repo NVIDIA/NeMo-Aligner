@@ -310,8 +310,8 @@ class GRPOTrainer:
             ppo_rollout_metrics[f"{key}_min"] = min_tensor
             ppo_rollout_metrics[f"{key}_max"] = max_tensor
 
-        ppo_rollout_data["advantages"] = advantages
         advantages = (torch.zeros_like(logprobs) + advantages.view(-1, 1)) * mask
+        ppo_rollout_data["advantages"] = advantages
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
 
