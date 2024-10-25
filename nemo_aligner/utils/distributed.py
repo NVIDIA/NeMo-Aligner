@@ -489,7 +489,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         if cross_tokenizer:  ## naively grab the top-k logits from the student
 
             ## TODO: only a few of the indices are wrong when using this approach, and they're shifted by 10 or 11
-            ## it seems like there's some sort of numerical instability when doing it this way -- maybe stick with the old 
+            ## it seems like there's some sort of numerical instability when doing it this way -- maybe stick with the old
             ## approach for now
             predicted_logits_full = tensor_parallel.gather_from_tensor_model_parallel_region(vocab_parallel_logits)
             ## shape [bs, sl, K], ids in [0, VS)
@@ -503,12 +503,11 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
             torch.testing.assert_close(target_mask, target_mask_correct)
 
-            print(f'{predicted_topk_ids=}')
-            print(f'{predicted_topk_ids_correct=}')
+            print(f"{predicted_topk_ids=}")
+            print(f"{predicted_topk_ids_correct=}")
 
             torch.testing.assert_close(predicted_logits_topk, predicted_logits_topk_correct)
             torch.testing.assert_close(predicted_topk_ids, predicted_topk_ids_correct)
-
 
         else:
             # Create a mask of valid vocab ids (1 means it needs to be masked).
@@ -672,12 +671,12 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         if bwd_kl:
             nonzero_grad = probs * (log_prob_ratio - bwd_kl_const)
-            grad_2d[arange_1d, target_token_ids_1d] = nonzero_grad.view(-1) ## slot in the nonzero gradients
+            grad_2d[arange_1d, target_token_ids_1d] = nonzero_grad.view(-1)  ## slot in the nonzero gradients
 
         else:  ## forward KL
             grad_2d[arange_1d, target_token_ids_1d] = probs.view(-1)
             softmax_update = torch.zeros_like(grad_2d)
-            softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1) ## slot in the nonzero gradients
+            softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1)  ## slot in the nonzero gradients
             grad_2d -= softmax_update
 
         grad_2d *= kd_loss_weight
