@@ -493,29 +493,9 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             ## approach for now
             predicted_logits_full = tensor_parallel.gather_from_tensor_model_parallel_region(vocab_parallel_logits)
             ## shape [bs, sl, K], ids in [0, VS)
-            predicted_logits_topk_correct, predicted_topk_ids_correct = torch.topk(predicted_logits_full, K)
-            target_mask_correct = (predicted_topk_ids_correct < vocab_start_index) | (predicted_topk_ids_correct >= vocab_end_index)
-            predicted_topk_ids_correct = predicted_topk_ids_correct.clone() - vocab_start_index
-
-            ## first get the topk logits on this rank
-            predicted_logits_topk, predicted_topk_ids = torch.topk(vocab_parallel_logits, K)
-            predicted_topk_ids = predicted_topk_ids + vocab_start_index
-
-            gathered_predicted_logits_topk = tensor_parallel.gather_from_tensor_model_parallel_region(predicted_logits_topk)
-            gathered_predicted_topk_ids = tensor_parallel.gather_from_tensor_model_parallel_region(predicted_topk_ids)
-
-            gathered_predicted_topk_ids_2d = gathered_predicted_topk_ids.view(-1, gathered_predicted_topk_ids.size()[-1])
-
-            ## then get the top k among the gathered logits
-            predicted_logits_topk, predicted_topk_id_ids = torch.topk(gathered_predicted_logits_topk, K)
-            id_indices = torch.arange(start=0, end=gathered_predicted_topk_ids_2d.size()[0], device=gathered_predicted_topk_ids.device).repeat_interleave(
-                K
-            )
-
-            predicted_topk_ids = gathered_predicted_topk_ids_2d[id_indices, predicted_topk_id_ids.view(-1)].view_as(target_token_ids)
+            predicted_logits_topk, predicted_topk_ids = torch.topk(predicted_logits_full, K)
 
             predicted_logits_topk = predicted_logits_topk.view_as(target_logits)  ## TODO: is this necessary?
-
             # Create a mask of valid vocab ids for this rank (1 means it needs to be masked).
             target_mask = (predicted_topk_ids < vocab_start_index) | (predicted_topk_ids >= vocab_end_index)
             predicted_topk_ids = predicted_topk_ids.clone() - vocab_start_index
