@@ -49,7 +49,7 @@ class KnowledgeDistillationDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        """Returns a pair of chosen/rejected pairs, their respective lengths, and labels.
+        """Returns a SFT example with topk_logits, topk_token_ids and target log_sum_exp_logits
         """
         payload = self.data[idx]
         for key in ["tokens", "labels", "loss_mask", "topk_token_ids"]:

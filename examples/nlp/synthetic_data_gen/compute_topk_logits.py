@@ -14,9 +14,7 @@
 
 import json
 import os
-from functools import partial
 
-import numpy as np
 import torch
 import torch.multiprocessing as mp
 from megatron.core import parallel_state
@@ -44,7 +42,7 @@ def write_generations(output_path, indices, batch, topk_logits, topk_token_ids, 
     log_sum_exp_logits = log_sum_exp_logits.tolist()
     batch = {k: v if isinstance(v, (list, dict, str, int, float)) else v.tolist() for k, v in batch.items()}
     with open(output_path, "a", encoding="utf-8") as write_file:
-        for i in range(len(batch["tokens"]) - num_padding):  ## do not write the dummy padding examples to disc
+        for i in range(len(batch["tokens"]) - num_padding):  ## do not write the dummy padding examples to disk
             obj = {k: v[i] for k, v in batch.items()}
             obj["topk_logits"] = topk_logits[i]
             obj["topk_token_ids"] = topk_token_ids[i]
@@ -117,8 +115,6 @@ def main(cfg) -> None:
         ## pad to batch size using the last example
         if num_padding:
             indices = indices + [indices[-1]] * num_padding
-
-        # indices_on_this_dp_rank = indices[start_idx_on_this_rank:end_idx_on_this_rank]
 
         # prepare the batch
         batch = [dataset[j] for j in indices]

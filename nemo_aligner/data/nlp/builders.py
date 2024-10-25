@@ -174,6 +174,25 @@ def build_train_valid_test_datasets(
         ), f"Data prefix dictionary should have train, test and validation keys.  data_prefix currently has only {data_prefix.keys()}"
         if cfg.data.splits_string is not None:
             logging.warning(cfg.data.splits_string + " ignored since data path is of type dictionary.")
+
+        if isinstance(n_examples_per_chunk, DictConfig):
+            train_examples_per_chunk = n_examples_per_chunk["train"]
+            validation_examples_per_chunk = n_examples_per_chunk["validation"]
+            test_examples_per_chunk = n_examples_per_chunk["test"]
+        else:
+            train_examples_per_chunk = n_examples_per_chunk
+            validation_examples_per_chunk = n_examples_per_chunk
+            test_examples_per_chunk = n_examples_per_chunk
+
+        if isinstance(n_chunks, DictConfig):
+            train_n_chunks = n_chunks["train"]
+            validation_n_chunks = n_chunks["validation"]
+            test_n_chunks = n_chunks["test"]
+        else:
+            train_n_chunks = n_chunks
+            validation_n_chunks = n_chunks
+            test_n_chunks = n_chunks
+
         train_ds = build_dataset_generic(
             cls=cls,
             cfg=cfg,
@@ -184,8 +203,8 @@ def build_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="train",
-            n_chunks=n_chunks,
-            n_examples_per_chunk=n_examples_per_chunk,
+            n_chunks=train_n_chunks,
+            n_examples_per_chunk=train_examples_per_chunk,
         )
         validation_ds = build_dataset_generic(
             cls=cls,
@@ -197,8 +216,8 @@ def build_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="validation",
-            n_chunks=n_chunks,
-            n_examples_per_chunk=n_examples_per_chunk,
+            n_chunks=validation_n_chunks,
+            n_examples_per_chunk=validation_examples_per_chunk,
         )
         test_ds = build_dataset_generic(
             cls=cls,
@@ -210,8 +229,8 @@ def build_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="test",
-            n_chunks=n_chunks,
-            n_examples_per_chunk=n_examples_per_chunk,
+            n_chunks=test_n_chunks,
+            n_examples_per_chunk=test_examples_per_chunk,
         )
         return train_ds, validation_ds, test_ds
 

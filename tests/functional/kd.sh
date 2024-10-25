@@ -76,7 +76,7 @@ mpirun -np 2 python -u ${GPFS}/examples/nlp/gpt/train_gpt_knowledge_distillation
     pretrained_checkpoint.restore_from_path=${PRETRAINED_CHECKPOINT_NEMO_FILE} \
     ++model.data.data_impl=chunked_jsonl \
     ++model.data.n_chunks=1 \
-    ++model.data.n_examples_per_chunk=50 \
+    ++"model.data.n_examples_per_chunk={train: 50, validation: 50, test: 50}" \
     ++model.data.seq_length=128 \
     ++model.global_batch_size=${GBS} \
     ++model.micro_batch_size=1 \

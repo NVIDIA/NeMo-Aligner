@@ -15,7 +15,7 @@ from functools import partial
 
 import torch
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf, open_dict
+from omegaconf.omegaconf import OmegaConf
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.core.config import hydra_runner
@@ -52,6 +52,7 @@ def _collate_fn(batch, eos_id, reset_position_ids=False, reset_attention_mask=Fa
 
     topk_logits = [item["topk_logits"] for item in batch]
     topk_token_ids = [item["topk_token_ids"] for item in batch]
+    log_sum_exp_logits = [item["log_sum_exp_logits"] for item in batch]
 
     tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
     labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=eos_id)
@@ -64,8 +65,6 @@ def _collate_fn(batch, eos_id, reset_position_ids=False, reset_attention_mask=Fa
     topk_token_ids = torch.nn.utils.rnn.pad_sequence(topk_token_ids, batch_first=True, padding_value=eos_id)
     assert len(topk_logits.shape) == 3, "topk_logits size should be [B, seq_length], got {topk_logits.shape}"
     assert len(topk_token_ids.shape) == 3, "topk_token_ids size should be [B, seq_length], got {topk_token_ids.shape}"
-
-    log_sum_exp_logits = torch.ones_like(topk_logits[..., 0])
 
     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
         tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,

@@ -439,8 +439,6 @@ def compute_topk_logits_in_batched_sequence(
     return topk_logits, topk_token_ids, log_sum_exp_logits
 
 
-## how to handle conditionals?
-## separate implementations for forward and backward KL?
 class _TopKLogitsCrossEntropy(torch.autograd.Function):
     @staticmethod
     def forward(
@@ -489,15 +487,48 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         K = target_logits.size()[-1]
 
         if cross_tokenizer:  ## naively grab the top-k logits from the student
+
+            ## TODO: only a few of the indices are wrong when using this approach, and they're shifted by 10 or 11
+            ## it seems like there's some sort of numerical instability when doing it this way -- maybe stick with the old 
+            ## approach for now
             predicted_logits_full = tensor_parallel.gather_from_tensor_model_parallel_region(vocab_parallel_logits)
             ## shape [bs, sl, K], ids in [0, VS)
-            predicted_logits_topk, predicted_topk_ids = torch.topk(predicted_logits_full, K)
+            predicted_logits_topk_correct, predicted_topk_ids_correct = torch.topk(predicted_logits_full, K)
+            target_mask_correct = (predicted_topk_ids_correct < vocab_start_index) | (predicted_topk_ids_correct >= vocab_end_index)
+            predicted_topk_ids_correct = predicted_topk_ids_correct.clone() - vocab_start_index
+
+            ## first get the topk logits on this rank
+            predicted_logits_topk, predicted_topk_ids = torch.topk(vocab_parallel_logits, K)
+            predicted_topk_ids = predicted_topk_ids + vocab_start_index
+
+            gathered_predicted_logits_topk = tensor_parallel.gather_from_tensor_model_parallel_region(predicted_logits_topk)
+            gathered_predicted_topk_ids = tensor_parallel.gather_from_tensor_model_parallel_region(predicted_topk_ids)
+
+            gathered_predicted_topk_ids_2d = gathered_predicted_topk_ids.view(-1, gathered_predicted_topk_ids.size()[-1])
+
+            ## then get the top k among the gathered logits
+            predicted_logits_topk, predicted_topk_id_ids = torch.topk(gathered_predicted_logits_topk, K)
+            id_indices = torch.arange(start=0, end=gathered_predicted_topk_ids_2d.size()[0], device=gathered_predicted_topk_ids.device).repeat_interleave(
+                K
+            )
+
+            predicted_topk_ids = gathered_predicted_topk_ids_2d[id_indices, predicted_topk_id_ids.view(-1)].view_as(target_token_ids)
 
             predicted_logits_topk = predicted_logits_topk.view_as(target_logits)  ## TODO: is this necessary?
+
             # Create a mask of valid vocab ids for this rank (1 means it needs to be masked).
             target_mask = (predicted_topk_ids < vocab_start_index) | (predicted_topk_ids >= vocab_end_index)
             predicted_topk_ids = predicted_topk_ids.clone() - vocab_start_index
             ids_for_loss = predicted_topk_ids.view(-1)
+
+            torch.testing.assert_close(target_mask, target_mask_correct)
+
+            print(f'{predicted_topk_ids=}')
+            print(f'{predicted_topk_ids_correct=}')
+
+            torch.testing.assert_close(predicted_logits_topk, predicted_logits_topk_correct)
+            torch.testing.assert_close(predicted_topk_ids, predicted_topk_ids_correct)
+
 
         else:
             # Create a mask of valid vocab ids (1 means it needs to be masked).
@@ -607,7 +638,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
             torch.Tensor([kd_loss_weight, sft_loss_weight]),
             exp_logits,
             label_mask,
-            masked_labels_1d,  ## <-- variables for SFT loss
+            masked_labels_1d,
         )
 
         return loss, kd_loss, sft_loss
@@ -635,7 +666,7 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         # For simplicity, work with the 2D gradient.
         grad_2d = grad_input.view(-1, partition_vocab_size)
 
-        # Add the gradient from matching classes.
+        # Used access the the indices of the gradient that are nonzero
         arange_1d = torch.arange(start=0, end=grad_2d.size()[0], device=grad_2d.device).repeat_interleave(K)
 
         inv_target_mask = ~target_mask
@@ -645,10 +676,12 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
         if bwd_kl:
             log_prob_ratio = probs.log() - target_probs.log()  ## shape = (bs, sl)
             bwd_kl_const = (probs * log_prob_ratio).sum(-1, keepdims=True).repeat_interleave(K, -1)
+
+            ## get only the values on this TP rank
             bwd_kl_const = bwd_kl_const[inv_target_mask]
             log_prob_ratio = log_prob_ratio[inv_target_mask]
 
-        ## grab only the probs on this rank
+        ## grab only the probs on this TP rank
         probs = probs[inv_target_mask]
         target_probs = target_probs[inv_target_mask]
         arange_1d = arange_1d[inv_target_mask.view(-1)]
@@ -659,12 +692,12 @@ class _TopKLogitsCrossEntropy(torch.autograd.Function):
 
         if bwd_kl:
             nonzero_grad = probs * (log_prob_ratio - bwd_kl_const)
-            grad_2d[arange_1d, target_token_ids_1d] = nonzero_grad.view(-1)
+            grad_2d[arange_1d, target_token_ids_1d] = nonzero_grad.view(-1) ## slot in the nonzero gradients
 
         else:  ## forward KL
             grad_2d[arange_1d, target_token_ids_1d] = probs.view(-1)
             softmax_update = torch.zeros_like(grad_2d)
-            softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1)
+            softmax_update[arange_1d, target_token_ids_1d] = target_probs.view(-1) ## slot in the nonzero gradients
             grad_2d -= softmax_update
 
         grad_2d *= kd_loss_weight

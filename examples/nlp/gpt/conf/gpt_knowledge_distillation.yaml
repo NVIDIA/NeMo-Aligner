@@ -99,8 +99,8 @@ model:
     
   data:
     data_impl: chunked_jsonl ## use chunked_jsonl rather than jsonl to save memory
-    n_chunks: null
-    n_examples_per_chunk: null
+    n_chunks: null ## either a single integer or a dict with integer values, if n_chunks differs per split
+    n_examples_per_chunk: null ## either a single integer or a dict with integer values, if n_examples_per_chunk differs per split
     splits_string: null
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True

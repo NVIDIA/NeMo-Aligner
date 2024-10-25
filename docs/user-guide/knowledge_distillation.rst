@@ -5,7 +5,7 @@ SFT with Knowledge Distillation
 
 Knowledge distillation is a technique in which a smaller (student) model learns from a larger (teacher) model. The goal is to "distill" information from the teacher to the student.
 Compared to standard SFT which trains the model to predict the next token, knowledge distillation allows more calibrated information passing from the teacher to the student.
-The two primary benefits of knowledge distillation compared to standard supervised fine-tuning: (1) convergence in fewer training tokens, and (2) improved accuracy.
+There are two primary benefits of knowledge distillation compared to standard supervised fine-tuning: (1) convergence in fewer training tokens, and (2) improved accuracy.
 
 There are many variants of knowledge distillation. NeMo Aligner supports training the student model to match the top-K logits of the teacher model. In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model.
 
@@ -18,7 +18,7 @@ To start, we must first download both the pre-trained student and fine-tuned tea
     .. tab-item:: 2B GPT Student
         :sync: key1
 
-        #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
+        #. Get the 2B checkpoint: ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
         #. Extract the NeMo File to a folder with ``mkdir student_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C student_checkpoint``
         #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/66646b83737d9a0facb1d8d714e0424fc86ec21a/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             
@@ -39,7 +39,7 @@ To start, we must first download both the pre-trained student and fine-tuned tea
 After these steps you should have files ``2b_student.nemo`` and ``teacher_checkpoint/Nemotron-3-8B-Chat-4k-SFT.nemo`` to use in NeMo-Aligner.
 
 .. note::
-   Mcore models use TransformerEngine as a backend, and it tries to find efficient kernels. But depending on the GPU you have it may not find them. If you ever face errors that relate to kernel finding set these variables on top of your script.
+   Mcore models use TransformerEngine as a backend, and it tries to find efficient kernels. But depending on the GPU you have, it may not find them. If you face errors that relate to kernel finding, set these variables on top of your script.
 
    .. code-block:: bash
 
@@ -51,7 +51,7 @@ After these steps you should have files ``2b_student.nemo`` and ``teacher_checkp
 Step 2: Download the data
 #########################
 
-In this example, you use the `OpenAssistant dataset <https://huggingface.co/datasets/OpenAssistant/oasst1>`__. Download and convert the dataset into the chat format by using the following script:
+In this example, we will use the `OpenAssistant dataset <https://huggingface.co/datasets/OpenAssistant/oasst1>`__. Download and convert the dataset into the chat format by using the following script:
 
 .. code-block:: bash
 
@@ -60,15 +60,16 @@ In this example, you use the `OpenAssistant dataset <https://huggingface.co/data
 Step 3: Cache the teacher's logits
 ##################################
 
-Next, we augment the dataset with the logits from the teacher. Note that this code will generate the top-k logits in descending order. For the purposes of this tutorial, we save the teacher's top four logits by setting
-
-.. important::
-   Failing to save the teacher's logits in descending order may affect convergence. If you choose to compute the teacher's logits using a different script than the one provided in this example, make sure the resulting dataset still has the teacher's logits in descending order.
+Next, we augment the dataset with the logits from the teacher. Note that this code will generate the top-K teacher logits for each example in descending order. For the purposes of this tutorial, we save the teacher's top four logits by setting
 
 .. code-block:: bash
+
    top_k=4
 
 In practice, ``k`` is usually set to something larger, such as 100.
+
+.. important::
+   Failing to save the teacher's logits in descending order may affect convergence. If you choose to compute the teacher's logits using a different script than the one provided in this example, make sure the resulting dataset still has the teacher's logits in descending order.
 
 
 This step takes around 20 minutes on 8 H100 80G GPUs.
@@ -150,7 +151,6 @@ This step takes around 20 minutes on 8 H100 80G GPUs.
             && python examples/nlp/synthetic_data_gen/compute_topk_logits.py \
                   trainer.num_nodes=\${SLURM_JOB_NUM_NODES} \
                   trainer.devices=\${SLURM_NTASKS_PER_NODE} \
-                  trainer.devices=8 \
                   trainer.precision=bf16 \
                   pretrained_checkpoint.restore_from_path=teacher_checkpoint/Nemotron-3-8B-Chat-4k-SFT.nemo \
                   model.megatron_amp_O2=True \
@@ -164,8 +164,7 @@ This step takes around 20 minutes on 8 H100 80G GPUs.
                   data.data.hf_dataset=True \
                   top_k=4 \
                   model.global_batch_size=16 \
-                  batch_size=16 \
-                  forward_micro_batch_size=2 \
+                  model.micro_batch_size=2 \
                   start_from_idx=0 \
                   end_at_idx=56439 \
                   output_path=data/oasst/train_with_logits_0.jsonl
@@ -243,7 +242,7 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
                "model.data.data_prefix={train: [data/oasst/train_with_logits_CHUNK_ID.jsonl], validation: [data/oasst/val_with_logits_CHUNK_ID.jsonl], test: [data/oasst/val_with_logits_CHUNK_ID.jsonl]}" \
                ++model.data.data_impl=chunked_jsonl \
                ++model.data.n_chunks=1 \
-               ++model.data.n_examples_per_chunk=56440 \
+               ++model.data.n_examples_per_chunk={train: 56440, validation: 2938, test: 2938}" \
                ++model.data.seq_length=4096 \
                model.data.splits_string=\'98,1,1\' \
                exp_manager.create_wandb_logger=True \
@@ -321,11 +320,11 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
                   model.knowledge_distillation.logits_scale=1.0 \
                   model.knowledge_distillation.sft_loss_weight=0.4 \
                   model.knowledge_distillation.kd_loss_weight=1 \
-                  model.knowledge_distillation.kd_loss=bwd_kl \
+                  model.knowledge_distillation.kd_loss=fwd_kl \
                   "model.data.data_prefix={train: [data/oasst/train_with_logits_CHUNK_ID.jsonl], validation: [data/oasst/val_with_logits_CHUNK_ID.jsonl], test: [data/oasst/val_with_logits_CHUNK_ID.jsonl]}" \
                   ++model.data.data_impl=chunked_jsonl \
                   ++model.data.n_chunks=1 \
-                  ++model.data.n_examples_per_chunk=56440 \
+                  ++"model.data.n_examples_per_chunk={train: 56440, validation: 2938, test: 2938}" \
                   ++model.data.seq_length=4096 \
                   model.data.splits_string=\'98,1,1\' \
                   exp_manager.create_wandb_logger=True \
