@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Misc helper functions"""
+import functools
 import gc
 import itertools
 import os
@@ -521,4 +522,22 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
 def log_memory(prefix):
     pyt = torch.cuda.memory_allocated() / (1024 ** 3)
     el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
-    logging.info(f"Mem Usage | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
+    logging.info(f"Mem Usage (GB) | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
+
+
+def deprecated_in_version(version: str, message: str | None = None):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Construct the deprecation message
+            func_name = func.__name__
+            warn_message = (
+                f"The function '{func_name}' is deprecated and will be removed in version {version}. "
+                f"{message if message else ''}".strip()
+            )
+            warnings.warn(warn_message, DeprecationWarning, stacklevel=2)
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator

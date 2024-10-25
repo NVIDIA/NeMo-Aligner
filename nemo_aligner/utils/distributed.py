@@ -14,6 +14,7 @@
 
 """distributed utils for communicating between different ranks"""
 
+import functools
 import time
 import warnings
 from collections import defaultdict
@@ -23,12 +24,14 @@ from datetime import timedelta
 from typing import Optional
 
 import torch
+import torch.distributed
 from megatron.core import tensor_parallel
 
 from nemo.utils.timers import NamedTimer
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.parallel_state import get_model_parallel_group, get_model_parallel_src_rank
 from nemo_aligner.utils.ppo_utils import calculate_entropy
+from nemo_aligner.utils.utils import deprecated_in_version
 
 
 def rebalance_nd_tensor(tensor, group):
@@ -55,6 +58,7 @@ def rebalance_nd_tensor(tensor, group):
     return output_tensor
 
 
+@deprecated_in_version("0.7.0", "Please use broadcast_tensor(tensor, src, group, dtype)")
 def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
     """Broadcast any 2d tensor from the src rank to every other rank in the given group.
     All the ranks that send or receive data must call this function."""
@@ -82,6 +86,45 @@ def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
     return tensor
 
 
+def broadcast_tensor(tensor, src, group, dtype: torch.dtype | None = None, max_tensor_ndim: int = 5):
+    """
+    Broadcast a tensor from the source rank to every other rank in the given group.
+    All the ranks that send or receive data must call this function.
+    
+    Parameters:
+    - tensor: The tensor to be broadcasted.
+    - src: The rank of the source tensor.
+    - group: The process group to use for the broadcast.
+    - dtype: (Optional) The desired data type to cast the tensor before broadcasting.
+    - max_tensor_ndim: The maximum number of dimensions the tensor can have, default is 5.
+
+    Restrictions:
+    - To optimize the number of broadcasts, this function assumes a maximum number of dimensions
+      for the tensor, controlled by the `max_tensor_ndim` parameter (default: 5).
+    
+    Returns:
+    - The broadcasted tensor.
+    """
+
+    if torch.distributed.get_rank() == src:
+        tensor = tensor.cuda()
+        if dtype:
+            tensor = tensor.to(dtype)
+
+        metadata = [tensor.dtype, tensor.shape]
+
+        torch.distributed.broadcast_object_list(metadata, src, group)
+        torch.distributed.broadcast(tensor, src, group)
+    else:
+        metadata = [None, None]
+        torch.distributed.broadcast_object_list(metadata, src, group)
+
+        dtype, input_shape = metadata
+        tensor = torch.empty(input_shape, dtype=dtype, device="cuda")
+        torch.distributed.broadcast(tensor, src, group)
+    return tensor
+
+
 def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     """helper function to broadcast within the model parallel group
     """
@@ -93,11 +136,36 @@ def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     return tensor
 
 
-def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32):
+@deprecated_in_version("0.7.0", "Please use broadcast_tensor_within_pp(tensor, dtype)")
+def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32, from_last: bool = True):
+    """
+    from_last: True=broadcast from the last PP rank and False=broadcast from first PP rank (default=True)
+    """
     if parallel_state.get_pipeline_model_parallel_world_size() > 1:
         return broadcast_2d_tensor(
             tensor,
-            parallel_state.get_pipeline_model_parallel_last_rank(),
+            parallel_state.get_pipeline_model_parallel_last_rank()
+            if from_last
+            else parallel_state.get_pipeline_model_parallel_first_rank(),
+            parallel_state.get_pipeline_model_parallel_group(),
+            dtype=dtype,
+        )
+
+    return tensor
+
+
+def broadcast_tensor_within_pp(tensor: torch.Tensor | None, dtype: torch.dtype = None, from_last: bool = True):
+    """
+    tensor: Should be a valid tensor on src rank and None elsewhere
+    dtype: no dtype means that the dtype is inferred
+    from_last: True=broadcast from the last PP rank and False=broadcast from first PP rank (default=True)
+    """
+    if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        return broadcast_tensor(
+            tensor,
+            parallel_state.get_pipeline_model_parallel_last_rank()
+            if from_last
+            else parallel_state.get_pipeline_model_parallel_first_rank(),
             parallel_state.get_pipeline_model_parallel_group(),
             dtype=dtype,
         )
@@ -304,22 +372,27 @@ def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distri
     return dict(zip(keys, tensor.tolist()))
 
 
+@deprecated_in_version("0.7.0", "Consider using ScopedTimer")
 class SyncTimer(NamedTimer):
     """Wrapper around NamedTimer to sync across DP ranks
         for more precise timing
     """
 
     def __init__(self, *args, **kwargs):
+        # TODO: double check can delete
         self.reduce_op = kwargs.pop("reduce_op", torch.distributed.ReduceOp.MAX)
         super().__init__(*args, **kwargs)
+        # TODO: double check can delete
         self.stored_results = defaultdict(list)
 
+    # TODO: double check can delete
     def sync_time(self, list_to_sync):
         output_tensor = torch.tensor(list_to_sync, dtype=torch.float32, device="cuda")
         torch.distributed.all_reduce(output_tensor, op=self.reduce_op, group=parallel_state.get_data_parallel_group())
 
         return output_tensor
 
+    # TODO: double check can delete
     def get_synced(self, *args, **kwargs):
         # time unsynced
         output = self.get(*args, **kwargs)
@@ -331,6 +404,7 @@ class SyncTimer(NamedTimer):
         self.stop(name=name)
         return self.get(name=name)
 
+    # TODO: double check can delete
     def store(self, name=""):
         """instead of immediately syncing the timing, we'll store it
             for a sync later on
@@ -339,6 +413,7 @@ class SyncTimer(NamedTimer):
         output = self.get(name=name)
         self.stored_results[name].append(output)
 
+    # TODO: double check can delete
     def sync_and_consume_over_stored_time(self, name=""):
         """get the timings we stored, sync them and iterates over them
             this function consumes the timings (i.e remove them after iterating)
@@ -350,6 +425,78 @@ class SyncTimer(NamedTimer):
         yield from output_list
 
         del self.stored_results[name]
+
+
+class ScopedTimer:
+    """
+    A thin adapter over the NamedTimer class to help time sections of code 
+    using a context manager.
+
+    This class is useful for tracking timings automatically so you don't need 
+    to manually collect them. You only need to pass the timer around and can 
+    collect the durations in one place, instead of returning and mutating 
+    dictionaries throughout your code.
+
+    The ScopedTimer ensures that durations are logged and consumed properly, 
+    preventing accidental overwriting of previous measurements.
+
+    Usage:
+        timer = ScopedTimer()
+
+        # All durations are logged in the timer
+        with timer("step_time"):
+            with timer("fwd"):
+                model.fwd()
+            with timer("bwd"):
+                model.bwd()
+
+        # Consume all durations and reset internal store
+        durations = timer.consume_durations()
+
+        # Durations that are not consumed will raise a ValueError
+        with timer("fwd"):
+            model.fwd()
+        with timer("fwd"):
+            model.fwd()  # <-- This will raise an error as timer.consume_durations()
+                         # is not called, meaning the previous measurement is 
+                         # still stored.
+
+    Methods:
+        consume_durations() -> dict[str, float]:
+            Returns a dictionary of all logged durations and resets the internal log.
+
+        __call__(name: str):
+            Context manager for timing a section of code. Raises a ValueError if
+            durations are not consumed before starting a new measurement for the 
+            same name.
+
+    Raises:
+        ValueError: If attempting to start a new timing section for a name that
+                    already has a recorded duration without consuming the previous
+                    measurement using consume_durations().
+    """
+
+    def __init__(self, *args, **kwargs):
+        self._timer = NamedTimer(*args, **kwargs)
+        self._duration_log = {}
+
+    def consume_durations(self) -> dict[str, float]:
+        durations = self._duration_log
+        self._duration_log = {}
+        return durations
+
+    @contextmanager
+    def __call__(self, name: str):
+        try:
+            self._timer.start(name=name)
+            yield
+        finally:
+            self._timer.stop(name=name)
+            if name in self._duration_log:
+                raise ValueError(
+                    f"Attempted to store new duration for {name=} before consuming last measurement. Call consume_durations() to consume the last set of measurements."
+                )
+            self._duration_log[name] = self._timer.get(name=name)
 
 
 @dataclass

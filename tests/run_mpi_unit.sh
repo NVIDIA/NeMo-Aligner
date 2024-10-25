@@ -11,7 +11,7 @@ if [[ $NUM_GPUS_AVAILABLE -lt 2 ]]; then
 fi
 
 export PYTHONPATH=$(realpath ..):${PYTHONPATH:-}
-CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node 2 -m pytest .. -rA -s -x -vv $@ || true
+CUDA_VISIBLE_DEVICES=0,1 mpirun -np 2 --allow-run-as-root pytest .. -rA -s -x -vv --mpi $@ || true
 
 if [[ -f PYTEST_SUCCESS ]]; then
     echo SUCCESS
