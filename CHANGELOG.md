@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### New Features and Optimizations
 - Added support for Megatron’s distributed optimizer, which can be configured using `++model.optim.name=mcore_distributed_optim`.
+- Added support for Knowledge Distillation with SFT. See the [tutorial](../docs/user-guide/knowledge-distillation.rst) for details.
 
 ### Breaking Changes
 
