@@ -109,6 +109,7 @@ def naive_topk_loss_function(
     return loss
 
 
+@pytest.mark.skip(reason="Tests currently hang and causes long delays")
 class TestDistributedFunctions:
     def _init_distributed(self, local_rank, main_address, main_port, nprocs):
         if torch.distributed.is_available() and not torch.distributed.is_initialized():

@@ -59,18 +59,17 @@ jobs:
   Unit_Tests:
     needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
-    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') # || needs.pre-flight.outputs.all == 'true' ## TODO: comment back in
+    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
     with:
-      IS_OPTIONAL: true
       RUNNER: self-hosted-azure
-      TIMEOUT: 20
+      TIMEOUT: 10
       SCRIPT: |
         nvidia-smi
         cd ${ALIGNER_REPO_DIR}
-        torchrun --nproc_per_node 2 -m pytest . -rA -s -x
+        bash tests/run_unit.sh
 
   Functional_Tests:
-    name: ${{ matrix.TEST_NAME }}
+    name: ${{ matrix.test_case }}
     needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
     if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
@@ -81,12 +80,12 @@ jobs:
           - dpo-llama3
           - kd-llama3
     with:
-      IS_OPTIONAL: true
       RUNNER: self-hosted-azure
       # Fairly aggresive timeout that all functional tests should try to adhere to
       TIMEOUT: 10
       SCRIPT: |
-        export PYTHONPATH=/opt/NeMo-Aligner:${PYTHONPATH:-}
-        git config --global --add safe.directory /opt/NeMo-Aligner
+        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
+        nvidia-smi
+        git config --global --add safe.directory ${ALIGNER_REPO_DIR}
         cd ${ALIGNER_REPO_DIR}
         bash tests/functional/test_cases/${{ matrix.test_case }}.sh
