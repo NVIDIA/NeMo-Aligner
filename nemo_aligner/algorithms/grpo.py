@@ -247,6 +247,7 @@ class GRPOTrainer:
 
         # TODO: consider normalizing the advantages
         advantages = advantages.flatten()
+        num_advantages_not_zero = (advantages != 0).sum()
 
         # advantage estimation
         mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
@@ -270,6 +271,8 @@ class GRPOTrainer:
         ppo_rollout_metrics["grouped_reward_mean"] = (
             grouped_reward_mean.mean(-1).sum() * self.cfg.num_responses_per_prompt
         )
+        ppo_rollout_metrics["percent_advantages_not_zero"] = num_advantages_not_zero
+
         ppo_rollout_metrics["grouped_reward_std"] = (
             grouped_reward_std.mean(-1).sum() * self.cfg.num_responses_per_prompt
         )
