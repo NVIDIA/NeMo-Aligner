@@ -32,12 +32,6 @@ To use a pre-built container, run the following code:
 Notes and Tips
 ##############
 
-Some of the subsequent tutorials require accessing gated Hugging Face models. To download these models, you must first request access to the model by following the link provided in the tutorial.
-After access has been granted, make sure you have a Hugging Face access token (if you do not, follow `this tutorial <https://huggingface.co/docs/hub/en/security-tokens#how-to-manage-user-access-tokens>`__ to generate one).
-Finally, be sure to set the `HF_TOKEN` variable in your environment:
-
-.. code-block:: bash
-   
-   export HF_TOKEN=<your_access_token>
+- Some of the subsequent tutorials require accessing gated Hugging Face models. For details on how to access these models, refer to the ``this document <https://docs.nvidia.com/nemo-framework/user-guide//latest/generaltips.html#working-with-hugging-face-models>``__.
 
 
