@@ -15,8 +15,8 @@
 import torch
 
 from nemo_aligner.utils.text_generation_utils import (
-    tokenize_batch,
     TrackLengthGPTModelTextGenerationStrategy,
+    tokenize_batch,
     verify_is_valid_and_clamp_range_,
 )
 
