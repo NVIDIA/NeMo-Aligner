@@ -114,6 +114,47 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
         return fwd_output_and_loss_func
 
     def loss_func(self, output_tensor, label_tensor):
+        loss_func_name = self.cfg.get("loss_func", "regression")
+
+        if loss_func_name == "regression":
+            return self.reg_loss_func(output_tensor, label_tensor)
+        elif loss_func_name.endswith('bt'):
+            return self.bt_loss_func(output_tensor, label_tensor)
+        else:
+            raise ValueError("only accepted values for loss_func are regression, regular_bt, margin_bt and scaled_bt")
+
+    def bt_loss_func(self, output_tensor, label_tensor):
+        """
+        label_tensor should have the value of the [0,0] index as a number indicating the prefered response as well as the strength of the preferred response
+        
+        In HelpSteer2-Preference, label is a non-negative integer between -3 and 3: -3, -2, -1 means A is preferred while 1, 2, 3 means B is preferred
+        
+        output_tensor uses the value of [:, 4] index as the reward for the chosen/rejected values, which inherits the position of the helpfulness attribute
+        """
+        label = label_tensor[0, 0]
+
+        aspect_importance = output_tensor[:, 4]
+        out_first= aspect_importance[0]
+        out_second = aspect_importance[1]
+
+        margin = abs(label)
+
+        label_item = label.item()
+        if label_item < 0:
+            out_chosen, out_rejected = out_first, out_second
+        # else include the zero case as well
+        else:
+            out_chosen, out_rejected = out_second, out_first
+        
+        if self.cfg.loss_func == "regular_bt":
+            loss = -torch.nn.functional.logsigmoid(out_chosen - out_rejected).mean()
+        elif self.cfg.loss_func == "margin_bt":
+            loss = -torch.nn.functional.logsigmoid(out_chosen - out_rejected - margin).mean()
+        elif self.cfg.loss_func == "scaled_bt":
+            loss = margin * -torch.nn.functional.logsigmoid(out_chosen - out_rejected).mean()
+        return loss
+
+    def reg_loss_func(self, output_tensor, label_tensor):
         mask_val = self.cfg.get("loss_mask_val", -100.0)
         mask = label_tensor != mask_val
         num_valid_attributes = mask.float().sum()

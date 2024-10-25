@@ -65,12 +65,14 @@ def main(cfg) -> None:
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
+    load_rm_head_weights = cfg.model.regression.load_rm_head_weights
+
     ptl_model = load_from_nemo(
         reward_model_cls,
         cfg.model,
         trainer,
         strict=True,
-        load_base_model_only=True,
+        load_base_model_only=not load_rm_head_weights,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
