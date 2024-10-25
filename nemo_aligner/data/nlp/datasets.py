@@ -71,7 +71,7 @@ class KnowledgeDistillationDataset(Dataset):
             )
             # ignore the example whose tokenized text exceeds max seq length.
             for key in ["tokens", "labels", "topk_logits", "topk_token_ids", "log_sum_exp_logits"]:
-                payload[key] = payload[key][: self.nograd_length]
+                payload[key] = payload[key][: self.nograd_length] ## make dummy example very short to reduce computation
             payload["loss_mask"] = torch.zeros_like(payload["tokens"])
 
         return payload
