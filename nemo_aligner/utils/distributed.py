@@ -86,22 +86,17 @@ def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
     return tensor
 
 
-def broadcast_tensor(tensor, src, group, dtype: torch.dtype | None = None, max_tensor_ndim: int = 5):
+def broadcast_tensor(tensor: torch.Tensor | None, src, group, dtype: torch.dtype | None = None):
     """
     Broadcast a tensor from the source rank to every other rank in the given group.
     All the ranks that send or receive data must call this function.
     
     Parameters:
-    - tensor: The tensor to be broadcasted.
+    - tensor: The tensor to be broadcasted (or None for non source ranks).
     - src: The rank of the source tensor.
     - group: The process group to use for the broadcast.
     - dtype: (Optional) The desired data type to cast the tensor before broadcasting.
-    - max_tensor_ndim: The maximum number of dimensions the tensor can have, default is 5.
 
-    Restrictions:
-    - To optimize the number of broadcasts, this function assumes a maximum number of dimensions
-      for the tensor, controlled by the `max_tensor_ndim` parameter (default: 5).
-    
     Returns:
     - The broadcasted tensor.
     """
