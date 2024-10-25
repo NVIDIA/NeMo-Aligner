@@ -54,9 +54,7 @@ class TestDistributedFunctions:
     def _init_distributed(self, local_rank, main_address, main_port, nprocs):
         if torch.distributed.is_available() and not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
-                "nccl" if torch.cuda.is_available() else "gloo",
-                rank=local_rank,
-                world_size=nprocs,
+                "nccl" if torch.cuda.is_available() else "gloo", rank=local_rank, world_size=nprocs,
             )
 
             if torch.cuda.is_available():
