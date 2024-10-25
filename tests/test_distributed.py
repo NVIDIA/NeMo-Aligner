@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import pytest
 import torch
 from megatron.core import tensor_parallel
@@ -49,7 +50,6 @@ def calculate_entropy_full(logits):
     return calculate_entropy(full_log_probs)
 
 
-@pytest.mark.skip(reason="Tests currently hang and causes long delays")
 class TestDistributedFunctions:
     def _init_distributed(self, local_rank, main_address, main_port, nprocs):
         if torch.distributed.is_available() and not torch.distributed.is_initialized():
@@ -57,15 +57,13 @@ class TestDistributedFunctions:
                 "nccl" if torch.cuda.is_available() else "gloo",
                 rank=local_rank,
                 world_size=nprocs,
-                init_method=f"tcp://{main_address}:{main_port}",
             )
 
             if torch.cuda.is_available():
                 torch.cuda.set_device(local_rank)
 
     def _run_test(self, func, *args):
-        nprocs = torch.cuda.device_count() if torch.cuda.is_available() else 1
-        torch.multiprocessing.spawn(func, args=("localhost", 1234, nprocs, *args), nprocs=nprocs, join=True)
+        func(int(os.environ["LOCAL_RANK"]), "localhost", 1234, torch.cuda.device_count(), *args)
 
     def _test_masked_global_mean_var(self, *args, **kwargs):
         self._init_distributed(*args, **kwargs)
@@ -115,6 +113,7 @@ class TestDistributedFunctions:
         B, S, V_total = batch_size, 2048, 512 * world_size
 
         # pretend initalize the tensor model_parallel so the util function works
+        parallel_state.destroy_model_parallel()
         parallel_state.initialize_model_parallel(tensor_model_parallel_size=world_size)
         assert parallel_state.get_tensor_model_parallel_world_size() == world_size
 
@@ -171,6 +170,7 @@ class TestDistributedFunctions:
         B, S, V_total = batch_size, 2048, 512 * world_size
 
         # pretend initalize the tensor model_parallel so the util function works
+        parallel_state.destroy_model_parallel()
         parallel_state.initialize_model_parallel(tensor_model_parallel_size=world_size)
         assert parallel_state.get_tensor_model_parallel_world_size() == world_size
 
