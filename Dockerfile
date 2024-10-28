@@ -14,7 +14,7 @@ ARG MAX_JOBS=8
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
 ARG PYTRITON_VERSION=0.5.10
 ARG NEMO_TAG=e033481e26e6ae32764d3e2b3f16afed00dc7218  # On: r2.0.0rc1
-ARG MLM_TAG=a3fe0c75df82218901fa2c3a7c9e389aa5f53182  # On: core_r0.8.0
+ARG MLM_TAG=32002bb7d44e28647833423e2ab447db12a6feb0  # On: core_r0.8.0
 ARG ALIGNER_COMMIT=main
 ARG TRTLLM_VERSION=v0.10.0
 ARG PROTOBUF_VERSION=4.24.4
@@ -76,12 +76,14 @@ RUN pip install --upgrade-strategy only-if-needed jsonlines
 
 # NeMo
 ARG NEMO_TAG
+## TODO: remove cherry-pick once we bump nemo version
 RUN git clone https://github.com/NVIDIA/NeMo.git && \
     cd NeMo && \
     git pull && \
     if [ ! -z $NEMO_TAG ]; then \
         git fetch origin $NEMO_TAG && \
         git checkout FETCH_HEAD; \
+        git cherry-pick 649ad1f18ab5fa8995663e722fe53894c69496bf; \
     fi && \
     pip uninstall -y nemo_toolkit sacrebleu && \
     pip install -e ".[nlp]" && \
