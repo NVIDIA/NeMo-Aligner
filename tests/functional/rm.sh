@@ -31,7 +31,7 @@ PROJECT=llama3_rm_test
 
 # START HETEROGENEUS JOB 3
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
-CONF_NAME="gpt_rm"
+CONF_NAME="training_rm"
 
 CHECKPOINT_DIR="${RESULTS_DIR}/checkpoints"
 TENSOBOARD_DIR="${RESULTS_DIR}/tensorboard"
