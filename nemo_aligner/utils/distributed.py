@@ -23,14 +23,14 @@ from datetime import timedelta
 from typing import Optional
 
 import torch
-from megatron.core import parallel_state, tensor_parallel
+from megatron.core import tensor_parallel
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.parts import utils_funcs
 from nemo.utils.timers import NamedTimer
-from nemo_aligner.utils.parallel_state import get_model_parallel_group, get_model_parallel_src_rank
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 
 
@@ -87,10 +87,10 @@ def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
 def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     """helper function to broadcast within the model parallel group
     """
-    group = get_model_parallel_group()
+    group = parallel_state.get_model_parallel_group()
 
     if torch.distributed.get_world_size(group) > 1:
-        return broadcast_2d_tensor(tensor, get_model_parallel_src_rank(), group, dtype=dtype)
+        return broadcast_2d_tensor(tensor, parallel_state.get_model_parallel_src_rank(), group, dtype=dtype)
 
     return tensor
 
@@ -124,7 +124,7 @@ def run_if_model_parallel_src(fn, *fn_args, **fn_kwargs):
     """This function is meant to wrap an arbitary function to only call the function
     if it's the model parallel src. So if we have DP=2, this function will be called
     only twice."""
-    src_rank = get_model_parallel_src_rank()
+    src_rank = parallel_state.get_model_parallel_src_rank()
 
     output = None
     if torch.distributed.get_rank() == src_rank:
