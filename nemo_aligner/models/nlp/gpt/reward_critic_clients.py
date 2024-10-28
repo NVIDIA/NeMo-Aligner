@@ -156,16 +156,16 @@ class RemoteGPTRMCriticClient:
         self.pad_to_length = self.cfg.pad_to_length
 
     def infer_rm(self, texts):
-
         new_texts = []
         for text in texts:
             user_text, assistant_text = extract_dialog(text)
-            text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
+
+            if len(user_text) > 0 and len(assistant_text) > 0:
+                text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
 
             new_texts.append(text)
 
-        texts = new_texts
-        data = {"sentences": _str_list2numpy(texts)}
+        data = {"sentences": _str_list2numpy(new_texts)}
         future = run_if_model_parallel_src(
             self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=data,
         )

@@ -164,10 +164,10 @@ class GRPOTrainer:
         self.ckpt_callback = ckpt_callback
 
         # TODO: we need to send it once per TP rank, but do that later i guess...
-        self.sandbox = get_sandbox()
+        # self.sandbox = get_sandbox()
 
         # sanity check
-        assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
+        # assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -214,36 +214,12 @@ class GRPOTrainer:
         is_end = rollout_batch["is_end"]
 
         num_responses = self.cfg.num_responses_per_prompt
-
-        # TODO: switch this to RLOO like! this adds bias
-        # compute advantages
-        grouped_rewards = rewards.view(-1, num_responses)
-
-        # leave one out estimate
-        grouped_reward_mean = (
-            grouped_rewards
-            @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
-        ) / (num_responses - 1)
-
-        grouped_square_mean = (
-            grouped_rewards.square()
-            @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
-        ) / (num_responses - 1)
-        grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt()
-
-        num_reward_non_zero = (grouped_rewards > 0).sum(-1).count_nonzero()
-        num_std_zero = (grouped_reward_std == 0).count_nonzero()
+        greedy_rewards = rollout_batch["greedy_rewards"].repeat_interleave(num_responses)
 
         if self.cfg.use_raw_rewards:
             advantages = rewards
         else:
-            advantages = grouped_rewards - grouped_reward_mean
-
-            if self.cfg.normalize_rewards:
-                # don't sharpen the ones with no variation
-                # advantages = advantages / grouped_reward_std
-                mask = grouped_reward_std > 0
-                advantages[mask] = advantages[mask] / grouped_reward_std[mask]
+            advantages = rewards - greedy_rewards
 
         # TODO: consider normalizing the advantages
         advantages = advantages.flatten()
@@ -262,20 +238,7 @@ class GRPOTrainer:
             ppo_rollout_data["init_logprobs"] = rollout_batch["init_logprobs"]
 
         ppo_rollout_metrics["num_samples"] = prompt_lengths.size(0)
-
-        # group statistics
-        ppo_rollout_metrics["num_prompt_with_positive_reward"] = (
-            num_reward_non_zero * self.cfg.num_responses_per_prompt
-        )
-        ppo_rollout_metrics["num_prompt_with_zero_std"] = num_std_zero * self.cfg.num_responses_per_prompt
-        ppo_rollout_metrics["grouped_reward_mean"] = (
-            grouped_reward_mean.mean(-1).sum() * self.cfg.num_responses_per_prompt
-        )
-        ppo_rollout_metrics["percent_advantages_not_zero"] = num_advantages_not_zero
-
-        ppo_rollout_metrics["grouped_reward_std"] = (
-            grouped_reward_std.mean(-1).sum() * self.cfg.num_responses_per_prompt
-        )
+        ppo_rollout_metrics["num_advantages_not_zero"] = num_advantages_not_zero
 
         # now the metrics are global
         ppo_rollout_metrics = all_reduce_dict(
@@ -340,6 +303,14 @@ class GRPOTrainer:
             )
             timer_metrics["batch_iterator_init"] = self.timer.stop_and_get_time("batch_iterator_init")
 
+            # new iterator
+            dataloader = dataloader_builder(consumed_samples=consumed_samples)
+            sampler_iter = iter(dataloader.batch_sampler)
+            greedy_batch_iterator = self.batch_iterator_cls(
+                sampler_iter, dataloader.dataset, self.collate_fn, 1, self.cfg.rollout_micro_batch_size,
+            )
+            #
+
             self.timer.start("generate")
 
             futures = []
@@ -360,6 +331,20 @@ class GRPOTrainer:
                 # output = run_if_model_parallel_src(sandbox_call, self.sandbox, answers)
                 # if stub is not None:
                 #     all_rewards.extend(stub)
+
+            # greedy_rollout_batches = []
+            greedy_futures = []
+            if not is_validation:
+                for batch in greedy_batch_iterator:
+                    # during val we want to use greedy sampling
+                    rollout_batch = self.model.infer(batch, use_greedy=True)
+                    # greedy_rollout_batches.append(rollout_batch)
+
+                    texts = [
+                        self.model.tokenizer.ids_to_text(item[:length].tolist())
+                        for item, length in zip(rollout_batch["response_tokens"], rollout_batch["response_lengths"])
+                    ]
+                    greedy_futures.append(self.rm_critic.infer_rm(texts))
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -387,13 +372,24 @@ class GRPOTrainer:
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
         all_rewards = []
+        greedy_rewards = []
 
         for future in futures:
             _, reward = future.result()
             all_rewards.extend(reward.flatten())
 
+        for greedy_future in greedy_futures:
+            _, reward = greedy_future.result()
+            greedy_rewards.extend(reward.flatten())
+
         all_rewards = torch.as_tensor(all_rewards)
-        balanced_local_batch.update({"rewards": all_rewards})
+        dict_to_update = {"rewards": all_rewards}
+
+        if len(greedy_rewards) > 0:
+            greedy_rewards = torch.as_tensor(greedy_rewards)
+            dict_to_update["greedy_rewards"] = greedy_rewards
+
+        balanced_local_batch.update(dict_to_update)
 
         # gather the global rollout batch
         global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
