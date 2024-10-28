@@ -115,6 +115,7 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
 
     def loss_func(self, output_tensor, label_tensor):
         loss_func_name = self.cfg.get("loss_func", "regression")
+        assert loss_func_name in ["regression", "regular_bt", "margin_bt", "scaled_bt"]
 
         if loss_func_name == "regression":
             return self.reg_loss_func(output_tensor, label_tensor)
@@ -125,6 +126,13 @@ class MegatronGPTRegressionRewardModel(MegatronGPTRewardModel):
 
     def bt_loss_func(self, output_tensor, label_tensor):
         """
+        label_tensor is a tensor of shape [2, n_attributes] and reflects the value of 'label' in the dataset file of two adjacent samples.
+        
+        An example is [
+            [1, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0], 
+            [1, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0, -100.0]
+        ]
+
         label_tensor should have the value of the [0,0] index as a number indicating the prefered response as well as the strength of the preferred response
         
         In HelpSteer2-Preference, label is a non-negative integer between -3 and 3: -3, -2, -1 means A is preferred while 1, 2, 3 means B is preferred

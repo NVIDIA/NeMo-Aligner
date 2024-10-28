@@ -65,6 +65,11 @@ def main(cfg) -> None:
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
+    if reward_model_type == "regression":
+        if cfg.model.regression.loss_func in ["regular_bt", "margin_bt", "scaled_bt"]:
+            if cfg.model.micro_batch_size != 2:
+                raise ValueError("micro_batch_size must be set to 2 in order to use {regular,margin,scaled}_bt loss func with regression reward model")
+
     load_rm_head_weights = cfg.model.regression.load_rm_head_weights
 
     ptl_model = load_from_nemo(
