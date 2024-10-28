@@ -79,6 +79,7 @@ jobs:
         test_case:
           #- ppo-pp-llama3
           - dpo-llama3
+          - rm-llama3
     with:
       IS_OPTIONAL: true
       RUNNER: self-hosted-azure
