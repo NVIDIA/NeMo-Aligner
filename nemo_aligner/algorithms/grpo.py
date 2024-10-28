@@ -222,7 +222,7 @@ class GRPOTrainer:
             advantages = rewards - greedy_rewards
 
         # TODO: consider normalizing the advantages
-        advantages = advantages.flatten()
+        advantages = advantages.flatten().cuda()
         num_advantages_not_zero = (advantages != 0).sum()
 
         # advantage estimation
