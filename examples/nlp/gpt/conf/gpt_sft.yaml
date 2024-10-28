@@ -131,6 +131,9 @@ model:
     
   data:
     chat: False # whether use chatbot data or not
+    memmap_workers: null
+    index_mapping_dir: null
+
     chat_prompt_tokens:  # special tokens for the chat prompts, a dictionary of {token_type: token}. note that some tokenizer may combine the characters at the junction between {end_of_turn}{turn_start}. e.g. '<im end><im start>', the '><' sometimes is merged to be a single token. This is not supported, try to avoid
       system_turn_start: "\x00"
       turn_start: "\x11"
@@ -151,10 +154,10 @@ model:
       global_batch_size: 128
       micro_batch_size: 1
       shuffle: True
-      memmap_workers: null
       max_seq_length: ${model.encoder_seq_length}
       min_seq_length: 1
       drop_last: True  # note that `False` is not currently supported
+      memmap_workers: ${model.data.memmap_workers}
       # Example of how to specify concat_sampling_probabilities
       # concat_sampling_probabilities:
       #   - 0.5
@@ -165,17 +168,17 @@ model:
       add_sep: False
       add_bos: False
       truncation_field: "input" # # Can be multiple keys separated with ',' Options: keys in prompt_template
-      index_mapping_dir: null # Path to a directory to write index mapping files.
+      index_mapping_dir: ${model.data.index_mapping_dir} # Path to a directory to write index mapping files.
       prompt_template: "{input} {output}" # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       hf_dataset: False # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
       truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
-
+    
     validation_ds:
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
       global_batch_size: ${model.data.train_ds.global_batch_size}
       micro_batch_size: ${model.data.train_ds.micro_batch_size}
       shuffle: False
-      memmap_workers: ${model.data.train_ds.memmap_workers}
+      memmap_workers: ${model.data.memmap_workers}
       max_seq_length: ${model.data.train_ds.max_seq_length}
       min_seq_length: 1
       drop_last: True  #  note that `False` is not currently supported
@@ -184,7 +187,7 @@ model:
       add_sep: ${model.data.train_ds.add_sep}
       add_bos: ${model.data.train_ds.add_bos}
       truncation_field: ${model.data.train_ds.truncation_field} # Options: keys in prompt_template
-      index_mapping_dir: null # Path to a directory to write index mapping files.
+      index_mapping_dir: ${model.data.index_mapping_dir} # Path to a directory to write index mapping files.
       prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       hf_dataset: False # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
       truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']

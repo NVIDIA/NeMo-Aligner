@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 import torch
+import torch.distributed
 from megatron.core import parallel_state as mcore_parallel_state
 from megatron.core.utils import divide
 from nemo_skills.code_execution.math_grader import extract_answer
@@ -212,12 +213,23 @@ class GRPOTrainer:
         logprobs = rollout_batch["logprobs"]
         is_end = rollout_batch["is_end"]
 
+        num_responses = self.cfg.num_responses_per_prompt
+
         # TODO: switch this to RLOO like! this adds bias
         # compute advantages
-        grouped_rewards = rewards.view(-1, self.cfg.num_responses_per_prompt)
+        grouped_rewards = rewards.view(-1, num_responses)
 
-        grouped_reward_mean = grouped_rewards.mean(-1, keepdim=True)
-        grouped_reward_std = grouped_rewards.std(-1, keepdim=True)
+        # leave one out estimate
+        grouped_reward_mean = (
+            grouped_rewards
+            @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
+        ) / (num_responses - 1)
+
+        grouped_square_mean = (
+            grouped_rewards.square()
+            @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
+        ) / (num_responses - 1)
+        grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt()
 
         num_reward_non_zero = (grouped_rewards > 0).sum(-1).count_nonzero()
         num_std_zero = (grouped_reward_std == 0).count_nonzero()
@@ -228,18 +240,20 @@ class GRPOTrainer:
             advantages = grouped_rewards - grouped_reward_mean
 
             if self.cfg.normalize_rewards:
-                advantages = advantages / grouped_reward_std.add(1e-8)
+                # don't sharpen the ones with no variation
+                # advantages = advantages / grouped_reward_std
+                mask = grouped_reward_std > 0
+                advantages[mask] = advantages[mask] / grouped_reward_std[mask]
 
         # TODO: consider normalizing the advantages
         advantages = advantages.flatten()
+        num_advantages_not_zero = (advantages != 0).sum()
 
         # advantage estimation
-        advantages = calculate_ppo_rewards(logprobs, advantages, response_lengths)
         mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
         # collect everything we need to train PPO
         ppo_rollout_data["mask"] = mask
-        ppo_rollout_data["advantages"] = advantages
         ppo_rollout_data["prev_logprobs"] = logprobs
         ppo_rollout_data["response_tokens"] = response_tokens
         ppo_rollout_data["is_end"] = is_end
@@ -254,8 +268,14 @@ class GRPOTrainer:
             num_reward_non_zero * self.cfg.num_responses_per_prompt
         )
         ppo_rollout_metrics["num_prompt_with_zero_std"] = num_std_zero * self.cfg.num_responses_per_prompt
-        ppo_rollout_metrics["grouped_reward_mean"] = grouped_reward_mean.sum() * self.cfg.num_responses_per_prompt
-        ppo_rollout_metrics["grouped_reward_std"] = grouped_reward_std.sum() * self.cfg.num_responses_per_prompt
+        ppo_rollout_metrics["grouped_reward_mean"] = (
+            grouped_reward_mean.mean(-1).sum() * self.cfg.num_responses_per_prompt
+        )
+        ppo_rollout_metrics["percent_advantages_not_zero"] = num_advantages_not_zero
+
+        ppo_rollout_metrics["grouped_reward_std"] = (
+            grouped_reward_std.mean(-1).sum() * self.cfg.num_responses_per_prompt
+        )
 
         # now the metrics are global
         ppo_rollout_metrics = all_reduce_dict(
@@ -266,14 +286,35 @@ class GRPOTrainer:
         ppo_rollout_metrics = {k: v / num_samples for k, v in ppo_rollout_metrics.items()}
 
         mask = ppo_rollout_data["mask"]
+
         for key in ["advantages"]:
-            tensor = ppo_rollout_data[key]
+            tensor = advantages
 
             global_mean, global_var = masked_global_mean_var(
-                tensor, mask, group=parallel_state.get_data_parallel_group(),
+                tensor, torch.ones_like(tensor), group=parallel_state.get_data_parallel_group(),
             )
+
+            if self.cfg.normalize_advantages:
+                advantages = (advantages - global_mean) / global_var.sqrt()
+
             ppo_rollout_metrics[f"{key}_mean"] = global_mean.item()
             ppo_rollout_metrics[f"{key}_std"] = global_var.sqrt().item()
+
+            max_tensor = tensor.max().item()
+            min_tensor = tensor.min().item()
+            reduce_tensor = torch.as_tensor(
+                [-min_tensor, max_tensor], device=torch.cuda.current_device(), dtype=torch.float32
+            )
+            torch.distributed.all_reduce(
+                reduce_tensor, torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
+            )
+            min_tensor, max_tensor = reduce_tensor.tolist()
+            min_tensor = -min_tensor
+            ppo_rollout_metrics[f"{key}_min"] = min_tensor
+            ppo_rollout_metrics[f"{key}_max"] = max_tensor
+
+        advantages = (torch.zeros_like(logprobs) + advantages.view(-1, 1)) * mask
+        ppo_rollout_data["advantages"] = advantages
 
         return ppo_rollout_data, cpu_dict(ppo_rollout_metrics)
 

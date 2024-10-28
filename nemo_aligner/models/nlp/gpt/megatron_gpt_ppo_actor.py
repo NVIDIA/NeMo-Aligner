@@ -133,15 +133,16 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 tokens = batch["response_tokens"]
                 is_end = batch["is_end"]
 
-                is_end_mask = mask * is_end.view(-1, 1)
+                # TODO: is this advantage thing legit ?
+                # only do loss on advantages != 0
+                is_end_mask = mask * is_end.view(-1, 1) * (advantages != 0)
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
                 )
 
                 scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
-                if self.entropy_bonus > 0:
-                    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask) * self.entropy_bonus
+                scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask).nan_to_num(0)
 
                 kl = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
 
@@ -154,7 +155,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
                 if is_end_mask.sum() > 0:
                     actor_loss = masked_mean(torch.max(loss1, loss2), is_end_mask)
-                    loss = actor_loss - scaled_entropy
+
+                    loss = actor_loss - (scaled_entropy * self.entropy_bonus)
 
                     if self.cfg.ppo.initial_policy_kl_penalty > 0:
                         # TODO: add kl penalty here
