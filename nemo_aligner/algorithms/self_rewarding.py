@@ -1008,8 +1008,12 @@ class SelfRewardingTrainer:
                         # Transform into batch of LLM-as-judge template samples for reward scoring
                         reward_buffer = []
                         for t, s, e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
-                            prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<extra_id_0>System\n\n", "")
-                            response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
+                            if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
+                                prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", "")
+                                response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
+                            else:
+                                prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<extra_id_0>System\n\n", "")
+                                response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
                             # llama3
                             # prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", "")
                             # response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
@@ -1019,12 +1023,16 @@ class SelfRewardingTrainer:
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
                                 prompt_and_response = self.tokenizer.ids_to_text(t.tolist())
                                 try:
-                                    prompt_ft = re.findall(
-                                        r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response
-                                    )[0]
-                                    response_ft = re.findall(
-                                        r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)", prompt_and_response
-                                    )[0]
+                                    if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
+                                        prompt_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
+                                        response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
+                                    else:
+                                        prompt_ft = re.findall(
+                                            r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response
+                                        )[0]
+                                        response_ft = re.findall(
+                                            r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)", prompt_and_response
+                                        )[0]
                                     # llama3
                                     # prompt_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
                                     # response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
