@@ -56,7 +56,7 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_reward
     ++model.data.shuffle_documents=False \
     "model.data.data_prefix={train: [${TRAIN_DATA_PATH}], validation: [${VALID_DATA_PATH}], test: [${VALID_DATA_PATH}]}" \
     trainer.rm.val_check_interval=1 \
-    exp_manager.create_wandb_logger=True \
+    exp_manager.create_wandb_logger=False \
     exp_manager.wandb_logger_kwargs.name=${NAME} \
     exp_manager.wandb_logger_kwargs.project=${PROJECT} \
     exp_manager.explicit_log_dir=/results \
