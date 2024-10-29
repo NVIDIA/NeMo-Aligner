@@ -41,6 +41,7 @@ from nemo.collections.multimodal.parts.stable_diffusion.sdxl_helpers import (
     get_unique_embedder_keys_from_conditioner,
 )
 from nemo.collections.multimodal.parts.stable_diffusion.sdxl_pipeline import get_sampler_config
+from nemo.collections.multimodal.parts.stable_diffusion.utils import append_dims, default, instantiate_from_config
 from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.utils import logging
@@ -263,6 +264,84 @@ class MegatronSDXLDRaFTPModel(MegatronDiffusionEngine, SupervisedInterface):
                 for i in range(batch_size)
             ]
             return log_img, log_reward, vae_decoder_output
+
+    @torch.no_grad()
+    def annealed_guidance(self, batch, x_T, weighing_fn=None):
+        """ this function tries to perform sampling with a modified score function at each step which is an average
+         of the base model and the trained model """
+        if weighing_fn is None:
+            weighing_fn = lambda sigma1, sigma2, i, total: i * 1.0 / total
+
+        with torch.cuda.amp.autocast(
+            enabled=self.autocast_dtype in (torch.half, torch.bfloat16), dtype=self.autocast_dtype,
+        ):
+            batch_c = self.append_sdxl_size_keys(batch)
+            truncation_steps = self.cfg.truncation_steps
+            force_uc_zero_embeddings = ["txt", "captions"]
+            sampler = self.sampler
+            # get conditional guidance keys
+            cond, uc = self.model.conditioner.get_unconditional_conditioning(
+                batch_c, batch_uc=None, force_uc_zero_embeddings=force_uc_zero_embeddings,
+            )
+            additional_model_inputs = {}
+            # get denoisers for base and trained model
+            denoiser_draft = lambda input, sigma, c: self.model.denoiser(
+                self.model.model, input, sigma, c, **additional_model_inputs
+            )
+            base_model = self.init_model or self.model
+            denoiser_base = lambda input, sigma, c: base_model.denoiser(
+                base_model.model, input, sigma, c, **additional_model_inputs
+            )
+            # prep initial sampler config
+            x = x_T.clone()
+            num_steps = sampler.num_steps
+            x, s_in, sigmas, num_sigmas, cond, uc = sampler.prepare_sampling_loop(x, cond, uc, num_steps)
+            # last step doesnt count since there is no additional sigma
+            total_steps = num_sigmas - 1
+            iterator = tqdm(range(num_sigmas - 1), desc=f"{sampler.__class__.__name__} Sampler", total=total_steps)
+            base_model = self.init_model or self.model
+            for i in iterator:
+                gamma = sampler.get_gamma(sigmas, num_sigmas, i)
+                # with context(set_draft_grad_flag):
+                # just run the sampling without storing any grad
+                x_next_draft, eps_draft = sampler.sampler_step(
+                    s_in * sigmas[i],
+                    s_in * sigmas[i + 1],
+                    denoiser_draft,
+                    x.clone(),
+                    cond,
+                    uc,
+                    gamma,
+                    return_noise=True,
+                )
+                # get base model
+                with adapter_control(base_model):
+                    _, eps_init = sampler.sampler_step(
+                        s_in * sigmas[i],
+                        s_in * sigmas[i + 1],
+                        denoiser_base,
+                        x.clone(),
+                        cond,
+                        uc,
+                        gamma,
+                        return_noise=True,
+                    )
+                # get weighing scheme
+                w_draft = float(weighing_fn(sigmas[i], sigmas[i + 1], i, total_steps))
+                w_base = 1 - w_draft
+                # combine weights
+                eps = w_base * eps_init + w_draft * eps_draft
+                dt = append_dims(s_in * sigmas[i + 1] - s_in * sigmas[i], x.ndim)
+                euler_step = sampler.euler_step(x, eps, dt)
+                # get next x
+                x = sampler.possible_correction_step(
+                    euler_step, x.clone(), eps, dt, s_in * sigmas[i + 1], denoiser_draft, cond, uc
+                )
+                iterator.set_description(f"iteration: {i}/{total_steps}, w_base={w_base:06f}")
+            # decode the latent
+            image = self.model.differentiable_decode_first_stage(x)
+            image = torch.clamp((image + 1.0) / 2.0, min=0.0, max=1.0) * 255.0
+            return image
 
     @torch.no_grad()
     def log_visualization(self, prompts):

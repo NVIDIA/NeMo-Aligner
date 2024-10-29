@@ -7,8 +7,8 @@ trainer:
   accelerator: gpu
   precision: bf16
   
-  # dpo specific args
-  dpo:
+  # kto specific args
+  kto:
     max_epochs: 1
     max_steps: -1
     val_check_interval: 0.1
@@ -24,8 +24,8 @@ trainer:
   enable_checkpointing: False
   use_distributed_sampler: False
   max_time: null
-  max_epochs: ${.dpo.max_epochs}
-  max_steps: ${.dpo.max_steps}
+  max_epochs: ${.kto.max_epochs}
+  max_steps: ${.kto.max_steps}
 
 exp_manager:
   explicit_log_dir: /results
@@ -34,8 +34,8 @@ exp_manager:
   max_time_per_run: ${trainer.max_time}
   create_wandb_logger: False
   wandb_logger_kwargs:
-    project: nemo_aligner_dpo
-    name: rlhf_gpt3_dpo
+    project: nemo_aligner_kto
+    name: rlhf_gpt3_kto
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   resume_if_exists: True
   resume_ignore_no_checkpoint: True
@@ -58,15 +58,15 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
 
-  dpo:
+  kto:
     # This default value ensures there are no numeric differences beween trained and reference policies when computing log probs.
     # A higher value can be used to speed-up log probs computations, but may cause numeric differences.
-    log_prob_forward_micro_batch_size: ${model.micro_batch_size}
+    log_prob_forward_micro_batch_size: ${multiply:${model.micro_batch_size}, 2}
     ref_policy_kl_penalty: 0.2
+    desirable_loss_weight: 1.0
+    undesirable_loss_weight: 1.0
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
-    gt_reward_scale: 1. # the scale of the rewards in RPO
-    preference_loss: dpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
     preference_loss_weight: 1 # the coefficient of the preference loss
     sft_loss_weight: 0 # the coefficient of the SFT loss
   
@@ -116,14 +116,12 @@ model:
     seq_length: ${model.encoder_seq_length}
     skip_warmup: True
     num_workers: 0
+    dataloader_type: single # cyclic
     reset_position_ids: False # Reset position ids after end-of-document token
     reset_attention_mask: False # Reset attention mask after end-of-document token
     eod_mask_loss: False # Mask loss for the end of document tokens
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: null
-    default_chosen_reward: 1. # the default reward for the chosen response in RPO
-    default_rejected_reward: 0. # the default reward for the rejected response in RPO
-    
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
     data:

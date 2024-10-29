@@ -2,20 +2,30 @@
 
 .. _model-aligner-dpo:
 
-Model Alignment by Direct Preference Optimization (DPO)
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+Model Alignment by DPO, RPO, and IPO
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 The NeMo Framework supports efficient model alignment via the NeMo-Aligner codebase.
 
-All algorithms in NeMo-Aligner will work with any GPT-based model that is from Megatron Core (in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire DPO pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  The same tutorial also works for GPT models (such as LLaMa2) of any size.
+All algorithms in NeMo-Aligner will work with any GPT-based model that is from Megatron Core (in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire Direct Preference Optimization (DPO) pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  The same tutorial also works for GPT models (such as LLaMa2) of any size.
+
+DPO with LoRA
+#############
 
 We support both full-parameter DPO training and LoRA DPO training. 
 For full-parameter DPO, there exists an actor and a reference model. The actor is initialized with the reference model and is fully trainable. The reference model is frozen and used to calculate logprobs for KL-penalty loss (see `DPO paper <https://arxiv.org/pdf/2305.18290.pdf>`__). 
 For LoRA-based DPO, the actor is initialized by the reference model plus LoRA weights, where only the LoRA weights are trainable. Therefore, it allows us to switch between the actor/reference models by simply enabling or disabling LoRA. In addition, there is no need to store two sets of LLM weights.
 
-Besides the vanilla DPO algorithm, we support other variants of DPO algorithms including Identity preference optimization (IPO) and Reward-aware preference optimization (RPO). The algorithm is identified with the ``dpo.preference_loss`` config variable. We support three sorts of RPO algorithms based on the distance metric: ``rpo_sq`` for squared distance; ``rpo_bwd_kl`` for Bernoulli backward KL divergence; ``rpo_fwd_kl`` for Bernoulli forward KL divergence. To use the RPO algorithm, each dataset example should have ``chosen_reward`` and ``rejected_reward``, which might come from Human labelers or reward models. If ``chosen_reward`` and ``rejected_reward`` are not existent in the data, ``dpo.default_chosen_reward`` and ``dpo.default_rejected_reward`` are used.
+RPO and IPO Variations
+#######################
 
-Obtaining a Pretrained Model
+Besides the vanilla DPO algorithm, we support other variants of DPO algorithms, including Identity preference optimization (IPO) and Reward-aware preference optimization (RPO).
+
+The algorithm is identified with the ``dpo.preference_loss`` config variable. We support three sorts of RPO algorithms based on the distance metric: ``rpo_sq`` for squared distance, ``rpo_bwd_kl`` for Bernoulli backward KL divergence, and ``rpo_fwd_kl`` for Bernoulli forward KL divergence.
+
+To use the RPO algorithm, each dataset example should have chosen_reward and rejected_reward, which might come from human labelers or reward models. If chosen_reward and rejected_reward are not existent in the data, dpo.default_chosen_reward and dpo.default_rejected_reward are used.
+
+Obtain a Pretrained Model
 ############################
 To start, we must first get a pretrained model to align. There are two models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes, we will use the smaller 2B model. 
 
@@ -79,6 +89,8 @@ However, please be aware that most Megatron GPT models adhere to a strict format
    {"prompt": "<extra_id_0>System\n\n<extra_id_1>User\nPlease give me the name of a famous medieval painter.\n<extra_id_1>Assistant\n", "chosen_response": "Hieronymus Bosch\n<extra_id_1>", "rejected_response": "David Hockney\n<extra_id_1>"}
 
 Always follow the prompt-response template format used during your SFT training for DPO, as failure to do so will produce a model which outputs garbage text. You should create one jsonl file in the format above for your training data and one jsonl for your validation data.
+
+Your JSONL file must contain at least as many samples as the Global Batch Size (GBS) you plan to use during training. For example, if GBS = 64, ensure that both your training and validation files include at least 64 samples. Using a file with fewer samples than the GBS will result in a crash.
 
 Once your data is processed into the correct format, you are ready to begin DPO training. You must start with a pretrained or SFT trained model. For this section, we will use the SFT model trained in the previous step to train the DPO model.
 For the purposes of the following sections, we assume that your training jsonl file is located in ``/path/to/train_dpo_format.jsonl`` and your validation jsonl file is located in ``/path/to/valid_dpo_format.jsonl``.

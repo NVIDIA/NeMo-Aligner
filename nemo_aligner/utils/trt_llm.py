@@ -33,6 +33,10 @@ def append_and_repad_list(list_of_items, item_to_append, pad_id):
 
 
 class GPTGenerateTRTLLM:
+    # If a tokenizer does not have a pad_id, we use a large negative number and replace
+    # with self.eos_id after generation.
+    DEFAULT_PAD_ID = -42
+
     def __init__(
         self,
         model_cfg,
@@ -53,14 +57,17 @@ class GPTGenerateTRTLLM:
         reshard_model=False,
         trt_model_dir="/tmp/trt_llm_model",
     ):
+        if not HAVE_TRTLLM:
+            raise RuntimeError(
+                "You are trying to use NeMo-Aligner's TensorRT-LLM acceleration for LLM generation. Please build the dockerfile to enable this feature: https://github.com/NVIDIA/NeMo-Aligner/blob/main/Dockerfile"
+            )
+
         # If this assert turns out to be a blocker with some tokenizers, potential workarounds could be to:
         #   - add a config option to allow specifying which token we pass as `end_id` to TRT-LLM (should
         #     be a token that the model is guaranteed to never generate)
-        #   - pass `end_id=-1` (and possibly also `pad_id=-1`) to TRT-LLM (would require making sure
-        #     this works as intended)
         assert (
             tokenizer.pad_id != tokenizer.eos_id
-        ), "We require tokenizers to have a different pad_id than eos_id when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
+        ), f"We require tokenizers to have a different {tokenizer.pad_id=} than {tokenizer.eos_id=} when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
 
         if use_greedy and sample_top_k != 1:
             logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
@@ -83,15 +90,15 @@ class GPTGenerateTRTLLM:
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        self.pad_id = tokenizer.pad_id
-        end_id = tokenizer.eos_id
+        self.pad_id = tokenizer.pad_id if tokenizer.pad_id is not None else GPTGenerateTRTLLM.DEFAULT_PAD_ID
+        self.eos_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
         # TRT-LLM uses different logic to compute the response length depending on if we specify stop_list or end_id
-        # we want to use the same logic (which is to include the stop token in response length) so we put end_id into the stop_list
+        # we want to use the same logic (which is to include the stop token in response length) so we put eos_id into the stop_list
         # manually
         if len(end_strings) == 0:
-            ids, offsets = [end_id], [1]
+            ids, offsets = [self.eos_id], [1]
         else:
             assert all(
                 "," not in end_string for end_string in end_strings
@@ -103,9 +110,9 @@ class GPTGenerateTRTLLM:
                 end_strings, build_tokenizer(self.tokenizer), ref_str="green tea icecream"
             )
             ids, offsets = stop_list[0].tolist()
-            # add the end_id if it doesn't exist
-            if end_id not in ids:
-                ids = append_and_repad_list(ids, end_id, pad_id=0)
+            # add the eos_id if it doesn't exist
+            if self.eos_id not in ids:
+                ids = append_and_repad_list(ids, self.eos_id, pad_id=0)
                 offsets = append_and_repad_list(offsets, max(offsets) + 1, pad_id=-1)
 
         assert max(offsets) == len(ids), "offset and stop token length are mismatched"
@@ -223,6 +230,8 @@ class GPTGenerateTRTLLM:
 
             output_ids = _output_ids
 
+        # Map pad_id to eos_id in case tokenizer does not have a pad_id
+        output_ids[output_ids == self.pad_id] = self.eos_id
         output_ids = output_ids[..., :max_length].contiguous()
         output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
 
