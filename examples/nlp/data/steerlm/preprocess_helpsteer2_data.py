@@ -30,25 +30,18 @@ def download_helpsteer2():
     val = ds["validation"]
     return train, val
 
+
 def download_helpsteer2_preference():
-    ds = load_dataset("nvidia/HelpSteer2", data_dir="preference")['train']
+    ds = load_dataset("nvidia/HelpSteer2", data_dir="preference")["train"]
     train = []
     val = []
 
     for dp in ds:
-        new_dp1 = {
-            'prompt': dp['prompt'],
-            'response': dp['response_1'],
-            'quality': dp['preference_strength']
-        }
+        new_dp1 = {"prompt": dp["prompt"], "response": dp["response_1"], "quality": dp["preference_strength"]}
 
-        new_dp2 = {
-            'prompt': dp['prompt'],
-            'response': dp['response_2'],
-            'quality': dp['preference_strength']
-        }
+        new_dp2 = {"prompt": dp["prompt"], "response": dp["response_2"], "quality": dp["preference_strength"]}
 
-        if dp['split'] == 'train':
+        if dp["split"] == "train":
             train.append(new_dp1)
             train.append(new_dp2)
         else:
@@ -56,6 +49,7 @@ def download_helpsteer2_preference():
             val.append(new_dp2)
 
     return train, val
+
 
 def format_label(dp):
     label_list = []
@@ -110,7 +104,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-pref",
         "--preference",
-        action='store_true',
+        action="store_true",
         help="Use HelpSteer2-preference meant for Bradley-Terry reward modelling instead of regular HelpSteer2",
     )
     args = parser.parse_args()
