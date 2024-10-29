@@ -81,6 +81,7 @@ jobs:
           - dpo-llama3
           - spin-llama3
           - self_rewarding-llama3
+          - generation-llama3
     with:
       IS_OPTIONAL: true
       RUNNER: self-hosted-azure
