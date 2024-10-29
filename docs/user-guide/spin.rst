@@ -3,27 +3,27 @@
 Model Alignment by Self-Play Fine-Tuning (SPIN)
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-Original paper: https://arxiv.org/abs/2401.01335
+The NeMo Framework supports efficient model alignment via the NeMo-Aligner codebase.
 
-The NeMo framework supports efficient model alignment via the NeMo Aligner codebase.
+All algorithms in NeMo-Aligner will work with any GPT-based model that is from Megatron-Core (in the config, ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire SPIN pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  This same tutorial also works for GPT models (such as LLaMa3) of any size.
 
-All algorithms in NeMo Aligner will work with any GPT based model that is from mcore(i.e in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire SPIN pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  This same tutorial also works for GPT models(such as LLaMa3) of any size.
+For details on the SPIN algorithm, refer to the paper: `https://arxiv.org/abs/2401.01335 <https://arxiv.org/abs/2401.01335>`__.
 
 .. note::
    Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
 
-Obtaining a pretrained model
-############################
-To start, we must first get a pretrained model to align. There are 2 models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes we will use the smaller 2B model. 
+Obtain a Pretrained Model
+#########################
+To start, we must first get a pretrained model to align. There are two models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes, we will use the smaller 2B model.
 
 .. tab-set::
 
     .. tab-item:: 2B GPT
         :sync: key1
 
-        #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
-        #. Extract the NeMo File to a folder with ``mkdir model_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C model_checkpoint``
-        #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/0ec7e9090d3261b8ce81818b0555a204e50d814d/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
+        #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``.
+        #. Extract the NeMo File to a folder with ``mkdir model_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C model_checkpoint``.
+        #. Run the script to convert from old NeMo checkpoint to a Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/0ec7e9090d3261b8ce81818b0555a204e50d814d/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             .. code-block:: bash 
 
                python convert_nemo_gpt_to_mcore.py \

@@ -16,17 +16,17 @@ DPO with LoRA
 #############
 
 We support both full-parameter DPO training and LoRA DPO training. 
-For full-parameter DPO, there exists an actor and a reference model. The actor is initialized with the reference model and is fully trainable. The reference model is frozen and used to calculate logprobs for KL-penalty loss (see `DPO paper <https://arxiv.org/pdf/2305.18290.pdf>`__). 
+In full-parameter DPO, there exists an actor and a reference model. The actor is initialized with the reference model and is fully trainable. The reference model is frozen and used to calculate logprobs for KL-penalty loss (see the `DPO paper <https://arxiv.org/pdf/2305.18290.pdf>`__).
 For LoRA-based DPO, the actor is initialized by the reference model plus LoRA weights, where only the LoRA weights are trainable. Therefore, it allows us to switch between the actor/reference models by simply enabling or disabling LoRA. In addition, there is no need to store two sets of LLM weights.
 
 RPO and IPO Variations
 #######################
 
-Besides the vanilla DPO algorithm, we support other variants of DPO algorithms, including Identity preference optimization (IPO) and Reward-aware preference optimization (RPO).
+Besides the vanilla DPO algorithm, we support other variants of DPO algorithms, including Identity Preference Optimization (IPO) and Reward-aware Preference Optimization (RPO).
 
 The algorithm is identified with the ``dpo.preference_loss`` config variable. We support three sorts of RPO algorithms based on the distance metric: ``rpo_sq`` for squared distance, ``rpo_bwd_kl`` for Bernoulli backward KL divergence, and ``rpo_fwd_kl`` for Bernoulli forward KL divergence.
 
-To use the RPO algorithm, each dataset example should have chosen_reward and rejected_reward, which might come from human labelers or reward models. If chosen_reward and rejected_reward are not existent in the data, dpo.default_chosen_reward and dpo.default_rejected_reward are used.
+To use the RPO algorithm, each dataset example should have ``chosen_reward`` and ``rejected_reward``, which might come from human labelers or reward models. If ``chosen_reward`` and ``rejected_reward`` are not existent in the data, ``dpo.default_chosen_reward`` and ``dpo.default_rejected_reward`` are used.
 
 Obtain a Pretrained Model
 ############################
@@ -81,7 +81,7 @@ For best DPO training performance, it is recommended that you start with a SFT m
 DPO Model Training
 #####################
 
-Before running the core DPO training, you must prepare your training and validation data to the format required for DPO training. DPO expects .jsonl files where each line is a JSON dict corresponding to a single, complete sample, as shown below::
+Before running the core DPO training, you must prepare your training and validation data to the format required for DPO training. DPO expects ``.jsonl`` files where each line is a JSON dict corresponding to a single, complete sample, as shown below::
 
    {"prompt": "Which year was the Magna Carta signed?", "chosen_response": "1215", "rejected_response": "I refuse to answer this question."}
    {"prompt": "Please give me the name of a famous medieval painter.", "chosen_response": "Hieronymus Bosch", "rejected_response": "David Hockney"}
@@ -91,10 +91,10 @@ However, please be aware that most Megatron GPT models adhere to a strict format
    {"prompt": "<extra_id_0>System\n\n<extra_id_1>User\nWhich year was the Magna Carta signed?\n<extra_id_1>Assistant\n", "chosen_response": "1215\n<extra_id_1>", "rejected_response": "I refuse to answer this question.\n<extra_id_1>"}
    {"prompt": "<extra_id_0>System\n\n<extra_id_1>User\nPlease give me the name of a famous medieval painter.\n<extra_id_1>Assistant\n", "chosen_response": "Hieronymus Bosch\n<extra_id_1>", "rejected_response": "David Hockney\n<extra_id_1>"}
 
-Always follow the prompt-response template format used during your SFT training for DPO, as failure to do so will produce a model which outputs garbage text. You should create one jsonl file in the format above for your training data and one jsonl for your validation data.
+Always follow the prompt-response template format used during your SFT training for DPO, as failure to do so will produce a model which outputs garbage text. You should create one ``.jsonl`` file in the format above for your training data and one ``.jsonl`` for your validation data.
 
 Once your data is processed into the correct format, you are ready to begin DPO training. You must start with a pretrained or SFT trained model. For this section, we will use the SFT model trained in the previous step to train the DPO model.
-For the purposes of the following sections, we assume that your training jsonl file is located in ``/path/to/train_dpo_format.jsonl`` and your validation jsonl file is located in ``/path/to/valid_dpo_format.jsonl``.
+For the purposes of the following sections, we assume that your training ``.jsonl`` file is located in ``/path/to/train_dpo_format.jsonl`` and your validation ``.jsonl`` file is located in ``/path/to/valid_dpo_format.jsonl``.
 
 For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` corresponds to the beta parameter in the DPO paper.
 
