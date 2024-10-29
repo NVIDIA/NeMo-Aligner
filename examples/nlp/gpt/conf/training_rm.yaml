@@ -67,7 +67,7 @@ model:
     load_rm_head_weights: False # [False, True] False only loads base model while True loads rm_head weights as well (useful for intializing rm_head with model containing existing rm_head)
   output_sequence: False  # Whether to output a single scalar or a sequence of scalars.
   use_avg_pool: False  # Whether to use avg pool to sum across the sequence dim in reward model
-  force_head_dtype: float32  # enforce specific dtype for the final projection in the model head
+  force_head_dtype: bfloat16 #float32  # enforce specific dtype for the final projection in the model head
   micro_batch_size: 2 # please do not adjust MBS to other values for xxx_bt implementations
   global_batch_size: 64
   megatron_amp_O2: True
