@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from dataclasses import dataclass
 from functools import partial
 
@@ -23,10 +24,11 @@ from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
-import re
+
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
     over to the remote PyTrition server
 """
+
 
 class HelpsteerTemplate:
     def get_first_turn_template(self, text):
@@ -43,10 +45,9 @@ class HelpsteerTemplate:
         return f"""{text}\n<extra_id_2>"""
 
 
-
 def chat_template(user_text, assistant_text, template):
     formatter = HelpsteerTemplate()
-    
+
     text = ""
     for i in range(len(user_text)):
         if i == 0:
@@ -59,22 +60,30 @@ def chat_template(user_text, assistant_text, template):
 
 
 def extract_dialogue_helpsteer(text):
-    user_pattern = r'<extra_id_1>User\n(.*?)\n<extra_id_1>'
-    assistant_pattern = r'<extra_id_1>Assistant\n(.*?)\n(?:<extra_id_1>|<extra_id_2>)'
-    
+    user_pattern = r"<extra_id_1>User\n(.*?)\n<extra_id_1>"
+    assistant_pattern = r"<extra_id_1>Assistant\n(.*?)\n(?:<extra_id_1>|<extra_id_2>)"
+
     user_text = re.findall(user_pattern, text, re.DOTALL)
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
-    
+
     return user_text, assistant_text
 
+
 def extract_dialogue_llama(text):
-    user_pattern = r'<\|start_header_id\|>user<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>'
-    assistant_pattern = r'<\|start_header_id\|>assistant<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>'
-    
+    user_pattern = r"<\|start_header_id\|>user<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+    assistant_pattern = r"<\|start_header_id\|>assistant<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+
     user_text = re.findall(user_pattern, text, re.DOTALL)
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
-    
+    # TPO
+    for t in assistant_text:
+        if "<R>" in t:
+            t = t.replace("**<R>**", "<R>").split("<R>")[1].strip()
+        elif "Here is my response:" in t:
+            t = t.replace("**Here is my response:**", "Here is my response:").split("Here is my response:")[1].strip()
+
     return user_text, assistant_text
+
 
 def _str_list2numpy(str_list) -> np.ndarray:
     str_ndarray = np.array(str_list)[..., np.newaxis]
@@ -242,9 +251,7 @@ class RemoteGPTRMClient:
     def __post_init__(self):
         cfg = self.cfg
 
-        server_dict = {
-            cfg.reward_model.name: (cfg.reward_model.ip, cfg.reward_model.port)
-        }
+        server_dict = {cfg.reward_model.name: (cfg.reward_model.ip, cfg.reward_model.port)}
 
         self.communicator = HTTPCommunicator.create_http_communicator_from_dict(server_dict)
         self.communicator.print_server_dict()
@@ -256,15 +263,17 @@ class RemoteGPTRMClient:
 
         texts = []
         for i in range(rollout_batch["response_tokens"].size(0)):
-            text = model.tokenizer.ids_to_text(rollout_batch["response_tokens"][i, :rollout_batch["response_lengths"][i]].tolist())
+            text = model.tokenizer.ids_to_text(
+                rollout_batch["response_tokens"][i, : rollout_batch["response_lengths"][i]].tolist()
+            )
             user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
-            
+
             text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
             texts.append(text)
 
         send_data = {
             "sentences": _str_list2numpy(texts),
-            }
+        }
 
         rm_future = run_if_model_parallel_src(
             self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data,
