@@ -191,8 +191,7 @@ with
 .. note::
    Storing the teacher's logits can be quite memory intensive. To avoid going out of memory when loading the data, the data is loaded into memory in chunks. The example above uses a single chunk.
    
-   To use multiple chunks, run the code multiple times, changing the ``start_from_idx`` and ``end_at_idx`` indices to
-exhaust the entire dataset:
+   To use multiple chunks, run the code multiple times, changing the ``start_from_idx`` and ``end_at_idx`` indices to exhaust the entire dataset:
 
    .. code-block:: bash
 
