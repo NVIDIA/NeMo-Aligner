@@ -280,6 +280,7 @@ If you are interested in following the approach from HelpSteer2-Preference work,
          model.reward_model_type="regression" \
          trainer.rm.train_random_sampler=False \
          model.regression.loss_func=scaled_bt \
+         model.regression.load_rm_head_weights=True \
          model.optim.lr=1e-6 \
          model.optim.sched.min_lr=1e-6 \
          model.regression.num_attributes=9
