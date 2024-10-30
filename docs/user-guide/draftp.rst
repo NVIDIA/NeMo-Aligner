@@ -37,7 +37,7 @@ Use the following script to download and save the prompts from the `Pick a pic <
             for caption in captions:
                 file.write(caption + '\n')
 
-You can then run the following snipet to convert it to a ``.tar`` file:
+You can then run the following snippet to convert it to a ``.tar`` file:
 
    .. code-block:: bash 
 
