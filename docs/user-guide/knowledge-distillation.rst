@@ -1,7 +1,7 @@
 .. include:: /content/nemo.rsts
 
-SFT with Knowledge Distillation
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+Supervised Fine-Tuning (SFT) with Knowledge Distillation
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 Knowledge distillation is a technique in which a smaller (student) model learns from a larger (teacher) model. The goal is to "distill" information from the teacher to the student.
 Compared to standard SFT which trains the model to predict the next token, knowledge distillation allows more calibrated information passing from the teacher to the student.
@@ -9,8 +9,8 @@ There are two primary benefits of knowledge distillation compared to standard su
 
 There are many variants of knowledge distillation. NeMo Aligner supports training the student model to match the top-K logits of the teacher model. In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model.
 
-Step 1: Obtain the fine-tuned teacher and pre-trained student models
-####################################################################
+Obtain the fine-tuned teacher and pre-trained student models
+############################################################
 To start, we must first download both the pre-trained student and fine-tuned teacher models
 
 .. tab-set::
@@ -18,8 +18,8 @@ To start, we must first download both the pre-trained student and fine-tuned tea
     .. tab-item:: 2B GPT Student
         :sync: key1
 
-        #. Get the 2B checkpoint: ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``
-        #. Extract the NeMo File to a folder with ``mkdir student_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C student_checkpoint``
+        #. Get the 2B checkpoint: ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``.
+        #. Extract the NeMo File to a folder with ``mkdir student_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C student_checkpoint``.
         #. And then run the script to convert from old NeMo checkpoint to Megatron-Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/66646b83737d9a0facb1d8d714e0424fc86ec21a/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             
             .. code-block:: bash 
@@ -31,7 +31,7 @@ To start, we must first download both the pre-trained student and fine-tuned tea
     .. tab-item:: Nemotron 8B Teacher
         :sync: key2
 
-        #. Download the `Llama3-8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder. You can use the HuggingFace CLI for this:
+        #. Download the `Llama3-8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder. You can use the Hugging Face CLI for this:
             
             .. code-block:: bash
                huggingface-cli download nvidia/nemotron-3-8b-chat-4k-sft --local-dir teacher_checkpoint
@@ -39,7 +39,7 @@ To start, we must first download both the pre-trained student and fine-tuned tea
 After these steps you should have files ``2b_student.nemo`` and ``teacher_checkpoint/Nemotron-3-8B-Chat-4k-SFT.nemo`` to use in NeMo-Aligner.
 
 .. note::
-   Mcore models use TransformerEngine as a backend, and it tries to find efficient kernels. But depending on the GPU you have, it may not find them. If you face errors that relate to kernel finding, set these variables on top of your script.
+   Megatron Core models use TransformerEngine as a backend, which attempts to find efficient kernels. However, depending on your GPU, it may not always succeed. If you encounter errors related to kernel finding, set these variables at the top of your script.
 
    .. code-block:: bash
 
@@ -48,8 +48,8 @@ After these steps you should have files ``2b_student.nemo`` and ``teacher_checkp
       export NVTE_FUSED_ATTN=0
 
 
-Step 2: Download the data
-#########################
+Download the Data
+#################
 
 In this example, we will use the `OpenAssistant dataset <https://huggingface.co/datasets/OpenAssistant/oasst1>`__. Download and convert the dataset into the chat format by using the following script:
 
@@ -57,10 +57,10 @@ In this example, we will use the `OpenAssistant dataset <https://huggingface.co/
 
    python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_openassistant_data.py --output_directory=data/oasst
 
-Step 3: Cache the teacher's logits
-##################################
+Cache the Teacher's Logits
+##########################
 
-Next, we augment the dataset with the logits from the teacher. Note that this code will generate the top-K teacher logits for each example in descending order. For the purposes of this tutorial, we save the teacher's top four logits by setting
+Next, we augment the dataset with the logits from the teacher. Note that this code will generate the top-K teacher logits for each example in descending order. For the purposes of this tutorial, we save the teacher's top four logits by setting:
 
 .. code-block:: bash
 
@@ -108,9 +108,7 @@ This step takes around 20 minutes on 8 H100 80G GPUs.
     .. tab-item:: Slurm
         :sync: key4
 
-         To generate the teacher logits via slurm, run the following command: 
-
-         ### TODO: make the mounts more explicit
+         To generate the teacher logits via Slurm, run the following command:
 
          .. code-block:: bash 
 
@@ -174,7 +172,7 @@ This step takes around 20 minutes on 8 H100 80G GPUs.
             set +x
 
 
-You can also generate the teacher logits for the validation dataset by replacing these lines
+You can also generate the teacher logits for the validation dataset by replacing these lines:
 
 .. code-block:: bash
 
@@ -189,21 +187,23 @@ with
    data.data.file_path=data/oasst/val.jsonl \
    end_at_idx=2937 \
    output_path=data/oasst/val_with_logits_0.jsonl
- 
-Note that storing the teacher's logits can be quite memory intensive. To avoid going out of memory when loading the data,
-the data is loaded into memory in chunks. The example above uses a single chunk. To use multiple chunks, run the code multiple times, changing the ``start_from_idx`` and ``end_at_idx`` indices to
+
+.. note::
+   Storing the teacher's logits can be quite memory intensive. To avoid going out of memory when loading the data, the data is loaded into memory in chunks. The example above uses a single chunk.
+   
+   To use multiple chunks, run the code multiple times, changing the ``start_from_idx`` and ``end_at_idx`` indices to
 exhaust the entire dataset:
 
-.. code-block:: bash
+   .. code-block:: bash
 
-   start_from_idx=${START_FROM_IDX} \
-   end_at_idx=${END_AT_IDX} \
-   output_path=data/oasst/train_with_logits_${CHUNK_INDEX}.jsonl
+      start_from_idx=${START_FROM_IDX} \
+      end_at_idx=${END_AT_IDX} \
+      output_path=data/oasst/train_with_logits_${CHUNK_INDEX}.jsonl
 
-Each time the code is run, a single chunk will be produced. Note that the output path should be suffixed with the chunk index. The index is expected to range from 0 to num_chunks - 1.
+   Each time the code is run, a single chunk will be produced. Note that the output path should be suffixed with the chunk index. The index is expected to range from 0 to num_chunks - 1.
 
-Step 4: Fine-tune the student
-#############################
+Fine-Tune the Student
+#####################
 
 Once the data has been prepared, you are ready to fine-tune the student model.  This step takes around 50 minutes on 8 H100 80G GPUs.
 
@@ -212,7 +212,7 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
     .. tab-item:: Terminal
         :sync: key3
 
-         To run fune-tuning on the terminal directly, use the following command. For successful execution, ensure that the NeMo-Aligner repository is set as your current working directory.
+         To run fine-tuning on the terminal directly, use the following command. For successful execution, ensure that the NeMo-Aligner repository is set as your current working directory.
 
          .. code-block:: bash 
 
@@ -258,9 +258,7 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
     .. tab-item:: Slurm
         :sync: key4
 
-         To generate the teacher logits via slurm, run the following command: 
-
-         ### TODO: make the mounts more explicit
+         To generate the teacher logits via Slurm, run the following command:
 
          .. code-block:: bash 
 
