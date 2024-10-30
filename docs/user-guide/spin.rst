@@ -71,7 +71,7 @@ SPIN training uses the exact same dataset formatting and files as the NeMo-Align
 Once your data is processed into the correct format, you are ready to begin SPIN training. You must start with a pretrained or SFT trained model. For this section, we will use the SFT model trained in the previous step to train the SPIN model.
 For the purposes of the following sections, we'll assume your training .jsonl file is located in ``/path/to/train_spin_format.jsonl`` and your validation .jsonl file is located in ``/path/to/valid_spin_format.jsonl``.
 
-For the following parameters, ``the model.spin.ref_policy_kl_penalty`` corresponds to the beta parameter in the SPIN paper and ``trainer.spin.max_iterations`` corresponds to T (with ``trainer.spin.max_epochs`` epochs per iteration).
+For the following parameters, the ``model.spin.ref_policy_kl_penalty`` corresponds to the beta parameter in the SPIN paper and ``trainer.spin.max_iterations`` corresponds to T (with ``trainer.spin.max_epochs`` epochs per iteration).
 
 .. tab-set::
 

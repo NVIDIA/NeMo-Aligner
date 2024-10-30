@@ -48,7 +48,7 @@ This section is a step-by-step tutorial that walks you through how to run a full
 .. note::
    Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
 
-Download Llama 2 LLM model 
+Download the Llama 2 LLM model 
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 #. Download the Llama 2 70B LLM model from HF <https://huggingface.co/meta-llama/Llama-2-70b-hf> into the models folder.
