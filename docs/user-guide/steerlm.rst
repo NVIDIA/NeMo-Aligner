@@ -80,8 +80,6 @@ To follow the HelpSteer2 and HelpSteer2-Preference line of works, you would need
 
 You need to get access to them, download and then convert them in a similar manner.
 
-An additional requirement is that you need to have an HF_TOKEN with access to the relevant models and then either export HF_TOKEN=<your_hf_token> or HF_HOME=<your_hf_home> contain a file named token with your token.
-
 Step 2: Download and Preprocess data for SteerLM Regression Reward Modelling
 #######################################################################
 
@@ -114,7 +112,7 @@ Finally, preprocess the data into regression reward model training format.
       --output-file=data/merge_val_reg.jsonl
 
 
-If you are interested in following the approach from HelpSteer2 work, please do the below instead.
+If you are interested in replicating Reward Modelling training in HelpSteer2, please do the below instead.
 
 
 .. code-block:: bash
@@ -131,7 +129,7 @@ If you are interested in following the approach from HelpSteer2 work, please do 
 
    cat data/helpsteer2/train_reg.jsonl data/helpsteer2/train_reg.jsonl > data/helpsteer2/train_reg_2_epoch.jsonl
 
-If you are interested in following the approach from HelpSteer2-Preference work, please do the below instead.
+If you are interested in replicating Reward Modelling training in HelpSteer2-Preference, please do the below instead.
 
 .. code-block:: bash
 
@@ -149,7 +147,7 @@ If you are interested in following the approach from HelpSteer2-Preference work,
    cat data/helpsteer2-only_helpfulness/train_reg.jsonl data/helpsteer2-only_helpfulness/train_reg.jsonl > data/helpsteer2-only_helpfulness/train_reg_2_epoch.jsonl
    
 
-   # for first stage of Reward Model training (i.e. Scaled Bradley Terry)
+   # for second stage of Reward Model training (i.e. Scaled Bradley Terry)
    python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_helpsteer2_data.py --output_directory=data/helpsteer2-pref -pref
 
    python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
@@ -192,7 +190,7 @@ Note that you would need to set up multi-node training in your cluster env, depe
          model.reward_model_type="regression" \
          model.regression.num_attributes=9
 
-If you are interested in following the approach from HelpSteer2 work, please do the below instead.
+If you are interested in replicating Reward Modelling training in HelpSteer2, please do the below instead.
 
 .. code-block:: bash
    
@@ -224,7 +222,7 @@ If you are interested in following the approach from HelpSteer2 work, please do 
          model.regression.num_attributes=9
          
 
-If you are interested in following the approach from HelpSteer2-Preference work, please do the below instead.
+If you are interested in replicating Reward Modelling training in HelpSteer2-Preference, please do the below instead.
 
 .. code-block:: bash
    
