@@ -169,6 +169,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             ## if using packing via TE, attention mask is generated in TE
             attention_mask = batch["attention_mask"][0:1] if not packed else None
 
+            # slice batch along sequence dimension for context parallelism
+            batch = self.get_batch_on_this_context_parallel_rank(batch)
+
             # Model forward pass
             forward_args = {
                 "input_ids": tokens,
@@ -262,6 +265,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
+                cp_size = parallel_state.get_context_parallel_world_size()
+
                 (
                     reduced_loss,
                     reduced_preference_loss,
@@ -278,7 +283,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 )
 
                 return (
-                    loss,
+                    loss * cp_size,
                     {
                         "avg": reduced_loss,
                         "avg_sft_loss": reduced_sft_loss,
@@ -406,6 +411,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
             acc_chosen = comp.float().mean()
+
+        if parallel_state.get_context_parallel_world_size() > 1:
+            torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
+            torch.distributed.all_reduce(acc_chosen, group=parallel_state.get_context_parallel_group())
 
         return loss, acc_chosen
 
