@@ -13,6 +13,9 @@
 # limitations under the License.
 
 import itertools
+import json
+import os
+import time
 from collections import UserDict
 from contextlib import nullcontext
 from typing import Dict, List, Optional, Union
@@ -37,16 +40,12 @@ from nemo_aligner.utils.distributed import (
     rebalance_nd_tensor,
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
-from nemo_aligner.utils.ppo_utils import (
-    calculate_rloo_baseline,
-    calculate_kl_penalty,
-    create_mask,
-)
+from nemo_aligner.utils.ppo_utils import calculate_kl_penalty, calculate_rloo_baseline, create_mask
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
-import time, json
+
 
 class PPORolloutBatch(UserDict):
     @classmethod
@@ -111,7 +110,7 @@ class PPORolloutBatch(UserDict):
 
         g_cpu = torch.Generator()
         g_cpu.manual_seed(seed)
-        indices = torch.arange(B) # torch.randperm(B, generator=g_cpu).tensor_split(split_size)[rank]
+        indices = torch.arange(B)  # torch.randperm(B, generator=g_cpu).tensor_split(split_size)[rank]
 
         for k in self.data:
             chunked_rollout_batch[k] = self.data[k][indices].clone()
@@ -144,7 +143,7 @@ class ReinforceTrainer:
         logger,
         ckpt_callback,
         run_timer,
-        num_rollouts_per_prompt
+        num_rollouts_per_prompt,
     ):
         self.cfg = cfg
         self.model = model
@@ -216,7 +215,6 @@ class ReinforceTrainer:
         init_policy_kl = rollout_batch["init_policy_kl"]
         baseline = rollout_batch["baseline"]
 
-
         # collect everything we need to train Reinforce
         ppo_rollout_data["mask"] = mask
         ppo_rollout_data["baseline"] = baseline
@@ -228,9 +226,7 @@ class ReinforceTrainer:
 
         # compute metrics
         # these are not global yet
-        ppo_rollout_metrics["init_policy_kl"] = (
-            init_policy_kl.sum().item() if self.compute_init_policy_kl else 0
-        )
+        ppo_rollout_metrics["init_policy_kl"] = init_policy_kl.sum().item() if self.compute_init_policy_kl else 0
         ppo_rollout_metrics["rewards_with_kl"] = rewards_with_kl.sum().item()
         ppo_rollout_metrics["num_samples"] = prompt_lengths.size(0)
 
@@ -276,12 +272,12 @@ class ReinforceTrainer:
                 if not is_validation:
                     for _ in range(self.num_rollouts_per_prompt):
                         rollout_batch = self.model.infer(batch)
-                        rollout_batch["prompt_tokens"] = batch["text"] # Save prompt tokens for rloo
+                        rollout_batch["prompt_tokens"] = batch["text"]  # Save prompt tokens for rloo
                         rollout_batches.append(rollout_batch)
                         futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model))
                 else:
                     rollout_batch = self.model.infer(batch)
-                    rollout_batch["prompt_tokens"] = batch["text"] # Save prompt tokens for rloo
+                    rollout_batch["prompt_tokens"] = batch["text"]  # Save prompt tokens for rloo
                     rollout_batches.append(rollout_batch)
                     futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model))
 
@@ -354,8 +350,12 @@ class ReinforceTrainer:
                 )
             else:
                 init_policy_kl = torch.tensor(0, dtype=logprobs.dtype, device=logprobs.device)
-            
-            mask = create_mask(values=balanced_local_batch["logprobs"], prompt_lengths=balanced_local_batch["prompt_lengths"], response_lengths=balanced_local_batch["response_lengths"])
+
+            mask = create_mask(
+                values=balanced_local_batch["logprobs"],
+                prompt_lengths=balanced_local_batch["prompt_lengths"],
+                response_lengths=balanced_local_batch["response_lengths"],
+            )
             init_policy_kl = masked_mean(init_policy_kl, mask, dim=-1)
 
             # Calculate RLOO baseline
@@ -363,7 +363,7 @@ class ReinforceTrainer:
             baseline = calculate_rloo_baseline(
                 prompts=balanced_local_batch["prompt_tokens"],
                 reward=rewards_with_kl,
-                mask=balanced_local_batch["is_end"].float()
+                mask=balanced_local_batch["is_end"].float(),
             )
 
             balanced_local_batch["rewards_with_kl"] = rewards_with_kl
@@ -372,7 +372,11 @@ class ReinforceTrainer:
             balanced_local_batch["init_policy_kl"] = init_policy_kl
 
         if is_validation:
-            return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch, save_val_responses=True)), timer_metrics
+            return (
+                balanced_local_batch,
+                cpu_dict(self.compute_rollout_metrics(global_rollout_batch, save_val_responses=True)),
+                timer_metrics,
+            )
         else:
             return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch)), timer_metrics
 
@@ -409,19 +413,14 @@ class ReinforceTrainer:
                 response = self.model.tokenizer.tokenizer.decode(
                     response_token[prompt_length:response_length].tolist()
                 )
-                save_data.append(
-                    {
-                        "prompt": prompt,
-                        "response": response,
-                        "reward": reward.item()
-                    }
-                )
-            
-            with open(f"../gen_results/{self.step}.jsonl", "w") as f:
-                for item in save_data:
-                    f.write(json.dumps(item) + '\n')
-            
+                save_data.append({"prompt": prompt, "response": response, "reward": reward.item()})
 
+            results_dir = "../gen_results"
+            if not os.path.exists(results_dir):
+                os.makedirs(results_dir)
+            with open(f"{results_dir}/{self.step}.jsonl", "w") as f:
+                for item in save_data:
+                    f.write(json.dumps(item) + "\n")
 
         metrics = {
             "table": table,
@@ -661,7 +660,6 @@ class ReinforceTrainer:
         monitor_candidates.update(extra_candidates)
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
-
 
         self.model.finish_training()
 
