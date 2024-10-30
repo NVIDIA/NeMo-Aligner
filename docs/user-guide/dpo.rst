@@ -197,7 +197,7 @@ All metrics will be grouped by either ``train/`` or ``val/`` in WandB, represent
 When it comes to ideal hyperparameters for DPO training, much will depend on the characteristics of your SFT or base/foundation model. Consequently, there are no one-size-fits-all parameters that will universally work in all cases.
 However, the following list is a brief overview of which hyperparameters we have perturbed for various model sizes and their effects:
 
-* global_batch_size: generally, we have found that, all other parameters held equal, lower GBS performs worse. GBS of 256 or 512 seems to be the sweet spot for most models we trained.
-* epochs: highly sensitive to training data size. We recommend you start with 1 epoch and then add on from there. We did not see any improvements beyond 3 epochs.
-* learning rate: we tested cosine annealing with a warmup of 10 steps, followed by a slow decay to a constant rate. That constant rate should be fairly low. We saw the best performance with 9e-7 and 5-e7.
-* ref_policy_kl_penalty: we generally saw better performance with lower values of 0.1, 0.2, 0.5, and 1.0. Occasionally, values as high as 5.0 worked too.
+* global_batch_size: Generally, we have found that, all other parameters held equal, lower GBS performs worse. GBS of 256 or 512 seems to be the sweet spot for most models we trained.
+* epochs: Highly sensitive to training data size. We recommend you start with 1 epoch and then add on from there. We did not see any improvements beyond 3 epochs.
+* learning rate: We tested cosine annealing with a warmup of 10 steps, followed by a slow decay to a constant rate. That constant rate should be fairly low. We saw the best performance with 9e-7 and 5-e7.
+* ref_policy_kl_penalty: We generally saw better performance with lower values of 0.1, 0.2, 0.5, and 1.0. Occasionally, values as high as 5.0 worked too.
