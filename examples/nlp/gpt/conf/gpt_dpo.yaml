@@ -57,6 +57,7 @@ model:
   micro_batch_size: 1
   global_batch_size: 64
   megatron_amp_O2: True
+  mamba_hybrid: False
 
   dpo:
     # This default value ensures there are no numeric differences beween trained and reference policies when computing log probs.
