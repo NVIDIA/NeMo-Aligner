@@ -6,11 +6,10 @@
 SteerLM 2.0: Iterative Training for Attribute-Conditioned Language Model Alignment
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-**SteerLM 2.0** is a novel approach for aligning large language models (LLMs) to generate responses with desired attribute values, building upon the original `SteerLM <model-aligner-steerlm>`_ method [1]_ . While SteerLM conducts attribute-conditioned supervised fine-tuning to steer LLM outputs, SteerLM 2.0 introduces an iterative training procedure to explicitly enforce the generated responses to follow the desired attribute distribution.
-
+**SteerLM 2.0** is a novel approach for aligning large language models (LLMs) to generate responses with desired attribute values, building upon the original `SteerLM <model-aligner-steerlm>`_ method [1]_ . While SteerLM conducts attribute-conditioned Supervised Fine-Tuning (SFT) to steer LLM outputs, SteerLM 2.0 introduces an iterative training procedure to explicitly enforce the generated responses to follow the desired attribute distribution.
 
 Overview
-##########
+########
 
 The goal of SteerLM 2.0 is to train a model :math:`Q_\theta(y|a, x)` that can generate responses :math:`y` conditioned on a prompt :math:`x` and desired attributes :math:`a`, while approximating the optimal conditional distribution :math:`P(y|a, x)` derived from an attribute prediction model :math:`P(a|x, y)` and an unconditional response model :math:`P(y|x)`.
 SteerLM 2.0 accomplishes this by minimizing the Kullback-Leibler (KL) divergence between :math:`P(y|a, x)` and :math:`Q_\theta(y|a, x)`:
@@ -47,12 +46,12 @@ By iteratively training on this loss, SteerLM 2.0 can learn to generate response
 Train a SteerLM 2.0 Model
 ###########################
 
-Preparing the Training Dataset
-------------------------------
+Prepare the Training Dataset
+----------------------------
 
 SteerLM 2.0 requires a specific data format to train the model effectively. According to the SteerLM 2.0 method, the following components are needed:
 
-- A supervised fine-tuning (SFT) model :math:`P(y|x)` that generates responses :math:`y` given a prompt :math:`x`
+- A SFT model :math:`P(y|x)` that generates responses :math:`y` given a prompt :math:`x`
 - An original SteerLM model :math:`Q'(y|a, x)` that generates responses :math:`y` conditioned on attributes :math:`a` and prompt :math:`x`
 
 The SteerLM 2.0 model :math:`Q_\theta(y|a, x)` is initialized with the weights from :math:`Q'(y|a, x)` and optimized to approximate the optimal conditional distribution :math:`P(y|a, x)` derived from the attribute prediction model :math:`P(a|x, y)` and the unconditional response model :math:`P(y|x)`.
@@ -106,7 +105,7 @@ These values are provided as log(P(a|x,y)), log(P(y|x)), and log(Q(y|a,x)), resp
 Training Example
 ------------------
 
-By organizing the data in this format, the SteerLM 2.0 model can be effectively trained to generate responses that conform to the desired attribute values while approximating the optimal conditional distribution :math:`P(y|a, x)`. Following is an example of launching the training of SteerLM 2.0:
+By organizing the data in this format, the SteerLM 2.0 model can be effectively trained to generate responses that conform to the desired attribute values while approximating the optimal conditional distribution :math:`P(y|a, x)`. The following is an example of launching the training of SteerLM 2.0:
 
 .. code-block:: bash
    
