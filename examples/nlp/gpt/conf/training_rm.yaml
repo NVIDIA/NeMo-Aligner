@@ -13,6 +13,8 @@ trainer:
     max_steps: -1
     val_check_interval: 100
     save_interval: 100
+    train_random_sampler: True # whether you want to randomly shuffle train set
+    val_random_sampler: False # whether you want to randomly shuffle val set
 
     # how many GBS we loop over
     # set to float for a percentage

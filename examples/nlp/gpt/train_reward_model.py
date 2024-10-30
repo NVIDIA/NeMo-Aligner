@@ -122,6 +122,7 @@ def main(cfg) -> None:
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
+        use_random_sampler=cfg.trainer.rm.train_random_sampler
     )
 
     val_dataloader = build_dataloader(
@@ -131,7 +132,7 @@ def main(cfg) -> None:
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
-        use_random_sampler=False,
+        use_random_sampler=cfg.trainer.rm.val_random_sampler
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
