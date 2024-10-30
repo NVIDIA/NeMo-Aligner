@@ -76,7 +76,13 @@ Untar the .nemo file to obtain the tokenizer in NeMo format (only for the 70B mo
 
 The prefix for the tokenizer would be different when extracted. Ensure that the correct tokenizer file is used when running the preceding command.
 
-Step 2: Download and Preprocess data for Attribute Prediction Modelling
+To follow the HelpSteer2 and HelpSteer2-Preference line of works, you would need to use the Llama 3 70B and Llama 3.1 70B Instruct models respectively.
+
+You need to get access to them, download and then convert them in a similar manner.
+
+An additional requirement is that you need to have an HF_TOKEN with access to the relevant models and then either export HF_TOKEN=<your_hf_token> or HF_HOME=<your_hf_home> contain a file named token with your token.
+
+Step 2: Download and Preprocess data for SteerLM Regression Reward Modelling
 #######################################################################
 
 First, download and convert both datasets into a common format.
@@ -108,6 +114,53 @@ Finally, preprocess the data into regression reward model training format.
       --output-file=data/merge_val_reg.jsonl
 
 
+If you are interested in following the approach from HelpSteer2 work, please do the below instead.
+
+
+.. code-block:: bash
+
+   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_helpsteer2_data.py --output_directory=data/helpsteer2
+      
+   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
+      --input-file=data/helpsteer2/train.jsonl \
+      --output-file=data/helpsteer2/train_reg.jsonl
+
+   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
+      --input-file=data/helpsteer2/val.jsonl \
+      --output-file=data/helpsteer2/val_reg.jsonl
+
+   cat data/helpsteer2/train_reg.jsonl data/helpsteer2/train_reg.jsonl > data/helpsteer2/train_reg_2_epoch.jsonl
+
+If you are interested in following the approach from HelpSteer2-Preference work, please do the below instead.
+
+.. code-block:: bash
+
+   # for first stage of Reward Model training (i.e. SteerLM Regression)
+   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_helpsteer2_data.py --output_directory=data/helpsteer2-only_helpfulness --only_helpfulness
+
+   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
+      --input-file=data/helpsteer2-only_helpfulness/train.jsonl \
+      --output-file=data/helpsteer2-only_helpfulness/train_reg.jsonl
+
+   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
+      --input-file=data/helpsteer2-only_helpfulness/val.jsonl \
+      --output-file=data/helpsteer2-only_helpfulness/val_reg.jsonl
+
+   cat data/helpsteer2-only_helpfulness/train_reg.jsonl data/helpsteer2-only_helpfulness/train_reg.jsonl > data/helpsteer2-only_helpfulness/train_reg_2_epoch.jsonl
+   
+
+   # for first stage of Reward Model training (i.e. Scaled Bradley Terry)
+   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_helpsteer2_data.py --output_directory=data/helpsteer2-pref -pref
+
+   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
+      --input-file=data/helpsteer2-pref/train.jsonl \
+      --output-file=data/helpsteer2-pref/train_reg.jsonl
+
+   python /opt/NeMo-Aligner/examples/nlp/data/steerlm/process_to_regression_format.py \
+      --input-file=data/helpsteer2-pref/val.jsonl \
+      --output-file=data/helpsteer2-pref/val_reg.jsonl
+
+
 Step 3: Train the regression reward model on OASST+HelpSteer data
 #################################################################
 
@@ -124,9 +177,8 @@ Note that you would need to set up multi-node training in your cluster env, depe
          ++model.global_batch_size=512 \
          ++model.data.data_impl=jsonl \
          pretrained_checkpoint.restore_from_path=/models/llama13b/llama13b.nemo \
-         "model.data.data_prefix={train: ["data/merge_train_reg.jsonl"], validation: ["data/merge_val_reg.jsonl"], test: ["data/merge_val_reg.jsonl"]}" \
+         "model.data.data_prefix={train: ["data/train_reg.jsonl"], validation: ["data/merge_val_reg.jsonl"], test: ["data/merge_val_reg.jsonl"]}" \
          exp_manager.explicit_log_dir=/results/reward_model_13b \
-         trainer.rm.save_interval=100 \
          trainer.rm.val_check_interval=10 \
          exp_manager.create_wandb_logger=True \
          exp_manager.wandb_logger_kwargs.project=steerlm \
@@ -136,10 +188,100 @@ Note that you would need to set up multi-node training in your cluster env, depe
          ++model.tensor_model_parallel_size=4 \
          ++model.pipeline_model_parallel_size=1 \
          ++model.activations_checkpoint_granularity="selective" \
-         ++model.activations_checkpoint_method="uniform" \
-         model.global_batch_size=512 \
          model.optim.sched.constant_steps=0 \
          model.reward_model_type="regression" \
+         model.regression.num_attributes=9
+
+If you are interested in following the approach from HelpSteer2 work, please do the below instead.
+
+.. code-block:: bash
+   
+   python /opt/NeMo-Aligner/examples/nlp/gpt/train_reward_model.py \
+         trainer.num_nodes=8 \
+         trainer.devices=8 \
+         ++model.micro_batch_size=2 \
+         ++model.global_batch_size=128 \
+         ++model.data.data_impl=jsonl \
+         pretrained_checkpoint.restore_from_path=/models/llama-3-70b.nemo \
+         "model.data.data_prefix={train: ["data/helpsteer2/train_reg_2_epoch.jsonl"], validation: ["data/helpsteer2/val_reg.jsonl"], test: ["data/helpsteer2/val_reg.jsonl"]}" \
+         exp_manager.explicit_log_dir=/results/reward_model_13b \
+         trainer.rm.val_check_interval=10 \
+         exp_manager.create_wandb_logger=True \
+         exp_manager.wandb_logger_kwargs.project=steerlm \
+         exp_manager.wandb_logger_kwargs.name=rm_training \
+         trainer.rm.save_interval=10 \
+         trainer.rm.max_steps=317 \
+         ++model.tensor_model_parallel_size=8 \
+         ++model.pipeline_model_parallel_size=2 \
+         ++model.activations_checkpoint_method="uniform" \
+         ++model.activations_checkpoint_num_layers=1 \
+         ++model.sequence_parallel=False \
+         model.optim.sched.constant_steps=0 \
+         model.optim.sched.warmup_steps=10 \
+         model.reward_model_type="regression" \
+         model.optim.lr=2e-6 \
+         model.optim.sched.min_lr=2e-6 \
+         model.regression.num_attributes=9
+         
+
+If you are interested in following the approach from HelpSteer2-Preference work, please do the below instead.
+
+.. code-block:: bash
+   
+   python /opt/NeMo-Aligner/examples/nlp/gpt/train_reward_model.py \
+         trainer.num_nodes=8 \
+         trainer.devices=8 \
+         ++model.micro_batch_size=2 \
+         ++model.global_batch_size=128 \
+         ++model.data.data_impl=jsonl \
+         pretrained_checkpoint.restore_from_path=/models/llama-3.1-70b-instruct.nemo \
+         "model.data.data_prefix={train: ["data/helpsteer2-only_helpfulness/train_reg_2_epoch.jsonl"], validation: ["data/helpsteer2-only_helpfulness/val_reg.jsonl"], test: ["data/helpsteer2-only_helpfulness/val_reg.jsonl"]}" \
+         exp_manager.explicit_log_dir=/results/helpsteer2-only_helpfulness-llama-3.1-70b-instruct \
+         trainer.rm.val_check_interval=10 \
+         exp_manager.create_wandb_logger=True \
+         exp_manager.wandb_logger_kwargs.project=steerlm \
+         exp_manager.wandb_logger_kwargs.name=rm_training \
+         trainer.rm.save_interval=10 \
+         trainer.rm.max_steps=317 \
+         ++model.tensor_model_parallel_size=8 \
+         ++model.pipeline_model_parallel_size=2 \
+         ++model.activations_checkpoint_method="uniform" \
+         ++model.activations_checkpoint_num_layers=1 \
+         ++model.sequence_parallel=False \
+         model.optim.sched.constant_steps=0 \
+         model.optim.sched.warmup_steps=10 \
+         model.reward_model_type="regression" \
+         model.optim.lr=2e-6 \
+         model.optim.sched.min_lr=2e-6 \
+         model.regression.num_attributes=9
+   
+   python /opt/NeMo-Aligner/examples/nlp/gpt/train_reward_model.py \
+         trainer.num_nodes=4 \
+         trainer.devices=8 \
+         ++model.micro_batch_size=2 \
+         ++model.global_batch_size=128 \
+         ++model.data.data_impl=jsonl \
+         pretrained_checkpoint.restore_from_path=/results/helpsteer2-only_helpfulness-llama-3.1-70b-instruct/checkpoints/megatron_gpt.nemo \
+         "model.data.data_prefix={train: ["data/helpsteer2-pref/train_reg.jsonl"], validation: ["data/helpsteer2-pref/val_reg.jsonl"], test: ["data/helpsteer2-pref/val_reg.jsonl"]}" \
+         exp_manager.explicit_log_dir=/results/helpsteer2-only_helpfulness-llama-3.1-70b-instruct-then-scaled-bt \
+         trainer.rm.val_check_interval=10 \
+         exp_manager.create_wandb_logger=True \
+         exp_manager.wandb_logger_kwargs.project=steerlm \
+         exp_manager.wandb_logger_kwargs.name=rm_training \
+         trainer.rm.save_interval=10 \
+         trainer.rm.max_steps=105 \
+         ++model.tensor_model_parallel_size=8 \
+         ++model.pipeline_model_parallel_size=4 \
+         ++model.activations_checkpoint_method="uniform" \
+         ++model.activations_checkpoint_num_layers=1 \
+         ++model.sequence_parallel=False \
+         model.optim.sched.constant_steps=0 \
+         model.optim.sched.warmup_steps=10 \
+         model.reward_model_type="regression" \
+         trainer.rm.train_random_sampler=False \
+         model.regression.loss_func=scaled_bt \
+         model.optim.lr=1e-6 \
+         model.optim.sched.min_lr=1e-6 \
          model.regression.num_attributes=9
 
 

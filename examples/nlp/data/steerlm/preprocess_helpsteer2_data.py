@@ -51,21 +51,23 @@ def download_helpsteer2_preference():
     return train, val
 
 
-def format_label(dp):
+def format_label(dp, only_helpfulness=False):
     label_list = []
     for attr in ALL_STEERLM_ATTRIBUTES:
         if attr in dp:
+            if only_helpfulness and attr != 'helpfulness':
+                continue
             label_list.append(f"{attr}:{dp[attr]}")
     return ",".join(label_list)
 
 
-def process_dataset(data):
+def process_dataset(data, only_helpfulness=False):
     output = []
     for dp in data:
         conversation_obj = {}
         conversation_obj["conversations"] = [
             {"value": dp["prompt"], "from": "User", "label": None},
-            {"value": dp["response"], "from": "Assistant", "label": format_label(dp)},
+            {"value": dp["response"], "from": "Assistant", "label": format_label(dp, only_helpfulness=only_helpfulness)},
         ]
         conversation_obj["system"] = SYSTEM_PROMPT
         conversation_obj["mask"] = "User"
@@ -74,19 +76,20 @@ def process_dataset(data):
     return output
 
 
-def main(output_dir, preference=False):
+def main(output_dir, preference=False, only_helpfulness=False):
     if preference:
         train, val = download_helpsteer2_preference()
     else:
         train, val = download_helpsteer2()
 
     os.makedirs(output_dir, exist_ok=True)
-    processed_train = process_dataset(train)
+    processed_train = process_dataset(train, only_helpfulness=only_helpfulness)
+
     with open(f"{output_dir}/train.jsonl", "w", encoding="utf-8") as f:
         for record in processed_train:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    processed_val = process_dataset(val)
+    processed_val = process_dataset(val, only_helpfulness=only_helpfulness)
     with open(f"{output_dir}/val.jsonl", "w", encoding="utf-8") as f:
         for record in processed_val:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -101,6 +104,14 @@ if __name__ == "__main__":
         required=True,
         help="folder to store the created train.jsonl and val.jsonl; will be created if it does not exist",
     )
+
+    parser.add_argument(
+        "-oh",
+        "--only_helpfulness",
+        action="store_true",
+        help="Use only the Helpfulness attribute",
+    )
+
     parser.add_argument(
         "-pref",
         "--preference",
@@ -109,4 +120,4 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    main(args.output_directory, preference=args.preference)
+    main(args.output_directory, preference=args.preference, only_helpfulness=args.only_helpfulness)
