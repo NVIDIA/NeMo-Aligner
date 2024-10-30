@@ -55,7 +55,7 @@ def format_label(dp, only_helpfulness=False):
     label_list = []
     for attr in ALL_STEERLM_ATTRIBUTES:
         if attr in dp:
-            if only_helpfulness and attr != 'helpfulness':
+            if only_helpfulness and attr != "helpfulness":
                 continue
             label_list.append(f"{attr}:{dp[attr]}")
     return ",".join(label_list)
@@ -67,7 +67,11 @@ def process_dataset(data, only_helpfulness=False):
         conversation_obj = {}
         conversation_obj["conversations"] = [
             {"value": dp["prompt"], "from": "User", "label": None},
-            {"value": dp["response"], "from": "Assistant", "label": format_label(dp, only_helpfulness=only_helpfulness)},
+            {
+                "value": dp["response"],
+                "from": "Assistant",
+                "label": format_label(dp, only_helpfulness=only_helpfulness),
+            },
         ]
         conversation_obj["system"] = SYSTEM_PROMPT
         conversation_obj["mask"] = "User"
@@ -106,10 +110,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "-oh",
-        "--only_helpfulness",
-        action="store_true",
-        help="Use only the Helpfulness attribute",
+        "-oh", "--only_helpfulness", action="store_true", help="Use only the Helpfulness attribute",
     )
 
     parser.add_argument(
