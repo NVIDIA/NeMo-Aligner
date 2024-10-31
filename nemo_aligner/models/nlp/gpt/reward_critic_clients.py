@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from dataclasses import dataclass
 from functools import partial
 
@@ -23,6 +24,70 @@ from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
+
+
+def extract_dialogue_llama(text):
+    user_pattern = r"<\|start_header_id\|>user<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+    assistant_pattern = r"<\|start_header_id\|>assistant<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
+
+    user_text = re.findall(user_pattern, text, re.DOTALL)
+    assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
+
+    return user_text, assistant_text
+
+
+def remove_eot_id(text):
+    pattern = r"(.*?)<|eot_id|>"
+    user_text = re.findall(pattern, text, re.DOTALL)
+
+    if len(user_text) > 0:
+        return user_text[0]
+    else:
+        return text
+
+
+class HelpsteerTemplate:
+    def get_first_turn_template(self, text):
+        return f"""<extra_id_0>System\nA chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
+<extra_id_1>User\n{text}"""
+
+    def get_assistant_turn_template(self, text):
+        return f"""\n<extra_id_1>Assistant\n{text}"""
+
+    def get_user_turn_template(self, text):
+        return f"""\n<extra_id_1>User\n{text}"""
+
+    def add_ending(self, text):
+        return f"""{text}\n<extra_id_2>"""
+
+
+def prompt_template(user_text):
+    formatter = HelpsteerTemplate()
+
+    text = ""
+    for i in range(len(user_text)):
+        if i == 0:
+            text += formatter.get_first_turn_template(user_text[i])
+        else:
+            text += formatter.get_user_turn_template(user_text[i])
+
+        text += formatter.get_assistant_turn_template("")
+
+    return text
+
+
+def chat_template(user_text, assistant_text):
+    formatter = HelpsteerTemplate()
+
+    text = ""
+    for i in range(len(user_text)):
+        if i == 0:
+            text += formatter.get_first_turn_template(user_text[i])
+        else:
+            text += formatter.get_user_turn_template(user_text[i])
+        text += formatter.get_assistant_turn_template(assistant_text[i])
+    text = formatter.add_ending(text)
+    return text
 
 
 def _str_list2numpy(str_list) -> np.ndarray:
@@ -123,9 +188,10 @@ class RemoteGPTRMCriticClient:
         self.combine_rm_and_critic_server = self.cfg.combine_rm_and_critic_server
         self.pad_to_length = self.cfg.pad_to_length
 
-    def infer_rm_critic(self, rollout_batch):
-        texts = rollout_batch["sentences"]
-        prompts = rollout_batch["prompts"]
+    def infer_rm_critic(self, rollout_batch, tokenizer):
+        texts, prompts = self.get_sentences_and_prompts(
+            rollout_batch["response_tokens"], rollout_batch["response_lengths"], tokenizer
+        )
 
         send_data = {
             "sentences": _str_list2numpy(texts),
@@ -147,7 +213,7 @@ class RemoteGPTRMCriticClient:
 
         return RMCriticFutureResult(critic_future, rm_future, self.combine_rm_and_critic_server, None)
 
-    def train(self, ppo_rollout_data):
+    def train(self, ppo_rollout_data, tokenizer):
         # TODO: deal with the training data
         send_data = {}
 
@@ -157,10 +223,12 @@ class RemoteGPTRMCriticClient:
             group=parallel_state.get_data_parallel_group(),
         )
 
-        send_data["tokens"] = func(ppo_rollout_data["response_tokens"], dtype=torch.int64)
-        send_data["returns"] = func(ppo_rollout_data["returns"], dtype=torch.float32)
-        send_data["prev_values"] = func(ppo_rollout_data["values"], dtype=torch.float32)
-        send_data["mask"] = func(ppo_rollout_data["mask"], dtype=torch.float32)
+        response_tokens = func(ppo_rollout_data["response_tokens"], dtype=torch.int64)
+        response_lengths = func(ppo_rollout_data["response_lengths"], dtype=torch.int64)
+        _, prompts = self.get_sentences_and_prompts(response_tokens, response_lengths, tokenizer)
+
+        send_data["sentences"] = prompts
+        send_data["rewards"] = func(ppo_rollout_data["rewards"], dtype=torch.float32)
 
         future = None
         if torch.distributed.get_rank() == 0:
@@ -180,6 +248,26 @@ class RemoteGPTRMCriticClient:
             )
 
         return SaveFuture(save_future)
+
+    def get_sentences_and_prompts(self, response_tokens, response_lengths, tokenizer):
+
+        texts = [tokenizer.ids_to_text(t[:z]) for t, z in zip(response_tokens.tolist(), response_lengths.tolist())]
+
+        sentences, prompts = [], []
+        for t in texts:
+            user_text, assistant_text = extract_dialogue_llama(t + "<|start_header_id|>")
+            user_text = list(map(remove_eot_id, user_text))
+            assistant_text = list(map(remove_eot_id, assistant_text))
+
+            sen = chat_template(user_text=user_text, assistant_text=assistant_text)
+            sentences.append(sen)
+
+            assert len(user_text) == 1, f"len user text is unexpected at {len(user_text)}"
+
+            promp = prompt_template(user_text=user_text)
+            prompts.append(promp)
+
+        return sentences, prompts
 
 
 @dataclass

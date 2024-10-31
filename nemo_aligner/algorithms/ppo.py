@@ -50,70 +50,6 @@ from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_p
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 
 
-def extract_dialogue_llama(text):
-    user_pattern = r"<\|start_header_id\|>user<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
-    assistant_pattern = r"<\|start_header_id\|>assistant<\|end_header_id\|>\n\n(.*?)<\|start_header_id\|>"
-
-    user_text = re.findall(user_pattern, text, re.DOTALL)
-    assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
-
-    return user_text, assistant_text
-
-
-def remove_eot_id(text):
-    pattern = r"(.*?)<|eot_id|>"
-    user_text = re.findall(pattern, text, re.DOTALL)
-
-    if len(user_text) > 0:
-        return user_text[0]
-    else:
-        return text
-
-
-class HelpsteerTemplate:
-    def get_first_turn_template(self, text):
-        return f"""<extra_id_0>System\nA chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
-<extra_id_1>User\n{text}"""
-
-    def get_assistant_turn_template(self, text):
-        return f"""\n<extra_id_1>Assistant\n{text}"""
-
-    def get_user_turn_template(self, text):
-        return f"""\n<extra_id_1>User\n{text}"""
-
-    def add_ending(self, text):
-        return f"""{text}\n<extra_id_2>"""
-
-
-def prompt_template(user_text):
-    formatter = HelpsteerTemplate()
-
-    text = ""
-    for i in range(len(user_text)):
-        if i == 0:
-            text += formatter.get_first_turn_template(user_text[i])
-        else:
-            text += formatter.get_user_turn_template(user_text[i])
-
-        text += formatter.get_assistant_turn_template("")
-
-    return text
-
-
-def chat_template(user_text, assistant_text):
-    formatter = HelpsteerTemplate()
-
-    text = ""
-    for i in range(len(user_text)):
-        if i == 0:
-            text += formatter.get_first_turn_template(user_text[i])
-        else:
-            text += formatter.get_user_turn_template(user_text[i])
-        text += formatter.get_assistant_turn_template(assistant_text[i])
-    text = formatter.add_ending(text)
-    return text
-
-
 class PPORolloutBatch(UserDict):
     @classmethod
     def from_rollout_batches(
@@ -303,7 +239,9 @@ class PPOTrainer:
         ppo_rollout_data["mask"] = mask
         ppo_rollout_data["advantages"] = advantages
         ppo_rollout_data["prev_logprobs"] = logprobs
+
         ppo_rollout_data["response_tokens"] = response_tokens
+        ppo_rollout_data["response_lengths"] = response_lengths
         ppo_rollout_data["is_end"] = is_end
         # for the critic
         ppo_rollout_data["values"] = values
@@ -373,33 +311,7 @@ class PPOTrainer:
                 rollout_batch = self.model.infer(batch)
                 rollout_batches.append(rollout_batch)
 
-                texts = [
-                    self.model.tokenizer.ids_to_text(t[:z])
-                    for t, z in zip(
-                        rollout_batch["response_tokens"].tolist(), rollout_batch["response_lengths"].tolist()
-                    )
-                ]
-
-                sentences, prompts = [], []
-                for t in texts:
-                    user_text, assistant_text = extract_dialogue_llama(t + "<|start_header_id|>")
-                    user_text = list(map(remove_eot_id, user_text))
-                    assistant_text = list(map(remove_eot_id, assistant_text))
-
-                    sen = chat_template(user_text=user_text, assistant_text=assistant_text)
-                    sentences.append(sen)
-
-                    assert len(user_text) == 1, f"len user text is unexpected at {len(user_text)}"
-
-                    promp = prompt_template(user_text=user_text)
-                    prompts.append(promp)
-
-                rollout_batch["sentences"] = sentences
-                rollout_batch["prompts"] = prompts
-
-                futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
-                del rollout_batch["sentences"]
-                del rollout_batch["prompts"]
+                futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model.tokenizer))
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -609,7 +521,7 @@ class PPOTrainer:
 
                     # send critic train
                     clear_memory()
-                    self.rm_critic.train(ppo_rollout_data)
+                    self.rm_critic.train(ppo_rollout_data, tokenizer=self.model.tokenizer)
 
                     timer_metrics = all_reduce_dict(timer_metrics, op=torch.distributed.ReduceOp.MAX)
                     timing_metrics.update(timer_metrics)
