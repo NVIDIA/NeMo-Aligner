@@ -19,7 +19,7 @@ To get started, you need to obtain a pretrained model to align. Three models are
         3. Run the script to convert from the old NeMo checkpoint to the Megatron Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/0ec7e9090d3261b8ce81818b0555a204e50d814d/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             .. code-block:: bash 
 
-               python convert_gpt_nemo_to_mcore.py \
+               python /opt/NeMo/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py \
                   --input_name_or_path ./model_checkpoint \
                   --output_path ./mcore_gpt.nemo
 
