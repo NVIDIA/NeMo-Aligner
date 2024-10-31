@@ -164,7 +164,7 @@ To start reward model training, you need checkpoints for both the `UNet <https:/
                exp_manager.wandb_logger_kwargs.project=${PROJECT}
             EOF
 
-            srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
+            srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
 
