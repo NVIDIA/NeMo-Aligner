@@ -5,25 +5,28 @@
 Model Alignment by DPO, RPO, and IPO
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
+.. note::
+   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+
 The NeMo Framework supports efficient model alignment via the NeMo-Aligner codebase.
 
-All algorithms in NeMo-Aligner will work with any GPT-based model that is from Megatron Core (in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire Direct Preference Optimization (DPO) pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  The same tutorial also works for GPT models (such as LLaMa2) of any size.
+All algorithms in NeMo-Aligner will work with any GPT-based model that is from Megatron Core (in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire Direct Preference Optimization (DPO) pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  The same tutorial also works for GPT models (such as LLaMa3) of any size.
 
 DPO with LoRA
 #############
 
 We support both full-parameter DPO training and LoRA DPO training. 
-For full-parameter DPO, there exists an actor and a reference model. The actor is initialized with the reference model and is fully trainable. The reference model is frozen and used to calculate logprobs for KL-penalty loss (see `DPO paper <https://arxiv.org/pdf/2305.18290.pdf>`__). 
+In full-parameter DPO, there exists an actor and a reference model. The actor is initialized with the reference model and is fully trainable. The reference model is frozen and used to calculate logprobs for KL-penalty loss (see the `DPO paper <https://arxiv.org/pdf/2305.18290.pdf>`__).
 For LoRA-based DPO, the actor is initialized by the reference model plus LoRA weights, where only the LoRA weights are trainable. Therefore, it allows us to switch between the actor/reference models by simply enabling or disabling LoRA. In addition, there is no need to store two sets of LLM weights.
 
 RPO and IPO Variations
 #######################
 
-Besides the vanilla DPO algorithm, we support other variants of DPO algorithms, including Identity preference optimization (IPO) and Reward-aware preference optimization (RPO).
+Besides the vanilla DPO algorithm, we support other variants of DPO algorithms, including Identity Preference Optimization (IPO) and Reward-aware Preference Optimization (RPO).
 
 The algorithm is identified with the ``dpo.preference_loss`` config variable. We support three sorts of RPO algorithms based on the distance metric: ``rpo_sq`` for squared distance, ``rpo_bwd_kl`` for Bernoulli backward KL divergence, and ``rpo_fwd_kl`` for Bernoulli forward KL divergence.
 
-To use the RPO algorithm, each dataset example should have chosen_reward and rejected_reward, which might come from human labelers or reward models. If chosen_reward and rejected_reward are not existent in the data, dpo.default_chosen_reward and dpo.default_rejected_reward are used.
+To use the RPO algorithm, each dataset example should have ``chosen_reward`` and ``rejected_reward``, which might come from human labelers or reward models. If ``chosen_reward`` and ``rejected_reward`` are not existent in the data, ``dpo.default_chosen_reward`` and ``dpo.default_rejected_reward`` are used.
 
 Obtain a Pretrained Model
 ############################
@@ -36,18 +39,18 @@ To start, we must first get a pretrained model to align. There are two models we
 
         #. Get the 2B checkpoint via ``wget https://huggingface.co/nvidia/GPT-2B-001/resolve/main/GPT-2B-001_bf16_tp1.nemo``.
         #. Extract the NeMo File to a folder with ``mkdir model_checkpoint && tar -xvf GPT-2B-001_bf16_tp1.nemo -C model_checkpoint``.
-        #. Run the script to convert from the old NeMo checkpoint to the Megatron Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/86b198ff93438d454f9c7f3550bcfb7d4e59feab/scripts/nlp_language_modeling/convert_nemo_gpt_to_mcore.py>`__.
+        #. Run the script to convert from the old NeMo checkpoint to the Megatron Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/0ec7e9090d3261b8ce81818b0555a204e50d814d/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             .. code-block:: bash 
 
                python convert_nemo_gpt_to_mcore.py \
                   --in-folder ./model_checkpoint \
                   --out-file ./mcore_gpt.nemo
 
-    .. tab-item:: LLaMa2 7B
+    .. tab-item:: LLaMa3 7B
         :sync: key2
 
-        #. Download the `Llama 2 7B LLM model and tokenizer <https://huggingface.co/meta-llama/Llama-2-7b>`__ into the models folder.
-        #. Convert the LLaMa2 LLM into ``.nemo`` format.
+        #. Download the `Llama 3 8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the models folder.
+        #. Convert the LLaMa3 LLM into ``.nemo`` format.
             .. code-block:: bash 
 
                python /opt/NeMo/scripts/checkpoint_converters/convert_llama_hf_to_nemo.py \
@@ -78,7 +81,7 @@ For best DPO training performance, it is recommended that you start with a SFT m
 DPO Model Training
 #####################
 
-Before running the core DPO training, you must prepare your training and validation data to the format required for DPO training. DPO expects .jsonl files where each line is a JSON dict corresponding to a single, complete sample, as shown below::
+Before running the core DPO training, you must prepare your training and validation data to the format required for DPO training. DPO expects ``.jsonl`` files where each line is a JSON dict corresponding to a single, complete sample, as shown below::
 
    {"prompt": "Which year was the Magna Carta signed?", "chosen_response": "1215", "rejected_response": "I refuse to answer this question."}
    {"prompt": "Please give me the name of a famous medieval painter.", "chosen_response": "Hieronymus Bosch", "rejected_response": "David Hockney"}
@@ -88,12 +91,12 @@ However, please be aware that most Megatron GPT models adhere to a strict format
    {"prompt": "<extra_id_0>System\n\n<extra_id_1>User\nWhich year was the Magna Carta signed?\n<extra_id_1>Assistant\n", "chosen_response": "1215\n<extra_id_1>", "rejected_response": "I refuse to answer this question.\n<extra_id_1>"}
    {"prompt": "<extra_id_0>System\n\n<extra_id_1>User\nPlease give me the name of a famous medieval painter.\n<extra_id_1>Assistant\n", "chosen_response": "Hieronymus Bosch\n<extra_id_1>", "rejected_response": "David Hockney\n<extra_id_1>"}
 
-Always follow the prompt-response template format used during your SFT training for DPO, as failure to do so will produce a model which outputs garbage text. You should create one jsonl file in the format above for your training data and one jsonl for your validation data.
+Always follow the prompt-response template format used during your SFT training for DPO, as failure to do so will produce a model which outputs garbage text. You should create one ``.jsonl`` file in the format above for your training data and one ``.jsonl`` for your validation data.
 
 Your JSONL file must contain at least as many samples as the Global Batch Size (GBS) you plan to use during training. For example, if GBS = 64, ensure that both your training and validation files include at least 64 samples. Using a file with fewer samples than the GBS will result in a crash.
 
 Once your data is processed into the correct format, you are ready to begin DPO training. You must start with a pretrained or SFT trained model. For this section, we will use the SFT model trained in the previous step to train the DPO model.
-For the purposes of the following sections, we assume that your training jsonl file is located in ``/path/to/train_dpo_format.jsonl`` and your validation jsonl file is located in ``/path/to/valid_dpo_format.jsonl``.
+For the purposes of the following sections, we assume that your training ``.jsonl`` file is located in ``/path/to/train_dpo_format.jsonl`` and your validation ``.jsonl`` file is located in ``/path/to/valid_dpo_format.jsonl``.
 
 For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` corresponds to the beta parameter in the DPO paper.
 
@@ -196,7 +199,7 @@ All metrics will be grouped by either ``train/`` or ``val/`` in WandB, represent
 When it comes to ideal hyperparameters for DPO training, much will depend on the characteristics of your SFT or base/foundation model. Consequently, there are no one-size-fits-all parameters that will universally work in all cases.
 However, the following list is a brief overview of which hyperparameters we have perturbed for various model sizes and their effects:
 
-* global_batch_size: generally, we have found that, all other parameters held equal, lower GBS performs worse. GBS of 256 or 512 seems to be the sweet spot for most models we trained.
-* epochs: highly sensitive to training data size. We recommend you start with 1 epoch and then add on from there. We did not see any improvements beyond 3 epochs.
-* learning rate: we tested cosine annealing with a warmup of 10 steps, followed by a slow decay to a constant rate. That constant rate should be fairly low. We saw the best performance with 9e-7 and 5-e7.
-* ref_policy_kl_penalty: we generally saw better performance with lower values of 0.1, 0.2, 0.5, and 1.0. Occasionally, values as high as 5.0 worked too.
+* global_batch_size: Generally, we have found that, all other parameters held equal, lower GBS performs worse. GBS of 256 or 512 seems to be the sweet spot for most models we trained.
+* epochs: Highly sensitive to training data size. We recommend you start with 1 epoch and then add on from there. We did not see any improvements beyond 3 epochs.
+* learning rate: We tested cosine annealing with a warmup of 10 steps, followed by a slow decay to a constant rate. That constant rate should be fairly low. We saw the best performance with 9e-7 and 5-e7.
+* ref_policy_kl_penalty: We generally saw better performance with lower values of 0.1, 0.2, 0.5, and 1.0. Occasionally, values as high as 5.0 worked too.
