@@ -100,20 +100,15 @@ class CriticServerTrainer:
         # PyTriton args
         self.infer_inputs = (
             Tensor(name="sentences", shape=(-1,), dtype=bytes, optional=True),
+            Tensor(name="prompts", shape=(-1,), dtype=bytes, optional=True),
             Tensor(name="tokens", shape=(-1,), dtype=np.int64, optional=True),
             Tensor(name="sequence_lengths", shape=(-1,), dtype=np.int64, optional=True),
         )
-        self.infer_outputs = [
-            Tensor(name="values", shape=(-1,), dtype=np.float32),
-        ]
-        if self.combine_rm_and_critic_server:
-            self.infer_outputs.append(Tensor(name="rewards", shape=(-1,), dtype=np.float32))
+        self.infer_outputs = [Tensor(name="rewards", shape=(-1,), dtype=np.float32)]
 
         self.train_inputs = (
-            Tensor(name="tokens", shape=(-1, -1,), dtype=np.int64, optional=False),
-            Tensor(name="returns", shape=(-1, -1,), dtype=np.float32, optional=False),
-            Tensor(name="prev_values", shape=(-1, -1,), dtype=np.float32, optional=False),
-            Tensor(name="mask", shape=(-1, -1,), dtype=np.float32, optional=False),
+            Tensor(name="sentences", shape=(-1, 1), dtype=bytes, optional=True),
+            Tensor(name="rewards", shape=(-1,), dtype=np.float32, optional=False),
         )
         self.train_outputs = (Tensor(name="loss_mean", shape=(1,), dtype=np.float32),)
 
@@ -141,21 +136,9 @@ class CriticServerTrainer:
             pad_to_multiple=pad_batch_to_multiple,
             strip_sequence_length_to_multiple=self.strip_sequence_length_to_multiple,
         )
-        rewards, values = self.run_inference(inputs=inputs)
-
-        # if the inference request has extra padding that it doesn't need
-        # then we will pad it back up to the expected padding when returning the values
-        if prepad_sequence_length > values.shape[1]:
-            values = np.pad(
-                values, ((0, 0), (0, prepad_sequence_length - values.shape[1])), mode="constant", constant_values=0
-            )
-
-        output = {
-            "values": values,
-        }
-        if self.combine_rm_and_critic_server:
-            output["rewards"] = rewards.reshape((-1, 1))
-
+        rewards = self.run_inference(inputs=inputs)
+        output = {}
+        output["rewards"] = rewards.reshape((-1, 1))
         return {k: v[: v.shape[0] - extra] for k, v in output.items()}
 
     @sample
@@ -170,27 +153,30 @@ class CriticServerTrainer:
     @sample
     @lock_method("self.lock")
     def server_train(self, **inputs: np.ndarray) -> Dict[str, np.ndarray]:
-        tokens = inputs.pop("tokens", None)
-        returns = inputs.pop("returns", None)
-        prev_values = inputs.pop("prev_values", None)
-        mask = inputs.pop("mask", None)
+        rewards = inputs.pop("rewards")
+
+        tokens, sequence_lengths = process_inputs(inputs, self.tokenize_func)
+        pad_batch_to_multiple = calculate_inference_batch_padding_multiple(
+            tokens.shape[0], self.model_forward_micro_batch_size
+        )
+        inputs, extra, prepad_sequence_length = pad_batch_and_strip_sequence(
+            tokens,
+            sequence_lengths,
+            pad_to_multiple=pad_batch_to_multiple,
+            strip_sequence_length_to_multiple=self.strip_sequence_length_to_multiple,
+        )
+
+        tokens, sequence_lengths = inputs["inputs"], inputs["sequence_length"]
 
         # we should pad to GBS
         tokens, extra_tokens = pad_input(tokens, self.gbs)
-        returns, extra_returns = pad_input(returns, self.gbs)
-        prev_values, extra_values = pad_input(prev_values, self.gbs)
-
-        # have to set the pad value to 0, so the masked mean in the loss will
-        # have no effect for the padded batch
-        mask, extra_mask = pad_input(mask, self.gbs, pad_value=0)
-
-        assert extra_tokens == extra_returns == extra_values == extra_mask
+        rewards, extra_rewards = pad_input(rewards, self.gbs)
+        sequence_lengths, extra_sequence_lengths = pad_input(sequence_lengths, self.gbs)
 
         batch = {
             "tokens": tokens,
-            "returns": returns,
-            "prev_values": prev_values,
-            "mask": mask,
+            "sequence_lengths": sequence_lengths,
+            "rewards": rewards,
         }
 
         batch = apply_func_to_dict(torch.tensor, batch)
@@ -269,27 +255,29 @@ class CriticServerTrainer:
         """only rank 0 needs valid input data, but all other ranks should call `run_inference()`
         """
         self.model.prepare_for_inference()
-        rewards, values = run_distributed_inference(inputs, self.infer_fn)
+        rewards = run_distributed_inference(inputs, self.infer_fn)
         self.model.finish_inference()
 
         torch.distributed.barrier()
-        return rewards, values
+        return rewards
 
-    def run_training(self, tokens=None, returns=None, prev_values=None, mask=None):
+    def run_training(self, tokens=None, sequence_lengths=None, rewards=None):
         """assume that the batch is already padded
         """
         # broadcast to every rank and then split out the tensor after
         batch = {
             "tokens": tokens,
-            "returns": returns,
-            "prev_values": prev_values,
-            "mask": mask,
+            "sequence_lengths": sequence_lengths,
+            "rewards": rewards,
         }
 
         batch["tokens"] = broadcast_2d_tensor(batch["tokens"], src=0, group=None, dtype=torch.int64)
-        batch["returns"] = broadcast_2d_tensor(batch["returns"], src=0, group=None, dtype=torch.float32)
-        batch["prev_values"] = broadcast_2d_tensor(batch["prev_values"], src=0, group=None, dtype=torch.float32)
-        batch["mask"] = broadcast_2d_tensor(batch["mask"], src=0, group=None, dtype=torch.float32)
+        batch["rewards"] = broadcast_2d_tensor(
+            batch["rewards"].view(-1, 1), src=0, group=None, dtype=torch.float32
+        ).flatten()
+        batch["sequence_lengths"] = broadcast_2d_tensor(
+            batch["sequence_lengths"].view(-1, 1), src=0, group=None, dtype=torch.long
+        ).flatten()
         input_size = batch["tokens"].size(0)
 
         self.model.prepare_for_training()

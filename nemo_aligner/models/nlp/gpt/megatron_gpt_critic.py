@@ -122,10 +122,10 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
         # validation step is not used
         def fwd_output_and_loss_func(data_iterator, model):
             batch = next(data_iterator)
+
             tokens = batch["tokens"].cuda()
-            returns = batch["returns"]
-            prev_values = batch["prev_values"]
-            mask = batch["mask"]
+            sequence_lengths = batch["sequence_lengths"].cuda()
+            rewards = batch["rewards"].cuda()
 
             attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
                 tokens, self.tokenizer.eos_id, False, True, False,
@@ -133,32 +133,19 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
 
             attention_mask = attention_mask[0:1]
 
-            # when using PP, set the unused variables to None just to be safe
-            if parallel_state.get_pipeline_model_parallel_world_size() > 1:
-                if parallel_state.is_pipeline_first_stage():
-                    returns, prev_values, mask = None, None, None
-
-                    tokens, position_ids = map(lambda x: x.cuda(non_blocking=True), (tokens, position_ids))
-
-                elif parallel_state.is_pipeline_last_stage():
-                    tokens, position_ids = None, None
-
-                    # loss needs these 3 values
-                    prev_values, mask, returns = map(lambda x: x.cuda(non_blocking=True), (prev_values, mask, returns))
-
-                else:
-                    # intermediates don't need anything
-                    tokens, position_ids, returns, prev_values, mask = [None] * 5
-
             output = model(
-                input_ids=tokens, lengths=None, position_ids=position_ids, attention_mask=attention_mask, labels=None,
+                input_ids=tokens,
+                lengths=sequence_lengths,
+                position_ids=position_ids,
+                attention_mask=attention_mask,
+                labels=None,
             )
 
             if not parallel_state.is_pipeline_last_stage():
                 output = output.to(dtype=self.autocast_dtype)
 
             def loss_func(curr_values):
-                curr_values = curr_values[:, :-1].contiguous()
+                curr_values = curr_values.view(-1)
 
                 # Standardize values to subtract a bias.
                 if self.enable_standardization:
@@ -167,15 +154,7 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
                 # Critic loss. Uses clipped version of the loss.
                 clip_val = self.clip_val
 
-                if clip_val > 0.0:
-                    values_clipped = prev_values + (curr_values - prev_values).clamp(-clip_val, clip_val)
-                    v_loss1 = (values_clipped - returns) ** 2
-                else:
-                    v_loss1 = torch.tensor(0.0).cuda()
-                v_loss2 = (curr_values - returns) ** 2
-
-                # Critic loss
-                loss = 0.5 * masked_mean(torch.max(v_loss1, v_loss2), mask)
+                loss = torch.nn.functional.huber_loss(curr_values, rewards, delta=clip_val)
 
                 reduced_loss = average_losses_across_data_parallel_group([loss])
                 return loss, {"avg": reduced_loss}
@@ -234,10 +213,12 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
             base_module.rm_head.output_sequence = value_to_set
 
     def _load_critic(self):
+
         if self.loaded_state_dict == StateDictState.REWARD:
             self.load_state_dict(self.critic_state_dict_cpu)
+            self.set_output_sequence_flag(False)
 
-            self.set_output_sequence_flag(True)
+            # self.set_output_sequence_flag(True)
             self.loaded_state_dict = StateDictState.CRITIC
 
     def _load_rm(self):
@@ -254,6 +235,10 @@ class MegatronGPTCriticModel(MegatronGPTRewardModel, CriticModelInterface):
     def _infer_rm(self, *args, **kwargs):
         self._load_rm()
         return self.infer(*args, **kwargs)
+
+    def infer(self, *args, **kwargs):
+        self._load_critic()
+        return super().infer(*args, **kwargs)
 
     def finish_training(self):
         self.critic_state_dict_cpu = copy_model_states_to_cpu(

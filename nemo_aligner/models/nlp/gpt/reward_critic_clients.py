@@ -24,6 +24,12 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
 
+
+def _str_list2numpy(str_list) -> np.ndarray:
+    str_ndarray = np.array(str_list)[..., np.newaxis]
+    return np.char.encode(str_ndarray, "utf-8")
+
+
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
     over to the remote PyTrition server
 """
@@ -66,13 +72,11 @@ class RMCriticFutureResult(FutureResult):
             rewards, values = get_future_result(self.critic_future, "rewards", "values")
         else:
             rewards = get_future_result(self.rm_future, "rewards")
-            values = get_future_result(self.critic_future, "values")
-
-        values = values[:, : self.og_seq_length - 1].contiguous()
+            values = get_future_result(self.critic_future, "rewards")
 
         self.critic_future = None
         self.rm_future = None
-        return rewards.flatten(), values
+        return rewards.flatten(), values.flatten()
 
 
 class RMFutureResult(FutureResult):
@@ -120,24 +124,19 @@ class RemoteGPTRMCriticClient:
         self.pad_to_length = self.cfg.pad_to_length
 
     def infer_rm_critic(self, rollout_batch):
-        response_tokens = rollout_batch["response_tokens"].cpu()
-        og_seq_length = response_tokens.size(-1)
-
-        if self.pad_to_length is not None:
-            assert (
-                og_seq_length <= self.pad_to_length
-            ), f"original shape before padding {og_seq_length} is higher than {self.pad_to_length}"
-            response_tokens = torch.nn.functional.pad(
-                response_tokens, (0, self.pad_to_length - response_tokens.size(-1)), value=0
-            )
+        texts = rollout_batch["sentences"]
+        prompts = rollout_batch["prompts"]
 
         send_data = {
-            "tokens": response_tokens.numpy(),
-            "sequence_lengths": rollout_batch["response_lengths"].unsqueeze(1).cpu().numpy(),
+            "sentences": _str_list2numpy(texts),
+        }
+
+        critic_send_data = {
+            "sentences": _str_list2numpy(prompts),
         }
 
         critic_future = run_if_model_parallel_src(
-            self.communicator.send_data_to_server, server_name=self.cfg.critic.name.infer, data=send_data,
+            self.communicator.send_data_to_server, server_name=self.cfg.critic.name.infer, data=critic_send_data,
         )
 
         rm_future = None
@@ -146,9 +145,10 @@ class RemoteGPTRMCriticClient:
                 self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data,
             )
 
-        return RMCriticFutureResult(critic_future, rm_future, self.combine_rm_and_critic_server, og_seq_length)
+        return RMCriticFutureResult(critic_future, rm_future, self.combine_rm_and_critic_server, None)
 
     def train(self, ppo_rollout_data):
+        # TODO: deal with the training data
         send_data = {}
 
         func = partial(

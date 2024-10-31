@@ -75,7 +75,7 @@ model:
   # critic args
   loss_clip_val: 0.2
   offload_adam_states: False
-  output_sequence: True # Whether to output a single scalar or a sequence of scalars.
+  output_sequence: False # Whether to output a single scalar or a sequence of scalars.
   reward_standardization:
     enable: False
     mean: null
