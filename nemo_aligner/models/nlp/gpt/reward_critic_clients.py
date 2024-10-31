@@ -81,7 +81,8 @@ def extract_dialogue_llama(text):
             t = t.replace("**<R>**", "<R>").split("<R>")[1].strip()
         elif "Here is my response:" in t:
             t = t.replace("**Here is my response:**", "Here is my response:").split("Here is my response:")[1].strip()
-
+        else:
+            t = "None"
     return user_text, assistant_text
 
 
