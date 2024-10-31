@@ -42,6 +42,13 @@ For the latest stable release, please see the [releases page](https://github.com
 ### Requirements
 NeMo-Aligner has the same requirements as the [NeMo Toolkit Requirements](https://github.com/NVIDIA/NeMo#requirements) with the addition of [PyTriton](https://github.com/triton-inference-server/pytriton).
 
+### Quick start inside NeMo container
+NeMo Aligner comes included with NeMo containers. On a machine with NVIDIA GPUs and drivers installed run NeMo container:
+```bash
+docker run --gpus all -it --rm --shm-size=8g --ulimit memlock=-1 --ulimit stack=67108864  nvcr.io/nvidia/nemo:24.07
+```
+Once you are inside the container, NeMo-Aligner is already installed and together with NeMo and other tools can be found under ```/opt/``` folder.
+
 ### Install NeMo-Aligner
 Please follow the same steps as outlined in the [NeMo Toolkit Installation Guide](https://github.com/NVIDIA/NeMo#installation).  After installing NeMo, execute the following additional command:
 ```bash
