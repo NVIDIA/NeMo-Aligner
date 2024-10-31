@@ -10,10 +10,6 @@ on:
         - major
         - minor
         - pre_release
-      mcore_version:
-        description: 'Version of MCore to use (must be a valid git ref)'
-        required: true
-        type: string
 
 jobs:
   code-freeze:
