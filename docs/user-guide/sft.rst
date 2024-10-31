@@ -233,6 +233,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
 If using sequence packing, replace the data paths with the paths to your packed datasets. For each packed dataset, you should also set ``packed_sequence=True`` in the config:
 
 .. code-block:: python
+
    +model.data.train_ds.packed_sequence=True \
    +model.data.validation_ds.packed_sequence=True
 
