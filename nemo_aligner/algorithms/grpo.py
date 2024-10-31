@@ -219,6 +219,18 @@ class GRPOTrainer:
         # compute advantages
         grouped_rewards = rewards.view(-1, num_responses)
 
+        # compute median
+        mask = 1 - torch.eye(num_responses, dtype=torch.long, device=grouped_rewards.device)
+        gathered_medians = (
+            (
+                grouped_rewards.view(-1, 1, num_responses)
+                .broadcast_to((grouped_rewards.size(0), *mask.shape))[:, mask.bool()]
+                .view(grouped_rewards.size(0), num_responses, num_responses - 1)
+            )
+            .float()
+            .quantile(q=0.5, dim=-1)
+        )
+
         # leave one out estimate
         grouped_reward_mean = (
             grouped_rewards
@@ -236,6 +248,16 @@ class GRPOTrainer:
 
         if self.cfg.use_raw_rewards:
             advantages = rewards
+        elif self.cfg.use_median:
+            advantages = grouped_rewards - gathered_medians
+
+            if self.cfg.normalize_group_advantages:
+                mean = advantages.mean(-1, keepdim=True)
+                std = advantages.std(-1, keepdim=True)
+
+                std_above_0 = std.flatten() > 0
+                advantages[std_above_0] = (advantages[std_above_0] - mean[std_above_0]) / std[std_above_0]
+
         else:
             advantages = grouped_rewards - grouped_reward_mean
 
