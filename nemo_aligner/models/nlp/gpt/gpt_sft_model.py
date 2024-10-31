@@ -227,6 +227,7 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
         self._restore_sequence_parallelism_args()
         set_train(self)
 
+
 class MambaSFTModel(MegatronMambaModel, GPTSFTModel):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)

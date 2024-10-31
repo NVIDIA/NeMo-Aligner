@@ -17,11 +17,12 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
-#from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
+
+# from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
 #    MegatronPretrainingBatchSampler,
-#)
-#from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
-#from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
+# )
+# from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+# from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -197,7 +198,7 @@ def main(cfg) -> None:
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=not train_data_cfg.drop_last,
         load_gbs=True,
-        #use_random_sampler=False, # qian: debug
+        # use_random_sampler=False, # qian: debug
     )
 
     val_dataloader = build_dataloader(
