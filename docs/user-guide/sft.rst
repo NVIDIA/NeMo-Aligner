@@ -220,7 +220,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
                exp_manager.checkpoint_callback_params.monitor=validation_loss
             EOF
 
-            srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
+            srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
 If using sequence packing, replace the data paths with the paths to your packed datasets. For each packed dataset, you should also set ``packed_sequence=True`` in the config:
@@ -379,7 +379,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner. Compare
                exp_manager.checkpoint_callback_params.monitor=validation_loss
             EOF
 
-            srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
+            srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
 

@@ -120,7 +120,7 @@ def main(cfg) -> None:
     ptl_model.reward_model = reward_model
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run", "0:12:00:00"))
+    timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
 
     draft_p_trainer = SupervisedTrainer(
         cfg=cfg.trainer.draftp_sd,
