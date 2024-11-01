@@ -82,12 +82,9 @@ def test_distributed_masked_global_mean_var(init_distributed):
     mask = masks[rank]
     global_mean, global_var = masked_global_mean_var(values, mask, None)
 
-    assert torch.allclose(
-        global_mean_pt, global_mean
-    ), f"expected global mean {global_mean_pt} but got {global_mean}"
-    assert torch.allclose(
-        global_var_pt, global_var
-    ), f"expected global var {global_var_pt} but we got {global_var}"
+    assert torch.allclose(global_mean_pt, global_mean), f"expected global mean {global_mean_pt} but got {global_mean}"
+    assert torch.allclose(global_var_pt, global_var), f"expected global var {global_var_pt} but we got {global_var}"
+
 
 @pytest.mark.run_only_on("GPU")
 @pytest.mark.parametrize(
@@ -159,6 +156,7 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
     assert torch.allclose(
         fake_output_grad_fast, fake_output_grad_slow, atol=atol, rtol=rtol
     ), "backward pass between fast and slow log prob calculation is not the same!"
+
 
 @pytest.mark.run_only_on("GPU")
 @pytest.mark.parametrize("batch_size,seed", [(1, 5555), (4, 6666)])
