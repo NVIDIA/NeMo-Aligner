@@ -40,7 +40,7 @@ mkdir -p $RESULTS_DIR
 mkdir -p $TENSOBOARD_DIR
 mkdir -p $CHECKPOINT_DIR
 
-dpo() {
+rm_training() {
 export CUDA_VISIBLE_DEVICES=0,1
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
@@ -81,4 +81,4 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_reward
 }
 
 log_file=$(mktemp /tmp/rm-log-XXXXXX)
-dpo | tee $log_file
+rm_training | tee $log_file

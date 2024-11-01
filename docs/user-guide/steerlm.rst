@@ -40,7 +40,7 @@ The two methods approach model alignment from different angles: RLHF reinforces 
    For details on SteerLM, please refer to our paper `SteerLM: Attribute Conditioned SFT as an (User-Steerable) Alternative to RLHF <https://arxiv.org/abs/2310.05344>`_.
    For details about the HelpSteer dataset, please refer to our paper `HelpSteer: Multi-attribute Helpfulness Dataset for SteerLM <https://arxiv.org/abs/2311.09528>`_.
 
-Train a SteerLM model 
+Train a SteerLM Model 
 #####################
 
 This section is a step-by-step tutorial that walks you through how to run a full SteerLM pipeline with a Llama2 70B LLM model.
@@ -48,8 +48,8 @@ This section is a step-by-step tutorial that walks you through how to run a full
 .. note::
    Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
 
-Download the Llama 2 LLM model 
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+Download the Llama 2 LLM Model
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 #. Download the Llama 2 70B LLM model from HF <https://huggingface.co/meta-llama/Llama-2-70b-hf> into the models folder.
 
@@ -75,12 +75,12 @@ Download the Llama 2 LLM model
 The prefix for the tokenizer would be different when extracted. Ensure that the correct tokenizer file is used when running the preceding command.
 
 
-To follow the HelpSteer2 and HelpSteer2-Preference line of works, you would need to use the Llama 3 70B and Llama 3.1 70B Instruct models respectively.
+To follow the HelpSteer2 and HelpSteer2-Preference line of works, you need to use the LLama 3 70B and LLama 3.1 70B Instruct models, respectively.
 
-You need to get access to them, download and then convert them in a similar manner.
+You need to obtain access to them, download them, and then convert them in a similar manner.
 
-Step 2: Download and Preprocess data for SteerLM Regression Reward Modelling
-#######################################################################
+Download and Preprocess Data for SteerLM Regression Reward Modeling
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 #. Download and convert both datasets into a common format:
 
@@ -90,7 +90,7 @@ Step 2: Download and Preprocess data for SteerLM Regression Reward Modelling
    
       python /opt/NeMo-Aligner/examples/nlp/data/steerlm/preprocess_helpsteer_data.py --output_directory=data/helpsteer
 
-#. Merge the two datasets for the train and val subset respectively:
+#. Merge the two datasets for the train and val subset, respectively:
 
    .. code-block:: bash
 
@@ -111,7 +111,7 @@ Step 2: Download and Preprocess data for SteerLM Regression Reward Modelling
          --output-file=data/merge_val_reg.jsonl
 
 
-If you are interested in replicating Reward Modelling training in HelpSteer2, please do the below instead.
+If you are interested in replicating Reward Modeling training in HelpSteer2, please follow the steps below instead.
 
 
 .. code-block:: bash
@@ -128,7 +128,7 @@ If you are interested in replicating Reward Modelling training in HelpSteer2, pl
 
    cat data/helpsteer2/train_reg.jsonl data/helpsteer2/train_reg.jsonl > data/helpsteer2/train_reg_2_epoch.jsonl
 
-If you are interested in replicating Reward Modelling training in HelpSteer2-Preference, please do the below instead.
+If you're interested in replicating Reward Modeling training in HelpSteer2-Preference, please follow the steps below instead.
 
 .. code-block:: bash
 
@@ -158,11 +158,11 @@ If you are interested in replicating Reward Modelling training in HelpSteer2-Pre
       --output-file=data/helpsteer2-pref/val_reg.jsonl
 
 
-Step 3: Train the regression reward model on OASST+HelpSteer data
-#################################################################
+Train the Regression Reward Model on OASST+HelpSteer Data
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 
-For this tutorial, train the regression reward model for 800 steps. 
+In this tutorial, you train the regression reward model for 800 steps. 
 
 .. note::
    Depending on the type of cluster you use, you may need to set up multi-node training in your cluster env. For details, please refer to https://lightning.ai/docs/pytorch/stable/clouds/cluster.html.
@@ -191,7 +191,7 @@ For this tutorial, train the regression reward model for 800 steps.
          model.reward_model_type="regression" \
          model.regression.num_attributes=9
 
-If you are interested in replicating Reward Modelling training in HelpSteer2, please do the below instead.
+If you're interested in replicating Reward Modeling training in HelpSteer2, please follow the steps below instead.
 
 .. code-block:: bash
    
@@ -223,7 +223,7 @@ If you are interested in replicating Reward Modelling training in HelpSteer2, pl
          model.regression.num_attributes=9
          
 
-If you are interested in replicating Reward Modelling training in HelpSteer2-Preference, please do the below instead.
+If you're interested in replicating Reward Modeling training in HelpSteer2-Preference, please follow the steps below instead.
 
 .. code-block:: bash
    
