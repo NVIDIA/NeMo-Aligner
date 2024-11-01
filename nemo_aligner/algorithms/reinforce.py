@@ -416,8 +416,7 @@ class ReinforceTrainer:
                 save_data.append({"prompt": prompt, "response": response, "reward": reward.item()})
 
             results_dir = "../gen_results"
-            if not os.path.exists(results_dir):
-                os.makedirs(results_dir)
+            os.makedirs(results_dir, exist_ok=True)
             with open(f"{results_dir}/{self.step}.jsonl", "w") as f:
                 for item in save_data:
                     f.write(json.dumps(item) + "\n")
