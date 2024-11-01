@@ -224,6 +224,17 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
 
     fake_output_grad_slow = fake_output.grad.detach().clone()
 
+    fake_output.grad = None
+    from_parallel_logits_to_logprobs(fake_output, target, higher_stability=higher_stability).sum().backward()
+    fake_output_grad_fast = fake_output.grad.detach().clone()
+
+    torch.testing.assert_close(
+        fake_output_grad_fast,
+        fake_output_grad_slow,
+        atol=atol,
+        rtol=rtol,
+        msg="backward pass between fast and slow log prob calculation is not the same!",
+    )
 
 @pytest.mark.run_only_on("GPU")
 @pytest.mark.parametrize("batch_size,seed", [(1, 5555), (4, 6666)])
