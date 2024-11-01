@@ -84,7 +84,7 @@ jobs:
         test_case:
           - ppo-llama3-pp2-reshard
           - dpo-llama3
-
+          - rm-llama3
     with:
       RUNNER: self-hosted-azure
       # Fairly aggresive timeout that all functional tests should try to adhere to
