@@ -184,7 +184,7 @@ For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` correspond
                ++model.dpo.ref_policy_kl_penalty=0.1
             EOF
 
-            srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
+            srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
 The default DPO training tunes all parameters. To use LoRA, we can set ``model.peft.peft_scheme=lora`` and use different parameters in ``model.peft.lora_tuning``. Please check the parameters in `the config file <https://github.com/NVIDIA/NeMo-Aligner/blob/main/examples/nlp/gpt/conf/gpt_dpo.yaml>`__.

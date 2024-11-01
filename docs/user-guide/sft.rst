@@ -19,7 +19,7 @@ To get started, you need to obtain a pretrained model to align. Three models are
         3. Run the script to convert from the old NeMo checkpoint to the Megatron Core checkpoint. The script is located `here <https://github.com/NVIDIA/NeMo/blob/0ec7e9090d3261b8ce81818b0555a204e50d814d/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py>`__.
             .. code-block:: bash 
 
-               python convert_gpt_nemo_to_mcore.py \
+               python /opt/NeMo/scripts/checkpoint_converters/convert_gpt_nemo_to_mcore.py \
                   --input_name_or_path ./model_checkpoint \
                   --output_path ./mcore_gpt.nemo
 
@@ -227,12 +227,13 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner.
                exp_manager.checkpoint_callback_params.monitor=val_loss
             EOF
 
-            srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
+            srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
 If using sequence packing, replace the data paths with the paths to your packed datasets. For each packed dataset, you should also set ``packed_sequence=True`` in the config:
 
 .. code-block:: python
+
    +model.data.train_ds.packed_sequence=True \
    +model.data.validation_ds.packed_sequence=True
 
@@ -390,7 +391,7 @@ Now, you will use the data for supervised fine-tuning with NeMo-Aligner. Compare
                exp_manager.checkpoint_callback_params.monitor=validation_loss
             EOF
 
-            srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
+            srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
 
