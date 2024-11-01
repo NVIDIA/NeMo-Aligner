@@ -29,7 +29,6 @@ trainer:
       # By default, assume the max input length is half of the model sequence length
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
       generation_batch_size: ${model.spin.rollout_micro_batch_size}
-      max_input_tokens: ${multiply:${trainer.self_rewarding.trt_llm.max_input_len}, ${trainer.self_rewarding.trt_llm.generation_batch_size}}
 
       model_type: gptnext
 

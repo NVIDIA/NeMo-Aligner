@@ -476,10 +476,6 @@ class SelfRewardingTrainer:
                 repetition_penalty=self.sampling_params["repetition_penalty"],
                 max_generation_length=self.length_params["max_length"],
                 max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
-                max_input_tokens=self.cfg.trt_llm.get(
-                    "max_input_tokens",
-                    self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2) * dp_batch_size,
-                ),
                 generation_batch_size=self.cfg.trt_llm.get(
                     "generation_batch_size", self.model.cfg.spin.get("rollout_micro_batch_size", 4)
                 ),

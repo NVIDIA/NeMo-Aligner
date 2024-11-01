@@ -21,7 +21,6 @@ trainer:
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
       max_input_len: ${int_div:${model.encoder_seq_length}, 2}
-      max_input_tokens: null
 
       model_type: gptnext
 

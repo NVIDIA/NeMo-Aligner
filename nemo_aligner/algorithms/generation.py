@@ -170,10 +170,6 @@ class GenerationTrainer:
                 model_cfg=self.model.cfg,
                 max_generation_length=self.length_params["max_length"],
                 max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
-                max_input_tokens=self.cfg.trt_llm.get(
-                    "max_input_tokens",
-                    self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2) * dp_batch_size,
-                ),
                 generation_batch_size=dp_batch_size,
                 unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
                 trt_model_type=self.cfg.trt_llm.get("model_type", "gptnext"),
