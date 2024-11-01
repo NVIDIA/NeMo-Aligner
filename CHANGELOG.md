@@ -34,6 +34,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
     # Consume all durations and reset internal store
     durations = timer.consume_durations()
     ```
+- Add code and instructions for replicating Reward Modelling training in HelpSteer2 and HelpSteer2-Preference
 
 ### Breaking Changes
 - Upgrade TRTLLM dependency from v0.10.0 to v0.12.0 and migrate from `GPTSession` cpp runtime to `ModelRunner` python runtime. Please use the latest Dockerfile.
