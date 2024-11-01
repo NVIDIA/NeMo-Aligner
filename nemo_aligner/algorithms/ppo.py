@@ -223,7 +223,7 @@ class PPOTrainer:
             init_policy_kl = torch.tensor(0, dtype=logprobs.dtype, device=logprobs.device)
 
         rewards_with_kl = calculate_ppo_rewards(
-            values, rewards, response_lengths, init_policy_kl, self.cfg.initial_policy_kl_penalty
+            logprobs, rewards, response_lengths, init_policy_kl, self.cfg.initial_policy_kl_penalty
         )
         mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
