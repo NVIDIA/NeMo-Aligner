@@ -54,7 +54,7 @@ def calculate_entropy(log_probs, mask=None):
         mask (torch.Tensor): Tensor of masks on the sequence length with shape B x S
     """
     entropy_unmasked = -torch.sum(log_probs.exp() * log_probs, dim=-1)
-    return entropy_unmasked.mean() if mask is None else masked_mean(entropy_unmasked, mask)
+    return entropy_unmasked, masked_mean(entropy_unmasked, mask)
 
 
 def calculate_ppo_rewards(values, rewards, response_lengths):

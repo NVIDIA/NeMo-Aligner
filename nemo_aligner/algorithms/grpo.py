@@ -538,6 +538,8 @@ class GRPOTrainer:
                 metrics, step=self.step, prefix="train_optim/",
             )
 
+            metrics.pop("entropies", None)
+
             self.ppo_optimization_step += 1
 
         self.model.finish_training()
