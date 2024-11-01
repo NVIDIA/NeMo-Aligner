@@ -142,7 +142,11 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 )
 
                 scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
-                scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask).nan_to_num(0)
+                scaled_entropy_unmasked, scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask)
+                scaled_entropy = scaled_entropy.nan_to_num(0)
+
+                # TODO: only works with mbs = 1
+                vectorized_entropy = scaled_entropy_unmasked.detach().nan_to_num(0)[mask.bool()].clone()
 
                 kl = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
 
@@ -189,6 +193,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         "ppo_ratio_clamped": ppo_ratio_clamped,
                         "scaled_entropy": scaled_entropy,
                         "kl": kl,
+                        "vectorized_entropy": vectorized_entropy,
                     },
                 )
 
@@ -242,6 +247,30 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             torch.distributed.broadcast(metric_mean, get_last_rank())
 
             metrics[key] = metric_mean.cpu().item()
+
+        entropies = None
+        if losses_reduced_per_micro_batch:
+            min_tokens = torch.as_tensor(
+                [min([item["vectorized_entropy"].numel() for item in losses_reduced_per_micro_batch])],
+                dtype=torch.long,
+                device=torch.cuda.current_device(),
+            )
+            torch.distributed.all_reduce(
+                min_tokens, op=torch.distributed.ReduceOp.MIN, group=parallel_state.get_data_parallel_group()
+            )
+
+            min_tokens = int(min(min_tokens.item(), 200))
+            entropies = torch.stack(
+                [item["vectorized_entropy"][:min_tokens] for item in losses_reduced_per_micro_batch],
+            )
+            size = entropies.size(0)
+            entropies = entropies.sum(0, keepdim=True).float().cuda()
+
+            torch.distributed.all_reduce(entropies, group=parallel_state.get_data_parallel_group())
+            entropies.div_((parallel_state.get_data_parallel_world_size() * size))
+
+        entropies = broadcast_2d_tensor_within_pp(entropies).flatten().cpu()
+        metrics["entropies"] = entropies
 
         return metrics["loss"], metrics
 
