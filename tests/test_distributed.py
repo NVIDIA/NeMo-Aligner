@@ -109,6 +109,7 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
         the more memory intensive naive implementation in the fwd and bwd pass
     """
     init_model_parallel(tensor_model_parallel_size=torch.cuda.device_count())
+    device = torch.cuda.current_device()
 
     world_size = torch.distributed.get_world_size()
     rank = torch.distributed.get_rank()
@@ -163,11 +164,11 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
 def test_distributed_entropy(init_model_parallel, batch_size, seed):
     """Test entropy against just using doing it on a single GPU
     """
-    initialize_model_parallel(tensor_model_parallel_size=torch.cuda.device_count())
+    init_model_parallel(tensor_model_parallel_size=torch.cuda.device_count())
+    world_size = torch.distributed.get_world_size()
     assert parallel_state.get_tensor_model_parallel_world_size() == world_size
     device = torch.cuda.current_device()
 
-    world_size = torch.distributed.get_world_size()
     rank = torch.distributed.get_rank()
 
     B, S, V_total = batch_size, 2048, 512 * world_size
