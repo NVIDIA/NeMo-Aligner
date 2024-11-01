@@ -224,6 +224,7 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
 
     fake_output_grad_slow = fake_output.grad.detach().clone()
 
+
 @pytest.mark.run_only_on("GPU")
 @pytest.mark.parametrize("batch_size,seed", [(1, 5555), (4, 6666)])
 def test_distributed_entropy(init_model_parallel, batch_size, seed):
@@ -262,6 +263,7 @@ def test_distributed_entropy(init_model_parallel, batch_size, seed):
     torch.testing.assert_close(
         grad_full_slice, grad_distributed, msg="grad of entropy between distributed and full path are different!"
     )
+
 
 @pytest.mark.run_only_on("GPU")
 @pytest.mark.parametrize(
@@ -302,6 +304,7 @@ def test_broadcast_within_pp(init_model_parallel, tp_size, pp_size, from_last, s
         assert out_tensor.dtype == dtype
         torch.testing.assert_close(out_tensor.to("cpu"), expected.to("cpu"))
 
+
 @pytest.mark.run_only_on("GPU")
 @pytest.mark.parametrize(
     "K,batch_size,seq_len,partition_vocab_size,sft_loss_weight,kd_loss_weight,bwd_kl,cross_tokenizer",
@@ -315,7 +318,15 @@ def test_broadcast_within_pp(init_model_parallel, tp_size, pp_size, from_last, s
     ],
 )
 def test_topk_logits(
-    init_model_parallel, K, batch_size, seq_len, partition_vocab_size, sft_loss_weight, kd_loss_weight, bwd_kl, cross_tokenizer,
+    init_model_parallel,
+    K,
+    batch_size,
+    seq_len,
+    partition_vocab_size,
+    sft_loss_weight,
+    kd_loss_weight,
+    bwd_kl,
+    cross_tokenizer,
 ):
     init_model_parallel(tensor_model_parallel_size=torch.cuda.device_count())
     rank = torch.distributed.get_rank()
@@ -374,9 +385,7 @@ def test_topk_logits(
 
     torch.testing.assert_close(naive_loss, efficient_loss)
 
-    ctx.saved_tensors = (
-        ctx.to_save
-    )  ## WAR for "AttributeError: 'FunctionCtx' object has no attribute 'saved_tensors'"
+    ctx.saved_tensors = ctx.to_save  ## WAR for "AttributeError: 'FunctionCtx' object has no attribute 'saved_tensors'"
 
     # test backward
     naive_loss.backward()
