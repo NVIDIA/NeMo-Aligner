@@ -55,7 +55,7 @@ def calculate_entropy_full(logits):
 
 
 @pytest.mark.run_only_on("GPU")
-def test_distributed_masked_global_mean_var(init_distributed):
+def test_distributed_masked_global_mean_var(init_model_parallel):
     init_model_parallel(tensor_model_parallel_size=1, pipeline_model_parallel_size=1)
     device = torch.cuda.current_device()
 
