@@ -77,7 +77,12 @@ def extract_dialogue_llama(text):
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
     # TPO
     if "<R>" in assistant_text[-1]:
-        assistant_text[-1] = assistant_text[-1].replace("**<R>**", "<R>").split("<R>")[1].strip()
+        for phrase in ["internal thought", "draft response", "evaluation"]:
+            if phrase not in assistant_text[-1].lower():
+                assistant_text[-1] = "None"
+                break
+        if assistant_text[-1] != "None":
+            assistant_text[-1] = assistant_text[-1].replace("**<R>**", "<R>").split("<R>")[1].strip()
     elif "Here is my response:" in assistant_text[-1]:
         assistant_text[-1] = (
             assistant_text[-1]
