@@ -49,6 +49,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - `SyncedTimer` is marked for deprecation and will be removed in `0.7.0`. Please switch to `ScopedTimer`
 - `broadcast_2d_tensor` and `broadcast_2d_tensor_within_pp` is marked for deprecation and will be removed in `0.7.0`. Please switch to `broadcast_tensor` and `broadcast_tensor_within_pp`. 
 
+- Changed class comment under `RegressionRewardModelDataset` such that the warning comment: "WARNING: It's recommended to preprocess..." is now "WARNING: It is recommended to preprocess". Allows for wider compatiblity by fixing a syntax error due ot an unterminated string literal bug caused by the ' character when running code.
+
 ## NVIDIA NeMo-Aligner 0.5.0
 
 ### New Features and Optimizations
