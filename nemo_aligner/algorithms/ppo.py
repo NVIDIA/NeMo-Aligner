@@ -225,9 +225,12 @@ class PPOTrainer:
         rewards_with_kl = calculate_ppo_rewards(
             values, rewards, response_lengths, init_policy_kl, self.cfg.initial_policy_kl_penalty
         )
+        mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
-        mask = create_mask(values=values, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
-        advantages, returns = calculate_advantages_and_returns(
+        values = torch.as_tensor(values, dtype=torch.float32, device=logprobs.device).flatten()
+        values = (torch.zeros_like(logprobs) + values.view(-1, 1)) * mask
+
+        advantages, _ = calculate_advantages_and_returns(
             values=values,
             rewards=rewards_with_kl,
             discount_factor=self.cfg.discount_factor,
@@ -245,7 +248,7 @@ class PPOTrainer:
         ppo_rollout_data["is_end"] = is_end
         # for the critic
         ppo_rollout_data["values"] = values
-        ppo_rollout_data["returns"] = returns
+        # ppo_rollout_data["returns"] = returns
         ppo_rollout_data["rewards"] = rewards
 
         # compute metrics
@@ -264,7 +267,7 @@ class PPOTrainer:
         ppo_rollout_metrics = {k: v / num_samples for k, v in ppo_rollout_metrics.items()}
 
         mask = ppo_rollout_data["mask"]
-        for key in ["advantages", "returns", "values"]:
+        for key in ["advantages", "values"]:
             tensor = ppo_rollout_data[key]
 
             global_mean, global_var = masked_global_mean_var(

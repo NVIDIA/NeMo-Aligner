@@ -128,7 +128,7 @@ class RMCriticFutureResult(FutureResult):
     def __init__(self, critic_future, rm_future, combine_rm_and_critic_server, og_seq_length):
         self.critic_future = critic_future
         self.rm_future = rm_future
-        self.combine_rm_and_critic_server = combine_rm_and_critic_server
+        self.combine_rm_and_critic_server = False
 
         self.og_seq_length = og_seq_length
 
