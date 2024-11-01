@@ -81,8 +81,12 @@ def test_distributed_masked_global_mean_var(init_model_parallel):
     mask = masks[rank]
     global_mean, global_var = masked_global_mean_var(values, mask, None)
 
-    torch.testing.assert_close(global_mean_pt, global_mean, msg=f"expected global mean {global_mean_pt} but got {global_mean}")
-    torch.testing.assert_close(global_var_pt, global_var, msg=f"expected global var {global_var_pt} but we got {global_var}")
+    torch.testing.assert_close(
+        global_mean_pt, global_mean, msg=f"expected global mean {global_mean_pt} but got {global_mean}"
+    )
+    torch.testing.assert_close(
+        global_var_pt, global_var, msg=f"expected global var {global_var_pt} but we got {global_var}"
+    )
 
 
 @pytest.mark.run_only_on("GPU")
@@ -141,8 +145,20 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
             fake_output, target, inference_only=True, higher_stability=higher_stability
         )
 
-        torch.testing.assert_close(log_probs_fast, log_probs_slow, atol=atol, rtol=rtol, msg="forward pass between fast, slow and log prob calculation is not the same!")
-        torch.testing.assert_close(log_probs_slow_inf_only, log_probs_fast, atol=atol, rtol=rtol, msg="forward pass between fast, slow and log prob calculation is not the same!")
+        torch.testing.assert_close(
+            log_probs_fast,
+            log_probs_slow,
+            atol=atol,
+            rtol=rtol,
+            msg="forward pass between fast, slow and log prob calculation is not the same!",
+        )
+        torch.testing.assert_close(
+            log_probs_slow_inf_only,
+            log_probs_fast,
+            atol=atol,
+            rtol=rtol,
+            msg="forward pass between fast, slow and log prob calculation is not the same!",
+        )
 
     slow_from_parallel_logits_to_logprobs(fake_output, target).sum().backward()
 
@@ -153,8 +169,11 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
     fake_output_grad_fast = fake_output.grad.detach().clone()
 
     torch.testing.assert_close(
-        fake_output_grad_fast, fake_output_grad_slow, atol=atol, rtol=rtol,
-        msg="backward pass between fast and slow log prob calculation is not the same!"
+        fake_output_grad_fast,
+        fake_output_grad_slow,
+        atol=atol,
+        rtol=rtol,
+        msg="backward pass between fast and slow log prob calculation is not the same!",
     )
 
 
@@ -194,8 +213,7 @@ def test_distributed_entropy(init_model_parallel, batch_size, seed):
     grad_distributed = fake_parallel_logits.grad
 
     torch.testing.assert_close(
-        grad_full_slice, grad_distributed,
-        msg="grad of entropy between distributed and full path are different!"
+        grad_full_slice, grad_distributed, msg="grad of entropy between distributed and full path are different!"
     )
 
 
