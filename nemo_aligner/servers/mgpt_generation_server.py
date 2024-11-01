@@ -17,15 +17,58 @@ import json
 import threading
 
 import torch
+from fastapi import FastAPI
+from fastapi.middleware.wsgi import WSGIMiddleware
 from flask import Flask, jsonify, request
 from flask_restful import Api, Resource
 import base64
 from io import BytesIO
 from PIL import Image
+from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
+
 
 from nemo.collections.nlp.modules.common.text_generation_utils import generate
 from nemo.collections.nlp.modules.common.text_generation_server import MegatronGenerate, GENERATE_NUM, API_ALLOWED_KEYS, lock
 from nemo.utils import logging
+
+
+
+
+# class TextContent(BaseModel):
+#     type: str
+#     text: str
+
+#     @field_validator('type')
+#     def check_type(cls, v):
+#         if v != 'text':
+#             raise ValueError('type must be text')
+#         return v
+
+# class ImageUrl(BaseModel):
+#     url: str
+
+# class ImageContent(BaseModel):
+#     type: str
+#     image_url: ImageUrl
+
+#     @field_validator('type')
+#     def check_type(cls, v):
+#         if v != 'image_url':
+#             raise ValueError('type must be image_url')
+#         return v
+
+# class Message(BaseModel):
+#     role: str
+#     content: Union[str, List[Union[TextContent, ImageContent]]]
+
+# class ChatCompletionRequest(BaseModel):
+#     model: Optional[str] = "mock-gpt-model"
+#     messages: List[Message]
+#     max_tokens: Optional[int] = 1024
+#     temperature: Optional[float] = 0.2
+#     stream: Optional[bool] = False
+
 
 
 class MegatronMultimodalGenerate(MegatronGenerate):
@@ -225,11 +268,91 @@ class MegatronMultimodalGenerate(MegatronGenerate):
         return jsonify(output)
 
 
+async def process_queue():
+    while True:
+        batch = []
+        while len(batch) < 4:
+            try:
+                request_entry = await asyncio.wait_for(request_queue.get(), timeout=0.05)
+                batch.append(request_entry)
+            except asyncio.TimeoutError:
+                break
+        
+        if batch:
+            # Text-only for now
+            def get_prompt(messages):
+                # prompt template gets applied in NeMo already
+                # so we only add user content and filter out system
+                prompt, first = "", True
+                for message in messages:
+                    if message.role.lower() == "system": continue
+
+                    if not first: prompt += f"<extra_id_1>{message.role.capitalize()}\n"
+
+                    if isinstance(message.content, str):
+                        prompt += message.content.strip() + "\n"
+                    else:
+                        for content in message.content:
+                            if content.type == "text":
+                                prompt += content.text.strip() + "\n"
+                            elif content.type == "image_url":
+                                prompt += "<image>\n"
+                            else:
+                                raise ValueError(f"Unsupported content type: {content.type}")
+                    
+                    first = False
+
+                return prompt.strip()
+
+            def get_image(messages):
+                image = None
+                for message in messages:
+                    if not isinstance(message.content, str):
+                        for content in message.content:
+                            if content.type == "image_url":
+                                if image is not None:
+                                    raise ValueError("Multiple images in the message")
+
+                                url = content.image_url.url
+                                logging.info(f"Got image url {url} downloading...")
+                                image = PIL.Image.open(requests.get(url, stream=True).raw)
+                                logging.info(f"Got image size {image.size}")
+
+                if image is not None:
+                    return image_processor(image)
+                
+                return None
+
+            input_prompts = [{
+                                "prompt": get_prompt(entry["request"].messages),
+                                "label" : "helpfulness:5,correctness:5,coherence:5",
+                                "image" : get_image(entry["request"].messages)
+                            } for entry in batch]
+            responses = predict_impl(input_prompts)
+            
+            for entry, response in zip(batch, responses):
+                response_content = response["clean_response"].replace("<extra_id_1>", "").strip()
+                entry["response"].set_result({
+                    "id": str(time.time()),
+                    "object": "chat.completion",
+                    "created": time.time(),
+                    "model": entry["request"].model,
+                    "choices": [{"message": Message(role="assistant", content=response_content)}],
+                })
+                logging.info(f"Request {entry['id']} response prepared")
+
+
+
 class MegatronMultimodalServer(object):
     def __init__(self, model, inference_strategy=None):
         self.app = Flask(__name__, static_url_path='')
         api = Api(self.app)
         api.add_resource(MegatronMultimodalGenerate, '/generate', resource_class_args=[model, inference_strategy])
+        
+        #self.fast_app = FastAPI(title="OpenAI-compatible API")
+        #self.fast_app.mount("/generate", WSGIMiddleware(flask_app))        
+
 
     def run(self, url, port=5000):
+        #request_queue = asyncio.Queue()
         self.app.run(url, threaded=True, port=port, debug=False)
