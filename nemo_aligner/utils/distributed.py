@@ -60,6 +60,7 @@ def rebalance_nd_tensor(tensor, group):
     torch.distributed.all_reduce(output_tensor, group=group)
     return output_tensor
 
+
 @deprecated_in_version("0.7.0", "Please use broadcast_tensor(tensor, src, group, dtype)")
 def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
     """Broadcast any 2d tensor from the src rank to every other rank in the given group.
@@ -86,6 +87,7 @@ def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
         tensor = torch.empty(dim1, dim2, dtype=dtype, device=torch.cuda.current_device())
         torch.distributed.broadcast(tensor, src, group)
     return tensor
+
 
 def broadcast_tensor(tensor: torch.Tensor | None, src, group, dtype: torch.dtype | None = None):
     """
@@ -119,6 +121,7 @@ def broadcast_tensor(tensor: torch.Tensor | None, src, group, dtype: torch.dtype
         tensor = torch.empty(input_shape, dtype=dtype, device="cuda")
         torch.distributed.broadcast(tensor, src, group)
     return tensor
+
 
 def broadcast_2d_tensor_within_mp(tensor, dtype=torch.float32):
     """helper function to broadcast within the model parallel group
