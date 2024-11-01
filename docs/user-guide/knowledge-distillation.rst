@@ -241,7 +241,7 @@ Once the data has been prepared, you are ready to fine-tune the student model.  
                "model.data.data_prefix={train: [data/oasst/train_with_logits_CHUNK_ID.jsonl], validation: [data/oasst/val_with_logits_CHUNK_ID.jsonl], test: [data/oasst/val_with_logits_CHUNK_ID.jsonl]}" \
                ++model.data.data_impl=chunked_jsonl \
                ++model.data.n_chunks=1 \
-               ++model.data.n_examples_per_chunk={train: 56440, validation: 2938, test: 2938}" \
+               ++"model.data.n_examples_per_chunk={train: 56440, validation: 2938, test: 2938}" \
                ++model.data.seq_length=4096 \
                model.data.splits_string=\'98,1,1\' \
                exp_manager.create_wandb_logger=True \
