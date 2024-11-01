@@ -92,10 +92,10 @@ def tokenize_batch(sentences, tokenizer, max_len, add_BOS=False, add_EOS=False):
         return output
 
     context_tokens = list(map(tokenize, sentences))
+    context_tokens = [x[:max_len] for x in context_tokens]
     max_sequence_length = max(len(x) for x in context_tokens)
 
     context_tokens, context_lengths = pad_batch(context_tokens, tokenizer.eos_id, max_len - max_sequence_length)
-    context_tokens = [x[:max_len] for x in context_tokens]
     context_tokens_tensor = torch.cuda.LongTensor(context_tokens)
     context_length_tensor = torch.cuda.LongTensor(context_lengths)
     return context_tokens_tensor, context_length_tensor
@@ -109,11 +109,12 @@ def verify_is_valid_and_clamp_range_(
     if end_strings is None:
         end_strings = []
 
+    mask = (0 <= response_tokens) & (response_tokens < tokenizer.vocab_size)
+    response_tokens.clamp_(min=0, max=tokenizer.vocab_size - 1)
+
     prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
     is_valid = strategy.end_of_generation_condition(response_tokens, prev, tokenizer.eos_id, end_strings)
 
-    mask = (0 <= response_tokens) & (response_tokens < tokenizer.vocab_size)
     is_valid = is_valid & torch.all(mask, dim=-1)
 
-    response_tokens.clamp_(0, tokenizer.vocab_size - 1)
     return is_valid

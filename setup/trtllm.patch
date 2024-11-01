@@ -1,126 +1,175 @@
-diff --git a/cpp/include/tensorrt_llm/runtime/gptSession.h b/cpp/include/tensorrt_llm/runtime/gptSession.h
-index c94eeb2a4..8fefe33af 100644
---- a/cpp/include/tensorrt_llm/runtime/gptSession.h
-+++ b/cpp/include/tensorrt_llm/runtime/gptSession.h
-@@ -32,6 +32,7 @@
- 
- #include <cstdint>
- #include <functional>
-+#include <map>
- #include <memory>
- #include <string>
- #include <vector>
-@@ -220,6 +221,8 @@ public:
-     void generate(GenerationOutput& outputs, GenerationInput const& inputs, SamplingConfig const& samplingConfig,
-         std::shared_ptr<GenerationProfiler> const generationProfiler = nullptr);
- 
-+    void refitEngine(std::vector<std::pair<std::string, nvinfer1::Weights>> refit_params);
+diff --git a/tensorrt_llm/builder.py b/tensorrt_llm/builder.py
+index 527f8ccfd..222c69fc6 100644
+--- a/tensorrt_llm/builder.py
++++ b/tensorrt_llm/builder.py
+@@ -660,10 +660,14 @@ class EngineConfig:
+     @classmethod
+     def from_json_file(cls, config_file):
+         with open(config_file) as f:
+-            config = json.load(f)
+-            return cls(PretrainedConfig.from_dict(config['pretrained_config']),
+-                       BuildConfig.from_dict(config['build_config']),
+-                       config['version'])
++            return cls.from_json_str(f.read())
 +
- private:
-     [[nodiscard]] bool useCudaGraphs()
-     {
-diff --git a/cpp/tensorrt_llm/pybind/bindings.cpp b/cpp/tensorrt_llm/pybind/bindings.cpp
-index 3e6d704af..efa03e83f 100644
---- a/cpp/tensorrt_llm/pybind/bindings.cpp
-+++ b/cpp/tensorrt_llm/pybind/bindings.cpp
++    @classmethod
++    def from_json_str(cls, config_str):
++        config = json.loads(config_str)
++        return cls(PretrainedConfig.from_dict(config['pretrained_config']),
++                   BuildConfig.from_dict(config['build_config']),
++                   config['version'])
+ 
+     def to_dict(self):
+         build_config = self.build_config.to_dict()
+@@ -770,6 +774,15 @@ class Engine:
+ 
+         return cls(config, engine_buffer, managed_weights)
+ 
++    @classmethod
++    def from_buffer(cls,
++                    engine_buffer: Union[trt.IHostMemory, bytes],
++                    json_config_str: str,
++                    rank: int = 0):
++        config = EngineConfig.from_json_str(json_config_str)
++        config.pretrained_config.set_rank(rank)
++        return cls(config, engine_buffer)
++
+ 
+ def get_engine_version(engine_dir: str) -> Union[None, str]:
+     engine_dir = Path(engine_dir)
+diff --git a/tensorrt_llm/runtime/generation.py b/tensorrt_llm/runtime/generation.py
+index 983d458b8..af8eceb7f 100755
+--- a/tensorrt_llm/runtime/generation.py
++++ b/tensorrt_llm/runtime/generation.py
 @@ -15,6 +15,7 @@
-  * limitations under the License.
-  */
  
-+#include <map>
- #include <pybind11/cast.h>
- #include <pybind11/functional.h>
- #include <pybind11/operators.h>
-@@ -44,6 +45,9 @@
- #include "tensorrt_llm/runtime/memoryCounters.h"
- #include "tensorrt_llm/runtime/samplingConfig.h"
+ import copy
+ import math
++import os
+ import platform
+ from collections import Counter
+ from dataclasses import dataclass, field
+@@ -47,6 +48,10 @@ from ..quantization import QuantMode
+ from .kv_cache_manager import GenerationSequence, KVCacheUpdater
+ from .session import _scoped_stream
  
-+#include <ATen/ATen.h>
-+#include <torch/torch.h>
++# When variable is set, this will disable torch.cuda.set_device(...) calls
++# Useful in situations where device is already assigned by another library, i.e., megatron.
++DISABLE_TORCH_DEVICE_SET = os.environ.get("DISABLE_TORCH_DEVICE_SET", False)
 +
- namespace py = pybind11;
- namespace tb = tensorrt_llm::batch_manager;
- namespace tbb = tensorrt_llm::batch_manager::batch_scheduler;
-@@ -329,7 +333,23 @@ PYBIND11_MODULE(TRTLLM_PYBIND_MODULE, m)
-             [](tr::GptSession& self, tpr::GenerationOutput& outputs, tpr::GenerationInput const& inputs,
-                 tr::SamplingConfig const& samplingConfig)
-             { self.generate(*outputs.toTrtLlm(), *inputs.toTrtLlm(), samplingConfig); },
--            py::arg("outputs"), py::arg("inputs"), py::arg("sampling_config"));
-+            py::arg("outputs"), py::arg("inputs"), py::arg("sampling_config"))
-+        .def(
-+            "refit_engine",
-+            [](tr::GptSession& self, std::map<std::string, at::Tensor> refit_params, nvinfer1::DataType dtype)
-+            {
-+                std::vector<std::pair<std::string, nvinfer1::Weights>> param_map;
-+                for (auto param : refit_params)
-+                {
-+                    nvinfer1::Weights trt_weight;
-+                    trt_weight.type = dtype;
-+                    trt_weight.count = param.second.numel();
-+                    trt_weight.values = param.second.data_ptr();
-+                    param_map.push_back({param.first, trt_weight});
-+                }
-+                self.refitEngine(param_map);
-+            },
-+            py::arg("refit_params"), py::arg("type"));
  
-     py::enum_<tb::LlmRequestState_t>(m, "LlmRequestState")
-         .value("REQUEST_STATE_UNKNOWN", tb::LlmRequestState_t::REQUEST_STATE_UNKNOWN)
-diff --git a/cpp/tensorrt_llm/runtime/gptSession.cpp b/cpp/tensorrt_llm/runtime/gptSession.cpp
-index 6e232f85d..81a5ef6ab 100644
---- a/cpp/tensorrt_llm/runtime/gptSession.cpp
-+++ b/cpp/tensorrt_llm/runtime/gptSession.cpp
-@@ -1184,6 +1184,11 @@ void GptSession::finalize(SizeType microBatchId)
-     TLLM_LOG_TRACE("%s stop", __PRETTY_FUNCTION__);
- }
+ def decode_words_list(word_dict: List[List[str]],
+                       tokenizer=None,
+@@ -247,8 +252,11 @@ class _Runtime(object):
+     def __prepare(self, mapping: Mapping, engine_buffer):
+         self.runtime_rank = mapping.rank
+         local_rank = self.runtime_rank % mapping.gpus_per_node
+-        torch.cuda.set_device(local_rank)
+-        CUASSERT(cudart.cudaSetDevice(local_rank))
++        if DISABLE_TORCH_DEVICE_SET:
++            CUASSERT(cudart.cudaSetDevice(torch.cuda.current_device()))
++        else:
++            torch.cuda.set_device(local_rank)
++            CUASSERT(cudart.cudaSetDevice(local_rank))
  
-+void GptSession::refitEngine(std::vector<std::pair<std::string, nvinfer1::Weights>> refit_params)
-+{
-+    mRuntime->refitEngine(*mLogger, refit_params);
-+}
+         self.runtime = trt.Runtime(logger.trt_logger)
+         self.engine = self.runtime.deserialize_cuda_engine(engine_buffer)
+@@ -535,8 +543,10 @@ class SamplingConfig:
+     sink_token_length: Optional[int] = field(default=None)
+     output_sequence_lengths: bool = field(default=False)
+     return_dict: bool = field(default=False)
+-    stop_words_list: Optional[torch.Tensor] = field(default=None)
+-    bad_words_list: Optional[torch.Tensor] = field(default=None)
++    stop_words_list: Optional[Union[list, np.ndarray,
++                                    torch.Tensor]] = field(default=None)
++    bad_words_list: Optional[Union[list, np.ndarray,
++                                   torch.Tensor]] = field(default=None)
+ 
+     temperature: Union[float, torch.Tensor] = field(default=1.0)
+     top_k: Union[int, torch.Tensor] = field(default=1)
+@@ -698,9 +708,12 @@ class GenerationSession(object):
+         self._model_config = model_config
+         self.mapping = mapping
+         self.runtime = _Runtime(engine_buffer, mapping)
+-        self.device = torch.device(
+-            f'cuda:{self.runtime.runtime_rank % mapping.gpus_per_node}')
+-        torch.cuda.set_device(self.device)
++        if DISABLE_TORCH_DEVICE_SET:
++            self.device = torch.device(f'cuda:{torch.cuda.current_device()}')
++        else:
++            self.device = torch.device(
++                f'cuda:{self.runtime.runtime_rank % mapping.gpus_per_node}')
++            torch.cuda.set_device(self.device)
+         # dynamic_decoder currently use torch's current stream, so must let TRT enqueue use same stream here
+         self.stream = stream
+         if self.stream is None:
+diff --git a/tensorrt_llm/runtime/model_runner.py b/tensorrt_llm/runtime/model_runner.py
+index d2ba7edfa..e02310c3a 100644
+--- a/tensorrt_llm/runtime/model_runner.py
++++ b/tensorrt_llm/runtime/model_runner.py
+@@ -31,10 +31,10 @@ from ..builder import Engine, EngineConfig, get_engine_version
+ from ..logger import logger
+ from ..mapping import Mapping
+ from ..quantization import QuantMode
+-from .generation import (ChatGLMGenerationSession, GenerationSession,
+-                         LogitsProcessor, LoraManager, ModelConfig,
+-                         QWenForCausalLMGenerationSession, SamplingConfig,
+-                         StoppingCriteria, to_word_list_format)
++from .generation import (DISABLE_TORCH_DEVICE_SET, ChatGLMGenerationSession,
++                         GenerationSession, LogitsProcessor, LoraManager,
++                         ModelConfig, QWenForCausalLMGenerationSession,
++                         SamplingConfig, StoppingCriteria, to_word_list_format)
+ 
+ 
+ def get_engine_name(model: str, dtype: str, tp_size: int, pp_size: int,
+@@ -554,7 +554,8 @@ class ModelRunner(ModelRunnerMixin):
+ 
+         if MpiComm.size() > runtime_mapping.gpus_per_node:
+             assert MpiComm.local_size() == runtime_mapping.gpus_per_node
+-        torch.cuda.set_device(rank % runtime_mapping.gpus_per_node)
++        if not DISABLE_TORCH_DEVICE_SET:
++            torch.cuda.set_device(rank % runtime_mapping.gpus_per_node)
+         session = session_cls(model_config,
+                               engine_buffer,
+                               runtime_mapping,
+@@ -656,7 +657,8 @@ class ModelRunner(ModelRunnerMixin):
+                 assert model_config.max_medusa_tokens > 0, \
+                     "medusa_choice is specified but model_config.max_medusa_tokens is 0."
+ 
+-            torch.cuda.set_device(rank % runtime_mapping.gpus_per_node)
++            if not DISABLE_TORCH_DEVICE_SET:
++                torch.cuda.set_device(rank % runtime_mapping.gpus_per_node)
+             session = session_cls(model_config,
+                                   engine_buffer,
+                                   runtime_mapping,
+@@ -840,12 +842,24 @@ class ModelRunner(ModelRunnerMixin):
+         batch_input_ids, input_lengths = self._prepare_inputs(
+             batch_input_ids, sampling_config.pad_id)
+ 
+-        if sampling_config.bad_words_list is not None:
+-            sampling_config.bad_words_list = to_word_list_format(
+-                sampling_config.bad_words_list)
+-        if sampling_config.stop_words_list is not None:
+-            sampling_config.stop_words_list = to_word_list_format(
+-                sampling_config.stop_words_list)
++        def maybe_convert_to_words_list_format(
++            words_list: Optional[Union[list, np.ndarray, torch.Tensor]]
++        ) -> Optional[np.ndarray]:
++            if words_list is None or isinstance(words_list, np.ndarray):
++                return words_list
++            elif isinstance(words_list, torch.Tensor):
++                return words_list.numpy()
++            elif isinstance(words_list, list):
++                return to_word_list_format(words_list)
++            else:
++                raise TypeError(
++                    f"Unexpected words_list type={type(words_list)}. Only list, np.ndarray, and torch.Tensor are supported."
++                )
 +
- void GptSession::CudaGraphExecutor::create(cudaGraph_t const& graph)
- {
-     TLLM_LOG_TRACE("%s start", __PRETTY_FUNCTION__);
-diff --git a/cpp/tensorrt_llm/runtime/tllmRuntime.cpp b/cpp/tensorrt_llm/runtime/tllmRuntime.cpp
-index 09261697c..87fe0a303 100644
---- a/cpp/tensorrt_llm/runtime/tllmRuntime.cpp
-+++ b/cpp/tensorrt_llm/runtime/tllmRuntime.cpp
-@@ -217,6 +217,24 @@ void TllmRuntime::setOutputTensors(SizeType contextIndex, TensorMap& tensorMap)
-     }
- }
++        sampling_config.bad_words_list = maybe_convert_to_words_list_format(
++            sampling_config.bad_words_list)
++        sampling_config.stop_words_list = maybe_convert_to_words_list_format(
++            sampling_config.stop_words_list)
  
-+void TllmRuntime::refitEngine(
-+    nvinfer1::ILogger& logger, std::vector<std::pair<std::string, nvinfer1::Weights>> refit_params)
-+{
-+    nvinfer1::ICudaEngine& engine = *(mEngine.get());
-+    TLLM_CHECK_WITH_INFO(engine.isRefittable(), "Tried refitting engine without refit enabled");
-+
-+    nvinfer1::IRefitter* refitter = nvinfer1::createInferRefitter(engine, logger);
-+    for (auto param : refit_params)
-+    {
-+        TLLM_CHECK_WITH_INFO(
-+            refitter->setNamedWeights(param.first.c_str(), param.second, nvinfer1::TensorLocation::kHOST),
-+            "Failed to refit %s", param.first.c_str());
-+    }
-+    TLLM_CHECK_WITH_INFO(refitter->refitCudaEngine(), "Refit failed!");
-+
-+    delete refitter;
-+}
-+
- CudaStream const& TllmRuntime::getStream() const
- {
-     return *mStream;
-diff --git a/cpp/tensorrt_llm/runtime/tllmRuntime.h b/cpp/tensorrt_llm/runtime/tllmRuntime.h
-index 51428f6f4..b32a754ca 100644
---- a/cpp/tensorrt_llm/runtime/tllmRuntime.h
-+++ b/cpp/tensorrt_llm/runtime/tllmRuntime.h
-@@ -70,6 +70,8 @@ public:
- 
-     bool executeContext(SizeType contextIndex) const;
- 
-+    void refitEngine(nvinfer1::ILogger& logger, std::vector<std::pair<std::string, nvinfer1::Weights>> refit_params);
-+
-     CudaStream const& getStream() const;
- 
-     BufferManager::CudaStreamPtr getStreamPtr()
+         if not self.kv_cache_type and sampling_config.max_new_tokens > 1:
+             raise RuntimeError(
