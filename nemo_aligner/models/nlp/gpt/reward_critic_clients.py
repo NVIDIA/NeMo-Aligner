@@ -76,13 +76,18 @@ def extract_dialogue_llama(text):
     user_text = re.findall(user_pattern, text, re.DOTALL)
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
     # TPO
-    for t in assistant_text:
-        if "<R>" in t:
-            t = t.replace("**<R>**", "<R>").split("<R>")[1].strip()
-        elif "Here is my response:" in t:
-            t = t.replace("**Here is my response:**", "Here is my response:").split("Here is my response:")[1].strip()
+    for i in range(len(assistant_text)):
+        if "<R>" in assistant_text[i]:
+            assistant_text[i] = assistant_text[i].replace("**<R>**", "<R>").split("<R>")[1].strip()
+        elif "Here is my response:" in assistant_text[i]:
+            assistant_text[i] = (
+                assistant_text[i]
+                .replace("**Here is my response:**", "Here is my response:")
+                .split("Here is my response:")[1]
+                .strip()
+            )
         else:
-            t = "None"
+            assistant_text[i] = "None"
     return user_text, assistant_text
 
 
@@ -271,6 +276,7 @@ class RemoteGPTRMClient:
 
             text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
             texts.append(text)
+            print(text)
 
         send_data = {
             "sentences": _str_list2numpy(texts),
