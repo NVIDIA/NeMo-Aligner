@@ -76,18 +76,17 @@ def extract_dialogue_llama(text):
     user_text = re.findall(user_pattern, text, re.DOTALL)
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
     # TPO
-    for i in range(len(assistant_text)):
-        if "<R>" in assistant_text[i]:
-            assistant_text[i] = assistant_text[i].replace("**<R>**", "<R>").split("<R>")[1].strip()
-        elif "Here is my response:" in assistant_text[i]:
-            assistant_text[i] = (
-                assistant_text[i]
-                .replace("**Here is my response:**", "Here is my response:")
-                .split("Here is my response:")[1]
-                .strip()
-            )
-        else:
-            assistant_text[i] = "None"
+    if "<R>" in assistant_text[-1]:
+        assistant_text[-1] = assistant_text[-1].replace("**<R>**", "<R>").split("<R>")[1].strip()
+    elif "Here is my response:" in assistant_text[-1]:
+        assistant_text[-1] = (
+            assistant_text[-1]
+            .replace("**Here is my response:**", "Here is my response:")
+            .split("Here is my response:")[1]
+            .strip()
+        )
+    else:
+        assistant_text[-1] = "None"
     return user_text, assistant_text
 
 
