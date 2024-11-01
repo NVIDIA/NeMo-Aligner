@@ -35,6 +35,7 @@ trainer:
     
     normalize_group_advantages: False
     use_median: False
+    use_mean_for_group_adv: True
 
     # the sequence length to pad the rollout batch for training to
     # reduce fragmentation at the cost of using more

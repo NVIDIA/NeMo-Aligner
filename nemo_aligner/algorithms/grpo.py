@@ -132,6 +132,24 @@ def compute_num_rollout_microbatches(dataloader):
     )
 
 
+def get_rloo_mean_std(grouped_rewards):
+    """reward tensor should be B x num responses
+    """
+    num_responses = grouped_rewards.size(1)
+
+    grouped_reward_mean = (
+        grouped_rewards @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
+    ) / (num_responses - 1)
+
+    grouped_square_mean = (
+        grouped_rewards.square()
+        @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
+    ) / (num_responses - 1)
+    grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt()
+
+    return grouped_reward_mean, grouped_reward_std
+
+
 class GRPOTrainer:
     """Trainer to coordinate PPO training
     """
@@ -231,18 +249,7 @@ class GRPOTrainer:
             .quantile(q=0.5, dim=-1)
         )
 
-        # leave one out estimate
-        grouped_reward_mean = (
-            grouped_rewards
-            @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
-        ) / (num_responses - 1)
-
-        grouped_square_mean = (
-            grouped_rewards.square()
-            @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
-        ) / (num_responses - 1)
-        grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt()
-
+        grouped_reward_mean, grouped_reward_std = get_rloo_mean_std(grouped_rewards)
         num_reward_non_zero = (grouped_rewards > 0).sum(-1).count_nonzero()
         num_std_zero = (grouped_reward_std == 0).count_nonzero()
 
@@ -252,11 +259,13 @@ class GRPOTrainer:
             advantages = grouped_rewards - gathered_medians
 
             if self.cfg.normalize_group_advantages:
-                mean = advantages.mean(-1, keepdim=True)
-                std = advantages.std(-1, keepdim=True)
+                mean, std = get_rloo_mean_std(advantages)
+                std_above_0 = std > 0
 
-                std_above_0 = std.flatten() > 0
-                advantages[std_above_0] = (advantages[std_above_0] - mean[std_above_0]) / std[std_above_0]
+                if self.cfg.use_mean_for_group_adv:
+                    advantages = advantages - mean
+
+                advantages[std_above_0] /= std[std_above_0]
 
         else:
             advantages = grouped_rewards - grouped_reward_mean
