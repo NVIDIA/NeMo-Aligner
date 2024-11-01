@@ -214,7 +214,6 @@ class RemoteGPTRMCriticClient:
         return RMCriticFutureResult(critic_future, rm_future, self.combine_rm_and_critic_server, None)
 
     def train(self, ppo_rollout_data, tokenizer):
-        # TODO: deal with the training data
         send_data = {}
 
         func = partial(
@@ -225,18 +224,17 @@ class RemoteGPTRMCriticClient:
 
         response_tokens = func(ppo_rollout_data["response_tokens"], dtype=torch.int64)
         response_lengths = func(ppo_rollout_data["response_lengths"], dtype=torch.int64)
-
-        response_tokens = torch.cat(response_tokens)
-        response_lengths = torch.cat(response_lengths)
-
-        _, prompts = self.get_sentences_and_prompts(response_tokens, response_lengths, tokenizer)
-
-        send_data["sentences"] = prompts
         send_data["rewards"] = func(ppo_rollout_data["rewards"], dtype=torch.float32)
 
         future = None
         if torch.distributed.get_rank() == 0:
-            send_data = {k: torch.cat(v, dim=0).detach().cpu().numpy() for k, v in send_data.items()}
+            response_tokens = torch.cat(response_tokens, dim=0)
+            response_lengths = torch.cat(response_lengths, dim=0)
+            send_data["rewards"] = torch.cat(send_data["rewards"], dim=0).cpu().numpy()
+
+            _, prompts = self.get_sentences_and_prompts(response_tokens, response_lengths, tokenizer)
+            send_data["sentences"] = prompts
+
             future = self.communicator.send_data_to_server(
                 server_name=self.cfg.critic.name.train, data=send_data, batching=False
             )
