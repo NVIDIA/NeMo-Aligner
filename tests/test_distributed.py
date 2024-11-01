@@ -13,12 +13,16 @@
 # limitations under the License.
 
 import os
+import megatron.core.parallel_state as mcore_parallel_state
+import numpy as np
 import pytest
 import torch
+import torch.distributed
 from megatron.core import tensor_parallel
 
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
+    broadcast_tensor_within_pp,
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
     masked_global_mean_var,
@@ -226,3 +230,43 @@ class TestDistributedFunctions:
     @pytest.mark.parametrize("batch_size,seed", [(1, 5555), (4, 6666)])
     def test_distributed_entropy(self, batch_size, seed):
         self._run_test(self._test_distributed_entropy, batch_size, seed)
+
+
+@pytest.mark.run_only_on("GPU")
+@pytest.mark.parametrize(
+    "tp_size, pp_size, from_last, shape, dtype, override_dtype",
+    [
+        (1, 2, True, (2,), torch.float32, False),
+        (1, 2, False, (2, 3), torch.bfloat16, True),
+        (1, 2, True, (2, 3, 4), torch.float16, False),
+        (1, 2, False, (2,), torch.int32, True),
+    ],
+)
+def test_broadcast_within_pp(init_model_parallel, tp_size, pp_size, from_last, shape, dtype, override_dtype):
+    init_model_parallel(tensor_model_parallel_size=tp_size, pipeline_model_parallel_size=pp_size)
+    num_el = np.product(shape)
+    expected = torch.arange(num_el, dtype=dtype).reshape(shape)
+
+    tensor = None
+    if (
+        from_last
+        and mcore_parallel_state.get_pipeline_model_parallel_rank()
+        == mcore_parallel_state.get_pipeline_model_parallel_last_rank()
+    ):
+        tensor = expected
+    elif (
+        not from_last
+        and mcore_parallel_state.get_pipeline_model_parallel_rank()
+        == mcore_parallel_state.get_pipeline_model_parallel_first_rank()
+    ):
+        tensor = expected
+
+    if override_dtype:
+        # For posterity, this was default behavior when type wasn't set
+        out_tensor = broadcast_tensor_within_pp(tensor, from_last=from_last, dtype=torch.float32)
+        assert out_tensor.dtype == torch.float32
+        torch.testing.assert_close(out_tensor.to("cpu"), expected.to("cpu").type(torch.float32))
+    else:
+        out_tensor = broadcast_tensor_within_pp(tensor, from_last=from_last)
+        assert out_tensor.dtype == dtype
+        torch.testing.assert_close(out_tensor.to("cpu"), expected.to("cpu"))

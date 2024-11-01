@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Misc helper functions"""
+import functools
 import gc
 import itertools
 import os
@@ -28,7 +29,7 @@ from unittest.mock import patch
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
-from megatron.core.num_microbatches_calculator import reconfigure_microbatch_calculator
+from megatron.core.num_microbatches_calculator import reconfigure_num_microbatches_calculator
 from omegaconf import DictConfig, OmegaConf
 from torch.masked import as_masked_tensor
 
@@ -122,7 +123,9 @@ def load_checkpoint_model_config(restore_path):
         return OmegaConf.load(cfg_path)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, extract_config_only=True)
+        # Extracts only model config
+        members = NLPSaveRestoreConnector._filtered_tar_info(restore_path, filter_fn=lambda name: ".yaml" in name)
+        NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, members=members)
         cfg = OmegaConf.load(os.path.join(tmpdir, config_name_in_ckpt))
 
     return cfg
@@ -229,7 +232,7 @@ def calculate_response_lengths(tokens, eos_id):
 
 def configure_batch_sizes(mbs, gbs, dp=1):
     app_state = AppState()
-    reconfigure_microbatch_calculator(
+    reconfigure_num_microbatches_calculator(
         rank=app_state.global_rank,
         rampup_batch_size=None,
         global_batch_size=gbs,
@@ -519,4 +522,22 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
 def log_memory(prefix):
     pyt = torch.cuda.memory_allocated() / (1024 ** 3)
     el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
-    logging.info(f"Mem Usage | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
+    logging.info(f"Mem Usage (GB) | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
+
+
+def deprecated_in_version(version: str, message: str | None = None):
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Construct the deprecation message
+            func_name = func.__name__
+            warn_message = (
+                f"The function '{func_name}' is deprecated and will be removed in version {version}. "
+                f"{message if message else ''}".strip()
+            )
+            warnings.warn(warn_message, DeprecationWarning, stacklevel=2)
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator

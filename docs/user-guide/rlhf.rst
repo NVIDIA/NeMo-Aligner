@@ -5,14 +5,17 @@
 Model Alignment by RLHF
 @@@@@@@@@@@@@@@@@@@@@@@
 
-For the purposes of this tutorial, we will go through the entire Reinforcement Learning from Human Feedback (RLHF) pipeline using models from the NeMo Framework. These models can include LLaMa2 or Mistral, and our scripts will function consistently across them.
+.. note::
+   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+
+For the purposes of this tutorial, we will go through the entire Reinforcement Learning from Human Feedback (RLHF) pipeline using models from the NeMo Framework. These models can include LLaMa or Mistral, and our scripts will function consistently across them.
 
 RLHF is usually preceded by a Supervised Fine-Tuning (SFT). We should first follow the :ref:`Prerequisite guide <prerequisite>` and the :ref:`SFT guide <sft>`. After obtaining the SFT model, we will use this to start the RLHF process. We will use the `PPO <https://arxiv.org/abs/1707.06347>`__ algorithm for reinforcement learning on the `Anthropic-HH-RLHF <https://huggingface.co/datasets/Anthropic/hh-rlhf>`__ dataset.
 
 Data Processing for RLHF
 #########################
 
-We have a script ready to use for processing the Anthropic-HH dataset into a jsonlines format. Run the following command on the `download_and_process.py <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/8d4f34c9da6b3254ca316b2c43ee88b77a894529/launcher_scripts/nemo_launcher/collections/dataprep_scripts/anthropichh_dataprep/download_and_process.py#L1>`__ script for anthropic HH.
+We have a script ready to use for processing the Anthropic-HH dataset into a JSONL format. Run the following command on the `download_and_process.py <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/8d4f34c9da6b3254ca316b2c43ee88b77a894529/launcher_scripts/nemo_launcher/collections/dataprep_scripts/anthropichh_dataprep/download_and_process.py#L1>`__ script for anthropic HH.
 
    .. code-block:: bash 
 
@@ -136,15 +139,17 @@ To launch reward model training, you must start with a pretrained or SFT-trained
                exp_manager.wandb_logger_kwargs.project=${PROJECT}
             EOF
 
-            srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
+            srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
 
-*Remark: Currently, the example training script does not automatically run evaluation on the provided test set. This may change in a future release.* 
+.. note::
+   Currently, the example training script does not automatically run evaluation on the provided test set. This may change in a future release.
+
 
 During reward model training, it’s expected that the validation accuracy improves as the training progresses. In the example provided above using Slurm, we achieved a validation accuracy of 69.57%. 
 
-With the finished training, NeMo-Aligner will save a ``megatron_gpt.nemo`` which is the reward model we need for the RL stage.
+Upon completing the training, NeMo-Aligner will save a ``megatron_gpt.nemo`` file, which serves as the reward model needed for the RL stage.
 
 PPO Training
 ############
@@ -154,16 +159,16 @@ After you have fine-tuned a GPT model using SFT and trained a reward model as ex
 During PPO training, we conceptually have four models that interact with each other:
 
 #. The PPO Actor Network (also known as the Policy Network): This is the model we are training. It should start from an SFT model.
-#. The Reward Model (RM) Network (also known as a Preference Model (PM)): This model takes a prompt concatenated with a response as input and outputs a single scalar value, the reward, which the PPO algorithm will try to maximize.
+#. The Reward Model (RM) Network (also known as a Preference Model): This model takes a prompt concatenated with a response as input and outputs a single scalar value, the reward, which the PPO algorithm will try to maximize.
 #. The PPO Critic Network (also known as the Value Network): Since PPO is an Actor-Critic algorithm, we need a Critic to guide the Actor during training. The Critic will provide value estimates for each token in the responses provided by the Actor. These values can be seen as an estimate of the total reward the Actor will receive after generating all the remaining tokens. The Critic should be initialized from the RM so as to provide useful feedback in the early stages of training. Note: The RM generates a single reward for the entire sequence, whereas the Critic generates a value for each token.
 #. The Initial Policy Network (also known as the Reference Model): We use this model to compute a KL Divergence penalty term that ensures that the PPO Actor does not diverge too much from the Initial Policy. This way, we prevent the PPO Actor from overfitting to the rewards given by the RM, and ensure it does not forget the knowledge it acquired during pretraining and SFT. This model should be the one used to initialize the PPO Actor Network.
 
-In the most optimized configuration, NeMo-Aligner will run the Actor and initial policy within the same job as well as the Critic and reward model within the same job. It will then use CPU offloading to load back the corresponding model when needed.
+In the most optimized configuration, NeMo-Aligner will run the Actor and initial policy within the same job, as well as the Critic and reward model within the same job. It will then use CPU offloading to load back the corresponding model when needed.
    
 The next section discusses how to launch each of these two jobs.
 
-Launching the Reward Model and Critic Server
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Launch the Reward Model and Critic Server
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 To launch the server:
 
@@ -198,8 +203,8 @@ To launch the server:
 
 The above example launches the reward model Critic server on 8 GPUs and 1 node. Please make sure to change ``trainer.devices``, ``trainer.num_nodes`` depending on your model size and scale. NeMo-Aligner will work on any scale. In addition, make sure to tune the `trainer.ppo.inference_micro_batch_size` argument as this determines the batch size the PPO Actor is allowed to send to the Critic per DP rank.
 
-Launching the Initial Policy and PPO Actor Training
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Launch the Initial Policy and PPO Actor Training
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 The PPO Actor training job contains the master controller that makes the HTTP calls to all servers when needed. To launch the PPO Actor and Initial Policy server:
 
@@ -240,8 +245,8 @@ The above script launches the initial and Actor server on 1 node with 8 GPUs.
 .. note::
    For more info on PPO hyperparameters, see `PPO Hparams <https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/RLHFTraining.md#ppo-hyperparameters>`__.
 
-Launching Both Servers for RLHF Training
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Launch Both Servers for RLHF Training
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 You can use Slurm to launch both jobs and coordinate them together in a full RLHF job using the following script:
 
@@ -251,6 +256,11 @@ You can use Slurm to launch both jobs and coordinate them together in a full RLH
    #SBATCH -N 1 --ntasks-per-node 8 -A <<ACCOUNT>> -p <<PARTITION>> --job-name <<JOBNAME>> -t 4:00:00 --exclusive
    #SBATCH hetjob
    #SBATCH -N 1 --ntasks-per-node 8 -A <<ACCOUNT>> -p <<PARTITION>> --job-name <<JOBNAME>> -t 4:00:00 --exclusive
+
+   # To ensure determinism when calculating log probabilities between two forward-passes with identical weights, it is strongly
+   # recommended to set NCCL_ALGO. See https://github.com/NVIDIA/Megatron-LM/blob/b3375a0e38c10e2300ef4be031f7dcabab52b448/megatron/training/arguments.py#L593-L595
+   # for options.
+   export NCCL_ALGO=Tree
 
    NAME="2p_ppo"
 
@@ -300,7 +310,7 @@ You can use Slurm to launch both jobs and coordinate them together in a full RLH
       pretrained_checkpoint.restore_from_path=${RM_NEMO_FILE}
    EOF
 
-   srun --het-group=0 -o $CRITIC_OUTFILE -e $CRITIC_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_critic_inference}" &
+   srun --no-container-mount-home --het-group=0 -o $CRITIC_OUTFILE -e $CRITIC_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_critic_inference}" &
 
    sleep 30
 
@@ -351,7 +361,7 @@ You can use Slurm to launch both jobs and coordinate them together in a full RLH
       remote_critic_rm.critic.port=${CRITIC_PORT}
    EOF
 
-   srun --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_ppo}" &
+   srun --no-container-mount-home --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_ppo}" &
 
    wait
 
@@ -362,8 +372,8 @@ It is important to launch all jobs with ``&`` after the srun command, to ensure 
 .. note::
    Make sure to change the Critic arg ``trainer.ppo.inference_micro_batch_size`` such that ``trainer.ppo.inference_micro_batch_size * DP size <= model.ppo.rollout_micro_batch_size``.
 
-Speeding up PPO with TensorRT-LLM
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Speed up PPO with TensorRT-LLM
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 NeMo-Aligner has support for accelerating RLHF with `TensorRT-LLM <https://github.com/NVIDIA/TensorRT-LLM>`__. This can provide a significant speedup to the PPO training time when enabled. There are a few crucial flags to set when using TensorRT-LLM with Aligner.
 
 #. `trainer.ppo.trt_llm.enable=True` enables TensorRT-LLM.
@@ -372,7 +382,7 @@ NeMo-Aligner has support for accelerating RLHF with `TensorRT-LLM <https://githu
 #. `trainer.trt_llm.model_type=llama` tells TensorRT-LLM which model type we want to run inference on. Must be changed for other model types, as an example for nemotron this should be gptnext.
 #. `trainer.ppo.batch_iterator.use_flask=True` enables a flask server to balance work across different DP workers.
 
-For more information please see the aligner `paper <https://arxiv.org/abs/2405.01481>`__.
+For more information please see the NeMo-Aligner `paper <https://arxiv.org/abs/2405.01481>`__.
 
 PPO Results with TensorRT-LLM
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -396,7 +406,9 @@ We test the scaling of our TRT-LLM integration by running Llama3 70B Actor and L
 | 64               | 32                | 334                         | 56.9                 | 6.44               |
 +------------------+-------------------+-----------------------------+----------------------+--------------------+
 
-NOTE: for 64x32 config we used a rollout_micro_batch_size of 16 instead of 8 since we have more memory coming from the distributed optimizer.
+.. note::
+   for 64x32 config we used a ``rollout_micro_batch_size`` of 16 instead of 8 due to the additional memory from the the distributed optimizer.
+
 
 We also support running RLHF on Llama3.1 405B Actor and Reward Model. The following numbers are generated with ``num_rollout_samples=128``, ``global_batch_size=128``, reshard turned off, engine offloading set to False.
 
@@ -406,14 +418,14 @@ We also support running RLHF on Llama3.1 405B Actor and Reward Model. The follow
 | 84               | 42                | 915.6                      | 164.6              |
 +------------------+-------------------+----------------------------+--------------------+
 
-In the future we aim to improve the performance of generation with large models that have high pipeline parallelism size.
+In the future, we aim to improve the performance of generation with large models that have high pipeline parallelism size.
 
 PPO Results
 %%%%%%%%%%%
 
 Once you've completed RLHF training, you can serve your model using the `megatron_gpt_eval.py <https://github.com/NVIDIA/NeMo/blob/8cd5f1c8e7d4fed9f4f946028cd02047c5d2296f/examples/nlp/language_modeling/megatron_gpt_eval.py#L4>`__ script from the NeMo codebase to run more rigorous evaluation of your trained model.
    
-Scaling the Tutorial to Bigger Models
-#####################################
+Scale the Tutorial to Bigger Models
+###################################
 
 While the tutorial above provides a way to get started with RLHF, it doesn’t represent the most optimal performance or convergence configuration. When running RLHF fully, we anticipate achieving an MT-bench score improvement of approximately +0.4 to +0.5. It’s essential to begin with a high-quality SFT model and closely monitor the response length.
