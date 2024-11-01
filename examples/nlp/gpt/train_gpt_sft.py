@@ -27,7 +27,7 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset
-from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel
+from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel, MambaSFTModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -127,7 +127,7 @@ def main(cfg) -> None:
         cfg.model.precision = cfg.trainer.precision
 
     ptl_model, updated_cfg = load_from_nemo(
-        GPTSFTModel,
+        MambaSFTModel if cfg.model.mamba_hybrid else GPTSFTModel,
         cfg,
         trainer,
         strict=True,
