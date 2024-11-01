@@ -104,8 +104,11 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
     apt-get install git-lfs && \
     git lfs install
 
+COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
+RUN cd /opt/NeMo-Aligner && \
+    pip install --no-deps -e .
+
 # TRTLLM
-COPY --from=aligner-bump /opt/NeMo-Aligner/setup/trtllm.patch /opt/NeMo-Aligner/setup/trtllm.patch
 ARG TRTLLM_VERSION
 RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     cd TensorRT-LLM && \
@@ -113,11 +116,6 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     patch -p1 < ../NeMo-Aligner/setup/trtllm.patch && \
     . docker/common/install_tensorrt.sh && \
     python3 ./scripts/build_wheel.py --trt_root /usr/local/tensorrt 
-
-# NeMo-Aligner
-COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
-RUN cd /opt/NeMo-Aligner && \
-    pip install --no-deps -e .
 
 RUN cd TensorRT-LLM && \
     pip install ./build/tensorrt_llm*.whl
