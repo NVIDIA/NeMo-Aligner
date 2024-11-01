@@ -225,6 +225,10 @@ class RemoteGPTRMCriticClient:
 
         response_tokens = func(ppo_rollout_data["response_tokens"], dtype=torch.int64)
         response_lengths = func(ppo_rollout_data["response_lengths"], dtype=torch.int64)
+
+        response_tokens = torch.cat(response_tokens)
+        response_lengths = torch.cat(response_lengths)
+
         _, prompts = self.get_sentences_and_prompts(response_tokens, response_lengths, tokenizer)
 
         send_data["sentences"] = prompts
