@@ -132,7 +132,7 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
-    timer = Timer(cfg.exp_manager.get("max_time_per_run"))
+    timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
 
     rm_trainer = SupervisedTrainer(
         cfg=cfg.trainer.rm,
