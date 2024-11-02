@@ -57,16 +57,22 @@ jobs:
     uses: ./.github/workflows/_build_container.yml
   
   Unit_Tests:
+    name: ${{ matrix.test_case }}
     needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
     if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+    strategy:
+      matrix:
+        test_case:
+          - run_unit.sh
+          - run_mpi_unit.sh
     with:
       RUNNER: self-hosted-azure
       TIMEOUT: 10
       SCRIPT: |
         nvidia-smi
         cd ${ALIGNER_REPO_DIR}
-        bash tests/run_unit.sh
+        bash tests/${{ matrix.test_case }}
 
   Functional_Tests:
     name: ${{ matrix.test_case }}
@@ -76,16 +82,13 @@ jobs:
     strategy:
       matrix:
         test_case:
-          #- ppo-pp-llama3
+          - ppo-llama3-pp2-reshard
           - dpo-llama3
           - sft-llama3
+          - rm-llama3
     with:
       RUNNER: self-hosted-azure
       # Fairly aggresive timeout that all functional tests should try to adhere to
-      TIMEOUT: 10
+      TIMEOUT: 8
       SCRIPT: |
-        export PYTHONPATH=${ALIGNER_REPO_DIR}:${PYTHONPATH:-}
-        nvidia-smi
-        git config --global --add safe.directory ${ALIGNER_REPO_DIR}
-        cd ${ALIGNER_REPO_DIR}
-        bash tests/functional/test_cases/${{ matrix.test_case }}.sh
+        bash /opt/NeMo-Aligner/tests/functional/test_cases/${{ matrix.test_case }}

@@ -139,7 +139,7 @@ To launch reward model training, you must start with a pretrained or SFT-trained
                exp_manager.wandb_logger_kwargs.project=${PROJECT}
             EOF
 
-            srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
+            srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
 
@@ -257,6 +257,11 @@ You can use Slurm to launch both jobs and coordinate them together in a full RLH
    #SBATCH hetjob
    #SBATCH -N 1 --ntasks-per-node 8 -A <<ACCOUNT>> -p <<PARTITION>> --job-name <<JOBNAME>> -t 4:00:00 --exclusive
 
+   # To ensure determinism when calculating log probabilities between two forward-passes with identical weights, it is strongly
+   # recommended to set NCCL_ALGO. See https://github.com/NVIDIA/Megatron-LM/blob/b3375a0e38c10e2300ef4be031f7dcabab52b448/megatron/training/arguments.py#L593-L595
+   # for options.
+   export NCCL_ALGO=Tree
+
    NAME="2p_ppo"
 
    # PARAMETERS
@@ -305,7 +310,7 @@ You can use Slurm to launch both jobs and coordinate them together in a full RLH
       pretrained_checkpoint.restore_from_path=${RM_NEMO_FILE}
    EOF
 
-   srun --het-group=0 -o $CRITIC_OUTFILE -e $CRITIC_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_critic_inference}" &
+   srun --no-container-mount-home --het-group=0 -o $CRITIC_OUTFILE -e $CRITIC_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_critic_inference}" &
 
    sleep 30
 
@@ -356,7 +361,7 @@ You can use Slurm to launch both jobs and coordinate them together in a full RLH
       remote_critic_rm.critic.port=${CRITIC_PORT}
    EOF
 
-   srun --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_ppo}" &
+   srun --no-container-mount-home --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_ppo}" &
 
    wait
 

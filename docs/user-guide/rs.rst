@@ -160,7 +160,7 @@ You can use Slurm to launch the two jobs and get them to coordinate together in 
       inference.port=${CRITIC_PORT}
    EOF
 
-   srun --het-group=0 -o $CRITIC_OUTFILE -e $CRITIC_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_critic_inference}" &
+   srun --no-container-mount-home --het-group=0 -o $CRITIC_OUTFILE -e $CRITIC_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_critic_inference}" &
 
    sleep 30
 
@@ -216,7 +216,7 @@ You can use Slurm to launch the two jobs and get them to coordinate together in 
       model.rs.top_n_rollouts=1
    EOF
 
-   srun --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_rs}" &
+   srun --no-container-mount-home --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_rs}" &
 
    wait
 

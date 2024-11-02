@@ -11,16 +11,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Breaking Changes
 
 ### Bug Fixes
+
+### Deprecation Notices
 -->
 
 ## [Next Version]
 
 ### New Features and Optimizations
 - Added support for Megatron’s distributed optimizer, which can be configured using `++model.optim.name=mcore_distributed_optim`.
+- Introduced `ScopedTimer` as a successor to `SyncedTimer`. `SyncedTimer` is marked for deprecation and will be removed in the next version.
+    ```python
+    from nemo_aligner.utils.distributed import ScopedTimer
+    timer = ScopedTimer()
+
+    # All durations are logged in the timer
+    with timer("step_time"):
+        with timer("fwd"):
+            model.fwd()
+        with timer("bwd"):
+            model.bwd()
+
+    # Consume all durations and reset internal store
+    durations = timer.consume_durations()
+    ```
+- Add code and instructions for replicating Reward Modeling training in HelpSteer2 and HelpSteer2-Preference
 
 ### Breaking Changes
+- Upgrade TRTLLM dependency from v0.10.0 to v0.12.0 and migrate from `GPTSession` cpp runtime to `ModelRunner` python runtime. Please use the latest Dockerfile.
+- Using latest TransformerEngine versions may require `++model.dist_ckpt_load_strictness=log_all` when loading from a older pre-existing checkpoint to not error out.
+- NeMo-Aligner now requires Megatron-LM==0.9.0 for the APIs to calculate the microbatch sizes (API introduced `megatron.core.num_microbatches_calculator.reconfigure_num_microbatch_calculator`).
+- NeMo-Aligner now requires a version of NeMo with this change to how the MoE spec is handled: https://github.com/NVIDIA/NeMo/pull/9035 .
 
 ### Bug Fixes
+- It is now required, for stability, to add `export NCCL_ALGO=...` to scripts launching PPO training loop. Please see the [RLHF docs](./docs/user-guide/rlhf.rst) for information.
+
+### Deprecation Notices
+- `SyncedTimer` is marked for deprecation and will be removed in `0.7.0`. Please switch to `ScopedTimer`
+- `broadcast_2d_tensor` and `broadcast_2d_tensor_within_pp` is marked for deprecation and will be removed in `0.7.0`. Please switch to `broadcast_tensor` and `broadcast_tensor_within_pp`. 
 
 ## NVIDIA NeMo-Aligner 0.5.0
 
@@ -32,6 +59,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### Bug Fixes
 - Change `log_prob_forward_micro_batch_size` in DPO to mean the same as the `micro_batch_size`, which is how many samples(chosen and rejected included) that we process at once.
+- PPO TensorRT-LLM acceleration now no longer errors if using a tokenizer without a `pad_id`. Examples being llama3 and llama3.1 tokenizers from huggingface.
 
 ## NVIDIA NeMo-Aligner 0.4.0
 - Implement reward-aware preference optimization.
@@ -51,7 +79,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Breaking Changes
 - `inference.micro_batch_size` is now renamed to `inference.inference_micro_batch_size` when running reward model inference in `inference_rm.yaml`.  This is to stay consistent with the naming scheme of the PPO critic.
 - It is no longer possible to specify `add_EOS` when running reward model or critic inference.
-- NeMo-Aligner now requires Megatron-LM>=0.8.0 for the APIs to calculate the microbatch sizes.
+- NeMo-Aligner now requires Megatron-LM==0.8.0 for the APIs to calculate the microbatch sizes (API introduced `megatron.core.num_microbatches_calculator.reconfigure_microbatch_calculator`).
 
 ### Bug Fixes
 - Make `num_workers` for dataloaders 0 by default. This prevents issues when using MPI (with TRT-LLM) or more sophisticated launchers.
