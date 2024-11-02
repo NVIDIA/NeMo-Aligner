@@ -53,7 +53,7 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
 
     ptl_model = load_from_nemo(
-        MegatronMambaDPOModel if cfg.mamba_hybrid else MegatronGPTDPOModel,
+        MegatronMambaDPOModel if cfg.model.mamba_hybrid else MegatronGPTDPOModel,
         cfg.model,
         trainer,
         strict=True,
