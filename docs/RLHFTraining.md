@@ -49,5 +49,5 @@ We have many optimizations available for performance that you can enable.
 * `model.ppo.length_params.max_length`: This sets the max tokens to generate in rollouts, it defaults to half the sequence length of the model. But if you know your model is not too verbose (e.g. after supervised fine tuning) then you can set it to a lower number.
 
 #### Critic performance optimization hyperparameters
-* `trainer.ppo.combine_rm_and_critic_server`: When enabled, inference requests to the critic server will also return the rewards. This saves the need of having to run a seperate reward model server..
+* `trainer.ppo.combine_rm_and_critic_server`: When enabled, inference requests to the critic server will also return the rewards. This saves the need of having to run a separate reward model server..
 * `model.offload_adam_states`: When enabled, offload the distributed adam optimizer states onto CPU during inference. This allows us to save memory during inference for a bigger `trainer.ppo.inference_micro_batch_size`. No effect if the optimizer is not distributed adam.

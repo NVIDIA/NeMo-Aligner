@@ -395,7 +395,7 @@ Run Inference
               web_server=False \
               port=1427 
 
-   Please wait for the server to be ready before proceeeding.
+   Please wait for the server to be ready before proceeding.
 
 #. Create Python helper functions:
 
