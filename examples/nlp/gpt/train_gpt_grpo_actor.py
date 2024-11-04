@@ -60,10 +60,11 @@ Below is a math question. I want you to first reason through the steps required 
 
 
 class MathDataset:
-    def __init__(self, data_path, tokenizer):
+    def __init__(self, data_path, tokenizer, use_text_field_from_data=False):
         super().__init__()
         self.data_path = data_path
         self.tokenizer = tokenizer
+        self.use_text_field_from_data = use_text_field_from_data
 
         assert os.path.exists(self.data_path), f"{self.data_path} must exist"
 
@@ -81,7 +82,11 @@ class MathDataset:
         """
         Return a single prompt.
         """
-        text = PROMPT_TEMPLATE.format(problem=self.data[idx]["problem"])
+        if self.use_text_field_from_data:
+            text = self.data[idx]["text"]
+        else:
+            text = PROMPT_TEMPLATE.format(problem=self.data[idx]["problem"])
+
         answer = self.data[idx]["expected_answer"]
 
         sample, _ = self.encode(text)
@@ -141,8 +146,16 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_ds = MathDataset(cfg.model.data.data_prefix["train"][0], ptl_model.tokenizer)
-    validation_ds = MathDataset(cfg.model.data.data_prefix["validation"][0], ptl_model.tokenizer)
+    train_ds = MathDataset(
+        cfg.model.data.data_prefix["train"][0],
+        ptl_model.tokenizer,
+        use_text_field_from_data=cfg.use_text_field_from_data,
+    )
+    validation_ds = MathDataset(
+        cfg.model.data.data_prefix["validation"][0],
+        ptl_model.tokenizer,
+        use_text_field_from_data=cfg.use_text_field_from_data,
+    )
 
     max_seqlen = cfg.model.ppo.length_params.max_length
     eos_id = ptl_model.tokenizer.eos_id
