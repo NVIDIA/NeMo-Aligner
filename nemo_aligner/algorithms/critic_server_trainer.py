@@ -175,8 +175,8 @@ class CriticServerTrainer:
 
         batch = {
             "tokens": tokens,
-            "sequence_lengths": sequence_lengths,
-            "rewards": rewards,
+            "sequence_lengths": sequence_lengths.view(-1, 1),
+            "rewards": rewards.view(-1, 1),
         }
 
         batch = apply_func_to_dict(torch.tensor, batch)
@@ -272,12 +272,11 @@ class CriticServerTrainer:
         }
 
         batch["tokens"] = broadcast_2d_tensor(batch["tokens"], src=0, group=None, dtype=torch.int64)
-        batch["rewards"] = broadcast_2d_tensor(
-            batch["rewards"].view(-1, 1), src=0, group=None, dtype=torch.float32
-        ).flatten()
+        batch["rewards"] = broadcast_2d_tensor(batch["rewards"], src=0, group=None, dtype=torch.float32).flatten()
         batch["sequence_lengths"] = broadcast_2d_tensor(
-            batch["sequence_lengths"].view(-1, 1), src=0, group=None, dtype=torch.long
+            batch["sequence_lengths"], src=0, group=None, dtype=torch.long
         ).flatten()
+
         input_size = batch["tokens"].size(0)
 
         self.model.prepare_for_training()
