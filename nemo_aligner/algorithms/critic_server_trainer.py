@@ -169,9 +169,9 @@ class CriticServerTrainer:
         tokens, sequence_lengths = inputs["inputs"], inputs["sequence_length"]
 
         # we should pad to GBS
-        tokens, extra_tokens = pad_input(tokens, self.gbs)
+        tokens, extra_tokens = pad_input(tokens.cpu().numpy(), self.gbs)
         rewards, extra_rewards = pad_input(rewards, self.gbs)
-        sequence_lengths, extra_sequence_lengths = pad_input(sequence_lengths, self.gbs)
+        sequence_lengths, extra_sequence_lengths = pad_input(sequence_lengths.cpu().numpy(), self.gbs)
 
         batch = {
             "tokens": tokens,
