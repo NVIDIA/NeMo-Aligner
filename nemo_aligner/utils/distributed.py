@@ -59,7 +59,10 @@ def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
     """Broadcast any 2d tensor from the src rank to every other rank in the given group.
     All the ranks that send or receive data must call this function."""
     if torch.distributed.get_rank() == src:
+        if tensor.ndim == 1:
+            tensor = tensor.view(-1, 1)
         assert tensor.ndim == 2, f"tensor dims is not 2 but is {tensor.ndim} with shape {tensor.shape}"
+
         tensor = tensor.cuda().to(dtype)
 
         input_info = [

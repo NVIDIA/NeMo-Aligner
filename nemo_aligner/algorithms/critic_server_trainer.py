@@ -175,8 +175,8 @@ class CriticServerTrainer:
 
         batch = {
             "tokens": tokens,
-            "sequence_lengths": sequence_lengths.view(-1, 1),
-            "rewards": rewards.view(-1, 1),
+            "sequence_lengths": sequence_lengths,
+            "rewards": rewards,
         }
 
         batch = apply_func_to_dict(torch.tensor, batch)
