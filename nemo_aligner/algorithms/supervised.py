@@ -150,7 +150,7 @@ class SupervisedTrainer:
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
         lr = self.optimizer.param_groups[0]["lr"]
 
-        self.optimizer.step(closure=None)
+        self.optimizer.step()
         self.scheduler.step()
 
         trainer_metrics = {}
