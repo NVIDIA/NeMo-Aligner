@@ -83,7 +83,8 @@ class GPTGenerateTRTLLM:
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        self.pad_id = tokenizer._unk_id
+        self.pad_id = getattr(tokenizer, "_unk_id", 128248)
+
         end_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
