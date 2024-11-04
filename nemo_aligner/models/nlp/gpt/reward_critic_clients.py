@@ -233,7 +233,7 @@ class RemoteGPTRMCriticClient:
             send_data["rewards"] = torch.cat(send_data["rewards"], dim=0).cpu().numpy()
 
             _, prompts = self.get_sentences_and_prompts(response_tokens, response_lengths, tokenizer)
-            send_data["sentences"] = prompts
+            send_data["sentences"] = _str_list2numpy(prompts)
 
             future = self.communicator.send_data_to_server(
                 server_name=self.cfg.critic.name.train, data=send_data, batching=False
