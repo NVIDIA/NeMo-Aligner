@@ -58,6 +58,7 @@ jobs:
     with:
       image-name: nemo_aligner_container
       dockerfile: Dockerfile
+      image-label: nemo-aligner
       build-args: |
         MAX_JOBS=32
         ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
