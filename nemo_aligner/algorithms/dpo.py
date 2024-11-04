@@ -18,7 +18,6 @@ from statistics import mean
 import torch
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
-import math
 
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingRandomBatchSampler,
@@ -31,14 +30,7 @@ from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batch
 from nemo_aligner.utils.utils import clear_memory
 
 
-def dpo_custom_collate(
-    batch: list,
-    eos_id: int,
-    reset_position_ids: bool = False,
-    reset_attention_mask: bool = False,
-    eod_mask_loss: bool = False,
-    pad_length_to_multiple_of: int | None = None,
-):
+def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
     chosen_tokens = [item["chosen"] for item in batch]
     rejected_tokens = [item["rejected"] for item in batch]
     chosen_lengths = torch.LongTensor([item["chosen_length"] for item in batch])
@@ -53,32 +45,8 @@ def dpo_custom_collate(
     chosen_labels = torch.nn.utils.rnn.pad_sequence(chosen_labels, batch_first=True, padding_value=-100)
     rejected_labels = torch.nn.utils.rnn.pad_sequence(rejected_labels, batch_first=True, padding_value=-100)
 
-    if pad_length_to_multiple_of:
-        chosen_padded_length = (
-            math.ceil(chosen_tokens.shape[1] / pad_length_to_multiple_of) * pad_length_to_multiple_of
-        )
-        rejected_padded_length = (
-            math.ceil(rejected_tokens.shape[1] / pad_length_to_multiple_of) * pad_length_to_multiple_of
-        )
-        chosen_tokens = torch.nn.functional.pad(
-            chosen_tokens, (0, chosen_padded_length - chosen_tokens.shape[1]), mode="constant", value=eos_id
-        )
-        rejected_tokens = torch.nn.functional.pad(
-            rejected_tokens, (0, rejected_padded_length - rejected_tokens.shape[1]), mode="constant", value=eos_id
-        )
-        chosen_labels = torch.nn.functional.pad(
-            chosen_labels, (0, chosen_padded_length - chosen_labels.shape[1]), mode="constant", value=eos_id
-        )
-        rejected_labels = torch.nn.functional.pad(
-            rejected_labels, (0, rejected_padded_length - rejected_labels.shape[1]), mode="constant", value=eos_id
-        )
-
     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-        chosen_tokens,
-        eos_id,
-        reset_position_ids,
-        reset_attention_mask,
-        eod_mask_loss,
+        chosen_tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
     )
     assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
     if attention_mask.shape[0] == 1:
@@ -102,7 +70,8 @@ def dpo_custom_collate(
 
 
 class DPOTrainer:
-    """Trainer to coordinate DPO training"""
+    """Trainer to coordinate DPO training
+    """
 
     def __init__(
         self,
@@ -203,7 +172,7 @@ class DPOTrainer:
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
         lr = self.optimizer.param_groups[0]["lr"]
 
-        self.optimizer.step(closure=None)
+        self.optimizer.step()
         self.scheduler.step()
 
         trainer_metrics = {}
@@ -264,9 +233,7 @@ class DPOTrainer:
                 metrics["step_time"] = train_step_time
                 metrics["epoch"] = self.epoch + 1
                 self.logger.log_metrics(
-                    metrics,
-                    step=self.step,
-                    prefix="train/",
+                    metrics, step=self.step, prefix="train/",
                 )
                 metrics = {f"train_{k}": v for k, v in metrics.items()}
 
