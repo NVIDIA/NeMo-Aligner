@@ -342,6 +342,7 @@ def test_topk_logits(
 ):
     init_model_parallel(tensor_model_parallel_size=torch.cuda.device_count())
     rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
 
     torch.manual_seed(0)
 
