@@ -102,6 +102,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 seed=self.cfg.ppo.trt_llm.get("seed", self.cfg.seed),
             )
 
+    def _build_vocab(self):
+        self.padded_vocab_size = self.tokenizer.vocab_size
+
     # training calls
     def get_actor_forward_output_and_loss_func(self):
         def fwd_output_and_loss_func(data_iterator, model):
