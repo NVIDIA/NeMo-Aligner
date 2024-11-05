@@ -55,11 +55,12 @@ from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
 class ChunkedJsonl:
+    CHUNK_ID_STRING = "CHUNK_ID"
+
     def __init__(self, path_placeholder, n_chunks, n_examples_per_chunk):
-        self.CHUNK_ID_STRING = "CHUNK_ID"
         assert (
             self.CHUNK_ID_STRING in path_placeholder
-        ), f"path_placehold ({path_placeholder}) does not have the CHUNK_ID_STRING ({self.CHUNK_ID_STRING})"
+        ), f"{path_placeholder=} does not contain {repr(self.CHUNK_ID_STRING)}"
         self.path_placeholder = path_placeholder
 
         # get the maximum number of chunks
@@ -71,7 +72,7 @@ class ChunkedJsonl:
         assert max_n_chunks > 0, f"no files match the required path {path_placeholder}"
         self.n_chunks = min(n_chunks, max_n_chunks)
 
-        print(f"Initializing chunked jsonl...")
+        print("Initializing chunked jsonl...")
         lengths = [n_examples_per_chunk for _ in range(self.n_chunks)]
         print(f"Number of Chunks = {self.n_chunks} | Number of Examples = {n_examples_per_chunk * self.n_chunks}")
         self._lengths = np.asarray(lengths)
