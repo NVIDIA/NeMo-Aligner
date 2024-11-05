@@ -8,17 +8,14 @@ export NCCL_ALGO=Tree
 export NVTE_APPLY_QK_LAYER_SCALING=1
 
 KL=${KL:-0.1}
-#LR=${LR:-9e-7}
 GBS=${GBS:-4}
 PRETRAINED_CHECKPOINT_NEMO_FILE=${PRETRAINED_CHECKPOINT_NEMO_FILE}
 
 
-#MIN_LR=$(awk -v var="$LR" 'BEGIN {print var - 1e-11}')
-
 TRAIN_DATA_PATH=$SCRIPT_DIR/test_data/dummy-dpo.jsonl
 VALID_DATA_PATH=$SCRIPT_DIR/test_data/dummy-dpo.jsonl
 
-NAME="llama3_dpo_test"
+NAME="dpo_test"
 
 # PARAMETERS
 RESULTS_DIR="/tmp/${NAME}"
@@ -27,7 +24,7 @@ mkdir -p $RESULTS_DIR
 GPFS=$(git rev-parse --show-toplevel)
 
 # W&B Logging
-PROJECT=llama3_dpo_test
+PROJECT=dpo_test
 
 # START HETEROGENEUS JOB 3
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
@@ -44,7 +41,7 @@ dpo() {
 export CUDA_VISIBLE_DEVICES=0,1
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
-mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
+torchrun --nproc-per-node 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
     --config-path=${CONF_DIR} \
     --config-name=${CONF_NAME} \
     trainer.num_nodes=1 \

@@ -15,7 +15,7 @@ MAX_SEQ_LENGTH=${MAX_SEQ_LENGTH:-4096}
 TRAIN_DATA_PATH=$SCRIPT_DIR/test_data/dummy-sft.jsonl
 VALID_DATA_PATH=$SCRIPT_DIR/test_data/dummy-sft.jsonl
 
-NAME="llama3_sft_test"
+NAME="sft_test"
 
 # PARAMETERS
 RESULTS_DIR="/tmp/${NAME}"
@@ -24,7 +24,7 @@ mkdir -p $RESULTS_DIR
 GPFS=$(git rev-parse --show-toplevel)
 
 # W&B Logging
-PROJECT=llama3_sft_test
+PROJECT=sft_test
 
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
 CONF_NAME="gpt_sft"
@@ -40,7 +40,7 @@ sft() {
 export CUDA_VISIBLE_DEVICES=0,1
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
-mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_sft.py \
+torchrun --nproc-per-node 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_sft.py \
     --config-path=${CONF_DIR} \
     --config-name=${CONF_NAME} \
     trainer.num_nodes=1 \
