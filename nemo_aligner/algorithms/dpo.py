@@ -29,6 +29,15 @@ from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory
 
+def pad_sequence_to_max(sequences, max_len, padding_value=0):
+    # Then, pad further to match `max_len`
+    if sequences.size(1) > max_len:
+        raise RuntimeError("max len has to be > seq len")
+    elif sequences.size(1) <= max_len:
+        pad_size = max_len - sequences.size(1)
+        padding = torch.full((sequences.size(0), pad_size), padding_value)
+        padded_sequences = torch.cat([sequences, padding], dim=1)
+    return padded_sequences
 
 def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
     chosen_tokens = [item["chosen"] for item in batch]
@@ -317,6 +326,15 @@ class DPOTrainer:
         while True:
             try:
                 batch = next(iter_dataloader)
+                if self.model.cfg.mamba_hybrid:
+                    max_seq_len = max([batch['chosen'].size(-1), batch['rejected'].size(-1), batch['chosen_labels'].size(-1), batch['rejected_labels'].size(-1)])
+                    max_seq_len = torch.tensor(max_seq_len, device=torch.cuda.current_device())
+                    torch.distributed.all_reduce(max_seq_len, op=torch.distributed.ReduceOp.MAX)
+                    max_seq_len = ((max_seq_len.item() + 255) // 256) * 256
+                    batch["chosen"] = pad_sequence_to_max(batch["chosen"], max_seq_len, padding_value=self.model.tokenizer.eos_id)
+                    batch["chosen_labels"] = pad_sequence_to_max(batch["chosen_labels"], max_seq_len, padding_value=-100)
+                    batch["rejected"] = pad_sequence_to_max(batch["rejected"], max_seq_len, padding_value=self.model.tokenizer.eos_id)
+                    batch["rejected_labels"] = pad_sequence_to_max(batch["rejected_labels"], max_seq_len, padding_value=-100)
                 logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
                 chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
                 batch["ref_policy_log_probs_chosen"] = chosen_logps
