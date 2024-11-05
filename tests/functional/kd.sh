@@ -66,7 +66,7 @@ torchrun --nproc-per-node 2 python -u ${GPFS}/examples/nlp/synthetic_data_gen/co
 TRAIN_DATA_PATH=${LOGITS_DATA_DIR}/train_with_logits_CHUNK_ID.jsonl
 VALID_DATA_PATH=${LOGITS_DATA_DIR}/train_with_logits_CHUNK_ID.jsonl
 
-mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_knowledge_distillation.py \
+torchrun --nproc-per-node 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_knowledge_distillation.py \
     trainer.num_nodes=1 \
     trainer.devices=2 \
     trainer.knowledge_distillation.max_steps=3 \
