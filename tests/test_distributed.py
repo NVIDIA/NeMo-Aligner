@@ -54,9 +54,8 @@ def calculate_entropy_full(logits):
     return calculate_entropy(full_log_probs)
 
 
-### the functions below are copied & slightly modified (removing self.)
-### from  (https://github.com/NVIDIA/NeMo-Aligner/blob/8927528c20f0a16254e72fceeea0adf842e34c94/nemo_aligner/models/nlp/gpt/megatron_gpt_knowledge_distillation.py#L182)
-def naive_topk_loss_function(
+### naive reference implementation
+def naive_top_k_loss_function(
     output_tensor,
     target_topk_logits,
     target_topk_token_ids,
@@ -329,7 +328,7 @@ def test_broadcast_within_pp(init_model_parallel, tp_size, pp_size, from_last, s
         (3, 4, 8, 16, 0.5, 0.5, False, True),
     ],
 )
-def test_topk_logits(
+def test_top_k_logits(
     init_model_parallel,
     K,
     batch_size,
@@ -368,7 +367,7 @@ def test_topk_logits(
     # test forward
     ctx = torch.autograd.function.FunctionCtx()
 
-    naive_loss = naive_topk_loss_function(
+    naive_loss = naive_top_k_loss_function(
         vocab_parallel_logits,
         target_logits,
         target_token_ids,

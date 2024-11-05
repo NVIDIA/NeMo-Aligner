@@ -7,9 +7,6 @@ set -eoux pipefail
 export NCCL_ALGO=Tree
 export NVTE_APPLY_QK_LAYER_SCALING=1
 
-KL=${KL:-0.1}
-#LR=${LR:-9e-7}
-GBS=${GBS:-4}
 PRETRAINED_CHECKPOINT_NEMO_FILE=${PRETRAINED_CHECKPOINT_NEMO_FILE}
 
 #MIN_LR=$(awk -v var="$LR" 'BEGIN {print var - 1e-11}')
@@ -27,7 +24,7 @@ mkdir -p $RESULTS_DIR
 GPFS=$(git rev-parse --show-toplevel)
 
 # W&B Logging
-PROJECT=llama3_kd_test
+PROJECT=kd_test
 
 # START HETEROGENEUS JOB 3
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
@@ -47,7 +44,7 @@ kd() {
 export CUDA_VISIBLE_DEVICES=0,1
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
-mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/synthetic_data_gen/compute_topk_logits.py \
+torchrun --nproc-per-node 2 python -u ${GPFS}/examples/nlp/synthetic_data_gen/compute_topk_logits.py \
     trainer.num_nodes=1 \
     trainer.devices=2 \
     trainer.precision=bf16 \
@@ -78,7 +75,7 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_kn
     ++model.data.n_chunks=1 \
     ++"model.data.n_examples_per_chunk={train: 50, validation: 50, test: 50}" \
     ++model.data.seq_length=128 \
-    ++model.global_batch_size=${GBS} \
+    ++model.global_batch_size=4 \
     ++model.micro_batch_size=1 \
     ++model.mcore_gpt=true \
     ++model.megatron_amp_O2=true \
