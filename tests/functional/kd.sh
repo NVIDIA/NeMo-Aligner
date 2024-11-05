@@ -44,7 +44,7 @@ kd() {
 export CUDA_VISIBLE_DEVICES=0,1
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
-torchrun --nproc-per-node 2 python -u ${GPFS}/examples/nlp/synthetic_data_gen/compute_topk_logits.py \
+torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/synthetic_data_gen/compute_topk_logits.py \
     trainer.num_nodes=1 \
     trainer.devices=2 \
     trainer.precision=bf16 \
@@ -66,7 +66,7 @@ torchrun --nproc-per-node 2 python -u ${GPFS}/examples/nlp/synthetic_data_gen/co
 TRAIN_DATA_PATH=${LOGITS_DATA_DIR}/train_with_logits_CHUNK_ID.jsonl
 VALID_DATA_PATH=${LOGITS_DATA_DIR}/train_with_logits_CHUNK_ID.jsonl
 
-torchrun --nproc-per-node 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_knowledge_distillation.py \
+torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_knowledge_distillation.py \
     trainer.num_nodes=1 \
     trainer.devices=2 \
     trainer.knowledge_distillation.max_steps=3 \
