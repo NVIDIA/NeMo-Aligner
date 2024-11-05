@@ -40,7 +40,7 @@ sft() {
 export CUDA_VISIBLE_DEVICES=0,1
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
-torchrun --nproc-per-node 2 python -u ${GPFS}/examples/nlp/gpt/train_gpt_sft.py \
+torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_sft.py \
     --config-path=${CONF_DIR} \
     --config-name=${CONF_NAME} \
     trainer.num_nodes=1 \
