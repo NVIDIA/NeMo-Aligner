@@ -312,6 +312,8 @@ class DPOModelDataset(Dataset):
         assert reject[0:prompt_len] == prompt, "the tokenizer for DPO has merged tokens between prompt and response"
 
         max_curr_seq_len = max(chosen_len, reject_len)
+
+        ## TODO: check whether this works wtih sequence packing!!!
         if max_curr_seq_len > self.seq_length:
             logging.warning(
                 f"WARNING: Tokenized text exceeds max seq length ({max_curr_seq_len} vs {self.seq_length})."
@@ -352,6 +354,174 @@ class DPOModelDataset(Dataset):
         }
         return output
 
+class DPOPackedDataset(DPOModelDataset):
+    """TODO: docstring
+    """
+
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True, return_cu_seqlen: bool = True
+    ):
+
+        np.random.seed(seed) ## TODO: why is this needed in sft dataset?
+        super().__init__(
+            cfg,
+            tokenizer,
+            name,
+            data_prefix,
+            documents,
+            data,
+            seq_length,
+            seed,
+            drop_last
+        )
+        self.data_prefix = data_prefix
+        ## cumulative sequence lengths
+        self.return_cu_seqlen = return_cu_seqlen
+
+
+    def __getitem__(self, idx):
+        #if self.samples_mapping is not None:
+        #    # assert idx < len(self.samples_mapping)
+        #    idx = self.samples_mapping[idx]
+
+        payload = self.indexed_dataset[idx]
+    
+        ## the following consist of chosen and rejected samples interleaved
+        input_ids = payload["input_ids"]
+        labels = payload["labels"] ## TODO: try to pack the labels. Ask Chen why this isn't done in nemo already
+        rewards = payload.get("reward", None)
+        lengths = payload["lengths"]
+        seq_boundaries = payload["seq_boundaries"]  + [len(input_ids)] ## TODO: this should be added to the preprocessed dataset
+
+        return {
+            "input_ids": input_ids,
+            "labels": labels,
+            "rewards": rewards,
+            "lengths": lengths,
+            "seq_boundaries": seq_boundaries
+        }
+
+    def __len__(self):
+        return len(self.indexed_dataset)
+
+    def _load_dataset(self):
+        try:
+            self.indexed_dataset = np.load(self.data_prefix, allow_pickle=True)
+        except Exception as e:
+            logging.error(
+                f"Failed to load packed dataset. The dataset should be a `.npy` file. "
+                f"Please check if the packed dataset was prepared correctly. The original error was:\n {e}",
+            )
+            exit(1)
+    
+    def _ceil_to_nearest(self, n, m):
+        return (n + m - 1) // m * m
+    
+    def _maybe_cast_to_list(self, x):
+        return [item.tolist() if isinstance(item, np.ndarray) else item for item in x]
+
+    def _collate_item(self, item, max_length, pad_id):
+        item = self._maybe_cast_to_list(item)
+        # max_length = max([len(x) for x in item]) if item else 0
+        # here [0] should be tokenizer.pad_id
+        #item = [x + [pad_id] * (max_length - len(x)) for x in item]
+        final_item = []
+        for x in item:
+            if len(x) <= max_length:
+                final_item.append(x + [pad_id] * (max_length - len(x)))
+            ### TODO: this is a hacky WAR. Find a better way to deal with long sequences
+            else:
+                final_item.append(x[:max_length])
+        return final_item
+
+    def collate_fn(self, batch):
+        def combine_keys(key):
+            return [item[key] for item in batch]
+
+        input_ids = combine_keys("input_ids")
+        labels = combine_keys("labels")
+        length = combine_keys("lengths")
+        reward = combine_keys("reward")
+
+        """if self.pad_to_max_length:
+            max_length_chosen = self.max_seq_length
+            max_length_rejected = self.max_seq_length
+        else:"""
+        # pad to the nearest multiple of 16 for FP8 training
+        # for many datasets in practice, all packed sequence lengths are very close to the
+        # target length (2048, 4096, 8192), so there is very minimal padding
+        max_length = max(len(l) for l in input_ids)
+
+        max_length = min(self.seq_length, self._ceil_to_nearest(max_length, 16)) ##self.pad_seq_length_to_mult)) ## TODO: support
+        print(f'{max_length=}')
+        assert max_length <= self.seq_length
+
+        position_ids: List[List[int]] = []
+        cu_seqlens: List[List[int]] = []
+        for item in batch:
+            position_ids.append([])
+            cu_seqlens.append([0])
+            ## TODO: chosen and rejected sequences always have the same seq len
+            ## is this expected?
+            seqlens = np.array(item['seq_boundaries'][1:]) - np.array(item['seq_boundaries'][:-1])
+            for l in seqlens:
+                position_ids[-1].extend(list(range(l)))
+                cu_seqlens[-1].append(cu_seqlens[-1][-1] + l)
+            # set last seq to the max seq len because rope and attn kernels expect no padding
+            cu_seqlens[-1][-1] = max_length
+
+        assert len(input_ids[0]) == len(
+            position_ids[0]
+        ), "Dataset problem: input_ids and position_ids lengths don't match"
+        
+        input_ids = self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        labels = self._collate_item(labels, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
+        
+        max_num_sequences = max(len(l) for l in length)
+
+        ## TODO: figure out whether this is the right way to pad length and reward
+        length = self._collate_item(length, max_length=max_num_sequences, pad_id=0)
+        reward = self._collate_item(reward, max_length=max_num_sequences, pad_id=-1)
+        
+        output = {
+            "input_ids": torch.LongTensor(input_ids),
+            "length": torch.LongTensor(length),
+            "labels": torch.LongTensor(labels),
+            "reward": torch.LongTensor(reward), ## TODO: is this the right shape? -- compare to non-packed version
+            "position_ids": torch.LongTensor(position_ids),
+        }
+
+        ### TODO!!! needed for TE
+        '''if self.return_cu_seqlen:
+            cu_seqlens = self._collate_item(cu_seqlens, max_length=max(len(l) for l in cu_seqlens) + 1, pad_id=-1)
+
+            # Pre-generate `cu_seqlens_argmin` and `max_seqlen` as CPU tensor to avoid device-to-host copies.
+            cu_seqlens = torch.IntTensor(cu_seqlens)
+            cu_seqlens_argmin = torch.argmin(cu_seqlens, dim=1, keepdim=True)
+            seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
+            max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
+
+            processed_batch.update(
+                {
+                    'attention_mask': torch.LongTensor(
+                        [1] * len(input_ids)
+                    ),  # no attention mask is needed for packed seq
+                    'cu_seqlens': torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
+                    'cu_seqlens_argmin': cu_seqlens_argmin,  # only required for perf
+                    'max_seqlen': max_seqlen,  # only required for perf
+                }
+            )
+        else:
+            attention_mask = [self._create_attention_mask(max_length) for _ in batch]
+            processed_batch.update(
+                {
+                    'attention_mask': torch.stack(attention_mask),
+                }
+            )'''
+
+        return output
+        
 
 class KTOModelDataset(Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
