@@ -29,6 +29,7 @@ from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory
 
+from nemo_aligner.utils.multimodal import pad_and_batch_samples
 
 def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
     chosen_tokens = [item["chosen"] for item in batch]
@@ -54,6 +55,14 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
         attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
 
+    media_tensors = [item.get("media", None) for item in batch]
+    
+    if all(item is not None for item in media_tensors):        
+        media = [torch.nested.nested_tensor(media_tensor_list).to_padded_tensor(padding=-1) for media_tensor_list in media_tensors]
+        media = pad_and_batch_samples(media) # batch_size, n_images, 3, H, W
+    else:
+        media = None
+    
     output = {
         "chosen": chosen_tokens,
         "rejected": rejected_tokens,
@@ -65,6 +74,7 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
         "position_ids": position_ids,
         "chosen_rewards": chosen_rewards,
         "rejected_rewards": rejected_rewards,
+        "media": media,
     }
     return output
 

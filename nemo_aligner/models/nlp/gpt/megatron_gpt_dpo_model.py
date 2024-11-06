@@ -40,9 +40,9 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
 )
 from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
+from nemo_aligner.utils.multimodal import MultimodalMixin, DPOMixin
 
-
-class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
+class MegatronGPTDPOModel(MultimodalMixin, DPOMixin, NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
     """
     Megatron GPT DPO Model Training.
     """
