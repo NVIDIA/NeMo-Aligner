@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import operator
+import re
 from collections import UserDict
 from contextlib import nullcontext
+from itertools import permutations, product
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -45,6 +48,75 @@ from nemo_aligner.utils.ppo_utils import calculate_ppo_rewards, create_mask
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict
+
+
+def solve_24(numbers):
+    ops = {"+": operator.add, "-": operator.sub, "*": operator.mul, "/": operator.truediv}
+
+    for nums in permutations(numbers):
+        for op1, op2, op3 in product(ops, repeat=3):
+            # ((a op1 b) op2 c) op3 d
+            try:
+                if abs(ops[op3](ops[op2](ops[op1](nums[0], nums[1]), nums[2]), nums[3]) - 24) < 1e-10:
+                    return f"(({nums[0]} {op1} {nums[1]}) {op2} {nums[2]}) {op3} {nums[3]}"
+            except ZeroDivisionError:
+                continue
+
+            # (a op1 b) op2 (c op3 d)
+            try:
+                if abs(ops[op2](ops[op1](nums[0], nums[1]), ops[op3](nums[2], nums[3])) - 24) < 1e-10:
+                    return f"({nums[0]} {op1} {nums[1]}) {op2} ({nums[2]} {op3} {nums[3]})"
+            except ZeroDivisionError:
+                continue
+
+    return "Impossible"
+
+
+def extract_box_content(text):
+    # Pattern to match \box{} and capture its content
+    pattern = r"\\boxed\{([^}]*)\}"
+    # Find all matches
+    matches = re.findall(pattern, text)
+    return matches
+
+
+def evaluate_all(answers):
+    return [judget_game24(*item)[0] for item in answers]
+
+
+def judget_game24(answer: str, input: str) -> bool:
+    if answer == "" or answer is None:
+        return False, "No answer provided"
+    # strip away the content after the '=' sign
+    answer = answer.split("=")[0].strip()
+
+    # convert input to list of integers
+    input_list = list(map(int, input.split(",")))
+    solver_ans = solve_24(input_list)
+    if solver_ans == "Impossible":
+        # check if 'impossible' is a substring of the answer
+        if "impossible" in answer.lower():
+            return True, "there is no solution and the answer says impossible"
+        else:
+            return False, "there is no solution, but the answer is not impossible"
+    # there must be a solution
+    if answer == "Impossible":
+        return False, "there is a solution, but the answer is impossible"
+    try:
+        # extract out the numbers from the answer
+        numbers = re.findall(r"\d+", answer)
+        if len(numbers) != 4:
+            return False, "there are not exactly 4 numbers in the answer"
+        # check if the numbers in the answer are the same as the input
+        if set(map(int, numbers)) != set(input_list):
+            return False, "the numbers in the answer are not the same as the input"
+
+        # check if the answer evaluates to 24
+        if eval(answer) != 24:
+            return False, "the answer does not evaluate to 24"
+        return True, "the answer is correct"
+    except:
+        return False, "the answer is not a valid arithmetic"
 
 
 def sandbox_call(sandbox, answers):
@@ -182,10 +254,10 @@ class GRPOTrainer:
         self.ckpt_callback = ckpt_callback
 
         # TODO: we need to send it once per TP rank, but do that later i guess...
-        self.sandbox = get_sandbox()
+        # self.sandbox = get_sandbox()
 
         # sanity check
-        assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
+        # assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -385,9 +457,10 @@ class GRPOTrainer:
                 ]
                 answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
                 # TODO: need to make this async for real
-                output = run_if_model_parallel_src(sandbox_call, self.sandbox, answers)
+                output = run_if_model_parallel_src(evaluate_all, answers)
                 if output is not None:
-                    all_rewards.extend(output)
+                    reward, _ = output
+                    all_rewards.extend(reward)
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 

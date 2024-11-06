@@ -59,6 +59,46 @@ Below is a math question. I want you to first reason through the steps required 
 """
 
 
+class Game24Dataset:
+    def __init__(self, data_path, tokenizer, use_text_field_from_data=False):
+        super().__init__()
+        self.data_path = data_path
+        self.tokenizer = tokenizer
+        self.use_text_field_from_data = use_text_field_from_data
+
+        assert os.path.exists(self.data_path), f"{self.data_path} must exist"
+
+        with jsonlines.open(self.data_path) as reader:
+            self.data = [obj for obj in reader]
+
+    def __len__(self):
+        return len(self.data)
+
+    def encode(self, text):
+        text_ids = self.tokenizer.text_to_ids(text)
+        return text_ids, len(text_ids)
+
+    def __getitem__(self, idx):
+        """
+        Return a single prompt.
+        """
+        assert self.use_text_field_from_data
+
+        text = self.data[idx]["text"]
+        answer = self.data[idx]["input"]
+        sample, _ = self.encode(text)
+        sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
+
+        output = {
+            "text": sample_tensor,
+            "length": sample_tensor.shape[0],
+            "answer": answer,
+            "loss_multiplier": True,
+            "idx": idx,
+        }
+        return output
+
+
 class MathDataset:
     def __init__(self, data_path, tokenizer, use_text_field_from_data=False):
         super().__init__()
@@ -146,12 +186,12 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_ds = MathDataset(
+    train_ds = Game24Dataset(
         cfg.model.data.data_prefix["train"][0],
         ptl_model.tokenizer,
         use_text_field_from_data=cfg.use_text_field_from_data,
     )
-    validation_ds = MathDataset(
+    validation_ds = Game24Dataset(
         cfg.model.data.data_prefix["validation"][0],
         ptl_model.tokenizer,
         use_text_field_from_data=cfg.use_text_field_from_data,
