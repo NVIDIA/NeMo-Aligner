@@ -68,23 +68,17 @@ def tokenize_dataset(cfg: 'DictConfig'):
         drop_last=True, ## TODO: do not hard-code
     )
 
-    ## concatenate chosen_* and rejected* for each example
     combined_dataset = []
     for item in dataset:
-        input_ids = torch.cat((item["chosen"], item["rejected"])).numpy()
-        labels = torch.cat((item["chosen_labels"], item["rejected_labels"])).numpy()
-        reward = torch.tensor([item["chosen_reward"], item["rejected_reward"]]).numpy()
-        boundary = len(item["chosen"])
-        lengths = np.array([item["chosen_length"], item["rejected_length"]])
-        new_item = {
-            "input_ids": input_ids,
-            "labels": labels,
-            "reward": reward,
-            "lengths": lengths,
-            "boundary": boundary
-        }
-        combined_dataset.append(new_item)
+        for k in item:
+            if isinstance(item[k], torch.Tensor):
+                item[k] = item[k].numpy()
+        item["boundary"] = len(item["chosen"])
+        item["input_ids"] = item["chosen"] ## WAR for create_hist
+        combined_dataset.append(item)
 
+    ## NOTE: chosen and rejected are already padded to the same sequence length,
+    ## so there's nothing to do here!
     return np.array(combined_dataset)
 
 
@@ -118,51 +112,97 @@ def fill_packing_strategy(
         per_seq_data = sequences[seq_len]
         if len(per_seq_data) > 0:
             perm = np.random.permutation(len(per_seq_data))
-            input_ids = np.array([x['input_ids'] for x in per_seq_data])[perm].tolist()
-            labels = np.array([x['labels'] for x in per_seq_data])[perm].tolist()
-            reward = np.array([x['reward'] for x in per_seq_data])[perm].tolist()
-            lengths = np.array([x['lengths'] for x in per_seq_data])[perm].tolist()
+
+            chosen_tokens = np.array([x['chosen'] for x in per_seq_data])[perm].tolist()
+            rejected_tokens = np.array([x['rejected'] for x in per_seq_data])[perm].tolist()
+            chosen_labels = np.array([x['chosen_labels'] for x in per_seq_data])[perm].tolist()
+            rejected_labels = np.array([x['rejected_labels'] for x in per_seq_data])[perm].tolist()
+            chosen_length = np.array([x['chosen_length'] for x in per_seq_data])[perm].tolist()
+            rejected_length = np.array([x['rejected_length'] for x in per_seq_data])[perm].tolist()
+            chosen_reward = np.array([x['chosen_reward'] for x in per_seq_data])[perm].tolist()
+            rejected_reward = np.array([x['rejected_reward'] for x in per_seq_data])[perm].tolist()
             boundary = np.array([x['boundary'] for x in per_seq_data])[perm].tolist()
 
-            """try:
-                loss_mask = np.array(
-                    [[idx >= x['answer_start_idx'] for idx in range(len(x['input_ids']))] for x in per_seq_data]
-                )[perm].tolist()
-            except KeyError:
-                loss_mask = None"""
-            ifile_handles[seq_len] = (input_ids, labels, reward, lengths, boundary)
+            ifile_handles[seq_len] = (
+                chosen_tokens,
+                rejected_tokens,
+                chosen_labels,
+                rejected_labels,
+                chosen_length,
+                rejected_length,
+                chosen_reward,
+                rejected_reward,
+                boundary,
+            )
 
-    input_ids, labels, reward, lengths, seq_boundaries = {}, {}, {}, {}, {}
+    (
+        chosen_ids,
+        rejected_ids,
+        chosen_labels,
+        rejected_labels,
+        chosen_length,
+        rejected_length,
+        chosen_reward,
+        rejected_reward,
+        seq_boundaries,
+    ) = {}, {}, {}, {}, {}, {}, {}, {}, {}
 
     for oindex, assignment in tqdm(enumerate(assignments), total=len(assignments)):
-        _input_ids, _labels, _reward, _lengths, _seq_boundaries = [], [], [], [], [0]
+        (
+            _chosen_ids,
+            _rejected_ids,
+            _chosen_labels,
+            _rejected_labels,
+            _chosen_length,
+            _rejected_length,
+            _chosen_reward,
+            _rejected_reward,
+            _seq_boundaries
+         ) = [], [], [], [], [], [], [], [], [0]
 
         for seq_length in assignment:
 
-            previous_seq_len = len(_input_ids)
+            previous_seq_len = len(_chosen_ids) ## also equals len(_rejected_ids)
 
-            _input_ids.extend(ifile_handles[seq_length][0].pop())
-            _labels.extend(ifile_handles[seq_length][1].pop())
-            _reward.extend(ifile_handles[seq_length][2].pop())
-            _lengths.extend(ifile_handles[seq_length][3].pop())
+            _chosen_ids.extend(ifile_handles[seq_length][0].pop())
+            _rejected_ids.extend(ifile_handles[seq_length][1].pop())
+            _chosen_labels.extend(ifile_handles[seq_length][2].pop())
+            _rejected_labels.extend(ifile_handles[seq_length][3].pop())
+            _chosen_length.append(ifile_handles[seq_length][4].pop())
+            _rejected_length.append(ifile_handles[seq_length][5].pop())
+            _chosen_reward.append(ifile_handles[seq_length][6].pop())
+            _rejected_reward.append(ifile_handles[seq_length][7].pop())
 
             ## store the boundaries for the chosen, rejected sequences
-            _seq_boundaries.append(previous_seq_len + ifile_handles[seq_length][4].pop())
-            _seq_boundaries.append(len(_input_ids))
+            _seq_boundaries.append(previous_seq_len + ifile_handles[seq_length][8].pop())
+            _seq_boundaries.append(len(_chosen_ids))
 
-        input_ids[oindex] = _input_ids
-        labels[oindex] = _labels
-        reward[oindex] = _reward
-        lengths[oindex] = _lengths
+        chosen_ids[oindex] = _chosen_ids
+        rejected_ids[oindex] = _rejected_ids
+        chosen_labels[oindex] = _chosen_labels
+        rejected_labels[oindex] = _rejected_labels
+        chosen_length[oindex] = _chosen_length
+        rejected_length[oindex] = _rejected_length
+        chosen_reward[oindex] = _chosen_reward
+        rejected_reward[oindex] = _rejected_reward
         seq_boundaries[oindex] = _seq_boundaries[:-1]
 
     output_data = []
-    for i in range(len(input_ids)):
-        item_dict = {'input_ids': input_ids[i], 'labels': labels[i], 'reward': reward[i], 'lengths': lengths[i], 'seq_boundaries': seq_boundaries[i]}
+    for i in range(len(chosen_ids)):
+        item_dict = {
+            'chosen': chosen_ids[i],
+            'rejected': rejected_ids[i],
+            'chosen_labels': chosen_labels[i],
+            'rejected_labels': rejected_labels[i],
+            'chosen_length': chosen_length[i],
+            'rejected_length': rejected_length[i],
+            'chosen_reward': chosen_reward[i],
+            'rejected_reward': rejected_reward[i],
+            'seq_boundaries': seq_boundaries[i]
+        }
         output_data.append(item_dict)
 
-    # (input_ids, labels, reward, lengths, boundary) = length 5
-    for i in range(5):
+    for i in range(9):
         assert all(not seq[i] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
     return output_data
 

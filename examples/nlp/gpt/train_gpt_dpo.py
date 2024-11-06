@@ -20,7 +20,11 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.dpo import DPOTrainer, dpo_custom_collate
-from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_dpo_datasets
+from nemo_aligner.data.nlp.builders import (
+    build_dataloader,
+    build_train_valid_test_dpo_datasets,
+    build_train_valid_test_dpo_packed_datasets,
+)
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -85,7 +89,11 @@ def main(cfg) -> None:
     # use the entire dataset
     train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
 
-    train_ds, validation_ds, test_ds = build_train_valid_test_dpo_datasets(
+    if cfg.model.data.data_impl=="packed_jsonl":
+        build_fn = build_train_valid_test_dpo_packed_datasets
+    else:
+        build_fn = build_train_valid_test_dpo_datasets
+    train_ds, validation_ds, test_ds = build_fn(
         cfg=cfg.model,
         data_prefix=cfg.model.data.data_prefix,
         data_impl=cfg.model.data.data_impl,
@@ -96,6 +104,7 @@ def main(cfg) -> None:
         tokenizer=ptl_model.tokenizer,
     )
 
+    collate = train_ds.collate_fn if cfg.model.data.data_impl=="packed_jsonl" else dpo_custom_collate
     train_dataloader = build_dataloader(
         cfg=cfg,
         dataset=train_ds,
@@ -105,7 +114,7 @@ def main(cfg) -> None:
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
         collate_fn=partial(
-            dpo_custom_collate,
+            collate,
             eos_id=ptl_model.tokenizer.eos_id,
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
@@ -113,6 +122,7 @@ def main(cfg) -> None:
         ),
     )
 
+    collate = validation_ds.collate_fn if cfg.model.data.data_impl=="packed_jsonl" else dpo_custom_collate
     val_dataloader = build_dataloader(
         cfg=cfg,
         dataset=validation_ds,
@@ -122,7 +132,7 @@ def main(cfg) -> None:
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
         collate_fn=partial(
-            dpo_custom_collate,
+            collate,
             eos_id=ptl_model.tokenizer.eos_id,
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),

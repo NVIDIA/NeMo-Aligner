@@ -22,6 +22,7 @@ import torch
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
+from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.core import Dataset
 from nemo.utils import logging
 
@@ -379,41 +380,21 @@ class DPOPackedDataset(DPOModelDataset):
         self.return_cu_seqlen = return_cu_seqlen
 
 
+    ## TODO: when is shuffling done?
     def __getitem__(self, idx):
         #if self.samples_mapping is not None:
         #    # assert idx < len(self.samples_mapping)
         #    idx = self.samples_mapping[idx]
 
-        payload = self.indexed_dataset[idx]
-    
-        ## the following consist of chosen and rejected samples interleaved
-        input_ids = payload["input_ids"]
-        labels = payload["labels"] ## TODO: try to pack the labels. Ask Chen why this isn't done in nemo already
-        rewards = payload.get("reward", None)
-        lengths = payload["lengths"]
-        seq_boundaries = payload["seq_boundaries"]  + [len(input_ids)] ## TODO: this should be added to the preprocessed dataset
+        payload = self.data[idx]
+        ## TODO: what is the purpose of this line?
+        payload["seq_boundaries"] = payload["seq_boundaries"]  + [len(payload["chosen"])]
 
-        return {
-            "input_ids": input_ids,
-            "labels": labels,
-            "rewards": rewards,
-            "lengths": lengths,
-            "seq_boundaries": seq_boundaries
-        }
+        return payload
 
     def __len__(self):
-        return len(self.indexed_dataset)
+        return len(self.data)
 
-    def _load_dataset(self):
-        try:
-            self.indexed_dataset = np.load(self.data_prefix, allow_pickle=True)
-        except Exception as e:
-            logging.error(
-                f"Failed to load packed dataset. The dataset should be a `.npy` file. "
-                f"Please check if the packed dataset was prepared correctly. The original error was:\n {e}",
-            )
-            exit(1)
-    
     def _ceil_to_nearest(self, n, m):
         return (n + m - 1) // m * m
     
@@ -434,14 +415,20 @@ class DPOPackedDataset(DPOModelDataset):
                 final_item.append(x[:max_length])
         return final_item
 
-    def collate_fn(self, batch):
+    ## TODO: unused arguments
+    def collate_fn(self, batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
         def combine_keys(key):
             return [item[key] for item in batch]
 
-        input_ids = combine_keys("input_ids")
-        labels = combine_keys("labels")
-        length = combine_keys("lengths")
-        reward = combine_keys("reward")
+        chosen = combine_keys("chosen")
+        rejected = combine_keys("rejected")
+        chosen_labels = combine_keys("chosen_labels")
+        rejected_labels = combine_keys("rejected_labels")
+        chosen_length = combine_keys("chosen_length")
+        rejected_length = combine_keys("rejected_length")
+        chosen_reward = combine_keys("chosen_reward")
+        rejected_reward = combine_keys("rejected_reward")
+        seq_boundaries = combine_keys("seq_boundaries")
 
         """if self.pad_to_max_length:
             max_length_chosen = self.max_seq_length
@@ -450,10 +437,9 @@ class DPOPackedDataset(DPOModelDataset):
         # pad to the nearest multiple of 16 for FP8 training
         # for many datasets in practice, all packed sequence lengths are very close to the
         # target length (2048, 4096, 8192), so there is very minimal padding
-        max_length = max(len(l) for l in input_ids)
+        max_length = max(len(l) for l in chosen)
 
         max_length = min(self.seq_length, self._ceil_to_nearest(max_length, 16)) ##self.pad_seq_length_to_mult)) ## TODO: support
-        print(f'{max_length=}')
         assert max_length <= self.seq_length
 
         position_ids: List[List[int]] = []
@@ -470,26 +456,47 @@ class DPOPackedDataset(DPOModelDataset):
             # set last seq to the max seq len because rope and attn kernels expect no padding
             cu_seqlens[-1][-1] = max_length
 
-        assert len(input_ids[0]) == len(
+        assert len(chosen[0]) == len(
             position_ids[0]
         ), "Dataset problem: input_ids and position_ids lengths don't match"
         
-        input_ids = self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
-        labels = self._collate_item(labels, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        chosen = self._collate_item(chosen, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        rejected = self._collate_item(rejected, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        chosen_labels = self._collate_item(chosen_labels, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        rejected_labels = self._collate_item(rejected_labels, max_length=max_length, pad_id=self.tokenizer.eos_id)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
         
-        max_num_sequences = max(len(l) for l in length)
+        max_num_sequences = max(len(l) for l in chosen_length)
 
         ## TODO: figure out whether this is the right way to pad length and reward
-        length = self._collate_item(length, max_length=max_num_sequences, pad_id=0)
-        reward = self._collate_item(reward, max_length=max_num_sequences, pad_id=-1)
-        
+        chosen_length = self._collate_item(chosen_length, max_length=max_num_sequences, pad_id=0)
+        rejected_length = self._collate_item(rejected_length, max_length=max_num_sequences, pad_id=0)
+        chosen_reward = self._collate_item(chosen_reward, max_length=max_num_sequences, pad_id=-1)
+        rejected_reward = self._collate_item(rejected_reward, max_length=max_num_sequences, pad_id=-1)
+        seq_boundaries = self._collate_item(seq_boundaries, max_length=max_num_sequences, pad_id=-1)
+
+        ## TODO: I don't think this is right when packing
+        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+            torch.LongTensor(chosen), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+        )
+        assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
+        if attention_mask.shape[0] == 1:
+            # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+            # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
+            attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+
         output = {
-            "input_ids": torch.LongTensor(input_ids),
-            "length": torch.LongTensor(length),
-            "labels": torch.LongTensor(labels),
-            "reward": torch.LongTensor(reward), ## TODO: is this the right shape? -- compare to non-packed version
-            "position_ids": torch.LongTensor(position_ids),
+            "chosen": torch.LongTensor(chosen),
+            "rejected": torch.LongTensor(rejected),
+            "chosen_labels": torch.LongTensor(chosen_labels),
+            "rejected_labels": torch.LongTensor(rejected_labels),
+            "chosen_length": torch.LongTensor(chosen_length),
+            "rejected_length": torch.LongTensor(rejected_length),
+            "chosen_rewards": torch.LongTensor(chosen_reward), ## TODO: is this the right shape? -- compare to non-packed version
+            "rejected_rewards": torch.LongTensor(rejected_reward),
+            "position_ids": torch.LongTensor(position_ids), ## use this for loss computation -- to upweigh shorter examples
+            "seq_boundaries": torch.LongTensor(seq_boundaries),
+            "attention_mask": attention_mask
         }
 
         ### TODO!!! needed for TE

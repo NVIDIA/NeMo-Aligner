@@ -43,6 +43,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
     DPOModelDataset,
+    DPOPackedDataset,
     KTOModelDataset,
     RegressionRewardModelDataset,
     RewardModelDataset,
@@ -59,8 +60,10 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
         elif data_impl.startswith("json"):
             with open(current_data_prefix, "r", encoding="utf_8") as fr:
                 data_payload = [json.loads(line.strip()) for line in fr]
+        elif data_impl == "packed_jsonl":
+            data_payload = np.load(current_data_prefix, allow_pickle=True)
         else:
-            raise RuntimeError(f"data.data_impl must be either mmap or json or jsonl, but got {data_impl}")
+            raise RuntimeError(f"data.data_impl must be either mmap, json, jsonl or packed_jsonl, but got {data_impl}")
         total_num_of_documents = len(data_payload)
 
         # Print stats about the splits.
@@ -212,8 +215,10 @@ def _build_train_valid_test_datasets(
     elif data_impl.startswith("json"):
         with open(data_prefix, "r", encoding="utf_8") as fr:
             data_payload = [json.loads(line.strip()) for line in fr]
+    elif data_impl == "packed_jsonl":
+        data_payload = np.load(data_prefix, allow_pickle=True)
     else:
-        raise RuntimeError(f"data.data_impl must be either mmap or json or jsonl, but got {data_impl}")
+        raise RuntimeError(f"data.data_impl must be either mmap, json, jsonl or packed_jsonl, but got {data_impl}")
     total_num_of_documents = len(data_payload)
     splits = get_train_valid_test_split_(splits_string, total_num_of_documents)
 
@@ -262,6 +267,7 @@ def _build_train_valid_test_datasets(
 build_train_valid_test_rlhf_datasets = partial(build_train_valid_test_datasets, RLHFDataset)
 build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, RewardModelDataset)
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
+build_train_valid_test_dpo_packed_datasets = partial(build_train_valid_test_datasets, DPOPackedDataset)
 build_train_valid_test_kto_datasets = partial(build_train_valid_test_datasets, KTOModelDataset)
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
 
