@@ -459,8 +459,7 @@ class GRPOTrainer:
                 # TODO: need to make this async for real
                 output = run_if_model_parallel_src(evaluate_all, answers)
                 if output is not None:
-                    reward, _ = output
-                    all_rewards.extend(reward)
+                    all_rewards.extend(output)
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
