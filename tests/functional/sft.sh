@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 set -eoux pipefail
@@ -33,7 +47,7 @@ sft() {
 export CUDA_VISIBLE_DEVICES=0,1
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
-torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_sft.py \
+torchrun --nproc_per_node=2 ${GPFS}/examples/nlp/gpt/train_gpt_sft.py \
     --config-path=${CONF_DIR} \
     --config-name=${CONF_NAME} \
     trainer.num_nodes=1 \
@@ -77,3 +91,4 @@ torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_sft.py \
 
 log_file=$(mktemp /tmp/sft-log-XXXXXX)
 sft | tee $log_file
+echo "[Finished] $0"
