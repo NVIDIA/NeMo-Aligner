@@ -60,10 +60,12 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
         elif data_impl.startswith("json"):
             with open(current_data_prefix, "r", encoding="utf_8") as fr:
                 data_payload = [json.loads(line.strip()) for line in fr]
+                ## TODO: return_cu_seqlen
         elif data_impl == "packed_jsonl":
             data_payload = np.load(current_data_prefix, allow_pickle=True)
         else:
             raise RuntimeError(f"data.data_impl must be either mmap, json, jsonl or packed_jsonl, but got {data_impl}")
+        ## TODO: fix for packed dataset
         total_num_of_documents = len(data_payload)
 
         # Print stats about the splits.

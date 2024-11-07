@@ -80,7 +80,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         dp_group = parallel_state.get_data_parallel_group()
 
         batch_logs = self.get_reduced_masked_logps(
-            pi_logprobs - ref_logprobs, labels[:, 1:], average_log_probs=average_log_probs
+            pi_logprobs - ref_logprobs, labels, average_log_probs=average_log_probs
         )
 
         output_list = [torch.zeros_like(batch_logs) for _ in range(dp_group.size())]
@@ -141,7 +141,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 gt_rewards = torch.cat((batch["chosen_rewards"], batch["rejected_rewards"]), dim=0)
             
             ## packing enabled. seq_boundaries are the same for pairs of chosen and rejected examples
+            packed=False
             if "seq_boundaries" in batch:
+                packed=True
                 seq_boundaries = torch.cat((batch["seq_boundaries"], batch["seq_boundaries"]), dim=0)
                 lengths = torch.cat((batch["chosen_length"], batch["chosen_length"]), dim=0)
 
@@ -180,7 +182,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 # See https://github.com/NVIDIA/Megatron-LM/blob/0bc3547702464501feefeb5523b7a17e591b21fa/megatron/core/pipeline_parallel/schedules.py#L228
                 assert non_loss_data
                 logprobs = from_parallel_logits_to_logprobs(
-                    vocab_parallel_logits=output_tensor, target=labels, inference_only=True, higher_stability=True,
+                    vocab_parallel_logits=output_tensor, target=labels, inference_only=True, higher_stability=True,ignore_last=not packed,
                 )
                 return {"logprobs": logprobs}
 
@@ -193,12 +195,17 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     target=labels,
                     inference_only=validation_step,
                     higher_stability=True,
+                    ignore_last=not packed,
                 )
 
+                if not packed:
+                    labels_for_loss = labels[:, 1:]
+                else:
+                    labels_for_loss = labels
                 preference_loss, acc_chosen = self.loss_func(
                     per_token_logps,
                     ref_logprobs,
-                    labels[:, 1:],
+                    labels_for_loss,
                     gt_rewards,
                     seq_boundaries,
                     lengths,
@@ -208,7 +215,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 sft_loss = torch.zeros_like(preference_loss)
                 if self.sft_loss_weight != 0:
                     sft_loss = self.sft_loss_func(
-                        per_token_logps, labels[:, 1:], average_log_probs=self.sft_avg_log_probs
+                        per_token_logps, labels_for_loss, average_log_probs=self.sft_avg_log_probs
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
@@ -246,7 +253,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         chosen_logps, reject_logps = torch.split(output_tensor.float(), len(output_tensor) // 2, dim=0)
         return chosen_logps, reject_logps
 
-    def get_reduced_masked_logps(self, logps, labels, seq_boundaries=None, lengths=None, average_log_probs=False):
+    def get_reduced_masked_logps(self, logps, labels, seq_boundaries=None, lengths=None, average_log_probs=False):        
         assert logps.shape == labels.shape, "logps and labels shape mismatch"
 
         loss_mask = (labels > -1).float()
@@ -254,23 +261,27 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         if average_log_probs:
             ## it's only in this case that upweighting longer examples is a problem with sequence packing
             # need to guard against divide by zero in case labels are all -100
+            max_sl = logps.shape[-1]
             if seq_boundaries is not None: ## packing enabled
                 ## need to multiply each example by total_len / (sl for this example * total num examples)
                 weights = torch.ones_like(logps)
-                examples_per_seq = (seq_boundaries >= 1).sum(-1) - 1 ## TODO: check! -l for end of sequence?
+                examples_per_seq = ((seq_boundaries >= 0).sum(-1, keepdim=True) - 1)
+                total_len = lengths ## total length of the packed sequence 
                 weights /= examples_per_seq
-                examples_lens = []
+                example_lens = []
                 for seq in lengths:
-                    lens_for_this_example
-                    total_len = logps.shape[-2] 
-                    for l in seq:
+                    nonpadded_len = torch.where(seq > 0, seq, 0).sum() ## TODO: use cu_sl once we have it
+                    lens_for_this_example = []
+                    for l in seq: 
                         if l > 0:
                             lens_for_this_example.extend([l]*l) ## this is how much we need to upweigh the example by
                         if l <= 0: ## padding
-                            lens_for_this_example.extend([0] * (total_len - len(lens_for_this_example)))
-                    example_lens.append(lens_for_this_example / total_len)
-                ## example_lens is now shape bs x sl x vs
+                            lens_for_this_example.extend([0] * (max_sl - len(lens_for_this_example)))
+                    example_lens.append(torch.tensor(lens_for_this_example, device=torch.cuda.current_device()) / nonpadded_len)
+                ## example_lens is now shape bs x sl
+                example_lens = torch.stack(example_lens)
                 weights /= example_lens
+                weights[weights == float("Inf")] = 0 ## mask out padding examples
             
                 logps *= weights ## upweight the shorter examples
 
@@ -279,7 +290,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             return (logps * loss_mask).sum(-1)
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, seq_boundaries=None, lengths=None, average_log_probs=False):
-        print(f'{ref_logprobs.shape=}')
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, seq_boundaries=seq_boundaries, lengths=lengths, average_log_probs=average_log_probs,
         )

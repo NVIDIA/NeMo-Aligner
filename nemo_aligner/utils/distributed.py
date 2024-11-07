@@ -348,17 +348,21 @@ def calculate_distributed_entropy(vocab_parallel_logits, mask=None):
     return calculate_entropy(full_log_probs, mask)
 
 
-def from_parallel_logits_to_logprobs(vocab_parallel_logits, target, inference_only=False, higher_stability=False):
+def from_parallel_logits_to_logprobs(vocab_parallel_logits, target, inference_only=False, higher_stability=False, ignore_last=True):
     """get log probs out of a B x S x V//TP tensor
         NOTE: this function shifts the target, which means you must give it the unmodified targets
 
     Returns a B x S-1 tensor
     """
-    target = target.roll(shifts=-1, dims=-1)
-    return DistributedLogprob.apply(vocab_parallel_logits, target, inference_only, higher_stability)[
-        :, :-1
-    ].contiguous()
 
+    if ignore_last: 
+        target = target.roll(shifts=-1, dims=-1)
+    probs = DistributedLogprob.apply(vocab_parallel_logits, target, inference_only, higher_stability).contiguous()
+    ### ignore_last should be true if labels are not shifted as a data preparation step
+    if ignore_last: 
+        return probs[:, :-1]
+    else:
+        return probs
 
 def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distributed.ReduceOp.SUM):
     keys = sorted(dictionary)

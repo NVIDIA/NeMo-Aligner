@@ -386,11 +386,7 @@ class DPOPackedDataset(DPOModelDataset):
         #    # assert idx < len(self.samples_mapping)
         #    idx = self.samples_mapping[idx]
 
-        payload = self.data[idx]
-        ## TODO: what is the purpose of this line?
-        payload["seq_boundaries"] = payload["seq_boundaries"]  + [len(payload["chosen"])]
-
-        return payload
+        return self.data[idx]
 
     def __len__(self):
         return len(self.data)
@@ -420,15 +416,53 @@ class DPOPackedDataset(DPOModelDataset):
         def combine_keys(key):
             return [item[key] for item in batch]
 
-        chosen = combine_keys("chosen")
-        rejected = combine_keys("rejected")
-        chosen_labels = combine_keys("chosen_labels")
-        rejected_labels = combine_keys("rejected_labels")
+        #chosen = combine_keys("chosen")
+        #rejected = combine_keys("rejected")
+        #chosen_labels = combine_keys("chosen_labels")
+        #rejected_labels = combine_keys("rejected_labels")
         chosen_length = combine_keys("chosen_length")
         rejected_length = combine_keys("rejected_length")
         chosen_reward = combine_keys("chosen_reward")
         rejected_reward = combine_keys("rejected_reward")
         seq_boundaries = combine_keys("seq_boundaries")
+
+        ## shift input ids and labels
+        chosen = [
+            np.concatenate(
+                [
+                    item['chosen'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
+                    for i in range(len(item['seq_boundaries']) - 1)
+                ]
+            )
+            for item in batch
+        ]
+        rejected = [
+            np.concatenate(
+                [
+                    item['rejected'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
+                    for i in range(len(item['seq_boundaries']) - 1)
+                ]
+            )
+            for item in batch
+        ]
+        chosen_labels = [
+            np.concatenate(
+                [
+                    item['chosen_labels'][item['seq_boundaries'][i] + 1 : item['seq_boundaries'][i + 1]]
+                    for i in range(len(item['seq_boundaries']) - 1)
+                ]
+            )
+            for item in batch
+        ]
+        rejected_labels = [
+            np.concatenate(
+                [
+                    item['rejected_labels'][item['seq_boundaries'][i] + 1 : item['seq_boundaries'][i + 1]]
+                    for i in range(len(item['seq_boundaries']) - 1)
+                ]
+            )
+            for item in batch
+        ]
 
         """if self.pad_to_max_length:
             max_length_chosen = self.max_seq_length
@@ -447,11 +481,9 @@ class DPOPackedDataset(DPOModelDataset):
         for item in batch:
             position_ids.append([])
             cu_seqlens.append([0])
-            ## TODO: chosen and rejected sequences always have the same seq len
-            ## is this expected?
             seqlens = np.array(item['seq_boundaries'][1:]) - np.array(item['seq_boundaries'][:-1])
             for l in seqlens:
-                position_ids[-1].extend(list(range(l)))
+                position_ids[-1].extend(list(range(l-1)))
                 cu_seqlens[-1].append(cu_seqlens[-1][-1] + l)
             # set last seq to the max seq len because rope and attn kernels expect no padding
             cu_seqlens[-1][-1] = max_length
@@ -473,7 +505,7 @@ class DPOPackedDataset(DPOModelDataset):
         rejected_length = self._collate_item(rejected_length, max_length=max_num_sequences, pad_id=0)
         chosen_reward = self._collate_item(chosen_reward, max_length=max_num_sequences, pad_id=-1)
         rejected_reward = self._collate_item(rejected_reward, max_length=max_num_sequences, pad_id=-1)
-        seq_boundaries = self._collate_item(seq_boundaries, max_length=max_num_sequences, pad_id=-1)
+        seq_boundaries = self._collate_item(seq_boundaries, max_length=max_num_sequences+1, pad_id=-1) ## [0, seq_boundary 1, ... seq_boundary n]
 
         ## TODO: I don't think this is right when packing
         attention_mask, _, position_ids = get_ltor_masks_and_position_ids(

@@ -47,11 +47,13 @@ def tokenize_dataset(cfg: 'DictConfig'):
     logging.info("Tokenizing dataset...")
     # using the same template as SFT/PEFT script. This may be overkill but guarantees the preprocess settings
     # are identical to normal SFT training
-    if os.path.isdir(cfg.tokenizer_path):
-        # pass in a Hugging Face folder which contains tokenizer.json
-        tokenizer = get_nmt_tokenizer(library="huggingface", model_name=cfg.tokenizer_path, use_fast=True)
-    else:
-        tokenizer = get_nmt_tokenizer(library="sentencepiece", tokenizer_model=cfg.tokenizer_path)
+
+    ## TODO: fix this! hf tokenizer path doesn't need to be a dir
+    #if os.path.isdir(cfg.tokenizer_path):
+    # pass in a Hugging Face folder which contains tokenizer.json
+    tokenizer = get_nmt_tokenizer(library="huggingface", model_name=cfg.tokenizer_path, use_fast=True)
+    #else:
+    #    tokenizer = get_nmt_tokenizer(library="sentencepiece", tokenizer_model=cfg.tokenizer_path)
 
     with open(cfg.model.data.data_prefix, "r", encoding="utf_8") as fr:
         data_payload = [json.loads(line.strip()) for line in fr]
@@ -73,7 +75,6 @@ def tokenize_dataset(cfg: 'DictConfig'):
         for k in item:
             if isinstance(item[k], torch.Tensor):
                 item[k] = item[k].numpy()
-        item["boundary"] = len(item["chosen"])
         item["input_ids"] = item["chosen"] ## WAR for create_hist
         combined_dataset.append(item)
 
@@ -121,7 +122,6 @@ def fill_packing_strategy(
             rejected_length = np.array([x['rejected_length'] for x in per_seq_data])[perm].tolist()
             chosen_reward = np.array([x['chosen_reward'] for x in per_seq_data])[perm].tolist()
             rejected_reward = np.array([x['rejected_reward'] for x in per_seq_data])[perm].tolist()
-            boundary = np.array([x['boundary'] for x in per_seq_data])[perm].tolist()
 
             ifile_handles[seq_len] = (
                 chosen_tokens,
@@ -132,7 +132,6 @@ def fill_packing_strategy(
                 rejected_length,
                 chosen_reward,
                 rejected_reward,
-                boundary,
             )
 
     (
@@ -174,7 +173,6 @@ def fill_packing_strategy(
             _rejected_reward.append(ifile_handles[seq_length][7].pop())
 
             ## store the boundaries for the chosen, rejected sequences
-            _seq_boundaries.append(previous_seq_len + ifile_handles[seq_length][8].pop())
             _seq_boundaries.append(len(_chosen_ids))
 
         chosen_ids[oindex] = _chosen_ids
@@ -185,7 +183,7 @@ def fill_packing_strategy(
         rejected_length[oindex] = _rejected_length
         chosen_reward[oindex] = _chosen_reward
         rejected_reward[oindex] = _rejected_reward
-        seq_boundaries[oindex] = _seq_boundaries[:-1]
+        seq_boundaries[oindex] = _seq_boundaries #[:-1]
 
     output_data = []
     for i in range(len(chosen_ids)):
@@ -200,10 +198,11 @@ def fill_packing_strategy(
             'rejected_reward': rejected_reward[i],
             'seq_boundaries': seq_boundaries[i]
         }
+        print(f'{item_dict["seq_boundaries"]=}')
         output_data.append(item_dict)
 
-    for i in range(9):
-        assert all(not seq[i] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
+    for i in range(8):
+        assert all(not seq[i] for seq in ifile_handles.values()), f"Error: There are items left over from the assignment. {ifile_handles.values()=}"
     return output_data
 
 @dataclass
