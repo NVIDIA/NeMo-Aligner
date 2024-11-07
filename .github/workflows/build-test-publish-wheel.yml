@@ -50,7 +50,7 @@ jobs:
     env:
       RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
       SLACK_WEBHOOK_ADMIN: "<!subteam^${{ secrets.SLACK_WEBHOOK_ADMIN }}>"
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_TEST }}
       COMMIT_URL: https://github.com/${{ github.repository }}/commit/${{ github.sha }}
       COMMIT_SHA: ${{ github.sha }}
     steps:
