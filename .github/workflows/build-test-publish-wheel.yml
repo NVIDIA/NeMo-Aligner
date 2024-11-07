@@ -74,4 +74,3 @@ jobs:
           }')
 
           curl -X POST -H "Content-type: application/json" --data "$MESSAGE" $SLACK_WEBHOOK
-
