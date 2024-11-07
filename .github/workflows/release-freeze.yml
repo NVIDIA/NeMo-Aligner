@@ -9,7 +9,6 @@ on:
         options: 
         - major
         - minor
-        - pre_release
 
 jobs:
   code-freeze:
