@@ -363,7 +363,7 @@ class DPOPackedDataset(DPOModelDataset):
         self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True, return_cu_seqlen: bool = True
     ):
 
-        np.random.seed(seed) ## TODO: why is this needed in sft dataset?
+        #np.random.seed(seed) ## TODO: why is this needed in sft dataset?
         super().__init__(
             cfg,
             tokenizer,
@@ -494,8 +494,8 @@ class DPOPackedDataset(DPOModelDataset):
         
         chosen = self._collate_item(chosen, max_length=max_length, pad_id=self.tokenizer.eos_id)
         rejected = self._collate_item(rejected, max_length=max_length, pad_id=self.tokenizer.eos_id)
-        chosen_labels = self._collate_item(chosen_labels, max_length=max_length, pad_id=self.tokenizer.eos_id)
-        rejected_labels = self._collate_item(rejected_labels, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        chosen_labels = self._collate_item(chosen_labels, max_length=max_length, pad_id=-1)
+        rejected_labels = self._collate_item(rejected_labels, max_length=max_length, pad_id=-1)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
         
         max_num_sequences = max(len(l) for l in chosen_length)
@@ -506,16 +506,6 @@ class DPOPackedDataset(DPOModelDataset):
         chosen_reward = self._collate_item(chosen_reward, max_length=max_num_sequences, pad_id=-1)
         rejected_reward = self._collate_item(rejected_reward, max_length=max_num_sequences, pad_id=-1)
         seq_boundaries = self._collate_item(seq_boundaries, max_length=max_num_sequences+1, pad_id=-1) ## [0, seq_boundary 1, ... seq_boundary n]
-
-        ## TODO: I don't think this is right when packing
-        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-            torch.LongTensor(chosen), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
-        )
-        assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
-        if attention_mask.shape[0] == 1:
-            # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
-            # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
-            attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
 
         output = {
             "chosen": torch.LongTensor(chosen),
@@ -532,7 +522,7 @@ class DPOPackedDataset(DPOModelDataset):
         }
 
         ### TODO!!! needed for TE
-        '''if self.return_cu_seqlen:
+        if self.return_cu_seqlen:
             cu_seqlens = self._collate_item(cu_seqlens, max_length=max(len(l) for l in cu_seqlens) + 1, pad_id=-1)
 
             # Pre-generate `cu_seqlens_argmin` and `max_seqlen` as CPU tensor to avoid device-to-host copies.
@@ -545,19 +535,23 @@ class DPOPackedDataset(DPOModelDataset):
                 {
                     'attention_mask': torch.LongTensor(
                         [1] * len(input_ids)
-                    ),  # no attention mask is needed for packed seq
+                    ),  # no attention mask is needed for packed seq, this serves as a placeholder
                     'cu_seqlens': torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
                     'cu_seqlens_argmin': cu_seqlens_argmin,  # only required for perf
                     'max_seqlen': max_seqlen,  # only required for perf
                 }
             )
         else:
-            attention_mask = [self._create_attention_mask(max_length) for _ in batch]
-            processed_batch.update(
-                {
-                    'attention_mask': torch.stack(attention_mask),
-                }
-            )'''
+            ## NOTE: this attention mask is just used as a placeholder.
+            ## You should not use this attention mask unless you have a specific use-case.
+            attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+                torch.LongTensor(chosen), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+            )
+            assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
+            if attention_mask.shape[0] == 1:
+                # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+                # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
+                attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
 
         return output
         
