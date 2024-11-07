@@ -298,10 +298,15 @@ class GRPOTrainer:
         prompt_lengths = rollout_batch["prompt_lengths"]
         response_lengths = rollout_batch["response_lengths"]
         response_tokens = rollout_batch["response_tokens"]
+
         rewards = rollout_batch["rewards"]
 
         logprobs = rollout_batch["logprobs"]
         is_end = rollout_batch["is_end"]
+
+        # TODO: NOTE THIS IS TERRIBAD FOR BT models!
+        # only works on verifier based
+        rewards = rewards * is_end
 
         num_responses = self.cfg.num_responses_per_prompt
 
