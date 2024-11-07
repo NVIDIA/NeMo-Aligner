@@ -101,15 +101,9 @@ CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
 CONF_NAME="gpt_ppo_actor"
 
 ACTOR_LOG_DIR="${RESULTS_DIR}/actor_results"
-CHECKPOINT_DIR="${ACTOR_LOG_DIR}/checkpoints"
-TENSOBOARD_DIR="${ACTOR_LOG_DIR}/tensorboard"
-
 mkdir -p $ACTOR_LOG_DIR
-mkdir -p $TENSOBOARD_DIR
-mkdir -p $CHECKPOINT_DIR
 
 ACTOR_NAME="${NAME}_actor"
-
 host_critic=localhost
 
 actor() {

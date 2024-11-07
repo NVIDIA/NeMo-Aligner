@@ -23,18 +23,11 @@ mkdir -p $RESULTS_DIR
 
 GPFS=$(git rev-parse --show-toplevel)
 
-# W&B Logging
-PROJECT=sft_test
-
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
 CONF_NAME="gpt_sft"
 
-CHECKPOINT_DIR="${RESULTS_DIR}/checkpoints"
-TENSOBOARD_DIR="${RESULTS_DIR}/tensorboard"
 
 mkdir -p $RESULTS_DIR
-mkdir -p $TENSOBOARD_DIR
-mkdir -p $CHECKPOINT_DIR
 
 sft() {
 export CUDA_VISIBLE_DEVICES=0,1

@@ -30,12 +30,7 @@ PROJECT=dpo_test
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
 CONF_NAME="gpt_dpo"
 
-CHECKPOINT_DIR="${RESULTS_DIR}/checkpoints"
-TENSOBOARD_DIR="${RESULTS_DIR}/tensorboard"
-
 mkdir -p $RESULTS_DIR
-mkdir -p $TENSOBOARD_DIR
-mkdir -p $CHECKPOINT_DIR
 
 dpo() {
 export CUDA_VISIBLE_DEVICES=0,1

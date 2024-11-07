@@ -31,12 +31,8 @@ PROJECT=rm_test
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
 CONF_NAME="training_rm"
 
-CHECKPOINT_DIR="${RESULTS_DIR}/checkpoints"
-TENSOBOARD_DIR="${RESULTS_DIR}/tensorboard"
 
 mkdir -p $RESULTS_DIR
-mkdir -p $TENSOBOARD_DIR
-mkdir -p $CHECKPOINT_DIR
 
 rm_training() {
 export CUDA_VISIBLE_DEVICES=0,1
