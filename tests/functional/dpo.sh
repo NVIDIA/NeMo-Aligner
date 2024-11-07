@@ -23,9 +23,6 @@ mkdir -p $RESULTS_DIR
 
 GPFS=$(git rev-parse --show-toplevel)
 
-# W&B Logging
-PROJECT=dpo_test
-
 # START HETEROGENEUS JOB 3
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
 CONF_NAME="gpt_dpo"
