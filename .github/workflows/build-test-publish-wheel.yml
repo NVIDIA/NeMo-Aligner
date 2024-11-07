@@ -68,4 +68,4 @@ jobs:
             <${{ env.RUN_URL }}|Build, test, and push PyPi wheel (test)> has failed for <${{ env.COMMIT_URL }}|${{ env.COMMIT_SHA }}>.
 
             cc: ${{ env.SLACK_WEBHOOK_ADMIN }}
-          webhook: ${{ env.SLACKWEBHOOK }}
+          webhook: ${{ env.SLACK_WEBHOOK }}
