@@ -227,7 +227,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss, acc_chosen])
 
                 out_chosen, out_rejected = self.gather_and_split_rewards(
-                    per_token_logps, ref_logprobs, labels, average_log_probs=self.preference_avg_log_probs
+                    per_token_logps, ref_logprobs, labels_for_loss, average_log_probs=self.preference_avg_log_probs
                 )
 
                 return (
