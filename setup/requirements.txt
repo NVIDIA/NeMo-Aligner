@@ -2,3 +2,4 @@ jsonlines
 megatron_core>=0.8
 nemo_toolkit[nlp]
 nvidia-pytriton
+pyyaml !=6.0.0,!=5.4.0,!=5.4.1 # pyyaml is broken with cython 3
