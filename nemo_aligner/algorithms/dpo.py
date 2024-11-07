@@ -220,7 +220,7 @@ class DPOTrainer:
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
         lr = self.optimizer.param_groups[0]["lr"]
 
-        self.optimizer.step()
+        self.optimizer.step(closure=None)
         self.scheduler.step()
 
         trainer_metrics = {}
