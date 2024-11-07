@@ -11,10 +11,10 @@
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
 # Git refs for dependencies
-ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
-ARG PYTRITON_VERSION=0.5.10
-ARG NEMO_TAG=19668e5320a2e2af0199b6d5e0b841993be3a634  # On: main
-ARG MLM_TAG=25059d3bbf68be0751800f3644731df12a88f3f3   # On: main
+ARG TE_TAG=2215fa5c7557b66034068816020f9f611019e457
+ARG PYTRITON_VERSION=0.5.12
+ARG NEMO_TAG=2b87d313bc04f456311b2fb99acafbfdaeb5e1e1  # On: r2.0.0
+ARG MLM_TAG=1b869f019af2c7aabf9c4deffe6eb64ebef88608   # On: core_r0.9.0 
 ARG ALIGNER_COMMIT=main
 ARG TRTLLM_VERSION=v0.13.0
 ARG PROTOBUF_VERSION=4.24.4
@@ -130,16 +130,18 @@ git fetch -a
 # 60e677423667c029dd05875da72bf0719774f844: [feat] Update get_model_parallel_src_rank to support tp-pp-dp ordering NeMo#10652
 # 0deaf6716cb4f20766c995ce25d129795f1ae200: fix[export]: update API for disabling device reassignment in TRTLLM for Aligner NeMo#10863
 # (superceded by 10863) 148543d6e9c66ff1f8562e84484448202249811d: feat: Migrate GPTSession refit path in Nemo export to ModelRunner for Aligner NeMo#10654
+# ba8edbd2063f3349c40c9c73e5bae46abbe65f94: fix: regular torch optims (e.g., sgd) no longer error with closure spec NeMo#11189
 for pr_and_commit in \
   "10651 0c92fe17df4642ffc33d5d8c0c83fda729e3910c" \
   "10652 60e677423667c029dd05875da72bf0719774f844" \
   "10863 0deaf6716cb4f20766c995ce25d129795f1ae200" \
+  "11189 ba8edbd2063f3349c40c9c73e5bae46abbe65f94" \
 ; do
   pr=$(cut -f1 -d' ' <<<"$pr_and_commit")
   head_pr_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")
   git fetch origin $head_pr_commit:PR-${pr}
   # cherry-picks all commits between main and the top of the PR
-  git cherry-pick --allow-empty $(git merge-base origin/main PR-${pr})..PR-${pr}
+  git cherry-pick -m 1 --allow-empty $(git merge-base origin/main PR-${pr})..PR-${pr}
   # Tag cherry-picks to help
   git tag cherry-pick-PR-${pr}
 done

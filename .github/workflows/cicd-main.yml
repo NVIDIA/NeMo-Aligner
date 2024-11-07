@@ -94,6 +94,8 @@ jobs:
           - kd-llama3
           - sft-llama3
           - rm-llama3
+          - dpo-mixtral-ep
+          - dpo-mixtral-peft-tp-sp
     with:
       RUNNER: self-hosted-azure
       # Fairly aggresive timeout that all functional tests should try to adhere to
