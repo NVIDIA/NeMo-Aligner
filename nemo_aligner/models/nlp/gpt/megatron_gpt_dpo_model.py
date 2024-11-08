@@ -145,6 +145,15 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             # position_ids = batch["position_ids"][0:1]
             attention_mask = batch["attention_mask"][0:1]
 
+            pad_len = 0
+            world_size = torch.distributed.get_world_size()
+            if tokens.shape[1] % world_size != 0:
+                pad_len = world_size - tokens.shape[1] % world_size
+                with torch.no_grad():
+                    import torch.nn.functional as F
+                    tokens = F.pad(tokens, [0, pad_len, 0, 0], value=0)
+                    labels = F.pad(labels, [0, pad_len, 0, 0], value=0)
+
             # Model forward pass
             forward_args = {
                 "input_ids": tokens,
