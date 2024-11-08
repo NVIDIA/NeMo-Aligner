@@ -42,11 +42,19 @@ jobs:
           ref: v0.5.0
           path: send-slack-alert
 
+      - name: Get todays date
+        id: date
+        run: |
+          DATE=$(date +"%Y-%m-%d")
+          echo "date=$DATE" | tee -a "$GITHUB_OUTPUT"
+
       - name: Send Slack alert
         uses: ./send-slack-alert/.github/actions/send-slack-alert
+        env:
+          date: ${{ steps.date.outputs.date }}
         with:
           message: >
-            <${{ env.RUN_URL }}|sync main with dev> has failed for.
+            Daily <${{ env.RUN_URL }}|sync main with dev> has failed for ${{ env.date }}.
 
             cc: ${{ env.SLACK_WEBHOOK_ADMIN }}
           webhook: ${{ env.SLACK_WEBHOOK }}
