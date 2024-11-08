@@ -53,6 +53,7 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          set +x
           PRs=$(curl -L \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
@@ -64,6 +65,7 @@ jobs:
             | select(.head.ref == "ko3n1g/dev") \
             | .number'
           )
+          set -x
 
           echo "pr-number=$PR_NUMBER" | tee -a "$GITHUB_OUTPUT"
 
