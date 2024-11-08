@@ -4,21 +4,22 @@ on:
     branches:
       - main
 
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
+
 jobs:
-  sync-branches:
+  sync-branches-via-rebase:
     runs-on: ubuntu-latest
     name: syncing main with dev
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Set up Node
-        uses: actions/setup-node@v1
         with:
-          node-version: 12
-      - name: Opening pull request
-        id: pull
-        uses: tretuna/sync-branches@1.4.0
-        with:
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-          FROM_BRANCH: "main"
-          TO_BRANCH: "dev"
+          ref: ko3n1g/dev
+
+      - name: Attempt rebase
+        run: |
+          git fetch origin main
+          git rebase origin/main
+          
