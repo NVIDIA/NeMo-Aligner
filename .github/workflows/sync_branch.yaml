@@ -80,7 +80,7 @@ jobs:
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
-          issue-number: ${{ github.event.number }}
+          issue-number: ${{ steps.fp.outputs.pr-number }}
           edit-mode: replace
           body: |
             <!-- auto-rebase-message -->
