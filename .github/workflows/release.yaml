@@ -22,7 +22,9 @@ on:
     
 jobs: 
   build-container:
-    uses: ./.github/workflows/_build_container.yml
+    uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_build_container.yml@v0.1.0
+    with:
+      image-label: nemo-aligner
     
   build-and-test-wheel:
     needs: build-container

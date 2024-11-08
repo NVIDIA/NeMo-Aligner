@@ -39,6 +39,7 @@ pip install --no-cache-dir --no-deps -e .
 EOF
 
 FROM ${BASE_IMAGE} as final
+LABEL "nemo.library"="nemo-aligner"
 WORKDIR /opt
 # needed in case git complains that it can't detect a valid email, this email is fake but works
 RUN git config --global user.email "worker@nvidia.com"
