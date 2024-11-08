@@ -14,11 +14,19 @@ jobs:
   sync-branches-via-rebase:
     runs-on: ubuntu-latest
     name: syncing main with dev
+    outputs:
+      date: ${{ steps.date.outputs.date }}
     steps:
       - name: Checkout
         uses: actions/checkout@v2
         with:
           ref: ko3n1g/dev
+
+      - name: Get todays date
+        id: date
+        run: |
+          DATE=$(date +"%Y-%m-%d")
+          echo "date=$DATE" | tee -a "$GITHUB_OUTPUT"
 
       - name: Attempt rebase
         run: |
@@ -26,7 +34,33 @@ jobs:
           git rebase origin/main
           git push --force
 
-  notify: 
+  notify-success:
+    runs-on: ubuntu-latest
+    if: success()
+    needs: [sync-branches-via-rebase]
+    env:
+      DATE: ${{ needs.sync-branches-via-rebase.outputs.date }}
+    steps:
+      - name: Find Comment
+        uses: peter-evans/find-comment@v3
+        id: fc
+        with:
+          issue-number: ${{ github.event.number }}
+          body-includes: <!-- auto-rebase-message -->
+
+      - name: Add PR comment for PyLint 
+        if: ${{ matrix.strict-mode == 'false' && env.OUTPUT != '' }}
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ github.event.number }}
+          edit-mode: replace
+          body: |
+            <!-- auto-rebase-message -->
+            
+            beep boop 🤖: This branch was last rebased onto `main` on ${{ env.DATE }}.
+
+  notify-failure: 
     runs-on: ubuntu-latest
     if: failure()
     needs: [sync-branches-via-rebase]
@@ -34,6 +68,7 @@ jobs:
       RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
       SLACK_WEBHOOK_ADMIN: "<!subteam^${{ secrets.SLACK_WEBHOOK_ADMIN }}>"
       SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      DATE: ${{ needs.sync-branches-via-rebase.outputs.date }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,19 +77,11 @@ jobs:
           ref: v0.5.0
           path: send-slack-alert
 
-      - name: Get todays date
-        id: date
-        run: |
-          DATE=$(date +"%Y-%m-%d")
-          echo "date=$DATE" | tee -a "$GITHUB_OUTPUT"
-
       - name: Send Slack alert
         uses: ./send-slack-alert/.github/actions/send-slack-alert
-        env:
-          date: ${{ steps.date.outputs.date }}
         with:
           message: >
-            Daily <${{ env.RUN_URL }}|sync main with dev> has failed for ${{ env.date }}.
+            Daily <${{ env.RUN_URL }}|sync main with dev> has failed for ${{ env.DATE }}.
 
             cc: ${{ env.SLACK_WEBHOOK_ADMIN }}
           webhook: ${{ env.SLACK_WEBHOOK }}
