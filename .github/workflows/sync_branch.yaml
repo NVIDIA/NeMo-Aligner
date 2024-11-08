@@ -61,8 +61,8 @@ jobs:
             https://api.github.com/repos/$REPOSITORY/pulls)
           
           PR_NUMBER=$(echo -E "$PRs" \
-            | jq '.[] \
-            | select(.head.ref == "ko3n1g/dev") \
+            | jq '.[] 
+            | select(.head.ref == "ko3n1g/dev")
             | .number'
           )
           set -x
