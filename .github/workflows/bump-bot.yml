@@ -21,4 +21,17 @@ jobs:
     secrets:
       PAT: ${{ secrets.PAT }}
   
+  bump-nemo:
+    uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_bump_dockerfile.yml@ko3n1g/feat/bump-dockerfile
+    with:
+      source-repository: NVIDIA/NeMo
+      source-ref: main
+      build-arg: NEMO_TAG
+      dockerfile: Dockerfile
+      base-branch: dev
+      cicd-label: Run CICD
+      pr-reviewers: 'terrykong'
+    secrets:
+      PAT: ${{ secrets.PAT }}
+  
   
