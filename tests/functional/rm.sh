@@ -13,12 +13,10 @@ GBS=${GBS:-4}
 PRETRAINED_CHECKPOINT_NEMO_FILE=${PRETRAINED_CHECKPOINT_NEMO_FILE}
 
 
-#MIN_LR=$(awk -v var="$LR" 'BEGIN {print var - 1e-11}')
-
 TRAIN_DATA_PATH=$SCRIPT_DIR/test_data/test-rm.jsonl
 VALID_DATA_PATH=$SCRIPT_DIR/test_data/test-rm.jsonl
 
-NAME="llama3_rm_test"
+NAME="rm_test"
 
 # PARAMETERS
 RESULTS_DIR="/tmp/${NAME}"
@@ -27,24 +25,20 @@ mkdir -p $RESULTS_DIR
 GPFS=$(git rev-parse --show-toplevel)
 
 # W&B Logging
-PROJECT=llama3_rm_test
+PROJECT=rm_test
 
 # START HETEROGENEUS JOB 3
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
 CONF_NAME="training_rm"
 
-CHECKPOINT_DIR="${RESULTS_DIR}/checkpoints"
-TENSOBOARD_DIR="${RESULTS_DIR}/tensorboard"
 
 mkdir -p $RESULTS_DIR
-mkdir -p $TENSOBOARD_DIR
-mkdir -p $CHECKPOINT_DIR
 
 rm_training() {
 export CUDA_VISIBLE_DEVICES=0,1
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
-mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_reward_model.py \
+torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_reward_model.py \
     --config-path=${CONF_DIR} \
     --config-name=${CONF_NAME} \
     trainer.num_nodes=1 \
