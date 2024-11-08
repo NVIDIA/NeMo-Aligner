@@ -1,10 +1,7 @@
 name: sync main with dev
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    
+  schedule:
+    - 0 8 * * * # Runs at 8am UTC
 
 defaults:
   run:
@@ -21,7 +18,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
         with:
-          ref: ko3n1g/dev
+          ref: dev
           fetch-depth: 0
           token: ${{ secrets.PAT }}
 
