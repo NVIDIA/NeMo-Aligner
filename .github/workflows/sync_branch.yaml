@@ -77,7 +77,6 @@ jobs:
           body-includes: <!-- auto-rebase-message -->
 
       - name: Add PR comment for PyLint 
-        if: ${{ matrix.strict-mode == 'false' && env.OUTPUT != '' }}
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
