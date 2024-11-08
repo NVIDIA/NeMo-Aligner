@@ -317,13 +317,20 @@ class DPOTrainer:
         while True:
             try:
                 batch = next(iter_dataloader)
+
                 logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
-                chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
-                batch["ref_policy_log_probs_chosen"] = chosen_logps
-                batch["ref_policy_log_probs_rejected"] = reject_logps
+                packed = (not "chosen" in batch)
+                if not packed:
+                    chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
+                    batch["ref_policy_log_probs_chosen"] = chosen_logps
+                    batch["ref_policy_log_probs_rejected"] = reject_logps
+                else:
+                    batch["ref_policy_log_probs"] = logprobs
 
                 yield batch
-                del logprobs, chosen_logps, reject_logps
+                del logprobs
+                if not packed:
+                    del chosen_logps, reject_logps
             except StopIteration:
                 break
 

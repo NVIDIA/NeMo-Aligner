@@ -108,47 +108,65 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     required_keys.add('cu_seqlens')
 
                 if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("chosen", "rejected", "position_ids"))
+                    ## indicates that batch is packed
+                    if "input_ids" in batch:
+                        packed = False
+                        required_keys.update(("input_ids", "position_ids"))
+                    ## batch not packed --> chosen and rejected are separate keys
+                    else:
+                        packed = True
+                        required_keys.update(("chosen", "rejected", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(
-                        (
-                            "ref_policy_log_probs_chosen",
-                            "ref_policy_log_probs_rejected",
-                            "chosen_labels",
-                            "rejected_labels",
-                            "chosen_rewards",
-                            "rejected_rewards",
+                    if not packed:
+                        required_keys.update(
+                            (
+                                "ref_policy_log_probs_chosen",
+                                "ref_policy_log_probs_rejected",
+                                "chosen_labels",
+                                "rejected_labels",
+                                "chosen_rewards",
+                                "rejected_rewards",
+                            )
                         )
-                    )
+                    else:
+                        required_keys.update(
+                            (
+                                "ref_policy_log_probs", ## chosen and rejected interleaved
+                                "labels",
+                                "rewards",
+                                "seq_boundaries", ## needed for breaking chosen and rejected sequence apart during loss computation
+                            )
+                        )  
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
+            #print(f'{batch["labels"]=}') ## need to figure out why labels are all -100
 
-            tokens, labels, ref_logprobs, gt_rewards, lengths, seq_boundaries = None, None, None, None, None, None
-            if batch["chosen"] is not None and batch["rejected"] is not None:
-                tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
+            tokens, labels, ref_logprobs, gt_rewards, seq_boundaries = None, None, None, None, None
+            packed = "chosen" not in batch
+            if packed: ## packed sequence
+                tokens = batch["input_ids"]
+                labels = batch["labels"]
+                gt_rewards = batch["rewards"]
+                seq_boundaries = batch["seq_boundaries"]
+                lengths = batch["lengths"]
+                ref_logprobs = batch.get("ref_policy_log_probs", None)
+            else:
+                if batch["chosen"] is not None and batch["rejected"] is not None:
+                    tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
+                if batch["chosen_labels"] is not None and batch["rejected_labels"] is not None:
+                    labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
+                if (
+                    batch.get("ref_policy_log_probs_chosen") is not None
+                    and batch.get("ref_policy_log_probs_rejected") is not None
+                ):
+                    ref_logprobs = torch.cat(
+                        (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
+                    )
 
-            if batch["chosen_labels"] is not None and batch["rejected_labels"] is not None:
-                labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
-
-            if (
-                batch.get("ref_policy_log_probs_chosen") is not None
-                and batch.get("ref_policy_log_probs_rejected") is not None
-            ):
-                ref_logprobs = torch.cat(
-                    (batch["ref_policy_log_probs_chosen"], batch["ref_policy_log_probs_rejected"]), dim=0
-                )
-
-            if batch["chosen_rewards"] is not None and batch["rejected_rewards"] is not None:
-                gt_rewards = torch.cat((batch["chosen_rewards"], batch["rejected_rewards"]), dim=0)
+                if batch["chosen_rewards"] is not None and batch["rejected_rewards"] is not None:
+                    gt_rewards = torch.cat((batch["chosen_rewards"], batch["rejected_rewards"]), dim=0)
             
-            ## packing enabled. seq_boundaries are the same for pairs of chosen and rejected examples
-            packed=False
-            if "seq_boundaries" in batch:
-                packed=True
-                seq_boundaries = torch.cat((batch["seq_boundaries"], batch["seq_boundaries"]), dim=0)
-                lengths = torch.cat((batch["chosen_length"], batch["chosen_length"]), dim=0)
-
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
             # these two lines ensure your position_ids and attn_mask are always B=1
             # position_ids = batch["position_ids"][0:1]
@@ -213,6 +231,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 # This function is expected to be used only when `collect_non_loss_data=True` in the fwd_bwd_function of Megatron-LM.
                 # See https://github.com/NVIDIA/Megatron-LM/blob/0bc3547702464501feefeb5523b7a17e591b21fa/megatron/core/pipeline_parallel/schedules.py#L228
                 assert non_loss_data
+
                 logprobs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=output_tensor, target=labels, inference_only=True, higher_stability=True,ignore_last=not packed,
                 )
@@ -287,13 +306,14 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
     def get_reduced_masked_logps(self, logps, labels, seq_boundaries=None, lengths=None, average_log_probs=False):        
         assert logps.shape == labels.shape, "logps and labels shape mismatch"
-
         ## break up the packed batch into an unpacked batch
         ## TODO: make this more efficient and only compute it once
         ## also make sure we don't get the padding at the end of the last example
         if seq_boundaries is not None:
             unpacked_logps = []
+            unpacked_logps_rejected = []
             unpacked_labels = []
+            unpacked_labels_rejected = []
             for i in range(seq_boundaries.shape[0]):
                 max_length = torch.max(lengths[i])
                 logp_unpacked = list(torch.tensor_split(logps[i], seq_boundaries[i][1:-1].cpu(), -1)) ## exclude 0 and max_seq_len
@@ -301,8 +321,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 for i in range(len(logp_unpacked)):
                     logp_unpacked[i] = torch.nn.functional.pad(logp_unpacked[i], (0, max_length - logp_unpacked[i].shape[-1]), "constant",)
                     labels_unpacked[i] = torch.nn.functional.pad(labels_unpacked[i], (0, max_length - labels_unpacked[i].shape[-1]), "constant", -100)
-                unpacked_logps.extend(logp_unpacked)
-                unpacked_labels.extend(labels_unpacked)
+                unpacked_logps.extend(logp_unpacked[::2]) ## chosen
+                unpacked_logps_rejected.extend(logp_unpacked[1::2]) ## rejected
+                unpacked_labels.extend(labels_unpacked[::2])
+                unpacked_labels_rejected.extend(labels_unpacked[1::2])
+            unpacked_logps.extend(unpacked_logps_rejected)
+            unpacked_labels.extend(unpacked_labels_rejected)
             logps = torch.stack(unpacked_logps, 0)
             labels = torch.stack(unpacked_labels, 0)
         
@@ -370,7 +394,11 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return -chosen_logprobs.mean(0)
 
     def get_loss_and_metrics(self, batch, forward_only):
-        seq_length = batch["chosen"].shape[1]
+        packed = not "chosen" in batch
+        if packed:
+            seq_length = batch["input_ids"].shape[1]
+        else:
+            seq_length = batch["chosen"].shape[1]
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         set_sync_funcs(self, forward_only)
@@ -388,6 +416,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
         )
 
+        ## TODO: this will not work with packing
         # only the last stages of the pipeline return losses
         if losses_reduced_per_micro_batch:
             # NOTE: assume that the returned values are already gathered across the DP workers
@@ -469,8 +498,13 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
     @torch.no_grad()
     def get_logprob_batch(self, batch):
-        seq_length = batch["chosen"].shape[1]
-        batch_size = batch["chosen"].shape[0]
+        packed = "chosen" not in batch
+        if packed:
+            k = "input_ids"
+        else:
+            k = "chosen"
+        seq_length = batch[k].shape[1]
+        batch_size = batch[k].shape[0]
 
         num_microbatches = divide(batch_size, self.cfg.dpo.log_prob_forward_micro_batch_size)
         data_iter = get_iterator_k_split(batch, num_microbatches)
@@ -490,14 +524,18 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         )
 
         if len(logprobs_list) > 0:
-            chosen_logprobs_list = []
-            rejected_logprobs_list = []
-            for item in logprobs_list:
-                chosen_logprobs, rejected_logprobs = self.split_output_tensor(item["logprobs"])
-                chosen_logprobs_list.append(chosen_logprobs)
-                rejected_logprobs_list.append(rejected_logprobs)
+            if not packed:
+                chosen_logprobs_list = []
+                rejected_logprobs_list = []
+                for item in logprobs_list:
+                    chosen_logprobs, rejected_logprobs = self.split_output_tensor(item["logprobs"])
+                    chosen_logprobs_list.append(chosen_logprobs)
+                    rejected_logprobs_list.append(rejected_logprobs)
 
-            logprobs = torch.cat([torch.cat(chosen_logprobs_list), torch.cat(rejected_logprobs_list)], dim=0)
+                logprobs = torch.cat([torch.cat(chosen_logprobs_list), torch.cat(rejected_logprobs_list)], dim=0)
+            else:
+                logprobs_list = [item["logprobs"] for item in logprobs_list]
+                logprobs = torch.cat(logprobs_list, dim=0)
         else:
             logprobs = None
 
@@ -512,7 +550,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return logprobs
 
     def get_ref_policy_logprobs(self, batch):
-
         if self.use_peft and self.ref_policy_state_dict is None:
             # when using adapters instead of full-tuning, the actor is reference model + adapters
             with adapter_control(self):

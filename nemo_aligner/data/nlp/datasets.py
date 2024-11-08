@@ -416,48 +416,22 @@ class DPOPackedDataset(DPOModelDataset):
         def combine_keys(key):
             return [item[key] for item in batch]
 
-        #chosen = combine_keys("chosen")
-        #rejected = combine_keys("rejected")
-        #chosen_labels = combine_keys("chosen_labels")
-        #rejected_labels = combine_keys("rejected_labels")
-        chosen_length = combine_keys("chosen_length")
-        rejected_length = combine_keys("rejected_length")
-        chosen_reward = combine_keys("chosen_reward")
-        rejected_reward = combine_keys("rejected_reward")
+        lengths = combine_keys("lengths")
+        rewards = combine_keys("reward")
         seq_boundaries = combine_keys("seq_boundaries")
-
-        ## shift input ids and labels
-        chosen = [
+        input_ids = [
             np.concatenate(
                 [
-                    item['chosen'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
+                    item['input_ids'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
                     for i in range(len(item['seq_boundaries']) - 1)
                 ]
             )
             for item in batch
         ]
-        rejected = [
+        labels = [
             np.concatenate(
                 [
-                    item['rejected'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
-                    for i in range(len(item['seq_boundaries']) - 1)
-                ]
-            )
-            for item in batch
-        ]
-        chosen_labels = [
-            np.concatenate(
-                [
-                    item['chosen_labels'][item['seq_boundaries'][i] + 1 : item['seq_boundaries'][i + 1]]
-                    for i in range(len(item['seq_boundaries']) - 1)
-                ]
-            )
-            for item in batch
-        ]
-        rejected_labels = [
-            np.concatenate(
-                [
-                    item['rejected_labels'][item['seq_boundaries'][i] + 1 : item['seq_boundaries'][i + 1]]
+                    item['labels'][item['seq_boundaries'][i] + 1 : item['seq_boundaries'][i + 1]]
                     for i in range(len(item['seq_boundaries']) - 1)
                 ]
             )
@@ -471,7 +445,7 @@ class DPOPackedDataset(DPOModelDataset):
         # pad to the nearest multiple of 16 for FP8 training
         # for many datasets in practice, all packed sequence lengths are very close to the
         # target length (2048, 4096, 8192), so there is very minimal padding
-        max_length = max(len(l) for l in chosen)
+        max_length = max(len(l) for l in input_ids)
 
         max_length = min(self.seq_length, self._ceil_to_nearest(max_length, 16)) ##self.pad_seq_length_to_mult)) ## TODO: support
         assert max_length <= self.seq_length
@@ -484,41 +458,31 @@ class DPOPackedDataset(DPOModelDataset):
             seqlens = np.array(item['seq_boundaries'][1:]) - np.array(item['seq_boundaries'][:-1])
             for l in seqlens:
                 position_ids[-1].extend(list(range(l-1)))
-                cu_seqlens[-1].append(cu_seqlens[-1][-1] + l)
+                cu_seqlens[-1].append(cu_seqlens[-1][-1] + l) ## TODO: this seems wrong. cu_seqlens = [0, 41, 96].. Is last example padded?
             # set last seq to the max seq len because rope and attn kernels expect no padding
             cu_seqlens[-1][-1] = max_length
 
-        assert len(chosen[0]) == len(
+        assert len(input_ids[0]) == len(
             position_ids[0]
         ), "Dataset problem: input_ids and position_ids lengths don't match"
         
-        chosen = self._collate_item(chosen, max_length=max_length, pad_id=self.tokenizer.eos_id)
-        rejected = self._collate_item(rejected, max_length=max_length, pad_id=self.tokenizer.eos_id)
-        chosen_labels = self._collate_item(chosen_labels, max_length=max_length, pad_id=-1)
-        rejected_labels = self._collate_item(rejected_labels, max_length=max_length, pad_id=-1)
+        input_ids = self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        labels = self._collate_item(labels, max_length=max_length, pad_id=-100)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
         
-        max_num_sequences = max(len(l) for l in chosen_length)
-
+        max_num_sequences = max(len(l) for l in lengths)
         ## TODO: figure out whether this is the right way to pad length and reward
-        chosen_length = self._collate_item(chosen_length, max_length=max_num_sequences, pad_id=0)
-        rejected_length = self._collate_item(rejected_length, max_length=max_num_sequences, pad_id=0)
-        chosen_reward = self._collate_item(chosen_reward, max_length=max_num_sequences, pad_id=-1)
-        rejected_reward = self._collate_item(rejected_reward, max_length=max_num_sequences, pad_id=-1)
+        lengths = self._collate_item(lengths, max_length=max_num_sequences, pad_id=0)
+        rewards = self._collate_item(rewards, max_length=max_num_sequences, pad_id=-1)
         seq_boundaries = self._collate_item(seq_boundaries, max_length=max_num_sequences+1, pad_id=-1) ## [0, seq_boundary 1, ... seq_boundary n]
 
         output = {
-            "chosen": torch.LongTensor(chosen),
-            "rejected": torch.LongTensor(rejected),
-            "chosen_labels": torch.LongTensor(chosen_labels),
-            "rejected_labels": torch.LongTensor(rejected_labels),
-            "chosen_length": torch.LongTensor(chosen_length),
-            "rejected_length": torch.LongTensor(rejected_length),
-            "chosen_rewards": torch.LongTensor(chosen_reward), ## TODO: is this the right shape? -- compare to non-packed version
-            "rejected_rewards": torch.LongTensor(rejected_reward),
+            "input_ids": torch.LongTensor(input_ids),
+            "labels": torch.LongTensor(labels),
+            "lengths": torch.LongTensor(lengths),
+            "rewards": torch.LongTensor(rewards), ## TODO: is this the right shape? -- compare to non-packed version
             "position_ids": torch.LongTensor(position_ids), ## use this for loss computation -- to upweigh shorter examples
             "seq_boundaries": torch.LongTensor(seq_boundaries),
-            "attention_mask": attention_mask
         }
 
         ### TODO!!! needed for TE
@@ -531,7 +495,7 @@ class DPOPackedDataset(DPOModelDataset):
             seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
             max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
 
-            processed_batch.update(
+            output.update(
                 {
                     'attention_mask': torch.LongTensor(
                         [1] * len(input_ids)
@@ -552,6 +516,11 @@ class DPOPackedDataset(DPOModelDataset):
                 # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
                 # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
                 attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+                output.update(
+                {
+                    'attention_mask': torch.stack(attention_mask),
+                }
+            )
 
         return output
         
