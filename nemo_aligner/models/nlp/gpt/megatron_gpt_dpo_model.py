@@ -140,9 +140,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                         )  
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
-            #print(f'{batch["labels"]=}') ## need to figure out why labels are all -100
+            #print(f'{batch=}')
 
-            tokens, labels, ref_logprobs, gt_rewards, seq_boundaries = None, None, None, None, None
+            tokens, labels, ref_logprobs, gt_rewards, lengths, seq_boundaries, ref_logprobs = None, None, None, None, None, None, None
             packed = "chosen" not in batch
             if packed: ## packed sequence
                 tokens = batch["input_ids"]
@@ -170,8 +170,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
             # these two lines ensure your position_ids and attn_mask are always B=1
             # position_ids = batch["position_ids"][0:1]
-            attention_mask = batch["attention_mask"][0:1] ## TODO: make this work for packed sequence 
-            ## also, no attention mask is needed if return_cu_seqlen is True.. look into this
+            attention_mask = batch["attention_mask"][0:1] ## TODO: make sure this works for packed sequence 
 
             # Model forward pass
             forward_args = {
@@ -194,8 +193,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     # these args are passed eventually into TEDotProductAttention.forward()
                     cu_seqlens = batch['cu_seqlens'].squeeze()  # remove batch size dimension (mbs=1)
                     
-                    max_seqlen = batch['max_seqlen'].squeeze() if 'max_seqlen' in batch else None ## TODO: add this to batch
-                    cu_seqlens_argmin = batch['cu_seqlens_argmin'] if 'cu_seqlens_argmin' in batch else None ## TODO add this to batch
+                    max_seqlen = batch['max_seqlen'].squeeze() if 'max_seqlen' in batch else None
+                    cu_seqlens_argmin = batch['cu_seqlens_argmin'] if 'cu_seqlens_argmin' in batch else None
                     # remove -1 "paddings" added in collate_fn
                     if cu_seqlens_argmin is not None:
                         cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
@@ -416,7 +415,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
         )
 
-        ## TODO: this will not work with packing
         # only the last stages of the pipeline return losses
         if losses_reduced_per_micro_batch:
             # NOTE: assume that the returned values are already gathered across the DP workers

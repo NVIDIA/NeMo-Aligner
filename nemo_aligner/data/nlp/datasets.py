@@ -485,7 +485,6 @@ class DPOPackedDataset(DPOModelDataset):
             "seq_boundaries": torch.LongTensor(seq_boundaries),
         }
 
-        ### TODO!!! needed for TE
         if self.return_cu_seqlen:
             cu_seqlens = self._collate_item(cu_seqlens, max_length=max(len(l) for l in cu_seqlens) + 1, pad_id=-1)
 
