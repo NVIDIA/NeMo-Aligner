@@ -110,7 +110,8 @@ def grad_reductions(ptl_model):
         # synchronize asynchronous grad reductions
         # note: not necessary, but reduces performance degradation
         # from multiple simultaneous NCCL calls
-        ptl_model._optimizer._finish_bucket_grad_sync()
+        if not ptl_model.use_mcore_dist_optim:
+            ptl_model._optimizer._finish_bucket_grad_sync()
     elif ptl_model.megatron_amp_O2:
         # when using pipeline parallelism grads must be all-reduced after the pipeline (not asynchronously)
         if ptl_model.cfg.get("pipeline_model_parallel_size", 1) > 1 or ptl_model.cfg.get("sequence_parallel", False):
@@ -164,7 +165,8 @@ def clip_gradients(ptl_model, clip_val):
         return
 
     if ptl_model.with_distributed_adam:
-        grad_norm = clip_grad_norm_distributed_optimizer(ptl_model._optimizer, clip_val)
+        if not ptl_model.use_mcore_dist_optim:
+            grad_norm = clip_grad_norm_distributed_optimizer(ptl_model._optimizer, clip_val)
     else:
         if ptl_model.megatron_amp_O2:
             # grep fp32 master parameters for gradient clipping
