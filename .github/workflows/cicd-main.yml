@@ -99,3 +99,5 @@ jobs:
       TIMEOUT: 8
       SCRIPT: |
         bash /opt/NeMo-Aligner/tests/functional/test_cases/${{ matrix.test_case }}
+
+
