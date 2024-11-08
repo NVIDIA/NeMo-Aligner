@@ -21,6 +21,7 @@ from megatron.core import tensor_parallel
 
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
+    _TopKLogitsCrossEntropy,
     broadcast_tensor_within_pp,
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
@@ -51,6 +52,64 @@ def calculate_entropy_full(logits):
 
     full_log_probs = full_log_probs[:, :-1, :].contiguous()
     return calculate_entropy(full_log_probs)
+
+
+### naive reference implementation
+def naive_top_k_loss_function(
+    output_tensor,
+    target_topk_logits,
+    target_topk_token_ids,
+    target_log_sum_exp_logits,
+    loss_mask,
+    labels,
+    kd_loss_weight=1,
+    sft_loss_weight=0,
+    kd_loss="fwd_kl",
+    cross_tokenizer=False,
+):
+    def loss_func(
+        logits, target_logits, mask, kd_loss="fwd_kl", logits_scale=1.0, target_logits_scale=1.0,
+    ):
+
+        logprobs = torch.nn.functional.log_softmax(logits_scale * logits, dim=-1)
+        target_logprobs = torch.nn.functional.log_softmax(target_logits_scale * target_logits, dim=-1)
+
+        if kd_loss == "fwd_kl":
+            loss = torch.sum(target_logprobs.exp() * (target_logprobs - logprobs), dim=-1)
+        elif kd_loss == "bwd_kl":
+            loss = torch.sum(logprobs.exp() * (logprobs - target_logprobs), dim=-1)
+        else:
+            raise ValueError(f"kd_loss {kd_loss} is not supported.")
+        return torch.sum(loss * mask) / torch.sum(mask).clamp(min=1.0)
+
+    output_tensor_max = torch.max(output_tensor, dim=-1)[0]
+    torch.distributed.all_reduce(
+        output_tensor_max, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_tensor_model_parallel_group()
+    )
+    output_tensor = output_tensor - output_tensor_max.unsqueeze(dim=-1).detach()
+    output_tensor = tensor_parallel.gather_from_tensor_model_parallel_region(output_tensor)
+
+    if cross_tokenizer:
+        topk_logits, _ = torch.topk(output_tensor, target_topk_token_ids.shape[-1])
+    else:
+        # compute the knowledge distillation loss against the ground-truth logits
+        topk_logits = torch.gather(output_tensor, dim=-1, index=target_topk_token_ids)
+
+    target_topk_logits_in_loss = target_topk_logits
+
+    kd_loss = loss_func(topk_logits, target_topk_logits_in_loss, mask=loss_mask, kd_loss=kd_loss)
+
+    # compute the sft loss against the ground-truth labels
+    sft_loss = torch.zeros_like(kd_loss)
+    if sft_loss_weight != 0:
+        target_label_logits = torch.gather(output_tensor, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        log_sum_exp_logits = torch.logsumexp(output_tensor, dim=-1)
+        target_label_logprobs = target_label_logits - log_sum_exp_logits
+        sft_loss = -torch.sum(target_label_logprobs * loss_mask) / torch.sum(loss_mask).clamp(min=1.0)
+
+    loss = kd_loss_weight * kd_loss + sft_loss_weight * sft_loss
+
+    return loss
 
 
 @pytest.mark.run_only_on("GPU")
@@ -255,3 +314,96 @@ def test_broadcast_within_pp(init_model_parallel, tp_size, pp_size, from_last, s
         out_tensor = broadcast_tensor_within_pp(tensor, from_last=from_last)
         assert out_tensor.dtype == dtype
         torch.testing.assert_close(out_tensor.to("cpu"), expected.to("cpu"))
+
+
+@pytest.mark.run_only_on("GPU")
+@pytest.mark.parametrize(
+    "K,batch_size,seq_len,partition_vocab_size,sft_loss_weight,kd_loss_weight,bwd_kl,cross_tokenizer",
+    [
+        (3, 4, 8, 16, 0.5, 0.5, False, False),
+        (3, 2, 8, 16, 0, 1.0, False, False),
+        (3, 2, 8, 32, 1.0, 0, False, False),
+        (3, 4, 8, 16, 0.5, 0.5, True, False),
+        (3, 2, 8, 16, 0, 1.0, True, False),
+        (3, 4, 8, 16, 0.5, 0.5, False, True),
+    ],
+)
+def test_top_k_logits(
+    init_model_parallel,
+    K,
+    batch_size,
+    seq_len,
+    partition_vocab_size,
+    sft_loss_weight,
+    kd_loss_weight,
+    bwd_kl,
+    cross_tokenizer,
+):
+    init_model_parallel(tensor_model_parallel_size=torch.cuda.device_count())
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+
+    torch.manual_seed(0)
+
+    true_logits = (
+        torch.randint(low=0, high=100, size=(batch_size, seq_len, partition_vocab_size * world_size)) / 5
+    ).to(torch.cuda.current_device())
+    target_logits, target_token_ids = torch.topk(true_logits, K)
+    target_log_sum_exp_logits = true_logits.exp().sum(-1).log()
+    loss_mask = torch.ones(target_logits.size()[:-1]).to(torch.cuda.current_device())
+    labels = torch.randint(low=0, high=partition_vocab_size * world_size, size=(batch_size, seq_len)).to(
+        torch.cuda.current_device()
+    )
+
+    torch.manual_seed(torch.cuda.current_device() + 10)
+    vocab_parallel_logits = torch.autograd.Variable(
+        (torch.randint(low=0, high=100, size=(batch_size, seq_len, partition_vocab_size)) / 5).to(
+            torch.cuda.current_device()
+        ),
+        requires_grad=True,
+    )
+
+    ## test loss function
+    # test forward
+    ctx = torch.autograd.function.FunctionCtx()
+
+    naive_loss = naive_top_k_loss_function(
+        vocab_parallel_logits,
+        target_logits,
+        target_token_ids,
+        target_log_sum_exp_logits,
+        loss_mask,
+        labels,
+        kd_loss_weight,
+        sft_loss_weight,
+        "bwd_kl" if bwd_kl else "fwd_kl",
+        cross_tokenizer,
+    )
+
+    efficient_loss, kd, sft = _TopKLogitsCrossEntropy.forward(
+        ctx,
+        vocab_parallel_logits,
+        target_logits,
+        target_token_ids,
+        labels,
+        kd_loss_weight,
+        sft_loss_weight,
+        bwd_kl,
+        cross_tokenizer,
+    )
+
+    ## sum p(x)logp(x) - p(x) logq(x)
+    efficient_loss = torch.mean(efficient_loss)
+
+    torch.testing.assert_close(naive_loss, efficient_loss)
+
+    ctx.saved_tensors = ctx.to_save  ## WAR for "AttributeError: 'FunctionCtx' object has no attribute 'saved_tensors'"
+
+    # test backward
+    naive_loss.backward()
+    naive_grad = vocab_parallel_logits.grad
+    new_grad = _TopKLogitsCrossEntropy.backward(
+        ctx, 1.0 / (batch_size * seq_len) * torch.ones(batch_size, seq_len).to(torch.cuda.current_device())
+    )[0]
+
+    torch.testing.assert_close(naive_grad, new_grad)
