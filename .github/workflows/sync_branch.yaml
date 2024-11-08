@@ -16,12 +16,14 @@ jobs:
     name: syncing main with dev
     outputs:
       date: ${{ steps.date.outputs.date }}
+    environment: main
     steps:
       - name: Checkout
         uses: actions/checkout@v2
         with:
           ref: ko3n1g/dev
           fetch-depth: 0
+          token: ${{ secrets.PAT }}
 
       - name: Get todays date
         id: date
@@ -33,7 +35,7 @@ jobs:
         run: |
           git config --global user.email "bot@nvidia.com"
           git config --global user.name "NVIDIA NeMo Bot"
-          
+
           git fetch origin main
           git rebase origin/main
           git push --force
