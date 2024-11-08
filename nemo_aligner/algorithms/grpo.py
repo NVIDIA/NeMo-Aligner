@@ -80,8 +80,19 @@ def extract_box_content(text):
     return matches
 
 
-def evaluate_all(answers):
-    return [judget_game24(*item)[0] for item in answers]
+def evaluate_all(sandbox, answers):
+    rewards = []
+
+    for (*output, is_game_24) in answers:
+        if is_game_24:
+            rewards.append(judget_game24(*output)[0])
+        else:
+            r = sandbox.is_output_correct(*output)
+            if r is None:
+                r = False
+            rewards.append(r)
+
+    return rewards
 
 
 def judget_game24(answer: str, input: str) -> bool:
@@ -254,10 +265,10 @@ class GRPOTrainer:
         self.ckpt_callback = ckpt_callback
 
         # TODO: we need to send it once per TP rank, but do that later i guess...
-        # self.sandbox = get_sandbox()
+        self.sandbox = get_sandbox()
 
         # sanity check
-        # assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
+        assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -450,6 +461,8 @@ class GRPOTrainer:
 
             self.timer.start("generate")
 
+            is_game_24 = []
+
             for batch in batch_iterator:
                 # during val we want to use greedy sampling
                 rollout_batch = self.model.infer(batch, use_greedy=is_validation)
@@ -460,11 +473,13 @@ class GRPOTrainer:
                     self.model.tokenizer.ids_to_text(item[length:].tolist())
                     for item, length in zip(rollout_batch["response_tokens"], batch["length"])
                 ]
-                answers = [(extract_answer(t), a) for t, a in zip(texts, batch["answers"])]
+                answers = [(extract_answer(t), a, g) for t, a, g in zip(texts, batch["answers"], batch["is_game_24"])]
                 # TODO: need to make this async for real
-                output = run_if_model_parallel_src(evaluate_all, answers)
+                output = run_if_model_parallel_src(evaluate_all, self.sandbox, answers)
                 if output is not None:
                     all_rewards.extend(output)
+
+                is_game_24.append(batch["is_game_24"])
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -503,9 +518,13 @@ class GRPOTrainer:
                 new_all_rewards, dtype=torch.float32, device=torch.cuda.current_device()
             ).view(-1, 1)
 
+        is_game_24_tensor = torch.as_tensor(
+            is_game_24, dtype=torch.float32, device=torch.cuda.current_device()
+        ).flatten()
+
         all_rewards = broadcast_2d_tensor_within_mp(all_rewards).flatten()
 
-        balanced_local_batch.update({"rewards": all_rewards})
+        balanced_local_batch.update({"rewards": all_rewards, "is_game_24": is_game_24_tensor})
         # gather the global rollout batch
         global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
         return (
@@ -522,6 +541,7 @@ class GRPOTrainer:
         response_tokens = rollout_batch["response_tokens"]
         rewards = rollout_batch["rewards"]
         is_end = rollout_batch["is_end"]
+        is_game_24 = rollout_batch["is_game_24"]
 
         # take the first sample for logging
         reward = rewards[0]
@@ -533,6 +553,10 @@ class GRPOTrainer:
         table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
         table["response"] = self.model.tokenizer.ids_to_text(response_token[prompt_length:response_length].tolist())
 
+        game_24_rewards = (rewards * is_game_24) / is_game_24.sum()
+        is_math = 1 - is_game_24
+        math_rewards = (rewards * is_math) / is_math.sum()
+
         metrics = {
             "table": table,
             "rollout_size": prompt_lengths.size(0) // num_responses,
@@ -540,6 +564,8 @@ class GRPOTrainer:
             "prompt_lengths": prompt_lengths.float().mean().item(),
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
             "rewards": rewards.mean().item(),
+            "game_24_rewards": game_24_rewards.item(),
+            "math_rewards": math_rewards.item(),
             "fraction_of_samples_properly_ended": is_end.float().mean().item(),
         }
 

@@ -83,9 +83,14 @@ class Game24Dataset:
         Return a single prompt.
         """
         assert self.use_text_field_from_data
-
         text = self.data[idx]["text"]
-        answer = self.data[idx]["input"]
+        is_game_24 = "input" in self.data[idx]
+
+        if is_game_24:
+            answer = self.data[idx]["input"]
+        else:
+            answer = self.data[idx]["expected_answer"]
+
         sample, _ = self.encode(text)
         sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
 
@@ -95,6 +100,7 @@ class Game24Dataset:
             "answer": answer,
             "loss_multiplier": True,
             "idx": idx,
+            "is_game_24": is_game_24,
         }
         return output
 
