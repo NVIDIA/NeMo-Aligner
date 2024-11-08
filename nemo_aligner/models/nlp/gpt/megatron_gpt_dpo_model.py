@@ -151,6 +151,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 pad_len = world_size - tokens.shape[1] % world_size
                 with torch.no_grad():
                     import torch.nn.functional as F
+
                     tokens = F.pad(tokens, [0, pad_len, 0, 0], value=0)
                     labels = F.pad(labels, [0, pad_len, 0, 0], value=0)
 
