@@ -31,6 +31,9 @@ jobs:
 
       - name: Attempt rebase
         run: |
+          git config --global user.email "bot@nvidia.com"
+          git config --global user.name "NVIDIA NeMo Bot"
+          
           git fetch origin main
           git rebase origin/main
           git push --force
