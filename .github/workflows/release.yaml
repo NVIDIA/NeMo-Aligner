@@ -11,21 +11,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-name: "Release NeMo Aligner"
+name: "Release Aligner"
 
 on:
   workflow_dispatch:
     inputs:
-      prerelease-sha:
+      release-ref: 
+        description: Ref (SHA or branch name) to release
+        required: true
         type: string
-        description: "Commit SHA for prerelease tag (default: HEAD main)"
-        required: false
     
 jobs:
-  prerelease:
-    uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_release_library.yml@v0.9.0
+  release:
+    uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_release_library.yml@v0.10.0
     with:
-      release-ref: ${{ inputs.prerelease-sha }}
+      release-ref: ${{ inputs.release-ref }}
       image-name: nemo_aligner_container
       dockerfile: Dockerfile
       image-label: nemo-aligner
