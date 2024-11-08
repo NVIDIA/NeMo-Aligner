@@ -41,11 +41,31 @@ jobs:
     env:
       DATE: ${{ needs.sync-branches-via-rebase.outputs.date }}
     steps:
+      - name: Find PR
+        id: fp
+        env:
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PRs=$(curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/$REPOSITORY/pulls)
+          
+          PR_NUMBER=$(echo -E "$PRs" \
+            | jq '.[] \
+            | select(.head.ref == "ko3n1g/dev") \
+            | .number'
+          )
+
+          echo "pr-number=$PR_NUMBER" | tee -a "$GITHUB_OUTPUT"
+
       - name: Find Comment
         uses: peter-evans/find-comment@v3
         id: fc
         with:
-          issue-number: ${{ github.event.number }}
+          issue-number: ${{ steps.fp.outputs.pr-number }}
           body-includes: <!-- auto-rebase-message -->
 
       - name: Add PR comment for PyLint 
