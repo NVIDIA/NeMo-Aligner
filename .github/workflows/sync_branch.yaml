@@ -111,5 +111,5 @@ jobs:
             Daily <${{ env.RUN_URL }}|sync main with dev> has failed for ${{ env.DATE }}.
 
             cc: ${{ env.SLACK_WEBHOOK_ADMIN }}
-          webhook: ${{ env.SLACK_WEBHOOK_TEST }}
+          webhook: ${{ env.SLACK_WEBHOOK }}
   
