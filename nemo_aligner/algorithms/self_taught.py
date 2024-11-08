@@ -20,7 +20,6 @@ import os
 from collections import defaultdict
 from functools import partial
 from statistics import mean
-from textwrap import dedent
 
 import numpy as np
 import pandas as pd
@@ -28,11 +27,10 @@ import torch
 from megatron.core import parallel_state
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
-from sklearn.linear_model import LogisticRegression
 from tqdm import tqdm
 
 from nemo.collections.common.tokenizers import AutoTokenizer
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
+#from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
     MegatronPretrainingRandomBatchSampler,
 )
@@ -44,11 +42,12 @@ from nemo_aligner.utils.text_generation_utils import (
     TrackLengthGPTModelTextGenerationStrategy,
     verify_is_valid_and_clamp_range_,
 )
-from nemo_aligner.utils.train_utils import clip_gradients
+from nemo_aligner.utils.train_utils import clip_gradients, set_eval, set_train
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import (
     batch_pad_to_fixed_len,
     clear_memory,
+    configure_batch_sizes,
     cpu_weight_swap,
     retrieve_model_state_dict_in_cpu,
 )
@@ -75,7 +74,7 @@ metadata: dict - with keys "system" for the preamble, and "mask" which is "User"
 """
 
 
-def self_rewarding_custom_collate(
+def self_taught_custom_collate(
     batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False
 ):
     input_ids = [item["input_ids"] for item in batch]
@@ -114,10 +113,6 @@ def db(msg):
         print(f"*** rank[{torch.distributed.get_rank()}]  {msg}", flush=True)
 
 
-def eye(x):
-    return x
-
-
 def exists(v):
     return v is not None
 
@@ -133,49 +128,16 @@ def find_variables_from_jinja_template(template: str):
     return meta.find_undeclared_variables(ast)
 
 
-def create_parse_reward_fn(reward_regex_template):
-    assert find_variables_from_jinja_template(reward_regex_template) == {
-        "reward"
-    }, 'reward template must include "score" variable'
-    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward="([0-9\.]+)")
+def create_parse_regex_fn(reward_regex_template):
+    def parse_reward_fn(llm_response: str):
+        result = re.findall(reward_regex_template, llm_response)
 
-    def parse_reward_fn(llm_response: str) -> float:
-        result = re.search(rf"{reward_regex_str}", llm_response)
-
-        if not exists(result) or result.groups == 0:
+        if result is None or len(result) == 0:
             return None
-
-        group_one = result.groups(1)[0] if isinstance(result.groups(1), tuple) else result.groups(1)
-
-        try:
-            ret = float(group_one)
-        except:
-            ret = None
-
-        return ret
-
-    return parse_reward_fn
-
-
-def create_meta_parse_reward_fn(reward_regex_template):
-    assert find_variables_from_jinja_template(reward_regex_template) == {
-        "reward"
-    }, 'reward template must include "score" variable'
-    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward="([A-B\.]+)")
-
-    # @always(lambda: randrange(0, 10))
-    def parse_reward_fn(llm_response: str) -> float:
-        result = re.search(rf"{reward_regex_str}", llm_response)
-
-        if not exists(result) or result.groups == 0:
-            return None
-
-        group_one = result.groups(1)[0] if isinstance(result.groups(1), tuple) else result.groups(1)
-
-        if group_one == "A" or group_one == "B":
-            return group_one
-        else:
-            return None
+        elif len(result) > 1:
+            print(f"*** REGEX_MORE_THAN_ONE [ {reward_regex_template} ] : {llm_response}")
+        
+        return result[0].strip()
 
     return parse_reward_fn
 
@@ -185,150 +147,119 @@ def divide_chunks(l, n):
         yield l[i : i + n]
 
 
-DEFAULT_LLM_AS_JUDGE_PROMPT = """<extra_id_0>System
+DEFAULT_BAD_RESPONSE_PROMPT = """<extra_id_0>System
 
 <extra_id_1>User
-Review the user's question and the corresponding response using the additive 5-point
-scoring system described below. Points are accumulated based on the satisfaction of each
-criterion:
-- Add 1 point if the response is relevant and provides some information related to
-the user's inquiry, even if it is incomplete or contains some irrelevant content.
-- Add another point if the response addresses a substantial portion of the user's question,
-but does not completely resolve the query or provide a direct answer.
-- Award a third point if the response answers the basic elements of the user's question in a
-useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-has elements typically found in blogs or search results.
-- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-addressing the user's question directly and comprehensively, and is well-organized and
-helpful, even if there is slight room for improvement in clarity, conciseness or focus.
-- Bestow a fifth point for a response that is impeccably tailored to the user's question
-by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-demonstrating a high-quality, engaging, and insightful answer.
+Below is a conversation between an user and an AI Assistant.
 
-<prompt>{{ prompt }}</prompt>
-<response>{{ response }}</response>
+{{ orig_prompt }}
 
-After examining the user's instruction and the response:
-- Briefly justify your total score, up to 100 words.
-- Conclude with the score using the format: "Score: <total points>"
-Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
-necessary. To evaluate the response in alignment with this additive scoring model, we'll
-systematically attribute points based on the outlined criteria.
+The start of Assistant's Answer
+{{ orig_response }}
+The end of Assistant's Answer
+
+Please first generate a modified instruction that is highly relevant but not semantically identical to
+the instruction above from the user. Then write a high-quality answer which is a good response to the
+modified instruction but not a good response to the original user question. IMPORTANT: Please strictly
+follow the following format:
+
+User Question Modified
+<provide a modified instruction here>
+
+[assistant modified instruction start]
+<provide a high-quality response to the modified instruction>
+[assistant modified instruction end]
 <extra_id_1>Assistant
 """
 
 
-DEFAULT_LLM_AS_JUDGE_PROMPT_LLAMA3 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+DEFAULT_BAD_RESPONSE_PROMPT_LLAMA3 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 
 <|eot_id|><|start_header_id|>user<|end_header_id|>
 
-Review the user's question and the corresponding response using the additive 5-point
-scoring system described below. Points are accumulated based on the satisfaction of each
-criterion:
-- Add 1 point if the response is relevant and provides some information related to
-the user's inquiry, even if it is incomplete or contains some irrelevant content.
-- Add another point if the response addresses a substantial portion of the user's question,
-but does not completely resolve the query or provide a direct answer.
-- Award a third point if the response answers the basic elements of the user's question in a
-useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-has elements typically found in blogs or search results.
-- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-addressing the user's question directly and comprehensively, and is well-organized and
-helpful, even if there is slight room for improvement in clarity, conciseness or focus.
-- Bestow a fifth point for a response that is impeccably tailored to the user's question
-by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-demonstrating a high-quality, engaging, and insightful answer.
+Below is a conversation between an user and an AI Assistant.
 
-<prompt>{{ prompt }}</prompt>
-<response>{{ response }}</response>
+{{ orig_prompt }}
 
-After examining the user's instruction and the response:
-- Briefly justify your total score, up to 100 words.
-- Conclude with the score using the format: "Score: <total points>"
-Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
-necessary. To evaluate the response in alignment with this additive scoring model, we'll
-systematically attribute points based on the outlined criteria.
+The start of Assistant's Answer
+{{ orig_response }}
+The end of Assistant's Answer
+
+Please first generate a modified instruction that is highly relevant but not semantically identical to
+the instruction above from the user. Then write a high-quality answer which is a good response to the
+modified instruction but not a good response to the original user question. IMPORTANT: Please strictly
+follow the following format:
+
+User Question Modified
+<provide a modified instruction here>
+
+[assistant modified instruction start]
+<provide a high-quality response to the modified instruction>
+[assistant modified instruction end]
 <|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
 """
 
 
-DEFAULT_META_JUDGE_PROMPT = """<extra_id_0>System
+DEFAULT_JUDGEMENT_ANNOTATION = """<extra_id_0>System
 
 <extra_id_1>User
-Review the user's question and the corresponding response, along with two judgments.
-Determine which judgment is more accurate according to the rubric provided below. The
-rubric used for the initial judgments is as follows:
-- Add 1 point if the response is relevant and provides some information related to
-the user's inquiry, even if it is incomplete or contains some irrelevant content.
-- Add another point if the response addresses a substantial portion of the user's question,
-but does not completely resolve the query or provide a direct answer.
-- Award a third point if the response answers the basic elements of the user's question in a
-useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-has elements typically found in blogs or search results.
-- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-addressing the user's question directly and comprehensively, and is well-organized and helpful,
-even if there is slight room for improvement in clarity, conciseness or focus.
-- Bestow a fifth point for a response that is impeccably tailored to the user's question
-by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-demonstrating a high-quality, engaging, and insightful answer.
+Please act as an impartial judge and evaluate the quality of the responses provided by two AI assistants
+to the user question displayed below. You should choose the assistant that follows the user's instructions
+and answers the user's question better. Your evaluation should consider factors such as the helpfulness,
+relevance, accuracy, depth, creativity, and level of detail of their responses. Begin your evaluation by
+comparing the two responses and provide a short explanation. Avoid any position biases and ensure that
+the order in which the responses were presented does not influence your decision. Do not allow the length
+of the responses to influence your evaluation. Do not favor certain names of the assistants. Be as objective
+as possible. After providing your explanation, output your final verdict by strictly following this format:
+"[[A]]" if assistant A is better, "[[B]]" if assistant B is better.
 
-<prompt>{{ prompt }}<prompt>
-<response>{{ response }}<response>
-<judgement A>{{ judgement_a }}<judgement A>
-<judgement B>{{ judgement_b }}<judgement B>
+[[User Question]]
+{{ orig_prompt }}
 
-After examining the original question, response, and both judgments:
-- Explain which judgment is more accurate according to the original rubric and why.
-Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
-consistency in applying the criteria.
-- Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
+[The Start of Assistant A's Answer]
+{{ response_A }}
+[The End of Assistant A's Answer]
+
+[The Start of Assistant B's Answer]
+{{ response_B }}
+[The End of Assistant B's Answer]
 <extra_id_1>Assistant
 """
 
 
-DEFAULT_META_JUDGE_PROMPT_LLAMA3 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+DEFAULT_JUDGEMENT_ANNOTATION_LLAMA3 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 
 <|eot_id|><|start_header_id|>user<|end_header_id|>
 
-Review the user's question and the corresponding response, along with two judgments.
-Determine which judgment is more accurate according to the rubric provided below. The
-rubric used for the initial judgments is as follows:
-- Add 1 point if the response is relevant and provides some information related to
-the user's inquiry, even if it is incomplete or contains some irrelevant content.
-- Add another point if the response addresses a substantial portion of the user's question,
-but does not completely resolve the query or provide a direct answer.
-- Award a third point if the response answers the basic elements of the user's question in a
-useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-has elements typically found in blogs or search results.
-- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-addressing the user's question directly and comprehensively, and is well-organized and helpful,
-even if there is slight room for improvement in clarity, conciseness or focus.
-- Bestow a fifth point for a response that is impeccably tailored to the user's question
-by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-demonstrating a high-quality, engaging, and insightful answer.
+Please act as an impartial judge and evaluate the quality of the responses provided by two AI assistants
+to the user question displayed below. You should choose the assistant that follows the user's instructions
+and answers the user's question better. Your evaluation should consider factors such as the helpfulness,
+relevance, accuracy, depth, creativity, and level of detail of their responses. Begin your evaluation by
+comparing the two responses and provide a short explanation. Avoid any position biases and ensure that
+the order in which the responses were presented does not influence your decision. Do not allow the length
+of the responses to influence your evaluation. Do not favor certain names of the assistants. Be as objective
+as possible. After providing your explanation, output your final verdict by strictly following this format:
+"[[A]]" if assistant A is better, "[[B]]" if assistant B is better.
 
-<prompt>{{ prompt }}<prompt>
-<response>{{ response }}<response>
-<judgement A>{{ judgement_a }}<judgement A>
-<judgement B>{{ judgement_b }}<judgement B>
+[[User Question]]
+{{ orig_prompt }}
 
-After examining the original question, response, and both judgments:
-- Explain which judgment is more accurate according to the original rubric and why.
-Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
-consistency in applying the criteria.
-- Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
+[The Start of Assistant A's Answer]
+{{ response_A }}
+[The End of Assistant A's Answer]
+
+[The Start of Assistant B's Answer]
+{{ response_B }}
+[The End of Assistant B's Answer]
 <|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
 """
 
 
-DEFAULT_REWARD_REGEX_TEMPLATE = "(?i)(?:Score|Points): {{ reward }}"
-DEFAULT_META_REWARD_REGEX_TEMPLATE = "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
-
-
-SCALE = 400
-INIT_RATING = 1000
+#DEFAULT_BAD_REGEX_TEMPLATE_PROMPT = r"(?s)(?<=\[User Question Modified Start\])(.*?)(?=\[User Question Modified End\])"
+DEFAULT_BAD_REGEX_TEMPLATE_RESP = r"(?s)(?<=\[assistant modified instruction start\])(.*?)(?=\[assistant modified instruction end\])"
+DEFAULT_JUDGEMENT_REGEX_TEMPLATE = r"\[\[(A|B)\]\]"
 
 
 def ids_to_text(self, ids):
@@ -337,7 +268,7 @@ def ids_to_text(self, ids):
     return text
 
 
-class SelfRewardingTrainer:
+class SelfTaughtTrainer:
     """Trainer to coordinate Self-Rewarding training
     """
 
@@ -397,33 +328,19 @@ class SelfRewardingTrainer:
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
 
-        self.spin_config = OmegaConf.to_container(self.model.cfg.spin, resolve=True)
-        if isinstance(self.spin_config["length_control"], (float, int)):
-            self.rho = self.spin_config["length_control"]
-        elif isinstance(self.spin_config["length_control"], list) or self.spin_config.get("length_control") is None:
-            self.rho = 0.0
-        else:
-            raise TypeError(
-                f"`length_control` must be a scalar or list, but got {type(self.spin_config['length_control'])}"
-            )
-
-        self.num_responses_to_gen = self.model.cfg.spin.num_responses_to_gen
-        self.num_evals_to_average = self.model.cfg.spin.num_evals_to_average
-        self.first_iteration_sft = self.model.cfg.spin.get("first_iteration_sft", False)
-        self.use_meta_judge = self.model.cfg.spin.get("use_meta_judge", False)
-        self.meta_judge_pcnt = self.model.cfg.spin.get("meta_judge_pcnt", -1.0)
-        self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
-        self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
+        self.num_responses_to_gen = self.model.cfg.self_taught.num_responses_to_gen
+        self.length_params = OmegaConf.to_container(self.model.cfg.self_taught.length_params, resolve=True)
+        self.sampling_params = OmegaConf.to_container(self.model.cfg.self_taught.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
         dp_batch_size = self.model.cfg.global_batch_size // parallel_state.get_data_parallel_world_size()
         assert (
-            self.model.cfg.spin.rollout_micro_batch_size % dp_batch_size == 0
-        ), f"rollout_micro_batch_size [{self.model.cfg.spin.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
-        self.rollout_micro_batch_size = self.model.cfg.spin.rollout_micro_batch_size
+            self.model.cfg.self_taught.rollout_micro_batch_size % dp_batch_size == 0
+        ), f"rollout_micro_batch_size [{self.model.cfg.self_taught.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
+        self.rollout_micro_batch_size = self.model.cfg.self_taught.rollout_micro_batch_size
         assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
 
         # for wandb table
-        self.train_df = pd.DataFrame(columns=["step", "prompt", "chosen_response", "rejected_response"])
+        self.train_df = pd.DataFrame(columns=["step", "prompt", "response"])
 
         if isinstance(self.model.tokenizer, AutoTokenizer):
             self.tokenizer = copy.copy(self.model.tokenizer)
@@ -431,37 +348,27 @@ class SelfRewardingTrainer:
         else:
             self.tokenizer = self.model.tokenizer
 
-        self.prompt_template = self.model.cfg.spin.get("llm_judge_prompt", DEFAULT_LLM_AS_JUDGE_PROMPT)
-        self.meta_judge_template = self.model.cfg.spin.get("llm_meta_judge_prompt", DEFAULT_META_JUDGE_PROMPT)
-        self.reward_regex_template = self.model.cfg.spin.get("judge_reward_regex", DEFAULT_REWARD_REGEX_TEMPLATE)
-        self.meta_judge_reward_regex_template = self.model.cfg.spin.get(
-            "meta_judge_reward_regex", DEFAULT_META_REWARD_REGEX_TEMPLATE
-        )
-        self.judge_score_low = self.model.cfg.spin.get("judge_score_low", 0)
-        self.judge_score_high = self.model.cfg.spin.get("judge_score_high", 5)
-        self.meta_max_relative_pcnt = self.model.cfg.spin.get("meta_max_relative_pcnt", 0.4)
+        self.bad_response_template = DEFAULT_BAD_RESPONSE_PROMPT_LLAMA3 #self.model.cfg.self_taught.get("bad_response_template", DEFAULT_BAD_RESPONSE_PROMPT)
+        self.llm_judge_template = DEFAULT_JUDGEMENT_ANNOTATION_LLAMA3 #self.model.cfg.self_taught.get("llm_judge_template", DEFAULT_JUDGEMENT_ANNOTATION)
+        #self.bad_response_regex_prompt = self.model.cfg.self_taught.get("bad_response_regex_prompt", DEFAULT_BAD_REGEX_TEMPLATE_PROMPT)
+        self.bad_response_regex_resp = DEFAULT_BAD_REGEX_TEMPLATE_RESP #self.model.cfg.self_taught.get("bad_response_regex_response", DEFAULT_BAD_REGEX_TEMPLATE_RESP)
+        self.judgement_regex = DEFAULT_JUDGEMENT_REGEX_TEMPLATE #self.model.cfg.self_taught.get("judgement_regex", DEFAULT_JUDGEMENT_REGEX_TEMPLATE)
 
-        assert find_variables_from_jinja_template(self.prompt_template) == {
-            "prompt",
-            "response",
-        }, "llm_judge_prompt must include `prompt` and `response` templating variables"
-        assert find_variables_from_jinja_template(self.meta_judge_template) == {
-            "prompt",
-            "response",
-            "judgement_a",
-            "judgement_b",
-        }, "llm_meta_judge_prompt must include `prompt`, `response`, `judgement_a`, and `judgement_b` templating variables"
-        assert find_variables_from_jinja_template(self.reward_regex_template) == {
-            "reward"
-        }, "judge_reward_regex must include `reward` templating variable"
-        assert find_variables_from_jinja_template(self.meta_judge_reward_regex_template) == {
-            "reward"
-        }, "meta_judge_reward_regex must include `reward` templating variable"
+        assert find_variables_from_jinja_template(self.bad_response_template) == {
+            "orig_prompt",
+            "orig_response",
+        }, "bad_response_template must include `orig_prompt` and `orig_response` templating variables"
+        assert find_variables_from_jinja_template(self.llm_judge_template) == {
+            "orig_prompt",
+            "response_A",
+            "response_B",
+        }, "llm_judge_template must include `orig_prompt`, `response_A`, and `response_B` templating variables"
 
-        self.template_fn = jinja2_env.from_string(self.prompt_template).render
-        self.meta_judge_template_fn = jinja2_env.from_string(self.meta_judge_template).render
-        self.parse_reward_fn = create_parse_reward_fn(self.reward_regex_template)
-        self.meta_parse_reward_fn = create_meta_parse_reward_fn(self.meta_judge_reward_regex_template)
+        self.bad_response_template_fn = jinja2_env.from_string(self.bad_response_template).render
+        self.llm_judge_template_fn = jinja2_env.from_string(self.llm_judge_template).render
+        #self.bad_response_regex_prompt_fn = create_parse_regex_fn(self.bad_response_regex_prompt)
+        self.bad_response_regex_resp_fn = create_parse_regex_fn(self.bad_response_regex_resp)
+        self.judgement_regex_fn = create_parse_regex_fn(self.judgement_regex)
 
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
@@ -476,12 +383,8 @@ class SelfRewardingTrainer:
                 repetition_penalty=self.sampling_params["repetition_penalty"],
                 max_generation_length=self.length_params["max_length"],
                 max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
-                max_input_tokens=self.cfg.trt_llm.get(
-                    "max_input_tokens",
-                    self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2) * dp_batch_size,
-                ),
                 generation_batch_size=self.cfg.trt_llm.get(
-                    "generation_batch_size", self.model.cfg.spin.get("rollout_micro_batch_size", 4)
+                    "generation_batch_size", self.model.cfg.self_taught.get("rollout_micro_batch_size", 4)
                 ),
                 use_greedy=self.sampling_params.get("use_greedy", False),
                 trt_model_type=self.cfg.trt_llm.get("model_type", "llama"),
@@ -494,7 +397,7 @@ class SelfRewardingTrainer:
         # these things should go into a GPTModel wrapper
         self.model.prepare_for_validation_step()
 
-        loss_mean, metrics = self.model.get_loss_and_metrics_vanilla_sft(batch=global_batch, forward_only=True)
+        loss_mean, metrics = self.model.get_loss_and_metrics(batch=global_batch, forward_only=True)
 
         self.model.finish_validation_step()
         return loss_mean, metrics
@@ -538,30 +441,6 @@ class SelfRewardingTrainer:
         self.model.prepare_for_training_step()
 
         # NOTE: assume backward is called on the loss already
-        loss_mean, metrics = self.model.get_loss_and_metrics_vanilla_sft(batch=global_batch, forward_only=False)
-
-        self.model.finish_training_step()
-
-        grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
-        grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
-        lr = self.optimizer.param_groups[0]["lr"]
-
-        self.optimizer.step()
-        self.scheduler.step()
-
-        trainer_metrics = {}
-        if grad_norm is not None:
-            trainer_metrics["grad_norm"] = grad_norm
-        trainer_metrics.update({"lr": lr, "loss": loss_mean})
-
-        return loss_mean, {**metrics, **trainer_metrics}
-
-    def train_single_step_dpo(self, global_batch):
-        self.optimizer.zero_grad()
-
-        self.model.prepare_for_training_step()
-
-        # NOTE: assume backward is called on the loss already
         loss_mean, metrics = self.model.get_loss_and_metrics(batch=global_batch, forward_only=False)
 
         self.model.finish_training_step()
@@ -577,30 +456,21 @@ class SelfRewardingTrainer:
         if grad_norm is not None:
             trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
-
+        
         num_samples = 0
         gen_lengths_chosen = 0
-        gen_lengths_reject = 0
         num_bad_samples = 0
         num_bad_ends = 0
-        sum_chosen_rewards = 0
-        sum_reject_rewards = 0
-        num_samples += global_batch["chosen"].shape[0]
+        num_samples += global_batch["tokens"].shape[0]
         num_bad_samples += global_batch["bad_samples"].sum()
         num_bad_ends += global_batch["bad_ends"].sum()
-        gen_lengths_chosen += (global_batch["chosen_gen_lens"] - global_batch["chosen_prompt_lens"]).sum()
-        gen_lengths_reject += (global_batch["reject_gen_lens"] - global_batch["reject_prompt_lens"]).sum()
-        sum_chosen_rewards += global_batch["chosen_rewards"][global_batch["chosen_rewards"] != -1].sum()
-        sum_reject_rewards += global_batch["rejected_rewards"][global_batch["rejected_rewards"] != -1].sum()
+        gen_lengths_chosen += (global_batch["gen_lens"] - global_batch["prompt_lens"]).sum()
         tensor_to_accumulate = torch.tensor(
             [
                 gen_lengths_chosen,
-                gen_lengths_reject,
                 num_bad_samples,
                 num_bad_ends,
                 num_samples,
-                sum_chosen_rewards,
-                sum_reject_rewards,
             ],
             dtype=torch.float32,
             device=torch.cuda.current_device(),
@@ -609,21 +479,34 @@ class SelfRewardingTrainer:
 
         (
             global_chosen_response_lengths,
-            global_reject_response_lengths,
             GBS_sum_bad_samples,
             GBS_sum_bad_ends,
             GBS_num_samples,
-            global_chosen_rewards,
-            global_reject_rewards,
         ) = tensor_to_accumulate.tolist()
-        metrics["chosen_lengths"] = global_chosen_response_lengths / GBS_num_samples
-        metrics["reject_lengths"] = global_reject_response_lengths / GBS_num_samples
+        metrics["response_lengths"] = global_chosen_response_lengths / GBS_num_samples
         metrics["bad_samples_per_GBS"] = GBS_sum_bad_samples / GBS_num_samples
         metrics["bad_ends_per_GBS"] = GBS_sum_bad_ends / (GBS_num_samples * self.num_responses_to_gen)
-        metrics["chosen_generated_rewards"] = global_chosen_rewards / GBS_num_samples
-        metrics["rejected_generated_rewards"] = global_reject_rewards / GBS_num_samples
 
         return loss_mean, {**metrics, **trainer_metrics}
+    
+    def prepare_model_for_inference(self):
+        self.model._reset_activation_checkpointing_args()
+        self.model._reset_sequence_parallelism_args()
+        set_eval(self.model)
+        self.model.offload_adam_states()
+    
+    def finish_model_inference(self):
+        self.model._restore_activation_checkpointing_args()
+        self.model._restore_sequence_parallelism_args()
+        set_train(self.model)
+    
+    def prepare_model_for_training(self):
+        configure_batch_sizes(
+            mbs=self.model.cfg.micro_batch_size,
+            gbs=self.model.cfg.global_batch_size,
+            dp=parallel_state.get_data_parallel_world_size(),
+        )
+        #self.model.onload_adam_states()
 
     @torch.no_grad()
     def get_generations(self, list_of_batches):
@@ -699,69 +582,24 @@ class SelfRewardingTrainer:
             self.trtllm_generate.free()
 
         return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu(), is_valid.cpu()
+    
+    def get_perturbed_responses(self, list_of_batches):
+        #perturbed_responses = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
+        perturbed_responses = []
+        perturb_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
+        batch_responses_str = []
+        for t, s, e, end in zip(perturb_responses, prompt_lengths.tolist(), resp_lengths.tolist(), is_end.tolist()):
+            response = self.tokenizer.ids_to_text(t[s:e].tolist())
+            batch_responses_str.append(response)
+        perturbs_as_str = [self.bad_response_regex_resp_fn(resp_str.strip()) for resp_str in batch_responses_str]
+        for idx, (r, end) in enumerate(zip(perturbs_as_str, is_end.tolist())):
+            perturbed_responses.append(
+                r if (end and (r is not None)) else None
+            )
 
-    def get_rewards(self, list_of_batches):
-        reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
-        judge_responses = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
-        for _ in range(self.num_evals_to_average):
-            reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
-            batch_responses_str = []
-            for t, s, e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
-                response = self.tokenizer.ids_to_text(t[s:e].tolist())
-                batch_responses_str.append(response)
-            rewards = [self.parse_reward_fn(resp_str) for resp_str in batch_responses_str]
-            for idx, (r, t, s, e, end) in enumerate(
-                zip(rewards, reward_responses, prompt_lengths.tolist(), resp_lengths.tolist(), is_end.tolist())
-            ):
-                # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
-                # a valid score, it's all good, we don't need correctness beyond that
-                # reward_scores[idx].append(r if end else None)
-                reward_scores[idx].append(
-                    r if ((r is not None) and (r >= self.judge_score_low and r <= self.judge_score_high)) else None
-                )
-                # should we include responses which only contain valid scores?
-                if self.use_meta_judge:
-                    judge_responses[idx].append(
-                        (t, s, e, end)
-                        if ((r is not None) and (r >= self.judge_score_low and r <= self.judge_score_high))
-                        else None
-                    )
+        #perturbed_responses = [[*filter(exists, b)] for b in perturbed_responses]
 
-        assert all(
-            [len(b) == self.num_evals_to_average for b in reward_scores]
-        ), f"did not get generate the correct number of reward scores: {reward_scores}"
-        reward_scores = [[*filter(exists, b)] for b in reward_scores]
-        if self.use_meta_judge:
-            assert all(
-                [len(b) == self.num_evals_to_average for b in judge_responses]
-            ), f"did not get generate the correct number of judge scores: {judge_responses}"
-            judge_responses = [[*filter(exists, b)] for b in judge_responses]
-
-        reward_means = [(np.mean(b) if len(b) > 0 else None) for b in reward_scores]
-        reward_variance = [(np.var(b) if len(b) > 0 else None) for b in reward_scores]
-
-        return reward_means, reward_variance, judge_responses
-
-    def get_rewards_meta(self, list_of_batches):
-        reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
-        for _ in range(1):
-            reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
-            batch_responses_str = []
-            for t, s, e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
-                response = self.tokenizer.ids_to_text(t[s:e].tolist())
-                batch_responses_str.append(response)
-            rewards = [self.meta_parse_reward_fn(resp_str) for resp_str in batch_responses_str]
-            for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
-                # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
-                # a valid score, it's all good, we don't need correctness beyond that
-                # reward_scores[idx].append(r if end else None)
-                reward_scores[idx].append(r if ((r is not None) and (r == "A" or r == "B")) else None)
-
-        reward_scores = [[*filter(exists, b)] for b in reward_scores]
-
-        reward_means = [(b[0] if len(b) > 0 else None) for b in reward_scores]
-
-        return reward_means
+        return perturbed_responses
 
     def fit(self):
         if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
@@ -788,13 +626,6 @@ class SelfRewardingTrainer:
                 # epoch done
                 return
 
-            # call this in case the model is using a KL scheduler based on iteration number
-            self.model.set_KL_penalty_by_iteration(self.iteration)
-            # call this in case we are using a length_control scheduler based on iteration number
-            self.set_rho_by_iteration(self.iteration)
-
-            # print(f"*** Iteration [ {self.iteration} ]  RHO [ {self.rho} ] ***")
-
             for _ in epoch_iter:
                 num_steps_in_epoch = min(
                     self.max_steps - self.step, self.num_steps_per_epoch - self.step % self.num_steps_per_epoch
@@ -813,13 +644,10 @@ class SelfRewardingTrainer:
                 )
 
                 for _, global_batch in zip(loop_iter, global_pbar):
-                    self.model.prepare_for_training()
+                    self.prepare_model_for_training()
 
                     self.timer.start("train_step_time")
-                    if self.first_iteration_sft and self.iteration == 0:
-                        loss, metrics = self.train_single_step_sft(global_batch)
-                    else:
-                        loss, metrics = self.train_single_step_dpo(global_batch)
+                    loss, metrics = self.train_single_step_sft(global_batch)
                     self.timer.stop("train_step_time")
                     train_step_time = self.timer.get("train_step_time")
                     # to help avoid fragmentation
@@ -859,27 +687,20 @@ class SelfRewardingTrainer:
 
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
-                        if (not self.first_iteration_sft) and torch.distributed.get_rank() == 0:
+                        if torch.distributed.get_rank() == 0:
                             for idx in range(len(global_batch["bad_samples"])):
                                 if not global_batch["bad_samples"][idx]:
                                     self.train_df.loc[len(self.train_df)] = [
                                         self.step,
                                         self.tokenizer.ids_to_text(
-                                            global_batch["chosen"][idx][
-                                                : global_batch["chosen_prompt_lens"][idx].item()
+                                            global_batch["tokens"][idx][
+                                                : global_batch["prompt_lens"][idx].item()
                                             ].tolist()
                                         ),
                                         self.tokenizer.ids_to_text(
-                                            global_batch["chosen"][idx][
-                                                global_batch["chosen_prompt_lens"][idx]
-                                                .item() : global_batch["chosen_gen_lens"][idx]
-                                                .item()
-                                            ].tolist()
-                                        ),
-                                        self.tokenizer.ids_to_text(
-                                            global_batch["rejected"][idx][
-                                                global_batch["reject_prompt_lens"][idx]
-                                                .item() : global_batch["reject_gen_lens"][idx]
+                                            global_batch["tokens"][idx][
+                                                global_batch["prompt_lens"][idx]
+                                                .item() : global_batch["gen_lens"][idx]
                                                 .item()
                                             ].tolist()
                                         ),
@@ -901,12 +722,13 @@ class SelfRewardingTrainer:
                         return
 
                     metrics.clear()
-                    self.model.finish_training()
+                    #self.model.finish_training()
 
             # update the reference policy weights
-            self.model.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-                self.model, megatron_amp_O2=self.model.cfg.get("megatron_amp_O2", False)
-            )
+            if self.model.cfg.self_taught.get("update_ref_policy", True):
+                self.model.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+                    self.model, megatron_amp_O2=self.model.cfg.get("megatron_amp_O2", False)
+                )
 
         self.logger.finalize()
 
@@ -915,7 +737,7 @@ class SelfRewardingTrainer:
 
     def save(self, extra_candidates=None, is_train_end=False):
         # load back in the adam states if needed
-        self.model.prepare_for_training()
+        self.prepare_model_for_training()
         torch.cuda.synchronize()
         torch.distributed.barrier()
 
@@ -931,7 +753,7 @@ class SelfRewardingTrainer:
 
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
-        self.model.finish_training()
+        #self.model.finish_training()
 
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs * self.cfg.max_iterations
@@ -963,321 +785,244 @@ class SelfRewardingTrainer:
 
     def augment_dataloader(self, dataloader):
         """Augment dataloader with generations and ref policy log probs"""
-        print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ]  ENTERED_AUGMENT ***")
         iter_dataloader = iter(dataloader)
         buffer = []
-        meta_buffer_pending, meta_buffer_done = [], []
         done = False
-        cnt_tracker = np.array([0 for _ in range(6)])
         while not done:
             try:
-                batches = next(iter_dataloader)
-                if self.first_iteration_sft and self.iteration == 0:
-                    batch = self.train_dataloader.dataset.collate_fn(batches)
-                else:
-                    batch = self_rewarding_custom_collate(
-                        batches,
-                        eos_id=self.model.tokenizer.eos_id,
-                        reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
-                        reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
-                        eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
-                    )
+                batch = next(iter_dataloader)
             except StopIteration:
                 done = True
             else:
                 buffer.append(batch)
 
-            if self.first_iteration_sft and self.iteration == 0:
-                for batch in buffer:
-                    yield batch
-                buffer.clear()
-            elif (done and buffer) or sum(
+            if (done and buffer) or sum(
                 [len(b["prompts_and_answers"]) for b in buffer]
             ) == self.rollout_micro_batch_size:
                 # generations use the reference model weights, as per the paper
                 with cpu_weight_swap(
                     self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
                 ):
-                    candidate_responses_with_rewards = [
-                        [] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))
-                    ]
-                    for _ in range(self.num_responses_to_gen):
+                    #candidate_responses_with_perturbs = [
+                    #    [] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))
+                    #]
+                    #for _ in range(self.num_responses_to_gen):
                         # Generation happens on GPU but returned tensors are on CPU so as not to blow up VRAM due to self.num_responses_to_gen
-                        gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end = self.get_generations(buffer)
+                    gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end = self.get_generations(buffer)
 
-                        # Transform into batch of LLM-as-judge template samples for reward scoring
-                        reward_buffer = []
-                        for t, s, e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
-                            if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
-                                prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
-                                    "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", ""
-                                )
-                                response = (
-                                    self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
-                                )
-                            else:
-                                prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
-                                    "<extra_id_0>System\n\n", ""
-                                )
-                                response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
-                            # llama3
-                            # prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", "")
-                            # response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
-                            reward_prompt_str = self.template_fn(prompt=prompt, response=response)
-                            reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                            # if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
-                            if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-                                prompt_and_response = self.tokenizer.ids_to_text(t.tolist())
-                                try:
-                                    if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
-                                        prompt_ft = re.findall(
-                                            r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)",
-                                            prompt_and_response,
-                                        )[0]
-                                        response_ft = re.findall(
-                                            r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)",
-                                            prompt_and_response,
-                                        )[0]
-                                    else:
-                                        prompt_ft = re.findall(
-                                            r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response
-                                        )[0]
-                                        response_ft = re.findall(
-                                            r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)",
-                                            prompt_and_response,
-                                        )[0]
-                                    # llama3
-                                    # prompt_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
-                                    # response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
-                                    reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
-                                    reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                    # Transform into batch of LLM-as-judge template samples for reward scoring
+                    perturb_buffer = []
+                    orig_prompts_and_responses = []
+                    for t, s, e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
+                        if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
+                            prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
+                                "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", ""
+                            )
+                            response = (
+                                self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
+                            )
+                        else:
+                            prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
+                                "<extra_id_0>System\n\n", ""
+                            )
+                            response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
+                        # llama3
+                        # prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", "")
+                        # response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
+                        perturb_prompt_str = self.bad_response_template_fn(orig_prompt=prompt, orig_response=response)
+                        perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
+                        # if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
+                        if len(perturb_prompt) > self.model.cfg.data.train_ds.max_seq_length:
+                            prompt_and_response = self.tokenizer.ids_to_text(t.tolist())
+                            try:
+                                if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
+                                    prompt_ft = re.findall(
+                                        r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)",
+                                        prompt_and_response,
+                                    )[0]
+                                    response_ft = re.findall(
+                                        r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)",
+                                        prompt_and_response,
+                                    )[0]
+                                else:
+                                    prompt_ft = re.findall(
+                                        r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response
+                                    )[0]
+                                    response_ft = re.findall(
+                                        r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)",
+                                        prompt_and_response,
+                                    )[0]
+                                # llama3
+                                # prompt_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
+                                # response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
+                                perturb_prompt_str = self.bad_response_template_fn(orig_prompt=prompt_ft, orig_response=response_ft)
+                                perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
 
-                                    while len(reward_prompt) > (
-                                        self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
-                                    ):
-                                        overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
-                                        if overage > len(self.model.tokenizer.text_to_ids(response_ft)):
-                                            print(f"*** OVERAGE_NOT_FIT_RESPONSE: {reward_prompt_str}")
-                                            reward_prompt_str = self.template_fn(
-                                                prompt="How does one make tea?", response="I have no answer at all."
-                                            )
-                                            reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                            break
-                                        response_ft = self.tokenizer.ids_to_text(
-                                            self.model.tokenizer.text_to_ids(response_ft)[:-overage]
-                                        )
-                                        reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
-                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                except:
-                                    print(f"*** TOO_LONG: {prompt_and_response}")
-                                    # overage = len(reward_prompt) - (self.model.cfg.encoder_seq_length - self.max_gen_seq_len)
-                                    while len(reward_prompt) > (
-                                        self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
-                                    ):
-                                        overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
-                                        if len(self.model.tokenizer.text_to_ids(response)) >= overage:
-                                            # truncate response only
-                                            response = self.tokenizer.ids_to_text(
-                                                self.model.tokenizer.text_to_ids(response)[:-overage]
-                                            )
-                                            reward_prompt_str = self.template_fn(prompt=prompt, response=response)
-                                            reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                        else:
-                                            # truncate response and prompt *SHOULD NEVER HAPPEN*
-                                            print("*** PROMPT_AND_RESPONSE_NEED_TRUNCATION")
-                                            reward_prompt_str = self.template_fn(
-                                                prompt="How does one make tea?", response="I have no answer at all."
-                                            )
-                                            reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                            break
-                                assert len(reward_prompt) <= (
+                                while len(perturb_prompt) > (
                                     self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
-                                ), f"truncation of response only failed [ {len(reward_prompt)} ]: {reward_prompt_str}"
+                                ):
+                                    overage = len(perturb_prompt) - self.model.cfg.data.train_ds.max_seq_length
+                                    if overage > len(self.model.tokenizer.text_to_ids(response_ft)):
+                                        print(f"*** OVERAGE_NOT_FIT_RESPONSE: {perturb_prompt_str}")
+                                        perturb_prompt_str = self.bad_response_template_fn(
+                                            orig_prompt="How does one make tea?", orig_response="I have no answer at all."
+                                        )
+                                        perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
+                                        break
+                                    response_ft = self.tokenizer.ids_to_text(
+                                        self.model.tokenizer.text_to_ids(response_ft)[:-overage]
+                                    )
+                                    perturb_prompt_str = self.bad_response_template_fn(orig_prompt=prompt_ft, orig_response=response_ft)
+                                    perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
+                                prompt = prompt_ft
+                                response = response_ft
+                            except:
+                                print(f"*** TOO_LONG: {prompt_and_response}")
+                                # overage = len(reward_prompt) - (self.model.cfg.encoder_seq_length - self.max_gen_seq_len)
+                                while len(perturb_prompt) > (
+                                    self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
+                                ):
+                                    overage = len(perturb_prompt) - self.model.cfg.data.train_ds.max_seq_length
+                                    if len(self.model.tokenizer.text_to_ids(response)) >= overage:
+                                        # truncate response only
+                                        response = self.tokenizer.ids_to_text(
+                                            self.model.tokenizer.text_to_ids(response)[:-overage]
+                                        )
+                                        perturb_prompt_str = self.bad_response_template_fn(orig_prompt=prompt, orig_response=response)
+                                        perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
+                                    else:
+                                        # truncate response and prompt *SHOULD NEVER HAPPEN*
+                                        print("*** PROMPT_AND_RESPONSE_NEED_TRUNCATION")
+                                        perturb_prompt_str = self.bad_response_template_fn(
+                                            orig_prompt="How does one make tea?", orig_response="I have no answer at all."
+                                        )
+                                        perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
+                                        break
+                            assert len(perturb_prompt) <= (
+                                self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
+                            ), f"truncation of response only failed [ {len(perturb_prompt)} ]: {perturb_prompt_str}"
 
-                            reward_buffer.append(
+                        perturb_buffer.append(
+                            {
+                                "prompts_only": torch.LongTensor(perturb_prompt).unsqueeze(0),
+                                "prompt_lengths": torch.LongTensor([len(perturb_prompt)]),
+                            }
+                        )
+                        orig_prompts_and_responses.append( (prompt, response) )
+
+                    judgement_cand_list = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))]
+                    perturbed_responses_as_str = self.get_perturbed_responses(perturb_buffer)
+                    
+                    for _ in range(self.num_responses_to_gen):
+                        judgement_buffer = []
+                        corrects = []
+                        for (orig_prompt, resp_good), resp_bad in zip(orig_prompts_and_responses, perturbed_responses_as_str):
+                            if resp_bad is None:
+                                resp_bad = "I cannot come up with a response"
+                            if torch.rand([1]) < 0.5:
+                                resp_A = resp_good
+                                resp_B = resp_bad
+                                correct_ans = 'A'
+                            else:
+                                resp_A = resp_bad
+                                resp_B = resp_good
+                                correct_ans = 'B'
+                            judge_template_str = self.llm_judge_template_fn(orig_prompt=orig_prompt, response_A=resp_A, response_B=resp_B)
+                            judge_template = self.model.tokenizer.text_to_ids(judge_template_str)
+                            if len(judge_template) > self.model.cfg.data.train_ds.max_seq_length:
+                                while len(judge_template) > (
+                                    self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
+                                ):
+                                    overage = (len(judge_template) - self.model.cfg.data.train_ds.max_seq_length) // 2
+                                    if len(self.model.tokenizer.text_to_ids(resp_good)) >= overage and len(self.model.tokenizer.text_to_ids(resp_bad)) >= overage:
+                                        # both responses equally
+                                        resp_A = self.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(resp_A)[:-overage])
+                                        resp_B = self.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(resp_B)[:-overage])
+                                        judge_template_str = self.llm_judge_template_fn(orig_prompt=orig_prompt, response_A=resp_A, response_B=resp_B)
+                                        judge_template = self.model.tokenizer.text_to_ids(judge_template_str)
+                                    else:
+                                        # truncate response and prompt *SHOULD NEVER HAPPEN*
+                                        print("*** PROMPT_AND_RESPONSE_NEED_TRUNCATION")
+                                        judge_template_str = self.llm_judge_template_fn(orig_prompt="How does one make tea?", response_A="I have no answer at all.", response_B="I have no answer at all.")
+                                        judge_template = self.model.tokenizer.text_to_ids(judge_template_str)
+                                        break
+                            judgement_buffer.append(
                                 {
-                                    "prompt_lengths": torch.LongTensor([len(reward_prompt)]),
-                                    "prompts_only": torch.LongTensor(reward_prompt).unsqueeze(0),
+                                    "prompts_only": torch.LongTensor(judge_template).unsqueeze(0),
+                                    "prompt_lengths": torch.LongTensor([len(judge_template)]),
                                 }
                             )
-
-                        # list of floats, same length as gen_tokens_buf
-                        reward_scores, reward_variances, judge_responses = self.get_rewards(reward_buffer)
-                        for idx, (t, s, e, r, v, j, end) in enumerate(
+                            corrects.append(correct_ans)
+                        # send to generator
+                        gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end = self.get_generations(judgement_buffer)
+                        for idx, (t, s, e, (p_o, resp_A), resp_B, end, c_ans) in enumerate(
                             zip(
                                 gen_tokens_buf,
                                 gen_prompt_lengths_buf.tolist(),
                                 gen_lengths_buf.tolist(),
-                                reward_scores,
-                                reward_variances,
-                                judge_responses,
+                                orig_prompts_and_responses,
+                                perturbed_responses_as_str,
                                 is_end.tolist(),
+                                corrects,
                             )
                         ):
-                            candidate_responses_with_rewards[idx].append((r, t, s, e, v, j, end))
+                            resp_str = self.tokenizer.ids_to_text(t[s:e].tolist())
+                            winner = self.judgement_regex_fn(resp_str)
+                            if resp_B is None or resp_B == "I cannot come up with a response" or (winner not in ['A', 'B']):
+                                winner = None
+                            judgement_cand_list[idx].append((winner == c_ans, t, s, e, p_o, resp_A, resp_B, end))
 
                     final_buffer = []
-                    # now we need to pick the chosen/rejected
-                    for cand_list in candidate_responses_with_rewards:
+                    for cand_list in judgement_cand_list:
                         scores = [b[0] for b in cand_list]
                         ends = [b[-1] for b in cand_list]
-                        resp_lengths = [len(b[1][b[2] : b[3]]) for b in cand_list]
-                        variances = [b[-3] for b in cand_list]
-                        j_responses = [b[-2] for b in cand_list]
+                        resp_lengths = [len(b[1][b[2]:b[3]]) for b in cand_list]
                         filtered_scores = [
-                            (s, r, v, idx)
-                            for idx, (s, r, v, e) in enumerate(zip(scores, resp_lengths, variances, ends))
-                            if (s is not None) and e
-                        ]
-                        filtered_variances = [
-                            (v, j, idx)
-                            for idx, (v, j, e) in enumerate(zip(variances, j_responses, ends))
-                            if (v is not None) and (v > 0) and (len(j) > 1) and e
+                            (s, r, idx)
+                            for idx, (s, r, e) in enumerate(zip(scores, resp_lengths, ends))
+                            if (s is not None and s == True) and e
                         ]
                         bad_sample = False
 
                         # if all scores are identical (even all None) we just randomly choose
-                        if len(filtered_scores) <= 1 or all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
-                            idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
+                        if len(filtered_scores) == 0:
+                            idx_chosen = 0
                             bad_sample = True
-                            # if len(filtered_scores) <= 1:
-                            #    print("BAD_SAMPLE_1")
-                            # elif all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
-                            #    print("BAD_SAMPLE_2")
-                        elif len(filtered_scores) > 1:
-                            # idx_chosen = filtered_scores[np.argmax([s[0] for s in filtered_scores])][-1]
-                            # idx_reject = filtered_scores[np.argmin([s[0] for s in filtered_scores])][-1]
-                            s_min = np.min([s[0] for s in filtered_scores])
-                            s_max = np.max([s[0] for s in filtered_scores])
-                            rng_chosen = [((1.0 - self.rho) * s_max) + (self.rho * s_min), s_max]
-                            rng_reject = [s_min, ((1.0 - self.rho) * s_min) + (self.rho * s_max)]
-                            chosen_cands = [
-                                s for s in filtered_scores if s[0] >= rng_chosen[0] and s[0] <= rng_chosen[1]
-                            ]
-                            reject_cands = [
-                                s for s in filtered_scores if s[0] >= rng_reject[0] and s[0] <= rng_reject[1]
-                            ]
-                            if self.rho > 0:
-                                # choose based on shortest/longest response length
-                                idx_chosen = chosen_cands[np.argmin([s[1] for s in chosen_cands])][-1]
-                                idx_reject = reject_cands[np.argmax([s[1] for s in reject_cands])][-1]
-                            else:
-                                # choose based on lowest variance of judgements
-                                idx_chosen = chosen_cands[np.argmin([s[2] for s in chosen_cands])][-1]
-                                idx_reject = reject_cands[np.argmin([s[2] for s in reject_cands])][-1]
-                            if self.rho == 0:
-                                assert all([s_max == s[0] for s in chosen_cands]), "chosen_cands violation"
-                                assert all([s_min == s[0] for s in reject_cands]), "reject_cands violation"
+                        elif len(filtered_scores) > 0:
+                            idx_chosen = filtered_scores[torch.randint(0, len(filtered_scores), [1]).item()][-1]
                         else:
                             print(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
                             raise RuntimeError("hit strange score selection state, please investigate")
 
                         # 1 x max_len tensor
-                        chosen_tokens = cand_list[idx_chosen][1]
                         chosen_prompt_len = cand_list[idx_chosen][2]
-                        chosen_gen_len = cand_list[idx_chosen][3]
-                        chosen_score = scores[idx_chosen]
-                        reject_tokens = cand_list[idx_reject][1]
-                        reject_prompt_len = cand_list[idx_reject][2]
-                        reject_gen_len = cand_list[idx_reject][3]
-                        reject_score = scores[idx_reject]
-                        bad_ends = sum(~np.array([cand_list[idx_chosen][-1], cand_list[idx_reject][-1]]))
+                        chosen_resp_len = cand_list[idx_chosen][3]
+                        chosen_prompt_and_resp_tokens = cand_list[idx_chosen][1][:chosen_resp_len]
+                        chosen_prompt_tokens = cand_list[idx_chosen][1][:chosen_prompt_len]
+                        chosen_response_tokens = cand_list[idx_chosen][1][chosen_prompt_len:chosen_resp_len]
+                        #chosen_mask = torch.arange(chosen_prompt_and_resp_tokens.shape[-1]).unsqueeze(0) >= chosen_prompt_len
+                        bad_ends = sum(~np.array([cand_list[idx_chosen][-1]]))
 
-                        if torch.equal(chosen_tokens, reject_tokens):
-                            bad_sample = True
-                            # print("BAD_SAMPLE_3")
-
-                        # meta-judge logic goes here
-                        if self.use_meta_judge and len(filtered_variances) > 0:
-                            # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
-                            reward_tokens_raw = filtered_variances[np.argmax([s[0] for s in filtered_variances])][1]
-                            idx_for_cand = filtered_variances[np.argmax([s[0] for s in filtered_variances])][-1]
-                            cand_for_meta = cand_list[idx_for_cand]
-                            orig_prompt_str = self.tokenizer.ids_to_text(cand_for_meta[1][: cand_for_meta[2]].tolist())
-                            orig_response_str = self.tokenizer.ids_to_text(
-                                cand_for_meta[1][cand_for_meta[2] : cand_for_meta[3]].tolist()
-                            )
-                            meta_batch = []
-                            for a, b in itertools.combinations(
-                                [self.tokenizer.ids_to_text(s[0][s[1] : s[2]].tolist()) for s in reward_tokens_raw], 2
-                            ):
-                                score_a = self.parse_reward_fn(a)
-                                score_b = self.parse_reward_fn(b)
-                                if score_a is None or score_b is None or a == b:
-                                    continue
-                                a = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", a)
-                                b = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", b)
-                                meta_str_ab = self.meta_judge_template_fn(
-                                    prompt=orig_prompt_str, response=orig_response_str, judgement_a=a, judgement_b=b
-                                )
-                                meta_str_ba = self.meta_judge_template_fn(
-                                    prompt=orig_prompt_str, response=orig_response_str, judgement_a=b, judgement_b=a
-                                )
-                                meta_tokens_ab = self.model.tokenizer.text_to_ids(meta_str_ab)
-                                meta_tokens_ba = self.model.tokenizer.text_to_ids(meta_str_ba)
-                                # check for seq len violation
-                                if (
-                                    len(meta_tokens_ab) > self.model.cfg.data.train_ds.max_seq_length
-                                    or len(meta_tokens_ba) > self.model.cfg.data.train_ds.max_seq_length
-                                ):
-                                    continue
-                                meta_batch.append(
-                                    {
-                                        "prompt_lengths": torch.LongTensor([len(meta_tokens_ab)]),
-                                        "prompts_only": torch.LongTensor(meta_tokens_ab).unsqueeze(0),
-                                    }
-                                )
-                                meta_batch.append(
-                                    {
-                                        "prompt_lengths": torch.LongTensor([len(meta_tokens_ba)]),
-                                        "prompts_only": torch.LongTensor(meta_tokens_ba).unsqueeze(0),
-                                    }
-                                )
-                            if len(meta_batch) > 1 and len(meta_buffer_done) < self.model.cfg.global_batch_size * 3:
-                                meta_buffer_pending.append((reward_tokens_raw, meta_batch))
-
-                        if (
-                            self.use_meta_judge
-                            and ((bad_ends > 0 or bad_sample) and (torch.rand((1,)) <= self.meta_judge_pcnt))
-                            and len(meta_buffer_done) > 0
-                        ):
-                            # if self.use_meta_judge and (bad_ends > 0 or bad_sample) and len(meta_buffer_done) > 0:
-                            final_buffer.append(meta_buffer_done.pop(0))
-                            # if you want to pop a random element instead, uncomment the below
-                            # final_buffer.append(meta_buffer_done.pop(torch.randint(0, len(meta_buffer_done), (1,)).item()))
-                        else:
-                            final_buffer.append(
-                                {
-                                    "chosen_tokens": chosen_tokens,
-                                    "chosen_prompt_len": chosen_prompt_len,
-                                    "chosen_gen_len": chosen_gen_len,
-                                    "chosen_score": chosen_score,
-                                    "reject_tokens": reject_tokens,
-                                    "reject_prompt_len": reject_prompt_len,
-                                    "reject_gen_len": reject_gen_len,
-                                    "reject_score": reject_score,
-                                    "bad_sample": bad_sample,
-                                    "bad_ends": bad_ends,
-                                }
-                            )
+                        final_buffer.append(
+                            {
+                                "chosen_prompt_and_resp_tokens": chosen_prompt_and_resp_tokens,
+                                "chosen_prompt_len": chosen_prompt_len,
+                                "chosen_resp_len": chosen_resp_len,
+                                "chosen_prompt_tokens": chosen_prompt_tokens,
+                                "chosen_response_tokens": chosen_response_tokens,
+                                #"chosen_mask": chosen_mask,
+                                "bad_sample": bad_sample,
+                                "bad_ends": bad_ends,
+                            }
+                        )
 
                 original_gbs_size = len(buffer[0]["prompt_lengths"])
                 for batch in divide_chunks(final_buffer, original_gbs_size):
                     chosen_prompt_lens = torch.LongTensor([b["chosen_prompt_len"] for b in batch])
-                    chosen_gen_lens = torch.LongTensor([b["chosen_gen_len"] for b in batch])
-                    chosen_scores = torch.FloatTensor(
-                        [(0 if b["chosen_score"] is None else b["chosen_score"]) for b in batch]
-                    )
-                    reject_prompt_lens = torch.LongTensor([b["reject_prompt_len"] for b in batch])
-                    reject_gen_lens = torch.LongTensor([b["reject_gen_len"] for b in batch])
-                    reject_scores = torch.FloatTensor(
-                        [(0 if b["reject_score"] is None else b["reject_score"]) for b in batch]
-                    )
+                    chosen_resp_lens = torch.LongTensor([b["chosen_resp_len"] for b in batch])
                     bad_samples = torch.BoolTensor([b["bad_sample"] for b in batch])
 
-                    max_batch_len = max(
-                        [len(b["chosen_tokens"]) for b in batch] + [len(b["reject_tokens"]) for b in batch]
-                    )
+                    max_batch_len = max([len(b["chosen_prompt_and_resp_tokens"]) for b in batch])
 
                     """
                     chosen_tokens_pad = torch.cat(
@@ -1297,19 +1042,13 @@ class SelfRewardingTrainer:
                     """
                     # only works without the outer wrapping because it's a 1D tensor instead of 2D
                     chosen_tokens_pad = batch_pad_to_fixed_len(
-                        [b["chosen_tokens"] for b in batch], max_batch_len, pad_token=self.model.tokenizer.eos_id
+                        [b["chosen_prompt_and_resp_tokens"] for b in batch], max_batch_len, pad_token=self.model.tokenizer.eos_id
                     )
-                    reject_tokens_pad = batch_pad_to_fixed_len(
-                        [b["reject_tokens"] for b in batch], max_batch_len, pad_token=self.model.tokenizer.eos_id
-                    )
-                    # chosen_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["chosen_prompt_len"]) + b["chosen_tokens"].tolist()[b["chosen_prompt_len"]:]) for b in batch], max_batch_len, pad_token=-100)
+                    chosen_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["chosen_prompt_len"]) + b["chosen_response_tokens"].tolist()) for b in batch], max_batch_len, pad_token=-100)
                     # reject_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["reject_prompt_len"]) + b["reject_tokens"].tolist()[b["reject_prompt_len"]:]) for b in batch], max_batch_len, pad_token=-100)
 
                     chosen_mask = create_mask(
-                        chosen_tokens_pad, chosen_prompt_lens, chosen_gen_lens
-                    ) * ~bad_samples.unsqueeze(-1)
-                    reject_mask = create_mask(
-                        reject_tokens_pad, reject_prompt_lens, reject_gen_lens
+                        chosen_tokens_pad, chosen_prompt_lens, chosen_resp_lens
                     ) * ~bad_samples.unsqueeze(-1)
 
                     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
@@ -1328,214 +1067,25 @@ class SelfRewardingTrainer:
                         )
 
                     new_batch = {
-                        "chosen": chosen_tokens_pad,
-                        "rejected": reject_tokens_pad,
-                        "attention_mask": attention_mask,
+                        "tokens": chosen_tokens_pad,
                         "position_ids": position_ids,
-                        "chosen_mask": chosen_mask,
-                        "rejected_mask": reject_mask,
-                        "chosen_rewards": chosen_scores,
-                        "rejected_rewards": reject_scores,
-                        "chosen_prompt_lens": chosen_prompt_lens,
-                        "reject_prompt_lens": reject_prompt_lens,
-                        "chosen_gen_lens": chosen_gen_lens,
-                        "reject_gen_lens": reject_gen_lens,
+                        "attention_mask": attention_mask,
+                        "labels": chosen_labels,
+                        "loss_mask": chosen_mask,
+                        "prompt_lens": chosen_prompt_lens,
+                        "gen_lens": chosen_resp_lens,
                         "bad_samples": bad_samples,
                         "bad_ends": torch.IntTensor([b["bad_ends"] for b in batch]),
                     }
 
                     assert (
-                        chosen_gen_lens - chosen_prompt_lens >= 0
+                        chosen_resp_lens - chosen_prompt_lens >= 0
                     ).all(), "negative generated length encountered in chosen"
-                    assert (
-                        reject_gen_lens - reject_prompt_lens >= 0
-                    ).all(), "negative generated length encountered in rejected"
-
-                    logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
-                    chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
-
-                    new_batch["ref_policy_log_probs_chosen"] = chosen_logps
-                    new_batch["ref_policy_log_probs_rejected"] = reject_logps
 
                     yield new_batch
-                    del logprobs, chosen_logps, reject_logps, new_batch
+                    del new_batch
 
                 buffer.clear()
-
-                # print(f"*** Rank [ {torch.distributed.get_rank()} ] Iteration [ {self.iteration} ] Step [ {self.step} ] META_BATCH_PENDING [ {len(meta_buffer_pending)} ] META_BATCH_ROLLOUT [ {sum([len(x[-1]) for x in meta_buffer_pending])} ] META_BATCH_DONE [ {len(meta_buffer_done)} ]")
-                # print(f"*** Rank [ {torch.distributed.get_rank()} ] Iteration [ {self.iteration} ] Step [ {self.step} ] META_CNTR  {cnt_tracker}  META_CNTR_PCNT  {cnt_tracker / sum(cnt_tracker).clip(min=1.0)}")
-                if done:
-                    meta_buffer_pending.clear()
-                    # meta_buffer_done.clear()
-                if (
-                    self.use_meta_judge
-                    and (not done)
-                    and (rollout_len := sum([len(x[-1]) for x in meta_buffer_pending]))
-                    >= self.rollout_micro_batch_size
-                ):
-                    num_rollouts = rollout_len // self.rollout_micro_batch_size
-                    meta_buffer_unroll_grp = [(idx, y) for idx, x in enumerate(meta_buffer_pending) for y in x[-1]]
-                    for _ in range(num_rollouts):
-                        meta_buffer_unroll = [
-                            meta_buffer_unroll_grp.pop(0) for _ in range(self.rollout_micro_batch_size)
-                        ]
-                        meta_reward_scores = self.get_rewards_meta([x[-1] for x in meta_buffer_unroll])
-                        meta_pairs = []
-                        reroll = [
-                            (grp, [y[-1] for y in x])
-                            for grp, x in itertools.groupby(meta_buffer_unroll, lambda kk: kk[0])
-                        ]
-                        for tup in reroll:
-                            N = len(tup[-1])
-                            bad_meta_sample = False
-                            # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
-                            # we need to find a chosen and reject index in this list
-                            reward_tokens_raw = meta_buffer_pending[tup[0]][0]
-                            p = len(reward_tokens_raw)
-
-                            elo_scores = self.get_elo_scores(p, N, meta_reward_scores)
-                            if len(np.unique(elo_scores)) < p:
-                                bad_meta_sample = True
-                                # print("BAD_META_SAMPLE_1")
-
-                            meta_chosen_idx = np.argmax(elo_scores)
-                            meta_reject_idx = np.argmin(elo_scores)
-
-                            chosen_tokens = reward_tokens_raw[meta_chosen_idx][0]
-                            chosen_prompt_len = reward_tokens_raw[meta_chosen_idx][1]
-                            chosen_gen_len = reward_tokens_raw[meta_chosen_idx][2]
-                            # chosen_score = 0.
-                            reject_tokens = reward_tokens_raw[meta_reject_idx][0]
-                            reject_prompt_len = reward_tokens_raw[meta_reject_idx][1]
-                            reject_gen_len = reward_tokens_raw[meta_reject_idx][2]
-                            # reject_score = 0.
-                            meta_bad_ends = sum(
-                                ~np.array(
-                                    [reward_tokens_raw[meta_chosen_idx][-1], reward_tokens_raw[meta_reject_idx][-1]]
-                                )
-                            )
-
-                            if torch.equal(chosen_tokens, reject_tokens):
-                                bad_meta_sample = True
-                                # print("BAD_META_SAMPLE_2")
-
-                            chosen_score = self.parse_reward_fn(
-                                self.tokenizer.ids_to_text(chosen_tokens[chosen_prompt_len:chosen_gen_len].tolist())
-                            )
-                            reject_score = self.parse_reward_fn(
-                                self.tokenizer.ids_to_text(reject_tokens[reject_prompt_len:reject_gen_len].tolist())
-                            )
-                            # print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_ACTUAL_REWARDS  CHOSEN[ {chosen_score} ]  REJECT[ {reject_score} ]")
-                            if chosen_score is None or reject_score is None or chosen_score == reject_score:
-                                bad_meta_sample = True
-                                # print("BAD_META_SAMPLE_3")
-
-                            if (
-                                meta_bad_ends == 0
-                                and bad_meta_sample == False
-                                and (
-                                    (cnt_tracker / sum(cnt_tracker).clip(min=1.0))[int(chosen_score)]
-                                    < self.meta_max_relative_pcnt
-                                )
-                                and (
-                                    cnt_tracker[int(chosen_score)]
-                                    < int(
-                                        self.num_steps_per_epoch
-                                        * original_gbs_size
-                                        / ((self.judge_score_high - self.judge_score_low) ** 2)
-                                    )
-                                )
-                            ):
-                                meta_pairs.append(
-                                    {
-                                        "chosen_tokens": chosen_tokens,
-                                        "chosen_prompt_len": chosen_prompt_len,
-                                        "chosen_gen_len": chosen_gen_len,
-                                        "chosen_score": chosen_score,
-                                        "reject_tokens": reject_tokens,
-                                        "reject_prompt_len": reject_prompt_len,
-                                        "reject_gen_len": reject_gen_len,
-                                        "reject_score": reject_score,
-                                        "bad_sample": bad_meta_sample,
-                                        "bad_ends": meta_bad_ends,
-                                    }
-                                )
-                                cnt_tracker[int(chosen_score)] += 1
-
-                            if N <= len(meta_buffer_pending[tup[0]][-1]):
-                                [meta_buffer_pending[tup[0]][-1].pop(0) for _ in range(N)]
-                            else:
-                                raise RuntimeError(
-                                    f"{N=} should never be greater than buffer [ {meta_buffer_pending[tup[0]]} ]"
-                                )
-
-                        meta_buffer_done.extend(meta_pairs)
-
-                    del meta_buffer_unroll_grp
-                    meta_buffer_pending = [x for x in meta_buffer_pending if len(x[-1]) > 0]
-
-    def set_rho_by_iteration(self, iteration):
-        if isinstance(self.spin_config["length_control"], (float, int)):
-            return
-        elif isinstance(self.spin_config["length_control"], list):
-            assert iteration < len(
-                self.spin_config["length_control"]
-            ), f"iteration [ {iteration} ] is out of bounds for length_control schedule {self.spin_config['length_control']}"
-
-            self.rho = self.spin_config["length_control"][iteration]
-
-    def get_elo_scores(self, p, N, meta_reward_scores):
-        players = list(range(p))
-        Bm = itertools.combinations(players, 2)
-        alloc = []
-        for _ in range(N):
-            alloc.append(meta_reward_scores.pop(0))
-        assert len(alloc) % 2 == 0, "alloc should always be divisible by 2"
-        ptbl_a_win = np.zeros([p, p])
-        ptbl_b_win = np.zeros([p, p])
-        ptbl_tie = np.zeros([p, p])
-        for (m_a, m_b), (ab, ba) in zip(Bm, divide_chunks(alloc, 2)):
-            if ab is not None and ba is not None:
-                ptbl_a_win[m_a, m_b] += int(ab == "A" and ba == "B")
-                ptbl_b_win[m_a, m_b] += int(ab == "B" and ba == "A")
-            ptbl_tie[m_a, m_b] += int(ab == ba)
-
-        ptbl_win = ptbl_a_win * 1 + ptbl_b_win.T * 1 + (ptbl_tie + ptbl_tie.T)
-
-        X = np.zeros([p * (p - 1) * 2, p])
-        Y = np.zeros(p * (p - 1) * 2)
-        # w1 = ptbl_b_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
-        # w2 = ptbl_a_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
-        cur_row = 0
-        sample_weights = []
-        for m_a in players:
-            for m_b in players:
-                if m_a == m_b:
-                    continue
-                # if nan skip
-                if math.isnan(ptbl_win[m_a, m_b]) or math.isnan(ptbl_win[m_b, m_a]):
-                    continue
-                X[cur_row, players[m_a]] = 1.0
-                X[cur_row, players[m_b]] = -1.0
-                Y[cur_row] = 1.0
-                sample_weights.append(ptbl_win[m_a, m_b])
-                # sample_weights.append(w1 * (1 if ptbl_a_win[m_a, m_b] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_a, m_b] >= 1 else 0))
-
-                X[cur_row + 1, players[m_a]] = 1.0
-                X[cur_row + 1, players[m_b]] = -1.0
-                Y[cur_row + 1] = 0.0
-                sample_weights.append(ptbl_win[m_b, m_a])
-                # sample_weights.append(w1 * (1 if ptbl_a_win[m_b, m_a] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_b, m_a] >= 1 else 0))
-                cur_row += 2
-        X = X[:cur_row]
-        Y = Y[:cur_row]
-
-        lr = LogisticRegression(fit_intercept=False, penalty=None, tol=1e-6)
-        lr.fit(X, Y, sample_weight=sample_weights)
-
-        elo_scores = SCALE * lr.coef_[0] + INIT_RATING
-
-        return elo_scores
 
     @property
     def epoch(self):
