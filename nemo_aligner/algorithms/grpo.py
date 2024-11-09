@@ -553,9 +553,9 @@ class GRPOTrainer:
         table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
         table["response"] = self.model.tokenizer.ids_to_text(response_token[prompt_length:response_length].tolist())
 
-        game_24_rewards = (rewards * is_game_24) / is_game_24.sum()
+        game_24_rewards = (rewards * is_game_24).sum() / is_game_24.sum()
         is_math = 1 - is_game_24
-        math_rewards = (rewards * is_math) / is_math.sum()
+        math_rewards = (rewards * is_math).sum() / is_math.sum()
 
         metrics = {
             "table": table,
