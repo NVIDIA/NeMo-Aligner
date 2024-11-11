@@ -100,7 +100,7 @@ class MultimodalMixin:
     def replace_media_embeddings(self, input_ids, inputs_embeds, media):
         if media is None:
             return inputs_embeds
-        print(f"{input_ids.shape = }")
+
         # Create mask for media tokens
         special_image_mask = (input_ids == self.image_token_id)  # Shape: (batch_size, sequence_length)
 
@@ -109,14 +109,13 @@ class MultimodalMixin:
 
         # Encode media features with gradients
         media_features = self.encode_vision(media).squeeze(0)  # Shape: (batch_size, num_media_tokens, hidden_size)
-        print(f"{media_features.shape = }")
+        
         # Clone inputs_embeds to maintain gradient flow
         updated_embeds = inputs_embeds.clone()
 
         if media_indices.size(0) > 0:
             # Replace the embeddings at media token positions
-            print(f"{updated_embeds.shape = }")
-            updated_embeds[media_indices[:, 0], media_indices[:, 1], :] = media_features
+            updated_embeds[media_indices[:, 1], media_indices[:, 0], :] = media_features
         else:
             # If there are no media tokens, add a dummy computation to ensure media_features is used in the computation graph
             updated_embeds = updated_embeds + media_features.sum(dim=(1, 2), keepdim=True) * 0
@@ -157,7 +156,7 @@ class MultimodalMixin:
             torch.Tensor: Output logits from the language model.
         """
         media = kwargs.pop("media")
-        input_ids = kwargs.pop("input_ids")
+        input_ids = kwargs["input_ids"]
         model = model_.module if hasattr(model_, "module") else model_
         if self.is_multimodal and media is not None:            
             # Step 1: Remove padding from media tensor to get a list of images per sample
@@ -167,31 +166,25 @@ class MultimodalMixin:
             # unpadded_media[i] -> List of images for sample i
 
             # Step 2: Get word embeddings from the language model
-            # Assuming self.language_model.embedding.word_embeddings is accessible
-            word_embeddings = model.embedding(input_ids=input_ids, position_ids=kwargs["position_ids"])  # [batch_size, seq_length, hidden_dim]
-
+            word_embeddings = model.embedding(input_ids=input_ids, position_ids=kwargs["position_ids"])  # [seq_length, batch_size, hidden_dim]
             # Step 3: Iterate over each sample in the batch to replace media embeddings
             for batch_idx in range(input_ids.size(0)):
                 images = unpadded_media[batch_idx]  # List[torch.Tensor]
-                print(f"{images[0].shape = }")
-                # Step 3a: Process images with the vision encoder to get image features
-                #image_features = self.encode_vision(images)  # [n_img, hidden_dim]
 
-                # Step 3b: Slice to retain batch dimension
+                # Step 3a: Slice to retain batch dimension
                 # Retain batch dimension by slicing [batch_idx:batch_idx+1]
                 sliced_input_ids = input_ids[batch_idx:batch_idx+1]  # [1, seq_length]
-                sliced_word_embeddings = word_embeddings[batch_idx:batch_idx+1]  # [1, seq_length, hidden_dim]
-
-                # Step 3c: Replace media embeddings
-                # Assuming replace_media_embeddings expects [1, seq_length, hidden_dim]
+                sliced_word_embeddings = word_embeddings[:, batch_idx:batch_idx+1]  # [seq_length, 1, hidden_dim]
+                # Step 3b: Replace media embeddings
+                # replace_media_embeddings expects [1, seq_length, hidden_dim]
                 updated_embeddings = self.replace_media_embeddings(
                     input_ids=sliced_input_ids,
                     inputs_embeds=sliced_word_embeddings,
                     media=images
-                )  # [1, seq_length, hidden_dim]
+                )  # [seq_length, 1, hidden_dim]
 
-                # Step 3d: Assign the updated embeddings back to word_embeddings
-                word_embeddings[batch_idx:batch_idx+1] = updated_embeddings  # [batch_size, seq_length, hidden_dim]
+                # Step 3c: Assign the updated embeddings back to word_embeddings
+                word_embeddings[:, batch_idx:batch_idx+1] = updated_embeddings  # [seq_length, batch_size, hidden_dim]
 
             # Step 4: Check if reduce_scatter_embeddings is enabled
             apply_reduce_scatter = getattr(model.embedding.word_embeddings, 'reduce_scatter_embeddings', False)
@@ -200,11 +193,10 @@ class MultimodalMixin:
                 model.embedding.word_embeddings.reduce_scatter_embeddings = True
 
             # Step 5: Pass the modified embeddings to the language model
-            # Assuming the language model's forward can accept decoder_input
             return model.forward(decoder_input=word_embeddings, **kwargs)
         else:
             # Standard forward pass when multimodal is not used
-            return model.forward(input_ids=input_ids, **kwargs)
+            return model.forward(**kwargs)
 
 class DPOMixin:
     """
