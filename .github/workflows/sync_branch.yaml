@@ -1,8 +1,8 @@
 name: sync main with dev
 on:
   pull_request:
-  schedule:
-    - 0 8 * * * # Runs at 8am UTC
+  # schedule:
+    # - 0 8 * * * # Runs at 8am UTC
     
 defaults:
   run:
