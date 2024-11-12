@@ -1,6 +1,6 @@
 name: sync main with dev
 on:
-  pull_request:
+  push:
   # schedule:
     # - 0 8 * * * # Runs at 8am UTC
     
