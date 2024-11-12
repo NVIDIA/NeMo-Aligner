@@ -86,7 +86,7 @@ jobs:
 
       - name: Parse output
         run: |
-          DELTA=${{ needs.sync-branches-via-rebase.outputs.commit-delta }}
+          DELTA="${{ needs.sync-branches-via-rebase.outputs.commit-delta }}"
           DELTA=$(echo "${DELTA//<<<NEWLINE>>>/\n}")
 
           echo "COMMIT_DELTA<<EOF" >> $GITHUB_ENV
