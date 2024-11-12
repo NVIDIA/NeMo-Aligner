@@ -35,10 +35,9 @@ jobs:
         run: |
           git fetch origin main:main
           DELTA=$(git cherry -v ko3n1g/dev main | tr '+' '*')
-
-          echo "COMMIT_DELTA<<EOF" >> $GITHUB_ENV
-          echo "$DELTA" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
+          DELTA=$(echo "${DELTA//$'\n'/<<<NEWLINE>>>}")
+            
+          echo "main=$DELTA" | tee -a "$GITHUB_OUTPUT"
 
       - name: Attempt rebase
         run: |
@@ -84,6 +83,15 @@ jobs:
         with:
           issue-number: ${{ steps.fp.outputs.pr-number }}
           body-includes: <!-- auto-rebase-message -->
+
+      - name: Parse output
+        run: |
+          DELTA=${{ needs.sync-branches-via-rebase.outputs.commit-delta }}
+          DELTA=$(echo "${DELTA//<<<NEWLINE>>>/\n}")
+
+          echo "COMMIT_DELTA<<EOF" >> $GITHUB_ENV
+          echo "$DELTA" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Add PR comment for PyLint 
         uses: peter-evans/create-or-update-comment@v4
