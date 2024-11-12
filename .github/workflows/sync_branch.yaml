@@ -91,7 +91,7 @@ jobs:
           
 
           echo "COMMIT_DELTA<<EOF" >> $GITHUB_ENV
-          echo -E "$DELTA" >> $GITHUB_ENV
+          echo -e "$DELTA" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
       - name: Add PR comment for PyLint 
