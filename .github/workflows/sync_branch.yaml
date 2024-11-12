@@ -2,7 +2,8 @@ name: sync main with dev
 on:
   schedule:
     - 0 8 * * * # Runs at 8am UTC
-
+  pull_request:
+    
 defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
@@ -27,6 +28,15 @@ jobs:
         run: |
           DATE=$(date +"%Y-%m-%d")
           echo "date=$DATE" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Get commit delta
+        id: commit-delta
+        run: |
+          DELTA=$(git cherry -v ko3n1g/dev main | tr '+' '*')
+
+          echo "COMMIT_DELTA<<EOF" >> $GITHUB_ENV
+          echo "$DELTA" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
 
       - name: Attempt rebase
         run: |
@@ -83,6 +93,13 @@ jobs:
             <!-- auto-rebase-message -->
             
             beep boop 🤖: This branch was last rebased onto `main` on ${{ env.DATE }}.
+
+            ---
+
+            Updated commits:
+            ```
+            ${{ steps.commit-delta.outputs.main }}
+            ```
 
   notify-failure: 
     runs-on: ubuntu-latest
