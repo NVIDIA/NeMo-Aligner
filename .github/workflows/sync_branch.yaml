@@ -19,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
         with:
-          ref: dev
+          ref: ko3n1g/dev
           fetch-depth: 0
           token: ${{ secrets.PAT }}
 
