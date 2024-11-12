@@ -1,8 +1,7 @@
 name: sync main with dev
 on:
-  push:
-  # schedule:
-    # - 0 8 * * * # Runs at 8am UTC
+  schedule:
+    - 0 8 * * * # Runs at 8am UTC
     
 defaults:
   run:
@@ -20,7 +19,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v2
         with:
-          ref: ko3n1g/dev
+          ref: dev
           fetch-depth: 0
           token: ${{ secrets.PAT }}
 
@@ -34,7 +33,7 @@ jobs:
         id: commit-delta
         run: |
           git fetch origin main:main
-          DELTA=$(git cherry -v ko3n1g/dev main | tr '+' '*')
+          DELTA=$(git cherry -v dev main | tr '+' '*')
           DELTA=$(echo "${DELTA//$'\n'/<<<NEWLINE>>>}")
             
           echo "main=$DELTA" | tee -a "$GITHUB_OUTPUT"
@@ -70,7 +69,7 @@ jobs:
           
           PR_NUMBER=$(echo -E "$PRs" \
             | jq '.[] 
-            | select(.head.ref == "ko3n1g/dev")
+            | select(.head.ref == "dev")
             | .number'
           )
           set -x
