@@ -63,7 +63,6 @@ def main(cfg) -> None:
     )
 
     init_peft(ptl_model, cfg.model)
-
     if cfg.model.peft.peft_scheme == "none":
         ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
             ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)

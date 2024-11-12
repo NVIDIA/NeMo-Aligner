@@ -32,8 +32,6 @@ from nemo.core import Dataset
 from nemo.utils import logging
 from nemo.collections.multimodal.data.neva.neva_dataset import TarOrFolderImageLoader
 
-import transformers
-
 MAX_NUM_IMAGES = 1
 MIN_NUM_IMAGES = 1
 IMAGE_PADDING_VAL = -100
@@ -102,7 +100,7 @@ def maybe_process_prompt_and_media(
 
             if isinstance(image_sizes[0], list):
                 image_sizes = image_sizes[0]
-        
+                
             record['prompt'] = _preprocess_media_tokens(
                 conversation=record['prompt'],
                 image_token=image_token,

@@ -7,8 +7,9 @@ from nemo_aligner.models.mm.vision.vit import VisionTransformer, VisionLanguageA
 from safetensors.torch import load_file
 import torch
 import torch.nn.functional as F
+from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
 
-def pad_and_batch_samples(samples, padding_value=-1):
+def pad_and_batch_samples(samples, padding_value=-100):
     # Determine the maximum dimensions for padding
     max_num_images = max(sample.shape[0] for sample in samples)
     max_channels = max(sample.shape[1] for sample in samples)  # Should be the same for all if constant
@@ -33,8 +34,7 @@ def pad_and_batch_samples(samples, padding_value=-1):
     batched_tensor = torch.stack(padded_samples)
     return batched_tensor
 
-
-def remove_padding(batched_tensor, padding_val=-1):
+def remove_padding(batched_tensor, padding_val=-100):
     result = []
     # Iterate over each sample in the batch
     for sample in batched_tensor:
@@ -100,13 +100,10 @@ class MultimodalMixin:
     def replace_media_embeddings(self, input_ids, inputs_embeds, media):
         if media is None:
             return inputs_embeds
-
         # Create mask for media tokens
         special_image_mask = (input_ids == self.image_token_id)  # Shape: (batch_size, sequence_length)
-
         # Find indices of media tokens
         media_indices = special_image_mask.nonzero(as_tuple=False)  # Shape: (num_media_tokens, 2)
-
         # Encode media features with gradients
         media_features = self.encode_vision(media).squeeze(0)  # Shape: (batch_size, num_media_tokens, hidden_size)
         
@@ -114,33 +111,12 @@ class MultimodalMixin:
         updated_embeds = inputs_embeds.clone()
 
         if media_indices.size(0) > 0:
-            # Replace the embeddings at media token positions
+            # Replace the embeddings at media token positions    
             updated_embeds[media_indices[:, 1], media_indices[:, 0], :] = media_features
         else:
             # If there are no media tokens, add a dummy computation to ensure media_features is used in the computation graph
             updated_embeds = updated_embeds + media_features.sum(dim=(1, 2), keepdim=True) * 0
-
         return updated_embeds
-    
-    def old_forward(self, input_ids, media=None, **kwargs):
-        # Only apply multimodal processing if multimodal is enabled
-        if self.is_multimodal and media is not None:
-            # Check if reduce_scatter_embeddings is enabled in the embedding forward function
-            apply_reduce_scatter = getattr(self.model.language_model.embedding.word_embeddings, 'reduce_scatter_embeddings', False)
-            word_embeddings = self.model.language_model.embedding.word_embeddings.forward(input_ids, **kwargs)
-            
-            # Replace embeddings with vision features
-            word_embeddings = self.replace_media_embeddings(input_ids, word_embeddings, media)
-
-            # Scatter embeddings back to each TP rank if needed
-            if apply_reduce_scatter:
-                word_embeddings = self.model.language_model.embedding.word_embeddings._apply_reduce_scatter(word_embeddings)
-                self.model.language_model.embedding.word_embeddings.reduce_scatter_embeddings = True
-            
-            return super().forward(decoder_input=word_embeddings, **kwargs)
-        else:
-            # Standard forward pass when multimodal is not used
-            return super().forward(input_ids=input_ids, **kwargs)
 
     def forward(self, model_, **kwargs):
         """
@@ -162,13 +138,15 @@ class MultimodalMixin:
             # Step 1: Remove padding from media tensor to get a list of images per sample
             # media: [batch_size, n_img, 3, H, W]
             media = media.to(input_ids.dtype)
-            unpadded_media = remove_padding(media, padding_val=-1)  # List[List[torch.Tensor]]
+            unpadded_media = remove_padding(media)  # List[List[torch.Tensor]]
             # unpadded_media[i] -> List of images for sample i
 
             # Step 2: Get word embeddings from the language model
             word_embeddings = model.embedding(input_ids=input_ids, position_ids=kwargs["position_ids"])  # [seq_length, batch_size, hidden_dim]
+            batch_size = input_ids.size(0)
+
             # Step 3: Iterate over each sample in the batch to replace media embeddings
-            for batch_idx in range(input_ids.size(0)):
+            for batch_idx in range(batch_size):
                 images = unpadded_media[batch_idx]  # List[torch.Tensor]
 
                 # Step 3a: Slice to retain batch dimension
@@ -198,6 +176,50 @@ class MultimodalMixin:
             # Standard forward pass when multimodal is not used
             return model.forward(**kwargs)
 
+    def get_forward_output_only_func(self):
+        def fwd_output_only_func(dataloader_iter, model):
+            batch = next(dataloader_iter)
+            extra_arg = {}
+            if len(batch) == 4:
+                batch = [x.cuda() for x in batch]
+                tokens, attention_mask, position_ids, media = batch
+                attention_mask = attention_mask[0:1]
+            else:
+                (
+                    tokens,
+                    attention_mask,
+                    position_ids,
+                    media,
+                    set_inference_key_value_memory,
+                    inference_max_sequence_len,
+                ) = batch
+                tokens = tokens.cuda()
+                position_ids = position_ids.cuda()
+                if attention_mask is not None:
+                    attention_mask = attention_mask.cuda()
+                    attention_mask = attention_mask[0:1]
+                if media is not None:
+                    media = media.cuda()
+                extra_arg['set_inference_key_value_memory'] = set_inference_key_value_memory[0].item()
+                extra_arg['inference_max_sequence_len'] = inference_max_sequence_len[0].item()
+            
+            # Model forward pass using the shared forward method from MultimodalMixin
+            forward_args = {
+                "input_ids": tokens,
+                "position_ids": position_ids,
+                "attention_mask": attention_mask,
+                "labels": None,
+                "media": media,
+            }
+            output_tensor = self.forward(model, **forward_args, **extra_arg)
+
+            def id_func(output_tensor):
+                return output_tensor, {'logits': output_tensor}
+
+            return output_tensor, id_func
+
+        return fwd_output_only_func
+    
 class DPOMixin:
     """
     Mixin class for Direct Preference Optimization (DPO) alignment.
@@ -208,10 +230,12 @@ class DPOMixin:
         super().__init__(*args, **kwargs)
         # Override the get_forward_output_and_loss_func method
         self.get_forward_output_and_loss_func = self.dpo_get_forward_output_and_loss_func
+        self.get_logprob_output_only_func = self.dpo_get_logprob_output_only_func
+        self.get_ref_policy_logprobs = self.dpo_get_ref_policy_logprobs
 
     def dpo_get_forward_output_and_loss_func(self, validation_step=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
-            batch = next(dataloader_iter)
+            batch = next(dataloader_iter)        
             required_keys = set()
             if parallel_state.get_pipeline_model_parallel_world_size() == 1:
                 required_keys.update(batch.keys())
@@ -336,4 +360,46 @@ class DPOMixin:
 
             return output_tensor, loss_func
 
-        return fwd_output_and_loss_func
+        return fwd_output_and_loss_func    
+    def dpo_get_logprob_output_only_func(self, inference_only=True):
+        fwd_output_only_func = self.get_forward_output_only_func()
+
+        def log_prob_output_only_func(dataloader_iter, model):
+            batch = next(dataloader_iter)
+            logits, _ = fwd_output_only_func(iter([batch[0:4],]), model)
+
+            def id_func(logits, non_loss_data=True):
+                logprobs = from_parallel_logits_to_logprobs(
+                    vocab_parallel_logits=logits,
+                    target=batch[-1].cuda() if len(batch) == 5 else batch[0].cuda(),
+                    inference_only=inference_only,
+                    higher_stability=True,
+                )
+                return {"logprobs": logprobs}
+
+            return logits, id_func
+
+        return log_prob_output_only_func    
+    def dpo_get_ref_policy_logprobs(self, batch):
+        tokens = torch.cat((batch["chosen"], batch["rejected"]), dim=0)
+        masks = torch.cat((batch["attention_mask"], batch["attention_mask"]), dim=0)
+        pos_ids = torch.cat((batch["position_ids"], batch["position_ids"]), dim=0)
+        labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
+        if batch["media"] is not None:
+            media = torch.cat((batch["media"], batch["media"]), dim=0)
+        else:
+            media = None
+            
+        global_batch = [tokens, masks, pos_ids, media, labels]
+
+        if self.use_peft and self.ref_policy_state_dict is None:
+            # when using adapters instead of full-tuning, the actor is reference model + adapters
+            with adapter_control(self):
+                # With adapters disabled (meaning using the reference model), calculate ref_log_probs
+                ref_log_probs = self.get_logprob_batch(global_batch)
+        else:
+            with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
+                ref_log_probs = self.get_logprob_batch(global_batch)
+
+        # return in GPU, trainer needs to move to cpu
+        return ref_log_probs
