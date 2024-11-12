@@ -87,10 +87,11 @@ jobs:
       - name: Parse output
         run: |
           DELTA="${{ needs.sync-branches-via-rebase.outputs.commit-delta }}"
-          DELTA=$(echo "${DELTA//<<<NEWLINE>>>/<br>}")
+          DELTA=$(echo "${DELTA//<<<NEWLINE>>>/\\n}")
+          
 
           echo "COMMIT_DELTA<<EOF" >> $GITHUB_ENV
-          echo "$DELTA" >> $GITHUB_ENV
+          echo -E "$DELTA" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
 
       - name: Add PR comment for PyLint 
