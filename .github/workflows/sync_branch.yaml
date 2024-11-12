@@ -118,12 +118,12 @@ jobs:
           ref: v0.5.0
           path: send-slack-alert
 
-      - name: Send Slack alert
-        uses: ./send-slack-alert/.github/actions/send-slack-alert
-        with:
-          message: >
-            Daily <${{ env.RUN_URL }}|sync main with dev> has failed for ${{ env.DATE }}.
+      # - name: Send Slack alert
+      #   uses: ./send-slack-alert/.github/actions/send-slack-alert
+      #   with:
+      #     message: >
+      #       Daily <${{ env.RUN_URL }}|sync main with dev> has failed for ${{ env.DATE }}.
 
-            cc: ${{ env.SLACK_WEBHOOK_ADMIN }}
-          webhook: ${{ env.SLACK_WEBHOOK }}
+      #       cc: ${{ env.SLACK_WEBHOOK_ADMIN }}
+      #     webhook: ${{ env.SLACK_WEBHOOK }}
   
