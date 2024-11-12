@@ -34,7 +34,7 @@ jobs:
         id: commit-delta
         run: |
           git fetch origin main:main
-          DELTA=$(git cherry -v ko3n1g/dev main | tr '+' '*')
+          DELTA=$(git cherry ko3n1g/dev main | tr '+' '*')
           DELTA=$(echo "${DELTA//$'\n'/<<<NEWLINE>>>}")
             
           echo "main=$DELTA" | tee -a "$GITHUB_OUTPUT"
@@ -89,7 +89,6 @@ jobs:
           DELTA="${{ needs.sync-branches-via-rebase.outputs.commit-delta }}"
           DELTA=$(echo "${DELTA//<<<NEWLINE>>>/\\n}")
           
-
           echo "COMMIT_DELTA<<EOF" >> $GITHUB_ENV
           echo -e "$DELTA" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
@@ -108,9 +107,7 @@ jobs:
             ---
 
             📢✨🪄 Updated commits:
-            ```
             ${{ env.COMMIT_DELTA }}
-            ```
 
   notify-failure: 
     runs-on: ubuntu-latest
