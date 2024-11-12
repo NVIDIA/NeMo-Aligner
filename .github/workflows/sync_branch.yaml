@@ -98,9 +98,9 @@ jobs:
 
             ---
 
-            Updated commits:
+            📢✨🪄 Updated commits:
             ```
-            ${{ needs.sync-branches-via-rebase.outputs.commit-delta }}
+            ${{ env.COMMIT_DELTA }}
             ```
 
   notify-failure: 
