@@ -113,6 +113,7 @@ def select_topk(batch, num_select=1):
     selected_batch = {k: batch[k][selected_idx] for k in batch.keys()}
     return selected_batch
 
+
 def calculate_rloo_baseline(prompts, reward, mask):
     """
     Function to select the RLOO baseline for each (prompt, response) pair in the batch. 
