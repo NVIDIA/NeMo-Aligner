@@ -1,24 +1,136 @@
 name: sync main with dev
 on:
-  push:
-    branches:
-      - main
+  schedule:
+    - 0 8 * * * # Runs at 8am UTC
+    
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
 
 jobs:
-  sync-branches:
+  sync-branches-via-rebase:
     runs-on: ubuntu-latest
     name: syncing main with dev
+    outputs:
+      date: ${{ steps.date.outputs.date }}
+      commit-delta: ${{ steps.commit-delta.outputs.main }}
+    environment: main
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-      - name: Set up Node
-        uses: actions/setup-node@v1
         with:
-          node-version: 12
-      - name: Opening pull request
-        id: pull
-        uses: tretuna/sync-branches@1.4.0
+          ref: dev
+          fetch-depth: 0
+          token: ${{ secrets.PAT }}
+
+      - name: Get todays date
+        id: date
+        run: |
+          DATE=$(date +"%Y-%m-%d")
+          echo "date=$DATE" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Get commit delta
+        id: commit-delta
+        run: |
+          git fetch origin main:main
+          DELTA=$(git cherry -v dev main | tr '+' '*')
+          DELTA=$(echo "${DELTA//$'\n'/<<<NEWLINE>>>}")
+            
+          echo "main=$DELTA" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Attempt rebase
+        run: |
+          git config --global user.email "bot@nvidia.com"
+          git config --global user.name "NVIDIA NeMo Bot"
+
+          git fetch origin main
+          git rebase origin/main
+          git push --force
+
+  notify-success:
+    runs-on: ubuntu-latest
+    if: success()
+    needs: [sync-branches-via-rebase]
+    env:
+      DATE: ${{ needs.sync-branches-via-rebase.outputs.date }}
+    steps:
+      - name: Find PR
+        id: fp
+        env:
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +x
+          PRs=$(curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/$REPOSITORY/pulls)
+          
+          PR_NUMBER=$(echo -E "$PRs" \
+            | jq '.[] 
+            | select(.head.ref == "dev")
+            | .number'
+          )
+          set -x
+
+          echo "pr-number=$PR_NUMBER" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Find Comment
+        uses: peter-evans/find-comment@v3
+        id: fc
         with:
-          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
-          FROM_BRANCH: "main"
-          TO_BRANCH: "dev"
+          issue-number: ${{ steps.fp.outputs.pr-number }}
+          body-includes: <!-- auto-rebase-message -->
+
+      - name: Parse output
+        run: |
+          DELTA="${{ needs.sync-branches-via-rebase.outputs.commit-delta }}"
+          DELTA=$(echo "${DELTA//<<<NEWLINE>>>/\\n}")
+          
+          echo "COMMIT_DELTA<<EOF" >> $GITHUB_ENV
+          echo -e "$DELTA" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Add PR comment for PyLint 
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.fc.outputs.comment-id }}
+          issue-number: ${{ steps.fp.outputs.pr-number }}
+          edit-mode: replace
+          body: |
+            <!-- auto-rebase-message -->
+            
+            beep boop 🤖: This branch was last rebased onto `main` on ${{ env.DATE }}.
+
+            ---
+
+            📢✨🪄 Updated commits:
+            ${{ env.COMMIT_DELTA }}
+
+  notify-failure: 
+    runs-on: ubuntu-latest
+    if: failure()
+    needs: [sync-branches-via-rebase]
+    env:
+      RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      SLACK_WEBHOOK_ADMIN: "<!subteam^${{ secrets.SLACK_WEBHOOK_ADMIN }}>"
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      DATE: ${{ needs.sync-branches-via-rebase.outputs.date }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA/NeMo-FW-CI-templates
+          ref: v0.5.0
+          path: send-slack-alert
+
+      # - name: Send Slack alert
+      #   uses: ./send-slack-alert/.github/actions/send-slack-alert
+      #   with:
+      #     message: >
+      #       Daily <${{ env.RUN_URL }}|sync main with dev> has failed for ${{ env.DATE }}.
+
+      #       cc: ${{ env.SLACK_WEBHOOK_ADMIN }}
+      #     webhook: ${{ env.SLACK_WEBHOOK }}
+  
