@@ -33,7 +33,7 @@ trainer:
 
     # Speed-up training by accelerating inference stage using TRTLLM
     trt_llm:
-      enable: False
+      enable: True
       reshard: False # if True then reshard the model into TP only for inference
 
       # TRTLLM preallocates activation memory according to the number of input tokens

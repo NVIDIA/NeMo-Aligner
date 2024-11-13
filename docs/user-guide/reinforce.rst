@@ -125,7 +125,7 @@ You can use slurm to launch the two jobs and get them to coordinate together in 
    #SBATCH hetjob
    #SBATCH -N 1 --ntasks-per-node 8 -A <<ACCOUNT>> -p <<PARTITION>> --job-name <<JOBNAME>> -t 4:00:00 --exclusive
 
-   NAME="2p_reinforce"
+   NAME="reinforce"
 
    # PARAMETERS
    RM_NEMO_FILE="/path/to/trained_rm.nemo"
