@@ -88,7 +88,7 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
         set_sync_funcs(self, forward_only)
 
         fwd_bwd_function = get_forward_backward_func()
-        fwd_loss_fn = self.get_forward_output_and_loss_func(forward_only)
+        fwd_loss_fn = self.get_forward_output_and_loss_func(forward_only, tuning=True)
 
         losses_reduced = fwd_bwd_function(
             forward_step_func=fwd_loss_fn,
