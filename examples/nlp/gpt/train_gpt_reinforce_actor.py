@@ -159,7 +159,7 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     rm = RemoteGPTRMClient(cfg.remote_rm)
-    timer = Timer(cfg.exp_manager.get("max_time_per_run"))
+    timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
 
     batch_iterator_cfg = cfg.trainer.reinforce.get("batch_iterator", {})
     batch_iterator_cls = get_batch_iterator_cls(batch_iterator_cfg)
