@@ -132,22 +132,31 @@ class GPTGenerateTRTLLM:
             .numpy()
         )
 
-        self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
+        self.sample_temperature = sample_temperature
+        self.sample_top_k = sample_top_k
+        self.sample_top_p = sample_top_p
+        self.repetition_penalty = repetition_penalty
+        self.stop_list = stop_list
+
+    def build_sampling_config(self, use_greedy=False):
+        sampling_config = tensorrt_llm.runtime.SamplingConfig(
             # We use `pad_id` as end token instead of `eos_id` to actually "disable" this end token
             # mechanism. Otherwise, the response length returned by TRT-LLM would *not* count `eos_id`
             # when the model would end its generation with this token. Instead, `stop_words_list` is
             # augmented with `eos_id` which ensures it is counted in the response length (see above).
             end_id=self.pad_id,
             pad_id=self.pad_id,
-            temperature=sample_temperature,
-            top_k=sample_top_k,
-            top_p=sample_top_p,
-            repetition_penalty=repetition_penalty,
+            temperature=self.sample_temperature,
+            top_k=1 if use_greedy else self.sample_top_k,
+            top_p=self.sample_top_p,
+            repetition_penalty=self.repetition_penalty,
             max_new_tokens=self.max_generation_length,
-            stop_words_list=stop_list,
+            stop_words_list=self.stop_list,
             return_dict=True,
             output_sequence_lengths=True,
         )
+
+        return sampling_config
 
     def refit(self, model):
         if not self._trtllm_model_compiled:
@@ -175,7 +184,9 @@ class GPTGenerateTRTLLM:
             self.trt_llm_exporter.refit(model, self.model_cfg)
             log_memory("After TRT-LLM engine refit")
 
-    def _generate(self, inputs: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+    def _generate(
+        self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy=False
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Internal API to make it easier to validate raw TRT-LLM outputs
         """
@@ -188,10 +199,11 @@ class GPTGenerateTRTLLM:
         random_seeds = torch.randint(
             0, 2 ** 32, size=(prompt_tokens.shape[0],), dtype=torch.long, generator=self.rng_generator
         )
-        self.sampling_config.update(random_seed=random_seeds)
+        sampling_config = self.build_sampling_config(use_greedy=use_greedy)
+        sampling_config.update(random_seed=random_seeds)
 
         output_dict = tensorrt_llm_run.tensorrt_llm_worker_context.decoder.generate(
-            batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
+            batch_input_ids=batch_input_ids, sampling_config=sampling_config, streaming=False
         )
 
         # TRTLLM returns the output_ids and sequence_lengths only on the first PP rank, and None otherwise, so we need to broadcast
@@ -205,9 +217,9 @@ class GPTGenerateTRTLLM:
         response_lengths = torch.squeeze(response_lengths, dim=1).long()
         return output_ids, response_lengths
 
-    def generate(self, inputs: tuple[torch.Tensor, torch.Tensor]):
+    def generate(self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy=False):
 
-        output_ids, response_lengths = self._generate(inputs)
+        output_ids, response_lengths = self._generate(inputs, use_greedy=use_greedy)
         max_length = response_lengths.max().item()
 
         # Map pad_id to eos_id in case tokenizer does not have a pad_id
