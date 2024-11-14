@@ -31,7 +31,7 @@ jobs:
       image-label: nemo-aligner
       build-args: |
         MAX_JOBS=32
-        ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
+        ALIGNER_COMMIT=${{ inputs.release-ref }}
       prune-filter-timerange: 24h
       python-package: nemo_aligner
       container-workdir: /opt/NeMo_Aligner
