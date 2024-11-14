@@ -34,7 +34,7 @@ jobs:
         ALIGNER_COMMIT=${{ inputs.release-ref }}
       prune-filter-timerange: 24h
       python-package: nemo_aligner
-      container-workdir: /opt/NeMo_Aligner
+      container-workdir: /opt/NeMo-Aligner
       library-name: NeMo-Aligner
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
