@@ -87,7 +87,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 model_cfg=self.cfg,
                 max_generation_length=self.cfg.ppo.length_params.get("max_length", 1024),
                 max_input_len=self.cfg.ppo.trt_llm.get("max_input_len", 1024),
-                max_input_tokens=self.cfg.ppo.trt_llm.get("max_input_tokens", 4096),
+                # max_input_tokens=self.cfg.ppo.trt_llm.get("max_input_tokens", 4096),
                 generation_batch_size=self.cfg.ppo.get("rollout_micro_batch_size", 4),
                 unload_engine_train=self.cfg.ppo.trt_llm.get("unload_engine_train", False),
                 trt_model_type=self.cfg.ppo.trt_llm.get("model_type", "llama"),
@@ -100,6 +100,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 use_greedy=self.cfg.ppo.sampling_params.get("use_greedy", False),
                 tokenizer=self.tokenizer,
                 seed=self.cfg.ppo.trt_llm.get("seed", self.cfg.seed),
+                trt_model_dir=self.cfg.ppo.get("trt_model_dir", "/tmp/trt_llm_model"),
             )
 
     def _build_vocab(self):

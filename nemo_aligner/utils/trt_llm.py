@@ -1,20 +1,31 @@
+# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import secrets
-
 import tensorrt_llm
 import torch
+import torch.distributed
 
 from nemo.export.tensorrt_llm import TensorRTLLM
 from nemo.export.trt_llm import tensorrt_llm_run
 from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
 from nemo.utils import logging
-from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
-from nemo_aligner.utils.utils import log_memory
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, broadcast_tensor_within_pp
+from nemo_aligner.utils.utils import clear_memory, log_memory
 
 try:
-    from tensorrt_llm.bindings import GptSession
+    import tensorrt_llm
 
-    GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
     HAVE_TRTLLM = True
 except (ImportError, ModuleNotFoundError) as e:
     logging.info(f"got error message {e} when importing trt-llm dependencies, disabling")
@@ -33,6 +44,11 @@ def append_and_repad_list(list_of_items, item_to_append, pad_id):
 
 
 class GPTGenerateTRTLLM:
+    # Use a reserved negative number since there is variation between tokenizers if
+    #  they (1) have a pad_id (2) don't have a pad_id or (3) have None as the pad_id.
+    #  This pad_id is replaced with eos_id after generation.
+    DEFAULT_PAD_ID = -42
+
     def __init__(
         self,
         model_cfg,
@@ -44,23 +60,24 @@ class GPTGenerateTRTLLM:
         repetition_penalty=1.0,
         max_generation_length=1024,
         max_input_len=1024,
-        max_input_tokens=4096,
         generation_batch_size=4,
         use_greedy=False,
-        trt_model_type="GPTForCausalLM",
+        trt_model_type="llama",
         seed=None,
         unload_engine_train=False,
         reshard_model=False,
         trt_model_dir="/tmp/trt_llm_model",
     ):
-        # If this assert turns out to be a blocker with some tokenizers, potential workarounds could be to:
-        #   - add a config option to allow specifying which token we pass as `end_id` to TRT-LLM (should
-        #     be a token that the model is guaranteed to never generate)
-        #   - pass `end_id=-1` (and possibly also `pad_id=-1`) to TRT-LLM (would require making sure
-        #     this works as intended)
-        # assert (
-        #     tokenizer.pad_id != tokenizer.eos_id
-        # ), "We require tokenizers to have a different pad_id than eos_id when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
+        if not HAVE_TRTLLM:
+            raise RuntimeError(
+                "You are trying to use NeMo-Aligner's TensorRT-LLM acceleration for LLM generation. Please build the dockerfile to enable this feature: https://github.com/NVIDIA/NeMo-Aligner/blob/main/Dockerfile"
+            )
+
+        assert max_input_len > 0
+        assert max_generation_length > 0
+        assert (
+            max_input_len + max_generation_length <= model_cfg.encoder_seq_length
+        ), f"We require max_input_len ({max_input_len}) + max_generation_length ({max_generation_length}) <= model_cfg.encoder_seq_length ({model_cfg.encoder_seq_length})"
 
         if use_greedy and sample_top_k != 1:
             logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
@@ -70,7 +87,6 @@ class GPTGenerateTRTLLM:
         self.tokenizer = tokenizer
         self.max_generation_length = max_generation_length
         self.max_input_len = max_input_len
-        self.max_input_tokens = max_input_tokens
         self.generation_batch_size = generation_batch_size
         self.unload_engine_train = unload_engine_train
         self.trt_model_type = trt_model_type
@@ -79,20 +95,19 @@ class GPTGenerateTRTLLM:
         self._trtllm_model_compiled = False
 
         rng_generator = torch.Generator(device="cpu")
-        seed = secrets.randbits(8) if seed is None else seed
+        seed = secrets.randbits(32) if seed is None else seed
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        self.pad_id = getattr(tokenizer, "_unk_id", 128248)
-
-        end_id = tokenizer.eos_id
+        self.pad_id = GPTGenerateTRTLLM.DEFAULT_PAD_ID
+        self.eos_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
         # TRT-LLM uses different logic to compute the response length depending on if we specify stop_list or end_id
-        # we want to use the same logic (which is to include the stop token in response length) so we put end_id into the stop_list
+        # we want to use the same logic (which is to include the stop token in response length) so we put eos_id into the stop_list
         # manually
         if len(end_strings) == 0:
-            ids, offsets = [end_id], [1]
+            ids, offsets = [self.eos_id], [1]
         else:
             assert all(
                 "," not in end_string for end_string in end_strings
@@ -104,45 +119,39 @@ class GPTGenerateTRTLLM:
                 end_strings, build_tokenizer(self.tokenizer), ref_str="green tea icecream"
             )
             ids, offsets = stop_list[0].tolist()
-            # add the end_id if it doesn't exist
-            if end_id not in ids:
-                ids = append_and_repad_list(ids, end_id, pad_id=0)
+            # add the eos_id if it doesn't exist
+            if self.eos_id not in ids:
+                ids = append_and_repad_list(ids, self.eos_id, pad_id=0)
                 offsets = append_and_repad_list(offsets, max(offsets) + 1, pad_id=-1)
 
-        assert max(offsets) == len(ids), "offset and stop token length are mismatched"
-        stop_list = torch.as_tensor([ids, offsets], dtype=torch.int32, device=torch.cuda.current_device()).repeat(
-            self.generation_batch_size, 1, 1
+        assert max(offsets) == len(ids), f"offset and stop token length are mismatched ({max(offsets)=} {len(ids)=})"
+        # TRT-LLM expects stop_list to be a numpy array
+        stop_list = (
+            torch.as_tensor([ids, offsets], dtype=torch.int32, device="cpu")
+            .repeat(self.generation_batch_size, 1, 1)
+            .numpy()
         )
 
-        self.sample_temperature = sample_temperature
-        self.sample_top_k = sample_top_k
-        self.sample_top_p = sample_top_p
-        self.repetition_penalty = repetition_penalty
-        self.stop_list = stop_list
-
-    def build_sampling_config(self, use_greedy=False):
-        sampling_config = tensorrt_llm.runtime.SamplingConfig(
+        self.sampling_config = tensorrt_llm.runtime.SamplingConfig(
             # We use `pad_id` as end token instead of `eos_id` to actually "disable" this end token
             # mechanism. Otherwise, the response length returned by TRT-LLM would *not* count `eos_id`
             # when the model would end its generation with this token. Instead, `stop_words_list` is
             # augmented with `eos_id` which ensures it is counted in the response length (see above).
             end_id=self.pad_id,
             pad_id=self.pad_id,
-            temperature=self.sample_temperature,
-            top_k=1 if use_greedy else self.sample_top_k,
-            top_p=self.sample_top_p,
-            repetition_penalty=self.repetition_penalty,
+            temperature=sample_temperature,
+            top_k=sample_top_k,
+            top_p=sample_top_p,
+            repetition_penalty=repetition_penalty,
             max_new_tokens=self.max_generation_length,
-            stop_words_list=self.stop_list,
+            stop_words_list=stop_list,
             return_dict=True,
             output_sequence_lengths=True,
         )
 
-        return sampling_config
-
     def refit(self, model):
         if not self._trtllm_model_compiled:
-            log_memory("memory before TRT-LLM engine build")
+            log_memory("Before TRT-LLM engine build")
             global_devices = [None for _ in range(torch.distributed.get_world_size())]
             torch.distributed.all_gather_object(global_devices, torch.cuda.current_device())
             gpus_per_node = max(global_devices) + 1
@@ -160,13 +169,16 @@ class GPTGenerateTRTLLM:
                 reshard_model=self.reshard_model,
             )
             self._trtllm_model_compiled = True
-            log_memory("memory after TRT-LLM engine build")
+            log_memory("After TRT-LLM engine build")
         else:
-            log_memory("memory before TRT-LLM engine refit")
+            log_memory("Before TRT-LLM engine refit")
             self.trt_llm_exporter.refit(model, self.model_cfg)
-            log_memory("memory after TRT-LLM engine refit")
+            log_memory("After TRT-LLM engine refit")
 
-    def generate(self, inputs, use_greedy=False):
+    def _generate(self, inputs: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Internal API to make it easier to validate raw TRT-LLM outputs
+        """
         prompt_tokens, prompt_lengths = inputs
 
         batch_input_ids = []
@@ -176,65 +188,30 @@ class GPTGenerateTRTLLM:
         random_seeds = torch.randint(
             0, 2 ** 32, size=(prompt_tokens.shape[0],), dtype=torch.long, generator=self.rng_generator
         )
-
-        sampling_config = self.build_sampling_config(use_greedy=use_greedy)
-        sampling_config.update(random_seed=random_seeds)
+        self.sampling_config.update(random_seed=random_seeds)
 
         output_dict = tensorrt_llm_run.tensorrt_llm_worker_context.decoder.generate(
-            batch_input_ids=batch_input_ids, sampling_config=sampling_config, streaming=False
+            batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
+        )
+
+        # TRTLLM returns the output_ids and sequence_lengths only on the first PP rank, and None otherwise, so we need to broadcast
+        output_ids = broadcast_tensor_within_pp(output_dict["output_ids"] if output_dict else None, from_last=False)
+        response_lengths = broadcast_tensor_within_pp(
+            output_dict["sequence_lengths"] if output_dict else None, from_last=False
         )
 
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
-        output_ids = torch.squeeze(output_dict["output_ids"], dim=1).long()
-        response_lengths = torch.squeeze(output_dict["sequence_lengths"], dim=1).long()
+        output_ids = torch.squeeze(output_ids, dim=1).long()
+        response_lengths = torch.squeeze(response_lengths, dim=1).long()
+        return output_ids, response_lengths
+
+    def generate(self, inputs: tuple[torch.Tensor, torch.Tensor]):
+
+        output_ids, response_lengths = self._generate(inputs)
         max_length = response_lengths.max().item()
 
-        # TRTLLM with PP erroneously inserts padding:
-        # As an example when we have the input:
-        #     [[prompt tok, PAD, PAD], [prompt tok, prompt tok, prompt tok]]
-        # The output when PP is enabled becomes:
-        #     [[prompt tok, PAD, PAD, resp_tok, resp_tok], [prompt tok, prompt tok, prompt tok, resp_tok, resp_tok]]
-        # Therefore we need this logic to get rid of the padding in the middle of the tensor.
-        # Furthermore, TRTLLM only produces valid outputs on the source rank, so we can only process it here
-        # and rely on the aligner broadcast to get it to the other ranks. Miraculously, the length
-        # is still correct on the non src ranks
-        if (
-            parallel_state.get_pipeline_model_parallel_world_size() > 1
-            and parallel_state.get_model_parallel_src_rank() == torch.distributed.get_rank()
-        ):
-            valid_tokens = output_ids != self.pad_id
-            # we can't just naively use the response length here
-            # because there are cases where the model generates
-            # stop strings after it has stopped. so we need to
-            # be slightly inefficient and then remove the excess later on
-            valid_token_lengths = valid_tokens.sum(-1, keepdims=True)
-            max_unpadded_length = valid_token_lengths.max()
-            assert max_length <= max_unpadded_length, (
-                "max unpadded length should be more or equal to max length. This assertion is probably happening because TRT-LLM considered a "
-                "pad tokens in the response length"
-            )
-
-            _output_ids = torch.full(
-                (response_lengths.size(0), max_unpadded_length),
-                fill_value=self.pad_id,
-                dtype=output_ids.dtype,
-                device=output_ids.device,
-            )
-
-            # only fill up to the amount of valid tokens
-            src_index_mask = (
-                torch.arange(max_unpadded_length, device=response_lengths.device).view(1, -1) < valid_token_lengths
-            )
-
-            _output_ids[src_index_mask] = output_ids[valid_tokens]
-
-            invalid_response_mask = torch.arange(max_unpadded_length, device=response_lengths.device).view(
-                1, -1
-            ) >= response_lengths.view(-1, 1)
-            _output_ids[invalid_response_mask] = self.pad_id
-
-            output_ids = _output_ids
-
+        # Map pad_id to eos_id in case tokenizer does not have a pad_id
+        output_ids[output_ids == self.pad_id] = self.eos_id
         output_ids = output_ids[..., :max_length].contiguous()
         output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
 
@@ -245,7 +222,10 @@ class GPTGenerateTRTLLM:
 
         return output
 
-    def free(self, force_unload=False):
-        if force_unload or self.unload_engine_train:
-            tensorrt_llm_run.tensorrt_llm_worker_context.decoder = None
-            tensorrt_llm_run.tensorrt_llm_worker_context = tensorrt_llm_run.TensorrtLLMWorkerContext()
+    def free(self):
+        if not self.unload_engine_train:
+            return
+        log_memory("Before TRT-LLM engine unload")
+        self.trt_llm_exporter.unload_engine()
+        clear_memory()
+        log_memory("After TRT-LLM engine unload")

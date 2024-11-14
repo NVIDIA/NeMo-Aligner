@@ -105,6 +105,59 @@ def broadcast_2d_tensor_within_pp(tensor, dtype=torch.float32):
     return tensor
 
 
+def broadcast_tensor(tensor: torch.Tensor | None, src, group, dtype: torch.dtype | None = None):
+    """
+    Broadcast a tensor from the source rank to every other rank in the given group.
+    All the ranks that send or receive data must call this function.
+    
+    Parameters:
+    - tensor: The tensor to be broadcasted (or None for non source ranks).
+    - src: The rank of the source tensor.
+    - group: The process group to use for the broadcast.
+    - dtype: (Optional) The desired data type to cast the tensor before broadcasting.
+
+    Returns:
+    - The broadcasted tensor.
+    """
+
+    if torch.distributed.get_rank() == src:
+        tensor = tensor.cuda()
+        if dtype:
+            tensor = tensor.to(dtype)
+
+        metadata = [tensor.dtype, tensor.shape]
+
+        torch.distributed.broadcast_object_list(metadata, src, group)
+        torch.distributed.broadcast(tensor, src, group)
+    else:
+        metadata = [None, None]
+        torch.distributed.broadcast_object_list(metadata, src, group)
+
+        dtype, input_shape = metadata
+        tensor = torch.empty(input_shape, dtype=dtype, device="cuda")
+        torch.distributed.broadcast(tensor, src, group)
+    return tensor
+
+
+def broadcast_tensor_within_pp(tensor: torch.Tensor | None, dtype: torch.dtype = None, from_last: bool = True):
+    """
+    tensor: Should be a valid tensor on src rank and None elsewhere
+    dtype: no dtype means that the dtype is inferred
+    from_last: True=broadcast from the last PP rank and False=broadcast from first PP rank (default=True)
+    """
+    if parallel_state.get_pipeline_model_parallel_world_size() > 1:
+        return broadcast_tensor(
+            tensor,
+            parallel_state.get_pipeline_model_parallel_last_rank()
+            if from_last
+            else parallel_state.get_pipeline_model_parallel_first_rank(),
+            parallel_state.get_pipeline_model_parallel_group(),
+            dtype=dtype,
+        )
+
+    return tensor
+
+
 def gather_tensor(tensor, dst, group, dtype=None):
     """Gather any tensor to the dst rank from every other rank in the given group.
     All the ranks that send or receive data must call this function."""
