@@ -24,8 +24,9 @@ import torch
 import torch.distributed
 from megatron.core import parallel_state as mcore_parallel_state
 from megatron.core.utils import divide
-from nemo_skills.code_execution.math_grader import extract_answer
-from nemo_skills.code_execution.sandbox import get_sandbox
+
+# from nemo_skills.code_execution.math_grader import extract_answer
+# from nemo_skills.code_execution.sandbox import get_sandbox
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 from typing_extensions import Self
@@ -48,6 +49,53 @@ from nemo_aligner.utils.ppo_utils import calculate_ppo_rewards, create_mask
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict
+
+
+def extract_answer(string: str, extract_from_boxed: bool = True, extract_regex: str = r"The final answer is (.+)$"):
+    """Extract Answer String from \\boxed expression or based on regex"""
+    if not extract_from_boxed:
+        match = re.search(extract_regex, string)
+        if match:
+            return match.group(1)
+        return None
+
+    if "\\boxed" not in string:
+        return None
+
+    idx = string.rfind("\\boxed")
+    if idx < 0:
+        idx = string.rfind("\\fbox")
+        if idx < 0:
+            return None
+
+    i = idx
+    right_brace_idx = None
+    num_left_braces_open = 0
+    while i < len(string):
+        if string[i] == "{":
+            num_left_braces_open += 1
+        if string[i] == "}":
+            num_left_braces_open -= 1
+            if num_left_braces_open == 0:
+                right_brace_idx = i
+                break
+        i += 1
+
+    if right_brace_idx is None:
+        retval = None
+    else:
+        retval = string[idx : right_brace_idx + 1]
+
+    if retval:
+        left = "\\boxed{"
+        try:
+            assert retval[: len(left)] == left
+            assert retval[-1] == "}"
+            return retval[len(left) : -1]
+        except AssertionError:
+            return None
+
+    return None
 
 
 def solve_24(numbers):
