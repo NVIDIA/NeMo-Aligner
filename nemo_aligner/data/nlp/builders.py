@@ -266,7 +266,7 @@ build_train_valid_test_kto_datasets = partial(build_train_valid_test_datasets, K
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
 
 
-def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
+def build_sft_dataset(data_cfg, tokenizer, num_samples, is_mamba, answer_only_loss=True, is_chat=True, special_tokens=None):
     packed_sequence = data_cfg.get("packed_sequence", False)
     dataset_kwargs = {}
 
@@ -298,6 +298,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
         answer_only_loss=answer_only_loss,
         truncation_field=data_cfg.get("truncation_field", "text"),
         pad_to_max_length=data_cfg.get("pad_to_max_length", False),
+        pad_seq_length_to_mult=256 if is_mamba else 16,
         index_mapping_dir=data_cfg.get("index_mapping_dir", None),
         prompt_template=data_cfg.get("prompt_template", None),
         virtual_tokens=0,

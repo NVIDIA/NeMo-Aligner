@@ -19,7 +19,7 @@ import json
 import re
 import sys
 input_jsonl = sys.argv[1]
-output_jsonl = input_jsonl.replace(".jsonl", "no_special_toks.jsonl")
+output_jsonl = input_jsonl.replace(".jsonl", ".no_special_toks.jsonl")
 
 def format_conversation(input_string):
     # Define roles and patterns
