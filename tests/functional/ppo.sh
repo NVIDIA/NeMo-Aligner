@@ -23,7 +23,7 @@ MIN_LR=$(awk -v var="$LR" 'BEGIN {print var - 1e-11}')
 TRAIN_DATA_PATH=$SCRIPT_DIR/test_data/synthetic-123.jsonl
 VALID_DATA_PATH=$SCRIPT_DIR/test_data/synthetic-123.jsonl
 
-NAME="llama3_test"
+NAME="ppo_test"
 
 # PARAMETERS
 RESULTS_DIR="/tmp/${NAME}"
@@ -32,7 +32,7 @@ mkdir -p $RESULTS_DIR
 GPFS=$(git rev-parse --show-toplevel)
 
 # W&B Logging
-PROJECT=llama3_ppo_test
+PROJECT=ppo_test
 
 CRITIC_CONFIG_PATH="$GPFS/examples/nlp/gpt/conf/"
 CRITIC_CONFIG_NAME="gpt_ppo_critic"
@@ -101,15 +101,9 @@ CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
 CONF_NAME="gpt_ppo_actor"
 
 ACTOR_LOG_DIR="${RESULTS_DIR}/actor_results"
-CHECKPOINT_DIR="${ACTOR_LOG_DIR}/checkpoints"
-TENSOBOARD_DIR="${ACTOR_LOG_DIR}/tensorboard"
-
 mkdir -p $ACTOR_LOG_DIR
-mkdir -p $TENSOBOARD_DIR
-mkdir -p $CHECKPOINT_DIR
 
 ACTOR_NAME="${NAME}_actor"
-
 host_critic=localhost
 
 actor() {

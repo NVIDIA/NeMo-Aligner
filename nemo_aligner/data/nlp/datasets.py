@@ -26,6 +26,59 @@ from nemo.core import Dataset
 from nemo.utils import logging
 
 
+class KnowledgeDistillationDataset(Dataset):
+    """The knowledge distillation dataset takes in raw tokens, labels, loss masks, and the teacher models' predictive top tokens & logits.
+    """
+
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.name = name
+        self.data = data
+        self.seq_length = seq_length
+
+        self.nograd_length = 32
+
+        # Checks
+        assert np.min(documents) >= 0
+        assert np.max(documents) < len(self.data)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        """Returns a SFT example with topk_logits, topk_token_ids and target log_sum_exp_logits
+        """
+        payload = self.data[idx]
+        for key in ["tokens", "labels", "loss_mask", "topk_token_ids"]:
+            assert key in payload, f"{key} not in the data"
+            payload[key] = torch.tensor(payload[key], dtype=torch.int64)
+        for key in ["topk_logits", "log_sum_exp_logits"]:
+            assert key in payload, f"{key} not in the data"
+            payload[key] = torch.tensor(payload[key], dtype=torch.float32)
+
+        if self.cfg.data.top_k is not None:
+            payload["topk_logits"] = payload["topk_logits"][..., : self.cfg.data.top_k]
+            payload["topk_token_ids"] = payload["topk_token_ids"][..., : self.cfg.data.top_k]
+
+        length = len(payload["tokens"])
+        if length > self.seq_length:
+            logging.warning(
+                f"WARNING: Tokenized text exceeds max seq length ({length} vs {self.seq_length})."
+                + f"The example will be ignored."
+            )
+            # ignore the example whose tokenized text exceeds max seq length.
+            for key in ["tokens", "labels", "topk_logits", "topk_token_ids", "log_sum_exp_logits"]:
+                payload[key] = payload[key][
+                    : self.nograd_length
+                ]  ## make dummy example very short to reduce computation
+            payload["loss_mask"] = torch.zeros_like(payload["tokens"])
+
+        return payload
+
+
 class RLHFDataset(Dataset):
     def __init__(
         self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
