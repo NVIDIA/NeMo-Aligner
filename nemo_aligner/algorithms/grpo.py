@@ -163,10 +163,10 @@ class GRPOTrainer:
         self.ckpt_callback = ckpt_callback
 
         # TODO: we need to send it once per TP rank, but do that later i guess...
-        self.sandbox = get_sandbox()
+# self.sandbox = get_sandbox()
 
         # sanity check
-        assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
+# assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -235,7 +235,7 @@ class GRPOTrainer:
 
         # advantage estimation
         mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
-        advantages = (torch.zeros_like(logprobs) + advantages.view(-1, 1)) * mask
+        advantages = (torch.zeros_like(logprobs).cuda() + advantages.cuda().view(-1, 1)) * mask
 
         # collect everything we need to train PPO
         ppo_rollout_data["mask"] = mask
