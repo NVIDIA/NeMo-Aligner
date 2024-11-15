@@ -22,7 +22,7 @@ from functools import partial
 
 import numpy as np
 import torch
-from datasets import load_dataset
+import torch.utils.data
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
@@ -212,7 +212,7 @@ def build_train_valid_test_datasets(
             cfg=cfg,
             data_prefix=data_prefix["validation"],
             data_impl=data_impl,
-            num_samples=int(train_valid_test_num_samples[0]),
+            num_samples=int(train_valid_test_num_samples[1]),
             seq_length=seq_length,
             seed=seed,
             tokenizer=tokenizer,
@@ -225,7 +225,7 @@ def build_train_valid_test_datasets(
             cfg=cfg,
             data_prefix=data_prefix["test"],
             data_impl=data_impl,
-            num_samples=int(train_valid_test_num_samples[0]),
+            num_samples=int(train_valid_test_num_samples[2]),
             seq_length=seq_length,
             seed=seed,
             tokenizer=tokenizer,
@@ -431,8 +431,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
 
 
 def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_masks_and_position_ids=True):
-    """collate function that pads each sequence to the max in the batch
-    """
+    """collate function that pads each sequence to the max in the batch"""
     return partial(
         collate_with_batch_max_sequence_length,
         response_token_length=max_seqlen,
@@ -442,6 +441,14 @@ def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_ma
         eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
         generate_masks_and_position_ids=generate_masks_and_position_ids,
     )
+
+
+def identity_collate(batch):
+    """
+    Useful since torch's data loader's default collate will crash with ragged sequences.
+    Also, this function is needed b/c lambda functions aren't pickle-able.
+    """
+    return batch
 
 
 def build_dataloader(
