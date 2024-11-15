@@ -1,8 +1,5 @@
 .. include:: /content/nemo.rsts
 
-.. note::
-   If you run into any problems, refer to NeMo's ``Known Issues page <https://gitlab-master.nvidia.com/nemo-framework-tme/documentation/-/blob/main/docs/user-guide/knownissues.rst?ref_type=heads>``__. The page enumerates known issues and provides suggested workarounds where appropriate.
-
 .. _model-aligner-rs:
 
 Model Alignment by Rejection Sampling
@@ -10,6 +7,8 @@ Model Alignment by Rejection Sampling
 
 .. note::
    Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+
+   If you run into any problems, refer to NeMo's `Known Issues page <https://gitlab-master.nvidia.com/nemo-framework-tme/documentation/-/blob/main/docs/user-guide/knownissues.rst?ref_type=heads>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 In this tutorial, we will guide you through the process of aligning a NeMo Framework model using rejection sampling. This method can be applied to various models, including LLaMa and Mistral, with our scripts functioning consistently across different models.
 

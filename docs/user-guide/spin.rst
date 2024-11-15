@@ -1,9 +1,5 @@
 .. include:: /content/nemo.rsts
 
-.. note::
-   - This tutorial requires accessing gated Hugging Face models. For details on how to access these models, refer to ``this document <https://docs.nvidia.com/nemo-framework/user-guide//latest/generaltips.html#working-with-hugging-face-models>``__.
-   - If you run into any problems, refer to NeMo's ``Known Issues page <https://gitlab-master.nvidia.com/nemo-framework-tme/documentation/-/blob/main/docs/user-guide/knownissues.rst?ref_type=heads>``__. The page enumerates known issues and provides suggested workarounds where appropriate.
-
 Model Alignment by Self-Play Fine-Tuning (SPIN)
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
@@ -15,6 +11,8 @@ For details on the SPIN algorithm, refer to the paper: `https://arxiv.org/abs/24
 
 .. note::
    Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+   
+   If you run into any problems, refer to NeMo's `Known Issues page <https://gitlab-master.nvidia.com/nemo-framework-tme/documentation/-/blob/main/docs/user-guide/knownissues.rst?ref_type=heads>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 Obtain a Pretrained Model
 #########################

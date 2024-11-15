@@ -1,9 +1,5 @@
 .. include:: /content/nemo.rsts
 
-.. note::
-   - This tutorial requires accessing gated Hugging Face models. For details on how to access these models, refer to ``this document <https://docs.nvidia.com/nemo-framework/user-guide//latest/generaltips.html#working-with-hugging-face-models>``__.
-   - If you run into any problems, refer to NeMo's ``Known Issues page <https://gitlab-master.nvidia.com/nemo-framework-tme/documentation/-/blob/main/docs/user-guide/knownissues.rst?ref_type=heads>``__. The page enumerates known issues and provides suggested workarounds where appropriate.
-
 Supervised Fine-Tuning (SFT) with Knowledge Distillation
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
@@ -12,6 +8,12 @@ Compared to standard SFT which trains the model to predict the next token, knowl
 There are two primary benefits of knowledge distillation compared to standard supervised fine-tuning: (1) convergence in fewer training tokens, and (2) improved accuracy.
 
 There are many variants of knowledge distillation. NeMo Aligner supports training the student model to match the top-K logits of the teacher model. In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model.
+
+.. note::
+   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+
+   If you run into any problems, refer to NeMo's `Known Issues page <https://gitlab-master.nvidia.com/nemo-framework-tme/documentation/-/blob/main/docs/user-guide/knownissues.rst?ref_type=heads>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
+
 
 Obtain the fine-tuned teacher and pre-trained student models
 ############################################################
