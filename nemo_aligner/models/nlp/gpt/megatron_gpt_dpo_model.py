@@ -316,6 +316,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             split = cu_seqlens[1:-1].long().cpu()  ## exclude 0 and max_seq_len
             logp_unpacked = list(torch.tensor_split(logps, split, -1))
             labels_unpacked = list(torch.tensor_split(labels, split, -1))
+            lengths = [ex.shape[-1] for ex in logp_unpacked]
+            max_length = max(lengths)
 
             for i in range(len(logp_unpacked)):
                 logp_unpacked[i] = torch.nn.functional.pad(logp_unpacked[i], (0, max_length - logp_unpacked[i].shape[-1]), "constant",)
