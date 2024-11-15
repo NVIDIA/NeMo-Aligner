@@ -74,13 +74,13 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         self.gt_reward_scale = self.cfg.dpo.get("gt_reward_scale", 1.0)
 
     @torch.no_grad()
-    def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels, seq_boundaries=None, lengths=None, average_log_probs=False):
+    def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels, cu_seqlens=None, lengths=None, average_log_probs=False):
         pi_logprobs = pi_logprobs.detach()
 
         dp_group = parallel_state.get_data_parallel_group()
 
         batch_logs = self.get_reduced_masked_logps(
-            pi_logprobs - ref_logprobs, labels, seq_boundaries, lengths, average_log_probs=average_log_probs
+            pi_logprobs - ref_logprobs, labels, cu_seqlens, lengths, average_log_probs=average_log_probs
         )
 
         output_list = [torch.zeros_like(batch_logs) for _ in range(dp_group.size())]
@@ -135,20 +135,18 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                                 "ref_policy_log_probs", ## chosen and rejected interleaved
                                 "labels",
                                 "rewards",
-                                "seq_boundaries", ## needed for breaking chosen and rejected sequence apart during loss computation
                             )
                         )  
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
             #print(f'{batch=}')
 
-            tokens, labels, ref_logprobs, gt_rewards, lengths, seq_boundaries, ref_logprobs = None, None, None, None, None, None, None
+            tokens, labels, ref_logprobs, gt_rewards, lengths, ref_logprobs, cu_seqlens = None, None, None, None, None, None, None
             packed = "chosen" not in batch
             if packed: ## packed sequence
                 tokens = batch["input_ids"]
                 labels = batch["labels"]
                 gt_rewards = batch["rewards"]
-                seq_boundaries = batch["seq_boundaries"]
                 lengths = batch["lengths"]
                 ref_logprobs = batch.get("ref_policy_log_probs", None)
             else:
@@ -257,7 +255,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     ref_logprobs,
                     labels_for_loss,
                     gt_rewards,
-                    seq_boundaries,
+                    cu_seqlens,
                     lengths,
                     average_log_probs=self.preference_avg_log_probs,
                 )
@@ -265,7 +263,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 sft_loss = torch.zeros_like(preference_loss)
                 if self.sft_loss_weight != 0:
                     sft_loss = self.sft_loss_func(
-                        per_token_logps, labels_for_loss, seq_boundaries, lengths, average_log_probs=self.sft_avg_log_probs
+                        per_token_logps, labels_for_loss, cu_seqlens, lengths, average_log_probs=self.sft_avg_log_probs
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
@@ -277,7 +275,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss, acc_chosen])
 
                 out_chosen, out_rejected = self.gather_and_split_rewards(
-                    per_token_logps, ref_logprobs, labels_for_loss, seq_boundaries, lengths, average_log_probs=self.preference_avg_log_probs
+                    per_token_logps, ref_logprobs, labels_for_loss, cu_seqlens, lengths, average_log_probs=self.preference_avg_log_probs
                 )
 
                 return (
@@ -303,27 +301,31 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         chosen_logps, reject_logps = torch.split(output_tensor.float(), len(output_tensor) // 2, dim=0)
         return chosen_logps, reject_logps
 
-    def get_reduced_masked_logps(self, logps, labels, seq_boundaries=None, lengths=None, average_log_probs=False):        
+    def get_reduced_masked_logps(self, logps, labels, cu_seqlens=None, lengths=None, average_log_probs=False):        
         assert logps.shape == labels.shape, "logps and labels shape mismatch"
         ## break up the packed batch into an unpacked batch
         ## TODO: make this more efficient and only compute it once
         ## also make sure we don't get the padding at the end of the last example
-        if seq_boundaries is not None:
-            unpacked_logps = []
-            unpacked_logps_rejected = []
-            unpacked_labels = []
-            unpacked_labels_rejected = []
-            for i in range(seq_boundaries.shape[0]):
-                max_length = torch.max(lengths[i])
-                logp_unpacked = list(torch.tensor_split(logps[i], seq_boundaries[i][1:-1].cpu(), -1)) ## exclude 0 and max_seq_len
-                labels_unpacked = list(torch.tensor_split(labels[i], seq_boundaries[i][1:-1].cpu(), -1))
-                for i in range(len(logp_unpacked)):
-                    logp_unpacked[i] = torch.nn.functional.pad(logp_unpacked[i], (0, max_length - logp_unpacked[i].shape[-1]), "constant",)
-                    labels_unpacked[i] = torch.nn.functional.pad(labels_unpacked[i], (0, max_length - labels_unpacked[i].shape[-1]), "constant", -100)
-                unpacked_logps.extend(logp_unpacked[::2]) ## chosen
-                unpacked_logps_rejected.extend(logp_unpacked[1::2]) ## rejected
-                unpacked_labels.extend(labels_unpacked[::2])
-                unpacked_labels_rejected.extend(labels_unpacked[1::2])
+        ## also, this assumes MBS is 1. Make sure this is enforced so we don't silently fail!!
+        
+        ## mbs = 1
+        logps = logps.squeeze()
+        labels = labels.squeeze()
+        if cu_seqlens is not None:
+            
+            split = cu_seqlens[1:-1].long().cpu()  ## exclude 0 and max_seq_len
+            logp_unpacked = list(torch.tensor_split(logps, split, -1))
+            labels_unpacked = list(torch.tensor_split(labels, split, -1))
+
+            for i in range(len(logp_unpacked)):
+                logp_unpacked[i] = torch.nn.functional.pad(logp_unpacked[i], (0, max_length - logp_unpacked[i].shape[-1]), "constant",)
+                labels_unpacked[i] = torch.nn.functional.pad(labels_unpacked[i], (0, max_length - labels_unpacked[i].shape[-1]), "constant", -100)
+            
+            unpacked_logps = logp_unpacked[::2] ## chosen
+            unpacked_logps_rejected = logp_unpacked[1::2] ## rejected
+            unpacked_labels = labels_unpacked[::2]
+            unpacked_labels_rejected = labels_unpacked[1::2]
+
             unpacked_logps.extend(unpacked_logps_rejected)
             unpacked_labels.extend(unpacked_labels_rejected)
             logps = torch.stack(unpacked_logps, 0)
@@ -336,9 +338,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         else:
             return (logps * loss_mask).sum(-1)
 
-    def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, seq_boundaries=None, lengths=None, average_log_probs=False):
+    def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, cu_seqlens=None, lengths=None, average_log_probs=False):
         rewards = self.get_reduced_masked_logps(
-            pi_logprobs - ref_logprobs, labels, seq_boundaries=seq_boundaries, lengths=lengths, average_log_probs=average_log_probs,
+            pi_logprobs - ref_logprobs, labels, cu_seqlens=cu_seqlens, lengths=lengths, average_log_probs=average_log_probs,
         )
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
         rewards_delta = chosen_rewards - reject_rewards
@@ -387,8 +389,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         return loss, acc_chosen
 
-    def sft_loss_func(self, pi_logprobs, labels, seq_boundaries=None, lengths=None, average_log_probs=False):
-        logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, seq_boundaries=seq_boundaries, lengths=lengths, average_log_probs=average_log_probs)
+    def sft_loss_func(self, pi_logprobs, labels, cu_seqlens=None, lengths=None, average_log_probs=False):
+        logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, cu_seqlens=cu_seqlens, lengths=lengths, average_log_probs=average_log_probs)
         chosen_logprobs, _ = self.split_output_tensor(logprobs)
         return -chosen_logprobs.mean(0)
 

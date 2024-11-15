@@ -457,8 +457,8 @@ class DPOPackedDataset(DPOModelDataset):
             cu_seqlens.append([0])
             seqlens = np.array(item['seq_boundaries'][1:]) - np.array(item['seq_boundaries'][:-1])
             for l in seqlens:
-                position_ids[-1].extend(list(range(l-1)))
-                cu_seqlens[-1].append(cu_seqlens[-1][-1] + l) ## TODO: this seems wrong. cu_seqlens = [0, 41, 96].. Is last example padded?
+                position_ids[-1].extend(list(range(l-1))) ## l - 1 to exclude labels
+                cu_seqlens[-1].append(cu_seqlens[-1][-1] + l - 1)
             # set last seq to the max seq len because rope and attn kernels expect no padding
             cu_seqlens[-1][-1] = max_length
 
@@ -474,7 +474,6 @@ class DPOPackedDataset(DPOModelDataset):
         ## TODO: figure out whether this is the right way to pad length and reward
         lengths = self._collate_item(lengths, max_length=max_num_sequences, pad_id=0)
         rewards = self._collate_item(rewards, max_length=max_num_sequences, pad_id=-1)
-        seq_boundaries = self._collate_item(seq_boundaries, max_length=max_num_sequences+1, pad_id=-1) ## [0, seq_boundary 1, ... seq_boundary n]
 
         output = {
             "input_ids": torch.LongTensor(input_ids),
@@ -482,7 +481,6 @@ class DPOPackedDataset(DPOModelDataset):
             "lengths": torch.LongTensor(lengths),
             "rewards": torch.LongTensor(rewards), ## TODO: is this the right shape? -- compare to non-packed version
             "position_ids": torch.LongTensor(position_ids), ## use this for loss computation -- to upweigh shorter examples
-            "seq_boundaries": torch.LongTensor(seq_boundaries),
         }
 
         if self.return_cu_seqlen:
