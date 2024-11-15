@@ -25,6 +25,42 @@ from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset i
 from nemo.core import Dataset
 from nemo.utils import logging
 
+class DataItemInvalidError(ValueError):
+    ...
+
+class EncodeMixin:
+    def encode(self, text: str, append_eod: bool = False) -> tuple[list[int], int]:
+        if self.apply_ftfy:
+            import ftfy
+
+            text = ftfy.fix_text(text)
+
+        text_ids = self.tokenizer.text_to_ids(text)
+
+        if len(text_ids) > 0 and append_eod:
+            text_ids.append(self.tokenizer.eos_id)
+
+        return text_ids, len(text_ids)
+    
+    def encode_pair(self, prompt: str, response: str, append_eod: bool = False) -> tuple[list[int], int, list[int], int]:
+        """Tokenizes prompt + response and ensures prompt and response are not merged by tokenizer.
+
+        Args:
+            prompt (str): _description_
+            response (str): _description_
+            append_eod (bool, optional): _description_. Defaults to False.
+
+        Returns:
+            tuple[list[int], int, list[int], int]: (prompt, prompt_len, combined_tokens, combined_len)
+        """
+        prompt_tokens, prompt_len = self.encode(prompt, append_eod=False)
+        response_tokens, response_len = self.encode(prompt + response, append_eod=append_eod)
+
+        if response_tokens[0:prompt_len] != prompt_tokens:
+            raise DataItemInvalidError(f"The tokenizer for DPO has merged tokens between prompt and response for:\n[[prompt]]={repr(prompt)}\n[[response]]={repr(response)}")
+
+        return prompt_tokens, prompt_len, response_tokens, response_len
+
 
 class KnowledgeDistillationDataset(Dataset):
     """The knowledge distillation dataset takes in raw tokens, labels, loss masks, and the teacher models' predictive top tokens & logits.
@@ -79,7 +115,7 @@ class KnowledgeDistillationDataset(Dataset):
         return payload
 
 
-class RLHFDataset(Dataset):
+class RLHFDataset(EncodeMixin, Dataset):
     def __init__(
         self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
     ):
@@ -89,7 +125,9 @@ class RLHFDataset(Dataset):
         self.data = data
         self.drop_last = drop_last
         self.seq_length = seq_length
+        # Required for EncodeMixin
         self.tokenizer = tokenizer
+        self.apply_ftfy = self.cfg.data.get("apply_ftfy", False)
 
         if "length_params" in cfg:
             max_sample_length = seq_length - cfg.length_params.max_length
@@ -118,19 +156,6 @@ class RLHFDataset(Dataset):
 
     def __len__(self):
         return len(self.data)
-
-    def encode(self, text):
-        if self.cfg.data.get("apply_ftfy", False):
-            import ftfy
-
-            text = ftfy.fix_text(text)
-
-        text_ids = self.tokenizer.text_to_ids(text)
-
-        if len(text_ids) > 0 and self.cfg.data.get("append_eod", False):
-            text_ids.append(self.tokenizer.eos_id)
-
-        return text_ids, len(text_ids)
 
     def __getitem__(self, idx):
         """
@@ -185,7 +210,7 @@ class RLHFDataset(Dataset):
         return output
 
 
-class RewardModelDataset(Dataset):
+class RewardModelDataset(EncodeMixin, Dataset):
     """This class assumes that we only have 2 responses per prompt that is ranked. Chosen is the better
     one(even index) whereas Rejected is the worse response(odd index)
     """
@@ -199,7 +224,9 @@ class RewardModelDataset(Dataset):
         self.data = data
         self.drop_last = drop_last
         self.seq_length = seq_length
+        # Required for EncodeMixin
         self.tokenizer = tokenizer
+        self.apply_ftfy = self.cfg.data.get("apply_ftfy", False)
 
         self.reset_position_ids = cfg.data.get("reset_position_ids", False)
         self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
@@ -222,19 +249,6 @@ class RewardModelDataset(Dataset):
 
     def __len__(self):
         return len(self.data) // 2
-
-    def encode(self, text):
-        if self.cfg.data.get("apply_ftfy", False):
-            import ftfy
-
-            text = ftfy.fix_text(text)
-
-        text_ids = self.tokenizer.text_to_ids(text)
-
-        if len(text_ids) > 0 and self.cfg.data.get("append_eod", False):
-            text_ids.append(self.tokenizer.eos_id)
-
-        return text_ids, len(text_ids)
 
     def __getitem__(self, idx, multiple=2):
         """Returns a pair of chosen/rejected pairs, and their respective lengths."""
@@ -290,7 +304,7 @@ class RewardModelDataset(Dataset):
         return output
 
 
-class DPOModelDataset(Dataset):
+class DPOModelDataset(EncodeMixin, Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
     with the prompt, along with the chosen response (response only, no prompt), and the rejected response
     (response only, no prompt). This Dataset will combine the prompt with each corresponding chosen and
@@ -313,7 +327,9 @@ class DPOModelDataset(Dataset):
         self.data = data
         self.drop_last = drop_last
         self.seq_length = seq_length
+        # Required for EncodeMixin
         self.tokenizer = tokenizer
+        self.apply_ftfy = self.cfg.data.get("apply_ftfy", False)
 
         self.reset_position_ids = cfg.data.get("reset_position_ids", False)
         self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
@@ -331,40 +347,14 @@ class DPOModelDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def encode(self, text, append_eod=False):
-        if self.cfg.data.get("apply_ftfy", False):
-            import ftfy
-
-            text = ftfy.fix_text(text)
-
-        text_ids = self.tokenizer.text_to_ids(text)
-
-        if len(text_ids) > 0 and append_eod:
-            text_ids.append(self.tokenizer.eos_id)
-
-        return text_ids, len(text_ids)
-
     def __getitem__(self, idx):
         """Returns a pair of chosen/rejected pairs, their respective lengths, and labels."""
         payload = self.data[idx]
-        prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
-        chosen, chosen_len = self.encode(
-            payload["prompt"] + payload["chosen_response"], append_eod=self.cfg.data.get("append_eod", False)
-        )
-        reject, reject_len = self.encode(
-            payload["prompt"] + payload["rejected_response"], append_eod=self.cfg.data.get("append_eod", False)
-        )
-        # chosen_response_only, chosen_response_len = self.encode(payload['chosen_response'])
-        # reject_response_only, reject_response_len = self.encode(payload['rejected_response'])
+        _, prompt_len, chosen, chosen_len = self.encode_pair(payload["prompt"], payload["chosen_response"], append_eod=False)
+        _, _, reject, reject_len = self.encode_pair(payload["prompt"], payload["rejected_response"], append_eod=False)
+        
         chosen_labels = ([-100] * prompt_len) + chosen[prompt_len:]
         reject_labels = ([-100] * prompt_len) + reject[prompt_len:]
-
-        assert (
-            chosen[0:prompt_len] == prompt
-        ), f"The tokenizer for DPO has merged tokens between prompt and response for {idx=}:\n[[prompt]]={repr(payload['prompt'])}\n[[chosen_response]]={repr(payload['chosen_response'])}"
-        assert (
-            reject[0:prompt_len] == prompt
-        ), f"The tokenizer for DPO has merged tokens between prompt and response for {idx=}:\n[[prompt]]={repr(payload['prompt'])}\n[[rejected_response]]={repr(payload['rejected_response'])}"
 
         max_curr_seq_len = max(chosen_len, reject_len)
 
@@ -407,7 +397,7 @@ class DPOModelDataset(Dataset):
         return output
 
 
-class KTOModelDataset(Dataset):
+class KTOModelDataset(EncodeMixin, Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
     with the prompt, along with the response (response only, no prompt), and the status denoting whether the response is
     chosen or rejected. This Dataset will combine the prompt with the corresponding response, and then tokenize it. It
@@ -430,7 +420,9 @@ class KTOModelDataset(Dataset):
         self.data = data
         self.drop_last = drop_last
         self.seq_length = seq_length
+        # Required for EncodeMixin
         self.tokenizer = tokenizer
+        self.apply_ftfy = self.cfg.data.get("apply_ftfy", False)
 
         self.reset_position_ids = cfg.data.get("reset_position_ids", False)
         self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
@@ -449,34 +441,16 @@ class KTOModelDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def encode(self, text, append_eod=False, add_dummy_prefix=True):
-        if self.cfg.data.get("apply_ftfy", False):
-            import ftfy
-
-            text = ftfy.fix_text(text)
-
-        text_ids = self.tokenizer.text_to_ids(text)
-
-        if len(text_ids) > 0 and append_eod:
-            text_ids.append(self.tokenizer.eos_id)
-
-        return text_ids, len(text_ids)
-
     def __getitem__(self, idx):
         """Returns a sample = prompt + response, their respective lengths, and labels.
         Differently from DPO, we need to separate the prompt from the response.
         """
         payload = self.data[idx]
-        prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
-        sample, sample_len = self.encode(
-            payload["prompt"] + payload["response"], append_eod=self.cfg.data.get("append_eod", False)
-        )
+        prompt, prompt_len, sample, sample_len = self.encode_pair(payload["prompt"], payload["response"], append_eod=False)
         labels = ([-100] * prompt_len) + sample[prompt_len:]
         # Separate the response from the prompt
         response = sample[prompt_len:]
         preference = 1 if payload["preference"] == "chosen" else 0
-
-        assert sample[0:prompt_len] == prompt, "the tokenizer for KTO has merged tokens between prompt and response"
 
         if sample_len > self.seq_length:
             logging.warning(
