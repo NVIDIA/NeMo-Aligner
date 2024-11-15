@@ -65,6 +65,11 @@ Model Alignment by Supervised Fine-Tuning (SFT)
 
 2. **Chat**. In the *Chat* format, each example contains a multi-turn conversation between different roles (e.g., *User* and *Assistant*). Fine-tuning the base model on a chat format dataset is useful to align a chatbot.
 
+.. note::
+   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+   
+   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
+
 Fine-Tune with a Prompt-Response Dataset
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 

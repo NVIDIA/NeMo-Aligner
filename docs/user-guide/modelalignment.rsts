@@ -1,2 +1,32 @@
 Model Alignment
 !!!!!!!!!!!!!!!
+
+Introduction
+############
+
+NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state-of-the-art model alignment algorithms such as SteerLM, Direct Preference Optimization (DPO), and Reinforcement Learning from Human Feedback (RLHF). These algorithms enable users to align language models to be more safe, harmless, and helpful. Users can perform end-to-end model alignment on a wide range of model sizes and take advantage of all the parallelism techniques to ensure their model alignment is done in a performant and resource-efficient manner. For more technical details, please refer to our `paper <https://arxiv.org/abs/2405.01481>`__.
+
+The NeMo-Aligner toolkit is built using the `NeMo Toolkit <https://github.com/NVIDIA/NeMo>`__ which allows for scaling training up to 1000s of GPUs using tensor, data and pipeline parallelism for all components of alignment. All of our checkpoints are cross-compatible with the NeMo ecosystem, allowing for inference deployment and further customization.
+
+The toolkit is currently in its early stages. We are committed to improving the toolkit to make it easier for developers to pick and choose different alignment algorithms to build safe, helpful, and reliable models.
+
+Get Started
+###########
+
+NeMo-Aligner comes preinstalled in NVIDIA NeMo containers. NeMo containers are launched concurrently with NeMo version updates.
+
+To get access to the container, log in to the NVIDIA GPU Cloud (NGC) platform or create a free NGC account here: `NVIDIA NGC <https://ngc.nvidia.com/signin>`__. Once you have logged in, you can get the container here: `NVIDIA NGC NeMo Framework <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo>`__.
+
+To use a pre-built container, run the following code:
+
+    .. code-block:: bash
+
+        docker run -it --gpus=all  --shm-size=8g --workdir /opt/NeMo-Aligner nvcr.io/nvidia/nemo:24.09
+
+    Please use the latest tag in the form yy.mm.(patch).
+
+.. note::
+   - Some of the subsequent tutorials require accessing gated Hugging Face models. For details on how to access these models, refer to `this document <https://docs.nvidia.com/nemo-framework/user-guide/latest/best-practices.html#working-with-hugging-face-models>`__.
+   - If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
+
+
