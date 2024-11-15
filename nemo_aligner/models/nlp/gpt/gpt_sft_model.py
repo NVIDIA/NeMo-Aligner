@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import nullcontext
 from typing import List, Optional, Tuple, Union
 
 import hydra
@@ -43,12 +44,15 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.utils import configure_batch_sizes
+from nemo_aligner.utils.utils import configure_batch_sizes, make_sharded_tensors_from_reference, offload_distributed_adam
 
 
 class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
+
+        self.distributed_adam_offload_manager = None
+        self.to_offload_adam_states = self.cfg.get("offload_adam_states", False)
 
         inference_params = dict(cfg.get("inference", {}))
         # note that this will fail if import path is not available when the model is restored
@@ -113,35 +117,71 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
         loss_value = loss_mean.detach().item()
         metrics = {"loss": loss_value}
         return loss_value, metrics
+    
+    def loss_func(self, loss_mask, num_valid_tokens_in_ub, output_tensor):
+        losses = output_tensor.float()
+        is_finite = losses.isfinite()
+        loss_mask = loss_mask.view(-1).float()
+        loss_mask = loss_mask * is_finite.view(-1)
+        # TODO: add nemo version here
+        loss = torch.sum(losses.view(-1) * loss_mask) / num_valid_tokens_in_ub.clamp(min=1)  # sequence level nll
+        if parallel_state.get_context_parallel_world_size() > 1:
+            torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
+        return loss
+    
+    def sharded_state_dict(self, prefix: str = ""):
+        sharded_state_dict_orig = super().sharded_state_dict(prefix=prefix)
 
-    def prepare_for_training_step(self):
-        """things to call to preprare for training
-        """
-        prepare_for_training_step(self, zero_grad=False)
+        if hasattr(self, "ref_policy_state_dict") and (self.ref_policy_state_dict is not None) and ("self_taught" in self.cfg) and (self.cfg.self_taught.get("update_ref_policy", False)):
+            # Link ref_policy keys with sharded_state_dict to reuse sharding information
+            ref_policy_sharded_state_dict = {}
+            for k, v in self.ref_policy_state_dict.items():
+                if v is None:
+                    continue
+                key = k.replace("model.module.", "model.", 1) if self.megatron_amp_O2 else k
+                assert (
+                    key in sharded_state_dict_orig
+                ), f"key [ {key} ] exists in ref_policy but not in sharded_state_dict_orig"  # may fail due to nesting?
+                ref_policy_sharded_state_dict[k] = make_sharded_tensors_from_reference(
+                    sharded_state_dict_orig[key], v, "reference_policy"
+                )
+            sharded_state_dict_orig["reference_policy"] = ref_policy_sharded_state_dict
 
-    def finish_training_step(self):
-        """things to call to finish training for example grad reductions
+        return sharded_state_dict_orig
+    
+    def on_load_checkpoint(self, checkpoint) -> None:
+        """LightningModule hook:
+        https://pytorch-lightning.readthedocs.io/en/stable/common/lightning_module.html#on-load-checkpoint
         """
-        grad_reductions(self)
 
-    def prepare_for_validation_step(self):
-        """things to call to prepare for validation
-        """
-        prepare_for_validation_step(self)
-        gbs = int(self.cfg.data.validation_ds.global_batch_size)
-        mbs = int(self.cfg.data.validation_ds.micro_batch_size)
-        dp_size = int(parallel_state.get_data_parallel_world_size())
-        configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
+        # mcore uses distributed checkpointing
+        if self.mcore_gpt:
+            # checkpoint keys: ['epoch', 'global_step', 'pytorch-lightning_version', 'state_dict', 'loops', 'callbacks', 'optimizer_states', 'lr_schedulers', 'hparams_name', 'hyper_parameters']
+            if "state_dict" in checkpoint and checkpoint["state_dict"]:
+                for index, module in enumerate(self.get_model_module_list()):
+                    if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+                        checkpoint_state_dict = checkpoint["state_dict"][f"model_{index}"]
+                    else:
+                        checkpoint_state_dict = checkpoint["state_dict"]
+                    # checkpoint_state_dict has "model." but module does not so we need to remove it when loading
+                    checkpoint_state_dict = {
+                        key.replace("model.", ""): checkpoint_state_dict.pop(key)
+                        for key in list(checkpoint_state_dict.keys())
+                    }
+                    ref_policy = checkpoint_state_dict.pop("reference_policy", None)
+                    if ref_policy is not None and len(ref_policy) > 0:
+                        # param_mean_ref = sum([v.mean().item() for k,v in ref_policy.items() if isinstance(v, torch.Tensor)])
+                        # print(f"*** REF_MEAN_LOAD_RAW: {param_mean_ref}", flush=True)
+                        self.ref_policy_state_dict = ref_policy
+                    module.load_state_dict(checkpoint_state_dict, strict=True)
+            else:
+                # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict
+                # see NLPModel.on_load_checkpoint
+                checkpoint["state_dict"] = {}
 
-    def finish_validation_step(self):
-        """things to call to prepare for validation
-        """
-        finish_validation_step(self)
-        # restore the batch sizes for training
-        gbs = int(self.cfg.data.train_ds.global_batch_size)
-        mbs = int(self.cfg.data.train_ds.micro_batch_size)
-        dp_size = int(parallel_state.get_data_parallel_world_size())
-        configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
+        # legacy checkpointing no longer supported (sorry)
+        else:
+            raise RuntimeError("legacy checkpoints are not supported by NeMo-Aligner")
 
     def generate(
         self,
@@ -215,13 +255,72 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
         self.finish_inference()
 
         return outputs
+    
+    def prepare_for_training(self):
+        configure_batch_sizes(
+            mbs=self.cfg.micro_batch_size,
+            gbs=self.cfg.global_batch_size,
+            dp=parallel_state.get_data_parallel_world_size(),
+        )
+        self.onload_adam_states()
+    
+    def prepare_for_training_step(self):
+        """things to call to preprare for training
+        """
+        prepare_for_training_step(self, zero_grad=False)
+
+    def finish_training_step(self):
+        """things to call to finish training for example grad reductions
+        """
+        grad_reductions(self)
+
+    def prepare_for_validation_step(self):
+        """things to call to prepare for validation
+        """
+        prepare_for_validation_step(self)
+        gbs = int(self.cfg.data.validation_ds.global_batch_size)
+        mbs = int(self.cfg.data.validation_ds.micro_batch_size)
+        dp_size = int(parallel_state.get_data_parallel_world_size())
+        configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
+
+    def finish_validation_step(self):
+        """things to call to prepare for validation
+        """
+        finish_validation_step(self)
+        # restore the batch sizes for training
+        gbs = int(self.cfg.data.train_ds.global_batch_size)
+        mbs = int(self.cfg.data.train_ds.micro_batch_size)
+        dp_size = int(parallel_state.get_data_parallel_world_size())
+        configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
 
     def prepare_for_inference(self):
         self._reset_activation_checkpointing_args()
         self._reset_sequence_parallelism_args()
         set_eval(self)
+        self.offload_adam_states()
 
     def finish_inference(self):
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
         set_train(self)
+    
+    def offload_adam_states(self):
+        if self.distributed_adam_offload_manager is None:
+
+            self.distributed_adam_offload_manager = (
+                offload_distributed_adam(
+                    self._optimizer.state_dict(state_dict_format=1, gather_on_root=False), force_clear_memory=True
+                )
+                if self.to_offload_adam_states
+                else nullcontext()
+            )
+
+            # offload onto cpu
+            self.distributed_adam_offload_manager.__enter__()
+
+    def onload_adam_states(self):
+        if self.distributed_adam_offload_manager is not None:
+            # load back onto GPU
+            self.distributed_adam_offload_manager.__exit__(None, None, None)
+
+        self.distributed_adam_offload_manager = None

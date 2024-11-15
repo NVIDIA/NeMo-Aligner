@@ -74,6 +74,7 @@ model:
   micro_batch_size: 1
   global_batch_size: 64
   megatron_amp_O2: True
+  offload_adam_states: True
   dist_ckpt_format: zarr
 
   self_taught:

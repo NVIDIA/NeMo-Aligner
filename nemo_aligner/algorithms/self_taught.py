@@ -52,15 +52,7 @@ from nemo_aligner.utils.utils import (
     retrieve_model_state_dict_in_cpu,
 )
 
-try:
-    from tensorrt_llm.bindings import GptSession
-
-    from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
-
-    GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
-    HAVE_TRTLLM = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TRTLLM = False
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 
 
 """
@@ -130,14 +122,15 @@ def find_variables_from_jinja_template(template: str):
 
 def create_parse_regex_fn(reward_regex_template):
     def parse_reward_fn(llm_response: str):
-        result = re.findall(reward_regex_template, llm_response)
+        result = list(set(re.findall(reward_regex_template, llm_response)))
 
         if result is None or len(result) == 0:
             return None
         elif len(result) > 1:
             print(f"*** REGEX_MORE_THAN_ONE [ {reward_regex_template} ] : {llm_response}")
+            return None
         
-        return result[0].strip()
+        return result[0].strip().replace('"','').upper()
 
     return parse_reward_fn
 
@@ -258,8 +251,8 @@ as possible. After providing your explanation, output your final verdict by stri
 
 
 #DEFAULT_BAD_REGEX_TEMPLATE_PROMPT = r"(?s)(?<=\[User Question Modified Start\])(.*?)(?=\[User Question Modified End\])"
-DEFAULT_BAD_REGEX_TEMPLATE_RESP = r"(?s)(?<=\[assistant modified instruction start\])(.*?)(?=\[assistant modified instruction end\])"
-DEFAULT_JUDGEMENT_REGEX_TEMPLATE = r"\[\[(A|B)\]\]"
+DEFAULT_BAD_REGEX_TEMPLATE_RESP = r"(?i)(?s)(?<=\[assistant modified instruction start\])(.*?)(?=\[assistant modified instruction end\])"
+DEFAULT_JUDGEMENT_REGEX_TEMPLATE = r"(?i)\[\[(A|B|\"A\"|\"B\")\]\]"
 
 
 def ids_to_text(self, ids):
@@ -372,7 +365,7 @@ class SelfTaughtTrainer:
 
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
-            assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
+            #assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
             self.trtllm_generate = GPTGenerateTRTLLM(
                 model_cfg=self.model.cfg,
                 end_strings=self.sampling_params["end_strings"],
@@ -488,25 +481,6 @@ class SelfTaughtTrainer:
         metrics["bad_ends_per_GBS"] = GBS_sum_bad_ends / (GBS_num_samples * self.num_responses_to_gen)
 
         return loss_mean, {**metrics, **trainer_metrics}
-    
-    def prepare_model_for_inference(self):
-        self.model._reset_activation_checkpointing_args()
-        self.model._reset_sequence_parallelism_args()
-        set_eval(self.model)
-        self.model.offload_adam_states()
-    
-    def finish_model_inference(self):
-        self.model._restore_activation_checkpointing_args()
-        self.model._restore_sequence_parallelism_args()
-        set_train(self.model)
-    
-    def prepare_model_for_training(self):
-        configure_batch_sizes(
-            mbs=self.model.cfg.micro_batch_size,
-            gbs=self.model.cfg.global_batch_size,
-            dp=parallel_state.get_data_parallel_world_size(),
-        )
-        #self.model.onload_adam_states()
 
     @torch.no_grad()
     def get_generations(self, list_of_batches):
@@ -644,7 +618,7 @@ class SelfTaughtTrainer:
                 )
 
                 for _, global_batch in zip(loop_iter, global_pbar):
-                    self.prepare_model_for_training()
+                    self.model.prepare_for_training()
 
                     self.timer.start("train_step_time")
                     loss, metrics = self.train_single_step_sft(global_batch)
@@ -733,11 +707,11 @@ class SelfTaughtTrainer:
         self.logger.finalize()
 
         if self.use_trtllm_generation:
-            self.trtllm_generate.free(force_unload=True)
+            self.trtllm_generate.free()
 
     def save(self, extra_candidates=None, is_train_end=False):
         # load back in the adam states if needed
-        self.prepare_model_for_training()
+        self.model.prepare_for_training()
         torch.cuda.synchronize()
         torch.distributed.barrier()
 
@@ -833,7 +807,7 @@ class SelfTaughtTrainer:
                         perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
                         # if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
                         if len(perturb_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-                            prompt_and_response = self.tokenizer.ids_to_text(t.tolist())
+                            prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
                             try:
                                 if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
                                     prompt_ft = re.findall(
@@ -933,10 +907,19 @@ class SelfTaughtTrainer:
                                 while len(judge_template) > (
                                     self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
                                 ):
-                                    overage = (len(judge_template) - self.model.cfg.data.train_ds.max_seq_length) // 2
-                                    if len(self.model.tokenizer.text_to_ids(resp_good)) >= overage and len(self.model.tokenizer.text_to_ids(resp_bad)) >= overage:
+                                    overage = len(judge_template) - self.model.cfg.data.train_ds.max_seq_length
+                                    overage_2 = overage // 2
+                                    if len(self.model.tokenizer.text_to_ids(resp_A)) >= overage_2 and len(self.model.tokenizer.text_to_ids(resp_B)) >= overage_2:
                                         # both responses equally
+                                        resp_A = self.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(resp_A)[:-overage_2])
+                                        resp_B = self.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(resp_B)[:-overage_2])
+                                        judge_template_str = self.llm_judge_template_fn(orig_prompt=orig_prompt, response_A=resp_A, response_B=resp_B)
+                                        judge_template = self.model.tokenizer.text_to_ids(judge_template_str)
+                                    elif len(self.model.tokenizer.text_to_ids(resp_A)) >= overage and len(self.model.tokenizer.text_to_ids(resp_B)) < overage:
                                         resp_A = self.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(resp_A)[:-overage])
+                                        judge_template_str = self.llm_judge_template_fn(orig_prompt=orig_prompt, response_A=resp_A, response_B=resp_B)
+                                        judge_template = self.model.tokenizer.text_to_ids(judge_template_str)
+                                    elif len(self.model.tokenizer.text_to_ids(resp_A)) < overage and len(self.model.tokenizer.text_to_ids(resp_B)) >= overage:
                                         resp_B = self.tokenizer.ids_to_text(self.model.tokenizer.text_to_ids(resp_B)[:-overage])
                                         judge_template_str = self.llm_judge_template_fn(orig_prompt=orig_prompt, response_A=resp_A, response_B=resp_B)
                                         judge_template = self.model.tokenizer.text_to_ids(judge_template_str)
@@ -946,6 +929,9 @@ class SelfTaughtTrainer:
                                         judge_template_str = self.llm_judge_template_fn(orig_prompt="How does one make tea?", response_A="I have no answer at all.", response_B="I have no answer at all.")
                                         judge_template = self.model.tokenizer.text_to_ids(judge_template_str)
                                         break
+                            assert len(judge_template) <= (
+                                self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
+                            ), f"truncation of judgement prompt failed [ {len(judge_template)} ]: {judge_template_str}"
                             judgement_buffer.append(
                                 {
                                     "prompts_only": torch.LongTensor(judge_template).unsqueeze(0),
@@ -967,9 +953,11 @@ class SelfTaughtTrainer:
                             )
                         ):
                             resp_str = self.tokenizer.ids_to_text(t[s:e].tolist())
-                            winner = self.judgement_regex_fn(resp_str)
-                            if resp_B is None or resp_B == "I cannot come up with a response" or (winner not in ['A', 'B']):
+                            winner = self.judgement_regex_fn(resp_str.replace("\n<extra_id_1>", "").replace("<|eot_id|>", "").strip())
+                            if (resp_B is None) or (resp_B == "I cannot come up with a response") or (winner not in ['A', 'B']):
                                 winner = None
+                            if winner != c_ans:
+                                print(f"*** WINNER_WRONG: [ {winner} ]  [ {c_ans} ]  [ {resp_B} ]  [ {resp_str} ]")
                             judgement_cand_list[idx].append((winner == c_ans, t, s, e, p_o, resp_A, resp_B, end))
 
                     final_buffer = []
@@ -1000,7 +988,6 @@ class SelfTaughtTrainer:
                         chosen_prompt_and_resp_tokens = cand_list[idx_chosen][1][:chosen_resp_len]
                         chosen_prompt_tokens = cand_list[idx_chosen][1][:chosen_prompt_len]
                         chosen_response_tokens = cand_list[idx_chosen][1][chosen_prompt_len:chosen_resp_len]
-                        #chosen_mask = torch.arange(chosen_prompt_and_resp_tokens.shape[-1]).unsqueeze(0) >= chosen_prompt_len
                         bad_ends = sum(~np.array([cand_list[idx_chosen][-1]]))
 
                         final_buffer.append(
@@ -1010,7 +997,6 @@ class SelfTaughtTrainer:
                                 "chosen_resp_len": chosen_resp_len,
                                 "chosen_prompt_tokens": chosen_prompt_tokens,
                                 "chosen_response_tokens": chosen_response_tokens,
-                                #"chosen_mask": chosen_mask,
                                 "bad_sample": bad_sample,
                                 "bad_ends": bad_ends,
                             }
@@ -1022,7 +1008,7 @@ class SelfTaughtTrainer:
                     chosen_resp_lens = torch.LongTensor([b["chosen_resp_len"] for b in batch])
                     bad_samples = torch.BoolTensor([b["bad_sample"] for b in batch])
 
-                    max_batch_len = max([len(b["chosen_prompt_and_resp_tokens"]) for b in batch])
+                    max_batch_len = max([len(b["chosen_prompt_and_resp_tokens"]) - 1 for b in batch])
 
                     """
                     chosen_tokens_pad = torch.cat(
@@ -1042,10 +1028,10 @@ class SelfTaughtTrainer:
                     """
                     # only works without the outer wrapping because it's a 1D tensor instead of 2D
                     chosen_tokens_pad = batch_pad_to_fixed_len(
-                        [b["chosen_prompt_and_resp_tokens"] for b in batch], max_batch_len, pad_token=self.model.tokenizer.eos_id
+                        [b["chosen_prompt_and_resp_tokens"][:-1] for b in batch], max_batch_len, pad_token=self.model.tokenizer.eos_id
                     )
-                    chosen_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["chosen_prompt_len"]) + b["chosen_response_tokens"].tolist()) for b in batch], max_batch_len, pad_token=-100)
-                    # reject_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["reject_prompt_len"]) + b["reject_tokens"].tolist()[b["reject_prompt_len"]:]) for b in batch], max_batch_len, pad_token=-100)
+                    #chosen_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["chosen_prompt_len"]) + b["chosen_response_tokens"].tolist()) for b in batch], max_batch_len, pad_token=-100)
+                    chosen_labels = batch_pad_to_fixed_len([b["chosen_prompt_and_resp_tokens"][1:] for b in batch], max_batch_len, pad_token=self.model.tokenizer.eos_id)
 
                     chosen_mask = create_mask(
                         chosen_tokens_pad, chosen_prompt_lens, chosen_resp_lens

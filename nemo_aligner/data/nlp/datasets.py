@@ -645,3 +645,26 @@ class SteerLM2Dataset(GPTSFTChatDataset):
         }
 
         return processed_batch
+
+
+class TruncatedGPTSFTChatDataset(GPTSFTChatDataset):
+    def _build_samples_mapping(self):
+        super()._build_samples_mapping()
+
+        assert self.max_seq_length is not None, "max_seq_length cannot be None if using TruncatedGPTSFTChatDataset"
+        assert self.max_num_samples is None, "max_num_samples must be None when using TruncatedGPTSFTChatDataset"
+        assert hasattr(self.indexed_dataset, "select"), "TruncatedGPTSFTChatDataset only works when 'hf_dataset=True'"
+
+        N = len(self)
+        good_idxes = []
+        for idx in range(N):
+            sample = self[idx]
+
+            if len(sample["context_ids"]) <= self.max_seq_length:
+                good_idxes.append(idx)
+
+        self.indexed_dataset = self.indexed_dataset.select(good_idxes)
+
+        logging.info(
+            f"TruncatedSFTChatDataset has {len(good_idxes)} total samples. Dropped {N - len(good_idxes)} samples."
+        )
