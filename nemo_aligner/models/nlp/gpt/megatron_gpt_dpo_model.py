@@ -83,7 +83,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             pi_logprobs - ref_logprobs, labels, cu_seqlens, lengths, average_log_probs=average_log_probs
         )
 
-        output_list = [torch.zeros_like(batch_logs) for _ in range(dp_group.size())]
+        num_examples_on_this_rank = torch.tensor(batch_logs.size(), device=torch.cuda.current_device())
+        num_examples = [torch.zeros_like(num_examples_on_this_rank) for _ in range(dp_group.size())]
+        torch.distributed.all_gather(num_examples, num_examples_on_this_rank, group=dp_group)
+        output_list = [torch.zeros(size, device=torch.cuda.current_device()) for size in num_examples]
 
         torch.distributed.all_gather(output_list, batch_logs, group=dp_group)
 
