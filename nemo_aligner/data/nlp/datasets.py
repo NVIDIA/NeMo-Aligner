@@ -52,6 +52,9 @@ class EncodeMixin:
 
         Returns:
             tuple[list[int], int, list[int], int]: (prompt, prompt_len, combined_tokens, combined_len)
+
+        Raises:
+            DataItemInvalidError
         """
         prompt_tokens, prompt_len = self.encode(prompt, append_eod=False)
         response_tokens, response_len = self.encode(prompt + response, append_eod=append_eod)

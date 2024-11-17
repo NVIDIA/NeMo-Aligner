@@ -8,28 +8,57 @@ from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenize
 from nemo_aligner.utils.utils import load_checkpoint_model_config
 from nemo_aligner.data.nlp.builders import build_dataset_generic
 from nemo_aligner.data.nlp.datasets import DPOModelDataset, DataItemInvalidError
+from tempfile import TemporaryDirectory
+from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
+from omegaconf import DictConfig
 
-
+# TODO(terryk): replace once NeMo has a tokenizer building API
 # Copied from nemo.collections.nlp.models.language_modeling.megatron_base_model.MegatronBaseModel._build_tokenizer
 #  to avoid loading full model
-def build_tokenizer(model_cfg):
-    if hasattr(model_cfg.tokenizer, "sentencepiece_legacy"):
-        legacy = model_cfg.tokenizer.sentencepiece_legacy
-    else:
-        legacy = True if model_cfg.tokenizer.library == 'sentencepiece' else False
-    tokenizer = get_nmt_tokenizer(
-        library=model_cfg.tokenizer.library,
-        model_name=model_cfg.tokenizer.get("type", None),
-        tokenizer_model=model_cfg.tokenizer.get('model', None),
-        vocab_file=model_cfg.tokenizer.get('vocab_file', None),
-        merges_file=model_cfg.tokenizer.get('merge_file', None),
-        use_fast=model_cfg.tokenizer.get('use_fast', False),
-        delimiter=model_cfg.tokenizer.get('delimiter', None),
-        special_tokens=model_cfg.tokenizer.get('special_tokens', None),
-        trust_remote_code=model_cfg.tokenizer.get('trust_remote_code', False),
-        legacy=legacy,
-        chat_template=getattr(model_cfg.tokenizer, "chat_template", None),
-    )
+def build_tokenizer(model_cfg: DictConfig, restore_path: str):
+    def maybe_unpack_nemo_artifact(restore_path: str, artifact_name: str | None, tmpdir: str):
+        if artifact_name is None:
+            return None
+        
+        rel_art_path = artifact_name[len('nemo:'):] if artifact_name.startswith('nemo:') else artifact_name
+        if os.path.isdir(restore_path):
+            return os.path.join(restore_path, rel_art_path)
+        else:
+            NLPSaveRestoreConnector._unpack_nemo_file(restore_path, tmpdir, members=[rel_art_path])
+            return os.path.join(tmpdir, rel_art_path)
+            
+    with TemporaryDirectory() as tmpdir:
+        #artifacts = NLPSaveRestoreConnector._filtered_tar_info(restore_path, filter_fn=lambda name: name.startswith('nemo:'))
+
+        if hasattr(model_cfg.tokenizer, "sentencepiece_legacy"):
+            legacy = model_cfg.tokenizer.sentencepiece_legacy
+        else:
+            legacy = True if model_cfg.tokenizer.library == 'sentencepiece' else False
+        tokenizer = get_nmt_tokenizer(
+            library=model_cfg.tokenizer.library,
+            model_name=model_cfg.tokenizer.get("type", None),
+            tokenizer_model=maybe_unpack_nemo_artifact(
+                restore_path=restore_path,
+                artifact_name=model_cfg.tokenizer.get('model', None),
+                tmpdir=tmpdir,
+            ),
+            vocab_file=maybe_unpack_nemo_artifact(
+                restore_path=restore_path,
+                artifact_name=model_cfg.tokenizer.get('vocab_file', None),
+                tmpdir=tmpdir,
+            ),
+            merges_file=maybe_unpack_nemo_artifact(
+                restore_path=restore_path,
+                artifact_name=model_cfg.tokenizer.get('merge_file', None),
+                tmpdir=tmpdir,
+            ),
+            use_fast=model_cfg.tokenizer.get('use_fast', False),
+            delimiter=model_cfg.tokenizer.get('delimiter', None),
+            special_tokens=model_cfg.tokenizer.get('special_tokens', None),
+            trust_remote_code=model_cfg.tokenizer.get('trust_remote_code', False),
+            legacy=legacy,
+            chat_template=getattr(model_cfg.tokenizer, "chat_template", None),
+        )
 
     if model_cfg.tokenizer.get('additional_special_tokens', None) is not None:
         tokens_list = omegaconf.OmegaConf.to_object(model_cfg.tokenizer.additional_special_tokens)
@@ -52,7 +81,7 @@ if __name__ == '__main__':
     
     model_cfg = load_checkpoint_model_config(args.restore_from_path)
 
-    tokenizer = build_tokenizer(model_cfg)
+    tokenizer = build_tokenizer(model_cfg, args.restore_from_path)
 
     dataset: DPOModelDataset = build_dataset_generic(
         cls=DPOModelDataset,
