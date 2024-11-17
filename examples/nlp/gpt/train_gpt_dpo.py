@@ -20,7 +20,7 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.dpo import DPOTrainer, dpo_custom_collate
-from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_dpo_datasets
+from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_dpo_datasets, identity_collate
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -85,7 +85,7 @@ def main(cfg) -> None:
     # use the entire dataset
     train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
 
-    train_ds, validation_ds, test_ds = build_train_valid_test_dpo_datasets(
+    train_ds, validation_ds, _ = build_train_valid_test_dpo_datasets(
         cfg=cfg.model,
         data_prefix=cfg.model.data.data_prefix,
         data_impl=cfg.model.data.data_impl,
@@ -104,13 +104,7 @@ def main(cfg) -> None:
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
-        collate_fn=partial(
-            dpo_custom_collate,
-            eos_id=ptl_model.tokenizer.eos_id,
-            reset_position_ids=cfg.model.data.get("reset_position_ids", False),
-            reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
-            eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-        ),
+        collate_fn=identity_collate,
     )
 
     val_dataloader = build_dataloader(
@@ -121,13 +115,7 @@ def main(cfg) -> None:
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
-        collate_fn=partial(
-            dpo_custom_collate,
-            eos_id=ptl_model.tokenizer.eos_id,
-            reset_position_ids=cfg.model.data.get("reset_position_ids", False),
-            reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
-            eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-        ),
+        collate_fn=identity_collate,
         use_random_sampler=False,
     )
 
@@ -147,6 +135,14 @@ def main(cfg) -> None:
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         test_dataloader=None,
+        collate_fn=partial(
+            dpo_custom_collate,
+            eos_id=ptl_model.tokenizer.eos_id,
+            reset_position_ids=cfg.model.data.get("reset_position_ids", False),
+            reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
+            eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+            pad_length_to_multiple_of=cfg.model.data.get("pad_length_to_multiple_of", None),
+        ),
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,

@@ -15,10 +15,31 @@
 # limitations under the License.
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-cd $SCRIPT_DIR
+cd $SCRIPT_DIR/test_cases
 
-set -eoux pipefail
+set -u
 
-PRETRAINED_CHECKPOINT_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo \
-  bash ../sft.sh \
-  2>&1 | tee $(basename $0).log
+# Define ANSI color codes
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+NC='\033[0m' # No Color
+
+for script in $(ls | grep -v '\.log$'); do
+  echo -n "[Running] $script..."
+  
+  start_time=$(date +%s.%N)
+  output=$(bash "$script" 2>&1)
+  exit_code=$?
+  end_time=$(date +%s.%N)
+  elapsed=$(echo "$end_time $start_time" | awk '{print $1 - $2}')
+
+  if [[ $exit_code -eq 0 ]]; then
+    echo -e "${GREEN}PASSED${NC} (Time: ${elapsed}s)"
+  else
+    echo -e "${RED}FAILED${NC} (Time: ${elapsed}s)"
+    echo -e "${YELLOW}"
+    echo "$output" | tail -n 10
+    echo -e "${NC}"
+  fi
+done

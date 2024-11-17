@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from collections import defaultdict
 from statistics import mean
+from typing import Any, Protocol
 
 import torch
+import torch.distributed
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
@@ -24,13 +27,34 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
+from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory
 
 
-def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
+class DistributedCollateFunction(Protocol):
+    def __call__(self, batch: list[dict], **kwargs: Any) -> dict[str, torch.Tensor]:
+        ...
+
+
+def dpo_custom_collate(
+    batch: list[dict],
+    eos_id: int,
+    reset_position_ids: bool = False,
+    reset_attention_mask: bool = False,
+    eod_mask_loss: bool = False,
+    pad_length_to_multiple_of: int | None = None,
+) -> dict[str, torch.Tensor]:
+    """
+    Transposes minibatch from list[dict] -> dict[Tensor] and also pads
+    
+    This collate happens outside of the torch data loader and is not compatible with the multiprocessing
+    logic due to requiring communication collectives.
+    """
+    if pad_length_to_multiple_of is not None and pad_length_to_multiple_of < 0:
+        raise ValueError(f"{pad_length_to_multiple_of=} must be >= 0")
     chosen_tokens = [item["chosen"] for item in batch]
     rejected_tokens = [item["rejected"] for item in batch]
     chosen_lengths = torch.LongTensor([item["chosen_length"] for item in batch])
@@ -44,9 +68,32 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
     rejected_tokens = torch.nn.utils.rnn.pad_sequence(rejected_tokens, batch_first=True, padding_value=eos_id)
     chosen_labels = torch.nn.utils.rnn.pad_sequence(chosen_labels, batch_first=True, padding_value=-100)
     rejected_labels = torch.nn.utils.rnn.pad_sequence(rejected_labels, batch_first=True, padding_value=-100)
+    assert chosen_tokens.shape == rejected_tokens.shape
+    assert chosen_labels.shape == rejected_labels.shape
+
+    if pad_length_to_multiple_of:
+        # Assumes both chosen and rejected match
+        max_seq_len = torch.tensor(chosen_tokens.shape[1], device=torch.cuda.current_device())
+        torch.distributed.all_reduce(
+            max_seq_len, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
+        )
+
+        padded_max_len = math.ceil(max_seq_len / pad_length_to_multiple_of) * pad_length_to_multiple_of
+        chosen_tokens = torch.nn.functional.pad(
+            chosen_tokens, (0, padded_max_len - chosen_tokens.shape[1]), mode="constant", value=eos_id
+        )
+        rejected_tokens = torch.nn.functional.pad(
+            rejected_tokens, (0, padded_max_len - rejected_tokens.shape[1]), mode="constant", value=eos_id
+        )
+        chosen_labels = torch.nn.functional.pad(
+            chosen_labels, (0, padded_max_len - chosen_labels.shape[1]), mode="constant", value=-100
+        )
+        rejected_labels = torch.nn.functional.pad(
+            rejected_labels, (0, padded_max_len - rejected_labels.shape[1]), mode="constant", value=-100
+        )
 
     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-        chosen_tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+        chosen_tokens.cuda(), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
     )
     assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
     if attention_mask.shape[0] == 1:
@@ -70,8 +117,7 @@ def dpo_custom_collate(batch, eos_id, reset_position_ids=False, reset_attention_
 
 
 class DPOTrainer:
-    """Trainer to coordinate DPO training
-    """
+    """Trainer to coordinate DPO training"""
 
     def __init__(
         self,
@@ -82,6 +128,7 @@ class DPOTrainer:
         train_dataloader,
         val_dataloader,
         test_dataloader,
+        collate_fn: DistributedCollateFunction,
         logger,
         ckpt_callback,
         run_timer,
@@ -90,6 +137,7 @@ class DPOTrainer:
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
         self.test_dataloader = test_dataloader
+        self.collate_fn = collate_fn
         self.logger = logger
         self.cfg = cfg
         self.optimizer = optimizer
@@ -317,6 +365,7 @@ class DPOTrainer:
         while True:
             try:
                 batch = next(iter_dataloader)
+                batch = self.collate_fn(batch)
                 logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
                 chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
                 batch["ref_policy_log_probs_chosen"] = chosen_logps
