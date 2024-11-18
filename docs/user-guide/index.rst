@@ -51,7 +51,9 @@
      - LLaMA2
      - LLaMA3
      - Mistral
+     - Nemotron
    * - :ref:`DPO <model-aligner-dpo>`
+     - Yes
      - Yes
      - Yes
      - Yes
@@ -61,7 +63,9 @@
      - Yes
      - Yes
      - Yes
+     - Yes
    * - :ref:`RLHF <model-aligner-rlhf>`
+     - Yes
      - Yes
      - Yes
      - Yes
@@ -71,7 +75,9 @@
      - Yes
      - Yes
      - Yes
+     - Yes
    * - :ref:`SteerLM <model-aligner-steerlm>`
+     - Yes
      - Yes
      - Yes
      - Yes
