@@ -17,10 +17,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
 
-from omegaconf import open_dict
-from omegaconf.omegaconf import OmegaConf
 from lightning.pytorch.trainer import call
 from lightning.pytorch.trainer.states import TrainerFn
+from omegaconf import open_dict
+from omegaconf.omegaconf import OmegaConf
 
 from nemo.collections.nlp.parts.megatron_trainer_builder import MegatronTrainerBuilder
 from nemo.collections.nlp.parts.peft_config import PEFT_CONFIG_MAP
