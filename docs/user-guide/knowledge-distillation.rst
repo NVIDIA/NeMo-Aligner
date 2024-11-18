@@ -2,7 +2,7 @@
 
 .. include:: aligner-algo-header.rst
 
-.. _model-aligner-knowledge-distillation:
+.. _nemo-aligner-knowledge-distillation:
 
 Supervised Fine-Tuning (SFT) with Knowledge Distillation
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

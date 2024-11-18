@@ -2,7 +2,7 @@
 
 .. include:: aligner-algo-header.rst
 
-.. _model-aligner-rlhf:
+.. _nemo-aligner-rlhf:
 
 Model Alignment by RLHF
 @@@@@@@@@@@@@@@@@@@@@@@

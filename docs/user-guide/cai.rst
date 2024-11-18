@@ -2,7 +2,7 @@
 
 .. include:: aligner-algo-header.rst
 
-.. _model-aligner-cai:
+.. _nemo-aligner-cai:
 
 Constitutional AI: Harmlessness from AI Feedback
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

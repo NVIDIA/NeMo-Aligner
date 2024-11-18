@@ -2,7 +2,7 @@
 
 .. include:: aligner-algo-header.rst
 
-.. _model-aligner-steerlm:
+.. _nemo-aligner-steerlm:
 
 Model Alignment by SteerLM Method
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

@@ -2,13 +2,13 @@
 
 .. include:: aligner-algo-header.rst
 
-.. _model-aligner-steerlm2:
+.. _nemo-aligner-steerlm2:
 
 
 SteerLM 2.0: Iterative Training for Attribute-Conditioned Language Model Alignment
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-**SteerLM 2.0** is a novel approach for aligning large language models (LLMs) to generate responses with desired attribute values, building upon the original `SteerLM <model-aligner-steerlm>`_ method [1]_ . While SteerLM conducts attribute-conditioned Supervised Fine-Tuning (SFT) to steer LLM outputs, SteerLM 2.0 introduces an iterative training procedure to explicitly enforce the generated responses to follow the desired attribute distribution.
+**SteerLM 2.0** is a novel approach for aligning large language models (LLMs) to generate responses with desired attribute values, building upon the original `SteerLM <nemo-aligner-steerlm>`_ method [1]_ . While SteerLM conducts attribute-conditioned Supervised Fine-Tuning (SFT) to steer LLM outputs, SteerLM 2.0 introduces an iterative training procedure to explicitly enforce the generated responses to follow the desired attribute distribution.
 
 Overview
 ########
@@ -160,12 +160,12 @@ By organizing the data in this format, the SteerLM 2.0 model can be effectively 
         exp_manager.explicit_log_dir=/results/acsft_70b \
         exp_manager.checkpoint_callback_params.save_nemo_on_train_end=True 
 
-``/path/to/steerlm1/model`` is the path to the initial SteerLM model. For details on training the initial SteerLM model, refer to the :ref:`SteerLM documentation <model-aligner-steerlm>`.
+``/path/to/steerlm1/model`` is the path to the initial SteerLM model. For details on training the initial SteerLM model, refer to the :ref:`SteerLM documentation <nemo-aligner-steerlm>`.
 
 Inference
 ------------------
 
-Since the SteerLM 2.0 Model is an extension of the original SteerLM model, the inference process is similar. Please refer to the `SteerLM <model-aligner-steerlm>`_ documentation for more details.
+Since the SteerLM 2.0 Model is an extension of the original SteerLM model, the inference process is similar. Please refer to the `SteerLM <nemo-aligner-steerlm>`_ documentation for more details.
 
 References
 ----------

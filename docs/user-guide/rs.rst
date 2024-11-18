@@ -2,7 +2,7 @@
 
 .. include:: aligner-algo-header.rst
 
-.. _model-aligner-rs:
+.. _nemo-aligner-rs:
 
 Model Alignment by Rejection Sampling
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

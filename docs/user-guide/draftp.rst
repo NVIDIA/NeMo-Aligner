@@ -2,7 +2,7 @@
 
 .. include:: aligner-algo-header.rst
 
-.. _model-aligner-draftp:
+.. _nemo-aligner-draftp:
 
 Fine-Tuning Stable Diffusion with DRaFT+
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@

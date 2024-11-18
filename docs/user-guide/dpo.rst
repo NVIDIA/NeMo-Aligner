@@ -2,7 +2,7 @@
 
 .. include:: aligner-algo-header.rst
 
-.. _model-aligner-dpo:
+.. _nemo-aligner-dpo:
 
 Model Alignment by DPO, RPO, and IPO
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
