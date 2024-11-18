@@ -10,7 +10,7 @@ All algorithms in NeMo-Aligner will work with any GPT-based model that is from M
 For details on the SPIN algorithm, refer to the paper: `https://arxiv.org/abs/2401.01335 <https://arxiv.org/abs/2401.01335>`__.
 
 .. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+   Before starting this tutorial, be sure to review the :ref:`introduction <nemo-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
    
    If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 

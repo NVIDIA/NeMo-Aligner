@@ -1,6 +1,6 @@
 .. include:: /content/nemo.rsts
 
-.. include:: modelalignment.rsts
+.. include:: nemoaligner.rsts
 
 .. toctree::
    :maxdepth: 4

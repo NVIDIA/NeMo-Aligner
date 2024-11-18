@@ -46,7 +46,7 @@ Train a SteerLM Model
 This section is a step-by-step tutorial that walks you through how to run a full SteerLM pipeline with a Llama2 70B LLM model.
 
 .. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+   Before starting this tutorial, be sure to review the :ref:`introduction <nemo-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
    
    If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
