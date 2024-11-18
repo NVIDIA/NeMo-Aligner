@@ -50,23 +50,33 @@
      - GPT 2B
      - LLaMA2
      - LLaMA3
+     - Mistral
    * - :ref:`DPO <model-aligner-dpo>`
      - Yes
-     - N/A
+     - Yes
+     - Yes
      - Yes
    * - :ref:`SFT <model-aligner-sft>`
      - Yes
      - Yes
-     - N/A
+     - Yes
+     - Yes
    * - :ref:`RLHF <model-aligner-rlhf>`
-     - N/A
+     - Yes
+     - Yes
      - Yes
      - Yes
    * - :ref:`CAI <model-aligner-cai>`
      - Yes
-     - N/A
+     - Yes
+     - Yes
      - Yes
    * - :ref:`SteerLM <model-aligner-steerlm>`
      - Yes
      - Yes
      - Yes
+     - Yes
+
+.. note::
+
+   In general, NeMo-Aligner supports models trained from Megatron-LM. 
