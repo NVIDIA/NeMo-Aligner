@@ -72,7 +72,7 @@ Model Alignment by Supervised Fine-Tuning (SFT)
 2. **Chat**. In the *Chat* format, each example contains a multi-turn conversation between different roles (e.g., *User* and *Assistant*). Fine-tuning the base model on a chat format dataset is useful to align a chatbot.
 
 Fine-Tune with a Prompt-Response Dataset
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 Step 1: Format the data.
 ^^^^^^^^^^^^^^^^^^^^^^^^

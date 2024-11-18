@@ -12,7 +12,7 @@ For the purposes of this tutorial, we will go through the entire Reinforcement L
 RLHF is usually preceded by a Supervised Fine-Tuning (SFT). We should first follow the :ref:`Prerequisite guide <prerequisite>` and the :ref:`SFT guide <sft>`. After obtaining the SFT model, we will use this to start the RLHF process. We will use the `PPO <https://arxiv.org/abs/1707.06347>`__ algorithm for reinforcement learning on the `Anthropic-HH-RLHF <https://huggingface.co/datasets/Anthropic/hh-rlhf>`__ dataset.
 
 Data Processing for RLHF
-#########################
+########################
 
 We have a script ready to use for processing the Anthropic-HH dataset into a JSONL format. Run the following command on the `download_and_process.py <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/8d4f34c9da6b3254ca316b2c43ee88b77a894529/launcher_scripts/nemo_launcher/collections/dataprep_scripts/anthropichh_dataprep/download_and_process.py#L1>`__ script for anthropic HH.
 

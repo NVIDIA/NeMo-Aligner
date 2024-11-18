@@ -14,7 +14,7 @@ The current approach for LLM improvement combines Supervised Fine-Tuning (SFT) a
 SteerLM addresses these challenges and represents a significant advancement in the field, making it easier to tailor LLMs to specific needs and preferences. This document delves into how SteerLM operates and offers guidance on training a SteerLM model.
 
 SteerLM
-###############
+#######
 SteerLM leverages a SFT method that empowers you to control responses during inference. It overcomes the limitations of prior alignment techniques, and consists of four key steps:
 
 1. Train an attribute prediction model on human-annotated datasets to evaluate response quality on any number of attributes like helpfulness, humor, and creativity.

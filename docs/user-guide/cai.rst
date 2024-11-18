@@ -16,7 +16,7 @@ CAI allows training a harmless, but non-evasive AI assistant that engages with h
 .. _Constitutional AI (CAI): https://arxiv.org/abs/2212.08073
 
 CAI
-###############
+###
 The basic steps of CAI are described in this section and illustrated in the figure below (`Figure 1 <https://arxiv.org/abs/2212.08073>`_).
 
 (Supervised Stage) Critique → Revision → Supervised Learning: The AI generates responses to harmfulness prompts using a helpful-only AI assistant, then critiques and revises its own responses according to a principle in the constitution, and then fine-tunes the original model on the revised responses.
@@ -31,7 +31,7 @@ The basic steps of CAI are described in this section and illustrated in the figu
 Critiques, revisions, and AI harmlessness feedback are steered by a small set of principles drawn from a ‘constitution’. The supervised stage significantly improves the initial model. It gives some control over the initial behavior at the start of the RL phase, while addressing potential exploration problems. The RL stage significantly improves performance and reliability.
 
 Motivation
-###############
+##########
 Constitutional AI motivation refers to designing AI systems in such a way that their objectives and behaviors are guided by a set of predefined rules or principles. It includes the following:
 
 Scaling supervision: using AI to help humans supervise other AIs more efficiently and effectively, especially for tasks where AI capabilities may exceed human ones.
@@ -43,7 +43,7 @@ Simplicity and transparency: encoding the training goals in a simple list of nat
 Reducing iteration time: obviating the need to collect new human feedback labels when altering the objective or testing different behaviors.
 
 Train a CAI model
-#####################
+#################
 
 This section is a step-by-step tutorial that walks you through how to run a full CAI pipeline with a ``Mistral-7B`` LLM model. It includes the following:
 
@@ -67,7 +67,7 @@ This section is a step-by-step tutorial that walks you through how to run a full
 .. image:: ../assets/cai_flow.png
 
 Step 1: Download models and datasets
-#############################################################################
+####################################
 1. Download ``Mistral-7B-Instruct`` and ``Mistral-7B`` LLM models from https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 and https://huggingface.co/mistralai/Mistral-7B-v0.1 into the models folder.
 
    Then, convert into .nemo format:
@@ -109,7 +109,7 @@ Step 1: Download models and datasets
 
 
 Step 2: Generate and revise responses to harmful prompts creating the SL-CAI dataset
-###################################################################################################
+####################################################################################
 
 Run an inference server in the background using the following command:
 
@@ -164,7 +164,7 @@ There are 2 tokenizer files that end with `.model` in the model checkpoint and t
 
 
 Step 3: Fine-tune Mistral-7B on the revised responses to create a Mistral-7B-SL-CAI model
-######################################################################################################
+#########################################################################################
 
 Note that you would need to set up multi-node training run in your cluster env, depending on the type of cluster you use. For details, please refer to https://lightning.ai/docs/pytorch/stable/clouds/cluster.html .
 
@@ -196,7 +196,7 @@ Note that you would need to set up multi-node training run in your cluster env, 
 
 
 Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
-##############################################################################################################
+########################################################################
 
 The following section runs an inference server with the SL-CAI model that we've previously trained, and queries it with red teaming prompts asking for several responses per prompt.
 The responses will then be ranked by a judge LLM being run from NVIDIA's NGC. An NGC API key can be acquired `here`_.
@@ -255,7 +255,7 @@ This command will create the ``rl-cai`` dataset files in the defined output fold
 
 
 Step 5: Train the RM
-#####################
+####################
 
 Run the following command to train the RM:
 
@@ -283,7 +283,7 @@ Run the following command to train the RM:
 The trained RM checkpoint will be saved to output dir given by ``exp_manager.explicit_log_dir``.
 
 Step 6: Fine-tune Mistral-7B-SL-CAI with PPO and the RM to train a Mistral-7B-RL-CAI model
-##############################################################################################
+##########################################################################################
 Run the following command in the background to launch a RM and PPO critic training server:
 
 .. code-block:: bash
@@ -327,7 +327,7 @@ Run the following command to launch actor training and a reference policy server
 The trained LLM policy checkpoint will be saved to the output dir given by ``exp_manager.explicit_log_dir``.
 
 Step 7: Inference
-##################
+#################
 To start inference, run an inference server in the background using the following command:
 
 .. code-block:: bash
