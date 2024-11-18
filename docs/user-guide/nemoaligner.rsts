@@ -45,16 +45,16 @@ NeMo-Aligner also provides its own `dockerfile <https://github.com/NVIDIA/NeMo-A
 Run the following to build the image:
 
     .. code-block:: bash
-    git clone https://github.com/NVIDIA/NeMo-Aligner.git
-    cd NeMo-Aligner
+        git clone https://github.com/NVIDIA/NeMo-Aligner.git
+        cd NeMo-Aligner
 
-    # Replace with branch to build from
-    ALIGNER_COMMIT=main
-    TARGET_IMAGE=aligner-custom
+        # Replace with branch to build from
+        ALIGNER_COMMIT=main
+        TARGET_IMAGE=aligner-custom
 
-    docker buildx build \
-        -t $TARGET_IMAGE \
-        --build-arg=ALIGNER_COMMIT=$ALIGNER_COMMIT \
-        .
+        docker buildx build \
+            -t $TARGET_IMAGE \
+            --build-arg=ALIGNER_COMMIT=$ALIGNER_COMMIT \
+            .
 
-    # Run the image using the above command in "Getting Started" and swap out "nvcr.io/nvidia/nemo:24.09" with "aligner-custom"
+        # Run the image using the above command in "Getting Started" and swap out "nvcr.io/nvidia/nemo:24.09" with "aligner-custom"
