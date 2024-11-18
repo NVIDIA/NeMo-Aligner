@@ -41,3 +41,32 @@
 
 :ref:`Constitutional AI: Harmlessness from AI Feedback <model-aligner-cai>`
    CAI, an alignment method developed by Anthropic, enables the incorporation of AI feedback for aligning LLMs. This feedback is grounded in a small set of principles (referred to as the ‘Constitution’) that guide the model toward desired behaviors, emphasizing helpfulness, honesty, and harmlessness.
+
+.. list-table:: Algorithm vs. Models
+   :widths: auto
+   :header-rows: 1
+
+   * - Algorithm
+     - GPT 2B
+     - LLaMA2
+     - LLaMA3
+   * - :ref:`DPO <model-aligner-dpo>`
+     - Yes
+     - N/A
+     - Yes
+   * - :ref:`SFT <model-aligner-sft>`
+     - Yes
+     - Yes
+     - N/A
+   * - :ref:`RLHF <model-aligner-rlhf>`
+     - N/A
+     - Yes
+     - Yes
+   * - :ref:`CAI <model-aligner-cai>`
+     - Yes
+     - N/A
+     - Yes
+   * - :ref:`SteerLM <model-aligner-steerlm>`
+     - Yes
+     - Yes
+     - Yes
