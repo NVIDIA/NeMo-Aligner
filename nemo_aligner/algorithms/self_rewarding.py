@@ -475,7 +475,9 @@ class SelfRewardingTrainer:
                 sample_top_p=self.sampling_params["top_p"],
                 repetition_penalty=self.sampling_params["repetition_penalty"],
                 max_generation_length=self.length_params["max_length"],
-                max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length - self.length_params["max_length"]),
+                max_input_len=self.cfg.trt_llm.get(
+                    "max_input_len", self.model.cfg.encoder_seq_length - self.length_params["max_length"]
+                ),
                 generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
                 use_greedy=self.sampling_params.get("use_greedy", False),
                 trt_model_type=self.cfg.trt_llm.get("model_type", "llama"),
@@ -1187,9 +1189,9 @@ class SelfRewardingTrainer:
                             reward_tokens_raw = filtered_variances[np.argmax([s[0] for s in filtered_variances])][1]
                             idx_for_cand = filtered_variances[np.argmax([s[0] for s in filtered_variances])][-1]
                             cand_for_meta = cand_list[idx_for_cand]
-                            orig_prompt_str = self.tokenizer.ids_to_text(cand_for_meta[1][:cand_for_meta[2]].tolist())
+                            orig_prompt_str = self.tokenizer.ids_to_text(cand_for_meta[1][: cand_for_meta[2]].tolist())
                             orig_response_str = self.tokenizer.ids_to_text(
-                                cand_for_meta[1][cand_for_meta[2]:cand_for_meta[3]].tolist()
+                                cand_for_meta[1][cand_for_meta[2] : cand_for_meta[3]].tolist()
                             )
                             meta_batch = []
                             for a, b in itertools.combinations(
