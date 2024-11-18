@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,11 +19,6 @@ cd $SCRIPT_DIR
 
 set -eoux pipefail
 
-GBS=2 \
-    TP_SIZE=1 \
-    PP_SIZE=2 \
-    RESHARD=True \
-    RM_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/llama3--nlayers4-hidden64-ffn224-dummy_rm-megatron_gpt.nemo \
-    ACTOR_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo \
-    bash ../ppo.sh \
-    2>&1 | tee $(basename $0).log
+PRETRAINED_CHECKPOINT_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo \
+  bash ../sft.sh \
+  2>&1 | tee $(basename $0).log

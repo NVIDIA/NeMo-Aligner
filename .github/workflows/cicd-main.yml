@@ -54,7 +54,14 @@ jobs:
   
   build-container:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
-    uses: ./.github/workflows/_build_container.yml
+    uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_build_container.yml@v0.1.0
+    with:
+      image-name: nemo_aligner_container
+      dockerfile: Dockerfile
+      image-label: nemo-aligner
+      build-args: |
+        MAX_JOBS=32
+        ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
   
   Unit_Tests:
     name: ${{ matrix.test_case }}
@@ -87,7 +94,9 @@ jobs:
           - spin-llama3
           - self_rewarding-llama3
           - generation-llama3
-
+          - kd-llama3
+          - sft-llama3
+          - rm-llama3
     with:
       RUNNER: self-hosted-azure
       # Fairly aggresive timeout that all functional tests should try to adhere to
