@@ -104,6 +104,7 @@ For the purposes of the following sections, we assume that your training ``.json
    global_batch_size.
 
       .. code-block:: bash
+
          # Generates a dummy dataset in /path/to/train_dpo_format.jsonl /path/to/valid_dpo_format.jsonl 
 
          NUM_EXAMPLES_TO_GENERATE=200
