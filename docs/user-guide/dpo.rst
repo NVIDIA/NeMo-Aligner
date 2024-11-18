@@ -104,6 +104,7 @@ For the purposes of the following sections, we assume that your training ``.json
    global_batch_size.
 
       .. code-block:: bash
+         # Generates a dummy dataset in /path/to/train_dpo_format.jsonl /path/to/valid_dpo_format.jsonl 
 
          NUM_EXAMPLES_TO_GENERATE=200
 
@@ -112,7 +113,7 @@ For the purposes of the following sections, we assume that your training ``.json
             cat <<EOF
          {"prompt": "<extra_id_0>System\n\n<extra_id_1>User\n${i}*10=?\n<extra_id_1>Assistant\n", "chosen_response": "$((i * 10))\n<extra_id_1>", "rejected_response": "I refuse to answer this question.\n<extra_id_1>"}
          EOF
-         done | tee  /path/to/train_dpo_format.jsonl /path/to/valid_dpo_format.jsonl >/dev/null
+         done | tee /path/to/train_dpo_format.jsonl /path/to/valid_dpo_format.jsonl >/dev/null
 
 For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` corresponds to the beta parameter in the DPO paper.
 
