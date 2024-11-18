@@ -1,4 +1,6 @@
-.. .. include:: /content/nemo.rsts
+.. include:: /content/nemo.rsts
+
+.. include:: aligner-algo-header.rst
 
 .. _model-aligner-steerlm2:
 

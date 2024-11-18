@@ -1,14 +1,11 @@
 .. include:: /content/nemo.rsts
 
+.. include:: aligner-algo-header.rst
+
 .. _model-aligner-draftp:
 
 Fine-Tuning Stable Diffusion with DRaFT+
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-
-.. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <nemo-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
-
-   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 In this tutorial, we will go through the step-by-step guide for fine-tuning a Stable Diffusion model using DRaFT+ algorithm by NVIDIA.
 DRaFT+ enhances the DRaFT `DRaFT <https://arxiv.org/pdf/2309.17400.pdf>`__ algorithm by mitigating mode collapse and improving diversity through regularization.

@@ -1,5 +1,7 @@
 .. include:: /content/nemo.rsts
 
+.. include:: aligner-algo-header.rst
+
 .. _prerequisite:
 
 Obtain a Pretrained Model
@@ -68,11 +70,6 @@ Model Alignment by Supervised Fine-Tuning (SFT)
 1. **Prompt-Response**. In the *Prompt-Response* format, each example contains an input prompt and the annotated response. SFT fine-tunes the base model to follow the prompt instruction and answer in the style of the annotated responses. The Prompt-Response format can be used in various problems like Question Answering (Q&A) and Summarization.
 
 2. **Chat**. In the *Chat* format, each example contains a multi-turn conversation between different roles (e.g., *User* and *Assistant*). Fine-tuning the base model on a chat format dataset is useful to align a chatbot.
-
-.. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <nemo-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
-   
-   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 Fine-Tune with a Prompt-Response Dataset
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

@@ -1,5 +1,7 @@
 .. include:: /content/nemo.rsts
 
+.. include:: aligner-algo-header.rst
+
 .. _model-aligner-cai:
 
 Constitutional AI: Harmlessness from AI Feedback
@@ -61,11 +63,6 @@ This section is a step-by-step tutorial that walks you through how to run a full
 6. Fine-tune the ``Mistral-7B-SL-CAI`` with Proximal Policy Optimization (PPO) and the RM to train a ``Mistral-7B-RL-CAI`` model.
 
 7. Run inference.
-
-.. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <nemo-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
-
-   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 .. image:: ../assets/cai_flow.png
 

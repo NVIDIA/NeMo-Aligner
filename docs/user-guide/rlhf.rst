@@ -1,14 +1,11 @@
 .. include:: /content/nemo.rsts
 
+.. include:: aligner-algo-header.rst
+
 .. _model-aligner-rlhf:
 
 Model Alignment by RLHF
 @@@@@@@@@@@@@@@@@@@@@@@
-
-.. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <nemo-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
-
-   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 For the purposes of this tutorial, we will go through the entire Reinforcement Learning from Human Feedback (RLHF) pipeline using models from the NeMo Framework. These models can include LLaMa or Mistral, and our scripts will function consistently across them.
 
