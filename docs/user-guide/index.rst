@@ -7,10 +7,10 @@
 
    sft.rst
    knowledge-distillation.rst
+   dpo.rst
    rlhf.rst
    steerlm.rst
    steerlm2.rst
-   dpo.rst
    rs.rst
    spin.rst
    draftp.rst
@@ -25,6 +25,9 @@
 :ref:`Supervised Fine-Tuning (SFT) with Knowledge Distillation <model-aligner-knowledge-distillation>`
    In this section, we walk through a variation of SFT using Knowledge Distillation where we train a smaller "student" model using a much later "teacher" model.
 
+:ref:`Model Alignment by DPO, RPO and IPO <model-aligner-dpo>`
+   DPO, RPO, and IPO are simpler alignment methods compared to RLHF. DPO introduces a novel parameterization of the reward model in RLHF, which allows us to extract the corresponding optimal policy. Similarly, RPO and IPO provide alternative parameterizations or optimization strategies, each contributing unique approaches to refining model alignment.
+
 :ref:`Model Alignment by RLHF <model-aligner-rlhf>`
    RLHF is the next step up in alignment and is still responsible for most state-of-the-art chat models. In this section, we walk you through the process of RLHF alignment, including training a reward model and RLHF training with the  PPO algorithm.
  
@@ -33,9 +36,6 @@
 
 :ref:`Model Alignment by SteerLM 2.0 Method <model-aligner-steerlm2>`
    SteerLM 2.0 is an extension to SteerLM method that introduces an iterative training procedure to explicitly enforce the generated responses to follow the desired attribute distribution.
-
-:ref:`Model Alignment by DPO, RPO and IPO <model-aligner-dpo>`
-   DPO, RPO, and IPO are simpler alignment methods compared to RLHF. DPO introduces a novel parameterization of the reward model in RLHF, which allows us to extract the corresponding optimal policy. Similarly, RPO and IPO provide alternative parameterizations or optimization strategies, each contributing unique approaches to refining model alignment.
 
 :ref:`Model Alignment by Rejection Sampling (RS) <model-aligner-rs>`
    RS is a simple online alignment algorithm. In RS, the policy model generates several responses. These responses are assigned a score by the reward model, and the highest scoring responses are used for SFT. 
@@ -86,13 +86,6 @@
      - Yes
      - Yes
      - Yes
-   * - :ref:`CAI <model-aligner-cai>`
-     - 
-     - Yes
-     - Yes
-     - Yes
-     - Yes
-     - Yes
    * - :ref:`SteerLM <model-aligner-steerlm>`
      - 
      - Yes
@@ -101,6 +94,20 @@
      - Yes
      - Yes
    * - :ref:`SteerLM 2.0 <model-aligner-steerlm2>`
+     - 
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+   * - :ref:`Rejection Sampling <model-aligner-rs>`
+     - 
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+   * - :ref:`CAI <model-aligner-cai>`
      - 
      - Yes
      - Yes
