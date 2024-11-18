@@ -103,7 +103,7 @@ if __name__ == '__main__':
             try:
                 # If this throws an error, then the datum was invalid
                 _ = dataset[i]
-                f.write(json.dumps(dataset.data[i]) + r'\n')
+                f.write(json.dumps(dataset.data[i]) + '\n')
             except DataItemInvalidError:
                 num_skipped += 1
     print(f"{orig_len=}")
