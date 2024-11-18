@@ -3,8 +3,7 @@
 .. include:: nemoaligner.rsts
 
 .. toctree::
-   :maxdepth: 4
-   :titlesonly:
+   :maxdepth: 2
 
    sft.rst
    rlhf.rst
