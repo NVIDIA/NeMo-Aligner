@@ -475,10 +475,8 @@ class SelfRewardingTrainer:
                 sample_top_p=self.sampling_params["top_p"],
                 repetition_penalty=self.sampling_params["repetition_penalty"],
                 max_generation_length=self.length_params["max_length"],
-                max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
-                generation_batch_size=self.cfg.trt_llm.get(
-                    "generation_batch_size", self.model.cfg.spin.get("rollout_micro_batch_size", 4)
-                ),
+                max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length - self.length_params["max_length"]),
+                generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
                 use_greedy=self.sampling_params.get("use_greedy", False),
                 trt_model_type=self.cfg.trt_llm.get("model_type", "llama"),
                 seed=self.model.cfg.get("seed", None),
@@ -1023,7 +1021,7 @@ class SelfRewardingTrainer:
                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                             # if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-                                prompt_and_response = self.tokenizer.ids_to_text(t.tolist())
+                                prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
                                 try:
                                     if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
                                         prompt_ft = re.findall(
@@ -1169,13 +1167,13 @@ class SelfRewardingTrainer:
                             raise RuntimeError("hit strange score selection state, please investigate")
 
                         # 1 x max_len tensor
-                        chosen_tokens = cand_list[idx_chosen][1]
                         chosen_prompt_len = cand_list[idx_chosen][2]
                         chosen_gen_len = cand_list[idx_chosen][3]
+                        chosen_tokens = cand_list[idx_chosen][1][:chosen_gen_len]
                         chosen_score = scores[idx_chosen]
-                        reject_tokens = cand_list[idx_reject][1]
                         reject_prompt_len = cand_list[idx_reject][2]
                         reject_gen_len = cand_list[idx_reject][3]
+                        reject_tokens = cand_list[idx_reject][1][:reject_gen_len]
                         reject_score = scores[idx_reject]
                         bad_ends = sum(~np.array([cand_list[idx_chosen][-1], cand_list[idx_reject][-1]]))
 
@@ -1189,9 +1187,9 @@ class SelfRewardingTrainer:
                             reward_tokens_raw = filtered_variances[np.argmax([s[0] for s in filtered_variances])][1]
                             idx_for_cand = filtered_variances[np.argmax([s[0] for s in filtered_variances])][-1]
                             cand_for_meta = cand_list[idx_for_cand]
-                            orig_prompt_str = self.tokenizer.ids_to_text(cand_for_meta[1][: cand_for_meta[2]].tolist())
+                            orig_prompt_str = self.tokenizer.ids_to_text(cand_for_meta[1][:cand_for_meta[2]].tolist())
                             orig_response_str = self.tokenizer.ids_to_text(
-                                cand_for_meta[1][cand_for_meta[2] : cand_for_meta[3]].tolist()
+                                cand_for_meta[1][cand_for_meta[2]:cand_for_meta[3]].tolist()
                             )
                             meta_batch = []
                             for a, b in itertools.combinations(
@@ -1397,13 +1395,13 @@ class SelfRewardingTrainer:
                             meta_chosen_idx = np.argmax(elo_scores)
                             meta_reject_idx = np.argmin(elo_scores)
 
-                            chosen_tokens = reward_tokens_raw[meta_chosen_idx][0]
                             chosen_prompt_len = reward_tokens_raw[meta_chosen_idx][1]
                             chosen_gen_len = reward_tokens_raw[meta_chosen_idx][2]
+                            chosen_tokens = reward_tokens_raw[meta_chosen_idx][0][:chosen_gen_len]
                             # chosen_score = 0.
-                            reject_tokens = reward_tokens_raw[meta_reject_idx][0]
                             reject_prompt_len = reward_tokens_raw[meta_reject_idx][1]
                             reject_gen_len = reward_tokens_raw[meta_reject_idx][2]
+                            reject_tokens = reward_tokens_raw[meta_reject_idx][0][:reject_gen_len]
                             # reject_score = 0.
                             meta_bad_ends = sum(
                                 ~np.array(

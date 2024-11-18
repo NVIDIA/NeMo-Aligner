@@ -28,7 +28,6 @@ trainer:
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
       max_input_len: ${subtract:${model.encoder_seq_length}, ${model.spin.length_params.max_length}}
-      generation_batch_size: ${model.spin.rollout_micro_batch_size}
 
       model_type: gptnext # can be gptj, gptnext, llama, gemma, falcon
 
