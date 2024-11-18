@@ -97,6 +97,22 @@ Your JSONL file must contain at least as many samples as the Global Batch Size (
 Once your data is processed into the correct format, you are ready to begin DPO training. You must start with a pretrained or SFT trained model. For this section, we will use the SFT model trained in the previous step to train the DPO model.
 For the purposes of the following sections, we assume that your training ``.jsonl`` file is located in ``/path/to/train_dpo_format.jsonl`` and your validation ``.jsonl`` file is located in ``/path/to/valid_dpo_format.jsonl``.
 
+.. tip::
+
+   If you do not yet have a DPO dataset readily available, you can generate a toy one to get started. Here's 
+   an example 
+
+      .. code-block:: bash
+
+         NUM_EXAMPLES_TO_GENERATE=200
+
+         mkdir -p /path/to
+         for i in $(seq 1 $NUM_EXAMPLES_TO_GENERATE); do
+            cat <<EOF
+         {"prompt": "<extra_id_0>System\n\n<extra_id_1>User\n${i}*10=?\n<extra_id_1>Assistant\n", "chosen_response": "$((i * 10))\n<extra_id_1>", "rejected_response": "I refuse to answer this question.\n<extra_id_1>"}
+         EOF
+         done | tee  /path/to/train_dpo_format.jsonl /path/to/valid_dpo_format.jsonl >/dev/null
+
 For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` corresponds to the beta parameter in the DPO paper.
 
 .. tab-set::
@@ -108,7 +124,7 @@ For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` correspond
 
          .. code-block:: bash 
 
-            export GPFS="/path/to/nemo-aligner-repo"
+            export GPFS="/opt/NeMo-Aligner"
             export TRAIN_DATA_PATH="/path/to/train_dpo_format.jsonl"
             export VALID_DATA_PATH="/path/to/valid_dpo_format.jsonl"
 
@@ -144,7 +160,7 @@ For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` correspond
             #SBATCH --exclusive
             #SBATCH --overcommit
 
-            GPFS="/path/to/nemo-aligner-repo"
+            export GPFS="/opt/NeMo-Aligner"
             PRETRAINED_CHECKPOINT_NEMO_FILE="/path/to/megatron_gpt_sft.nemo"
 
             TRAIN_DATA_PATH="/path/to/train_comparisons.jsonl"
@@ -184,7 +200,6 @@ For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` correspond
             EOF
 
             srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
-            set +x
 
 The default DPO training tunes all parameters. To use LoRA, we can set ``model.peft.peft_scheme=lora`` and use different parameters in ``model.peft.lora_tuning``. Please check the parameters in `the config file <https://github.com/NVIDIA/NeMo-Aligner/blob/main/examples/nlp/gpt/conf/gpt_dpo.yaml>`__.
 
