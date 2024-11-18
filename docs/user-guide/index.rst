@@ -6,10 +6,12 @@
    :maxdepth: 2
 
    sft.rst
+   knowledge-distillation.rst
    rlhf.rst
    steerlm.rst
    steerlm2.rst
    dpo.rst
+   rs.rst
    spin.rst
    draftp.rst
    cai.rst
@@ -19,6 +21,9 @@
 
 :ref:`Model Alignment by Supervised Fine-Tuning (SFT) <model-aligner-sft>`
    In this section, we walk you through the most straightforward alignment method. We use a supervised dataset in the prompt-response pairs format to fine-tune the base model according to the desired behavior.
+
+:ref:`Supervised Fine-Tuning (SFT) with Knowledge Distillation <model-aligner-knowledge-distillation>`
+   In this section, we walk through a variation of SFT using Knowledge Distillation where we train a smaller "student" model using a much later "teacher" model.
 
 :ref:`Model Alignment by RLHF <model-aligner-rlhf>`
    RLHF is the next step up in alignment and is still responsible for most state-of-the-art chat models. In this section, we walk you through the process of RLHF alignment, including training a reward model and RLHF training with the  PPO algorithm.
@@ -44,20 +49,31 @@
 .. list-table:: Algorithm vs. Models
    :widths: auto
    :header-rows: 1
+   :stub-columns: 1
 
    * - Algorithm
+     - TRTLLM Accelerated
      - GPT 2B
      - LLaMA2
      - LLaMA3
      - Mistral
      - Nemotron
-   * - :ref:`DPO <model-aligner-dpo>`
-     - Yes
-     - Yes
-     - Yes
-     - Yes
-     - Yes
    * - :ref:`SFT <model-aligner-sft>`
+     - 
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+   * - :ref:`SFT with Knowledge Distillation <model-aligner-knowledge-distillation>`
+     - 
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+   * - :ref:`DPO <model-aligner-dpo>`
+     - 
      - Yes
      - Yes
      - Yes
@@ -69,13 +85,23 @@
      - Yes
      - Yes
      - Yes
+     - Yes
    * - :ref:`CAI <model-aligner-cai>`
+     - 
      - Yes
      - Yes
      - Yes
      - Yes
      - Yes
    * - :ref:`SteerLM <model-aligner-steerlm>`
+     - 
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+     - Yes
+   * - :ref:`SteerLM 2.0 <model-aligner-steerlm2>`
+     - 
      - Yes
      - Yes
      - Yes

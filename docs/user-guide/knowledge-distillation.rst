@@ -2,6 +2,8 @@
 
 .. include:: aligner-algo-header.rst
 
+.. _model-aligner-knowledge-distillation:
+
 Supervised Fine-Tuning (SFT) with Knowledge Distillation
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
