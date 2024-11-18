@@ -48,12 +48,11 @@ def tokenize_dataset(cfg: 'DictConfig'):
     # using the same template as SFT/PEFT script. This may be overkill but guarantees the preprocess settings
     # are identical to normal SFT training
 
-    ## TODO: fix this! hf tokenizer path doesn't need to be a dir
-    #if os.path.isdir(cfg.tokenizer_path):
-    # pass in a Hugging Face folder which contains tokenizer.json
-    tokenizer = get_nmt_tokenizer(library="huggingface", model_name=cfg.tokenizer_path, use_fast=True)
-    #else:
-    #    tokenizer = get_nmt_tokenizer(library="sentencepiece", tokenizer_model=cfg.tokenizer_path)
+    if cfg.tokenizer_type=="huggingface":
+        # pass in a Hugging Face folder which contains tokenizer.json
+        tokenizer = get_nmt_tokenizer(library="huggingface", model_name=cfg.tokenizer_path, use_fast=True)
+    else:
+        tokenizer = get_nmt_tokenizer(library="sentencepiece", tokenizer_model=cfg.tokenizer_path)
 
     with open(cfg.model.data.data_prefix, "r", encoding="utf_8") as fr:
         data_payload = [json.loads(line.strip()) for line in fr]
@@ -62,7 +61,7 @@ def tokenize_dataset(cfg: 'DictConfig'):
         cfg=cfg.model,
         name="packing_dataset",
         tokenizer=tokenizer,
-        data_prefix=cfg.model.data.data_prefix, ## TODO: fix
+        data_prefix=cfg.model.data.data_prefix,
         documents=documents,
         data=data_payload,
         seq_length=cfg.model.data.seq_length,
@@ -171,6 +170,7 @@ class PackingArgs:
     pack_sizes: Tuple[int] = (2048,)
     packing_algorithm: str = "first_fit_shuffle"
     seed: int = 0
+    tokenizer_type: str = "sentencepiece" ## one of "huggingface" or "sentencepiece"
 
     def from_config(self, cfg: 'DictConfig'):
         for required_arg in ('output_dir', 'pack_sizes'):
