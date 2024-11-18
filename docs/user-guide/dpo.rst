@@ -100,7 +100,8 @@ For the purposes of the following sections, we assume that your training ``.json
 .. tip::
 
    If you do not yet have a DPO dataset readily available, you can generate a toy one to get started. Here's 
-   an example 
+   an example to generate ``NUM_EXAMPLES_TO_GENERATE`` datum. Ensure this value is larger than the
+   global_batch_size.
 
       .. code-block:: bash
 
