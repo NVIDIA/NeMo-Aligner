@@ -20,19 +20,19 @@ trainer:
     limit_val_batches: 1.0
     gradient_clip_val: 1.0
 
-    # Accelerate training times by accelerating inference stage using TRTLLM
+    # Speed-up training by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
-      # reshard is not supported in Self-Rewarding
+      # reshard: False # reshard is not supported in Self-Rewarding
 
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
-      max_input_len: ${int_div:${model.encoder_seq_length}, 2}
+      max_input_len: ${subtract:${model.encoder_seq_length}, ${model.spin.length_params.max_length}}
       generation_batch_size: ${model.spin.rollout_micro_batch_size}
 
-      model_type: gptnext
+      model_type: gptnext # can be gptj, gptnext, llama, gemma, falcon
 
-      # Unload and reload the TRTLLM engine before and after the training stage 
+      # Save GPU memory by unloading and reloading the TRTLLM engine before and after the training stage
       # Reloading the engine incurs a constant time overhead
       unload_engine_train: False
 
@@ -48,11 +48,11 @@ exp_manager:
   explicit_log_dir: /results
   exp_dir: null
   name: megatron_gpt
-  max_time_per_run: ${trainer.max_time}
+  max_time_per_run: null
   create_wandb_logger: False
   wandb_logger_kwargs:
-    project: nemo_aligner_dpo
-    name: rlhf_gpt3_dpo
+    project: nemo_aligner_self_rewarding
+    name: rlhf_gpt3_self_rewarding
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   resume_if_exists: True
   resume_ignore_no_checkpoint: True
@@ -79,31 +79,33 @@ model:
   spin:
     log_prob_forward_micro_batch_size: ${model.micro_batch_size}
     rollout_micro_batch_size: 32
-    ref_policy_kl_penalty: 0.1   # Can also be a list of elements == max_iterations, where each element will be the KL penalty used for that iteration
+    ref_policy_kl_penalty: 0.1  # Can also be a list of elements of size max_iterations, where each element will be the KL penalty used for that iteration
     offload_adam_states: True
-    num_responses_to_gen: 4
-    num_evals_to_average: 3
-    length_control: 0.0
-    use_meta_judge: False
-    meta_judge_pcnt: -1
-    first_iteration_sft: False
+    num_responses_to_gen: 4  # number of responses to generate per prompt
+    num_evals_to_average: 3  # number of times to evaluate each response via LLM-as-a-judge (and then take the average score)
+    length_control: 0.0      # the length control rho parameter to use as per the paper's implementation
+    use_meta_judge: False    # whether or not use the meta rewarding algorithm by generating DPO pairs for the LLM judge itself
+    meta_judge_pcnt: -1      # percentage of each GBS to dedicate to meta judge samples (if `use_mega_judge=True`)
+    first_iteration_sft: False  # whether the first iteration should be the SFT loss instead of DPO
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
     gt_reward_scale: 1. # the scale of the rewards in RPO
     preference_loss: dpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
     preference_loss_weight: 1 # the coefficient of the preference loss
     sft_loss_weight: 0 # the coefficient of the SFT loss
-    judge_score_low: 0  # the lowest score which the LLM-as-a-judge can aware, as per your llm_judge_prompt
-    judge_score_high: 5  # the highest score which the LLM-as-a-judge can aware, as per your llm_judge_prompt
-    meta_max_relative_pcnt: 0.4
+    judge_score_low: 0  # the lowest score which the LLM-as-a-judge can award, as per your llm_judge_prompt
+    judge_score_high: 5  # the highest score which the LLM-as-a-judge can award, as per your llm_judge_prompt
+    meta_max_relative_pcnt: 0.4  # the largest percentage that any one score category can be for the purposes of training (e.g. no score can be more than 40% of the total training data)
 
     judge_reward_regex: "(?i)(?:Score|Points): {{ reward }}"
     meta_judge_reward_regex: "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
 
+    # Current default judge prompt is copied from https://arxiv.org/abs/2401.10020
+    # Note that its template (the "<extra_id_..." lines) may need to be customized to your specific model
     llm_judge_prompt: |
-      <extra_id_0>System
+      ${model.data.chat_prompt_tokens.system_turn_start}System
       
-      <extra_id_1>User
+      ${model.data.chat_prompt_tokens.turn_start}User
       Review the user's question and the corresponding response using the additive 5-point
       scoring system described below. Points are accumulated based on the satisfaction of each
       criterion:
@@ -130,12 +132,14 @@ model:
       Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
       necessary. To evaluate the response in alignment with this additive scoring model, we'll
       systematically attribute points based on the outlined criteria.
-      <extra_id_1>Assistant
+      ${model.data.chat_prompt_tokens.turn_start}Assistant
 
+    # Current default meta-judge prompt is copied from https://arxiv.org/abs/2407.19594
+    # Note that its template (the "<extra_id_..." lines) may need to be customized to your specific model
     llm_meta_judge_prompt: |
-      <extra_id_0>System
+      ${model.data.chat_prompt_tokens.system_turn_start}System
       
-      <extra_id_1>User
+      ${model.data.chat_prompt_tokens.turn_start}User
       Review the user's question and the corresponding response, along with two judgments.
       Determine which judgment is more accurate according to the rubric provided below. The
       rubric used for the initial judgments is as follows:
@@ -163,7 +167,7 @@ model:
       Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
       consistency in applying the criteria.
       - Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
-      <extra_id_1>Assistant
+      ${model.data.chat_prompt_tokens.turn_start}Assistant
 
 
     # params for generation
@@ -209,7 +213,7 @@ model:
   precision: ${trainer.precision}
 
   data:
-    chat: True # whether use chatbot data or not
+    chat: True # whether to use chatbot data or not
     chat_prompt_tokens:  # special tokens for the chat prompts, a dictionary of {token_type: token}. note that some tokenizer may combine the characters at the junction between {end_of_turn}{turn_start}. e.g. '<im end><im start>', the '><' sometimes is merged to be a single token. This is not supported, try to avoid
       system_turn_start: "<extra_id_0>"
       turn_start: "<extra_id_1>"
@@ -243,7 +247,7 @@ model:
       #   - 0.25
       #   - 0.25
       label_key: 'output'
-      add_eos: True
+      add_eos: False
       add_sep: False
       add_bos: False
       truncation_field: "input" # # Can be multiple keys separated with ',' Options: keys in prompt_template

@@ -8,7 +8,7 @@ Meta Self-Rewarding paper: https://arxiv.org/abs/2407.19594
 
 The NeMo framework supports efficient model alignment via the NeMo Aligner codebase.
 
-All algorithms in NeMo Aligner will work with any GPT based model that is from mcore(i.e in the config it has ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire Self-Rewarding pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  This same tutorial also works for other GPT models(such as LLaMa2) of any size.
+All algorithms in NeMo Aligner are compatible with any GPT-based model from Megatron Core (i.e., those with mcore_gpt=True in the configuration). For this tutorial, we will demonstrate the entire self-rewarding pipeline using a 2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>__. This tutorial is also applicable to other GPT models, such as Llama models, regardless of their size.
 
 Obtaining a pretrained model
 ############################
@@ -75,11 +75,11 @@ Due to some limitations of the Nemo Aligner system and reusing code files, the p
 For the parameters below, the ``model.spin.ref_policy_kl_penalty`` corresponds to the beta parameter in the Self-Rewarding paper, and ``trainer.self_rewarding.max_iterations`` corresponds to number of iterations.
 
 Self-Rewarding is a very generation-heavy algorithm, with N*k generations per sample in the training data. As such, it is highly advisable to enable TRTLLM in order to vastly speedup training generation times (5-7X speedup).
-You can enable TRT by setting ``trainer.self_rewarding.trt_llm.enable=true`` along with ``trainer.self_rewarding.trt_llm.model_type`` (set this to ``gptnext`` for Nemotron models, and ``llama`` for the llama family of models).
-If you want to train using Meta-Self-Rewarding instead of the original Self-Rewarding, you need to set ``model.spin.use_meta_judge=true``. When using meta mode, you need to also set ``model.spin.meta_judge_pcnt`` which controls the maximum percent of any GBS which can be populated by meta-judge training samples.
-If you want to use Length Control (Meta-Self-Rewarding paper, section 2.1, last paragraph), you can set that with ``model.spin.length_control``. This parameter accepts either a scalar, or a list of size == number of iterations, where
+You can enable TRT by setting ``trainer.self_rewarding.trt_llm.enable=true`` along with ``trainer.self_rewarding.trt_llm.model_type``. Set this parameter to ``gptnext`` for Nemotron models and ``llama`` for the Llama family of models.
+If you want to train using Meta-Rewarding instead of the original Self-Rewarding, you need to set ``model.spin.use_meta_judge=true``. When using meta mode, you also need to set ``model.spin.meta_judge_pcnt`` which controls the maximum percent of any GBS which can be populated by meta-judge training samples.
+If you want to use Length Control (Meta-Self-Rewarding paper, section 2.1, last paragraph), you can set that with ``model.spin.length_control``. This parameter accepts either a scalar or a list of size == number of iterations, where
 each iteration will apply its corresponding length control value. This allows you to create a schedule of different length control values for each iteration. This logic will work for both Self-Rewarding and Meta Self-Rewarding.
-You can also control which variant of DPO loss is used for training using the ``model.spin.preference_loss`` parameter. Valid entries are: dpo, scale, rpo_bwd_kl, rpo_fwd_kl, ipo, and rpo_sq. Default is dpo.
+You can also control which variant of DPO loss is used for training using the ``model.spin.preference_loss`` parameter. Valid entries are: ``dpo``, ``scale``, ``rpo_bwd_kl``, ``rpo_fwd_kl``, ``ipo``, and ``rpo_sq``. Default is ``dpo``.
 
 
 .. tab-set::
@@ -87,7 +87,7 @@ You can also control which variant of DPO loss is used for training using the ``
     .. tab-item:: Terminal
         :sync: key3
 
-         To run Self-Rewarding model training on the terminal directly
+         To run Self-Rewarding model training on the terminal directly:
 
          .. code-block:: bash 
 
@@ -119,7 +119,7 @@ You can also control which variant of DPO loss is used for training using the ``
     .. tab-item:: Slurm
         :sync: key4
 
-         To run SPIN model training using Slurm. The script below uses 4 nodes, but you can change the node count to something different.
+         To run SPIN model training with Slurm, use the script below. The script uses 4 nodes, but you can change the node count to something different:
 
          .. code-block:: bash 
 
