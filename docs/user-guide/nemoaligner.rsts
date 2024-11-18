@@ -24,7 +24,9 @@ To use a pre-built container, run the following code:
 
     .. code-block:: bash
 
-        docker run -it --gpus=all  --shm-size=8g --workdir /opt/NeMo-Aligner nvcr.io/nvidia/nemo:24.09
+        docker run --rm -it \
+          --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --shm-size=8g \
+          --workdir /opt/NeMo-Aligner nvcr.io/nvidia/nemo:24.09
 
     Please use the latest tag in the form yy.mm.(patch).
 
