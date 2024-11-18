@@ -13,6 +13,8 @@ The NeMo-Aligner toolkit is built using the `NeMo Toolkit <https://github.com/NV
 
 The toolkit is currently in its early stages. We are committed to improving the toolkit to make it easier for developers to pick and choose different alignment algorithms to build safe, helpful, and reliable models.
 
+.. _nemo-aligner-getting-started:
+
 Get Started
 ###########
 
