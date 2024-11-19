@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from dataclasses import dataclass
 from functools import partial
 
@@ -27,6 +28,42 @@ from nemo_aligner.utils.server_utils import FutureResult
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
     over to the remote PyTrition server
 """
+
+
+def extract_dialog(text):
+    user_pattern = r"<SPECIAL_10>System\n\n<SPECIAL_11>User\n(.*?)\n<SPECIAL_11>Assistant\n"
+    assistant_pattern = r"\n<SPECIAL_11>Assistant\n(.*?)\n<SPECIAL_11>"
+    user_text = re.findall(user_pattern, text, re.DOTALL)
+    assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
+    return user_text, assistant_text
+
+
+class HelpsteerTemplate:
+    def get_first_turn_template(self, text):
+        return f"""<extra_id_0>System\nA chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.
+<extra_id_1>User\n{text}"""
+
+    def get_assistant_turn_template(self, text):
+        return f"""\n<extra_id_1>Assistant\n{text}"""
+
+    def get_user_turn_template(self, text):
+        return f"""\n<extra_id_1>User\n{text}"""
+
+    def add_ending(self, text):
+        return f"""{text}\n<extra_id_2>"""
+
+
+def chat_template(user_text, assistant_text, template):
+    formatter = HelpsteerTemplate()
+    text = ""
+    for i in range(len(user_text)):
+        if i == 0:
+            text += formatter.get_first_turn_template(user_text[i])
+        else:
+            text += formatter.get_user_turn_template(user_text[i])
+        text += formatter.get_assistant_turn_template(assistant_text[i])
+    text = formatter.add_ending(text)
+    return text
 
 
 def get_future_result(future, *keys):
@@ -62,13 +99,14 @@ class RMCriticFutureResult(FutureResult):
         self.og_seq_length = og_seq_length
 
     def result(self):
-        if self.combine_rm_and_critic_server:
-            rewards, values = get_future_result(self.critic_future, "rewards", "values")
-        else:
-            # rewards = get_future_result(self.rm_future, "rewards")
-            values = get_future_result(self.critic_future, "values")
+        values = get_future_result(self.critic_future, "rewards")
+        # if self.combine_rm_and_critic_server:
+        #     rewards, values = get_future_result(self.critic_future, "rewards", "values")
+        # else:
+        #     # rewards = get_future_result(self.rm_future, "rewards")
+        #     values = get_future_result(self.critic_future, "values")
 
-        values = values[:, : self.og_seq_length - 1].contiguous()
+        # values = values[:, : self.og_seq_length - 1].contiguous()
 
         self.critic_future = None
         self.rm_future = None
@@ -87,6 +125,11 @@ class SaveFuture(FutureResult):
         torch.distributed.barrier()
 
 
+def _str_list2numpy(str_list) -> np.ndarray:
+    str_ndarray = np.array(str_list)[..., np.newaxis]
+    return np.char.encode(str_ndarray, "utf-8")
+
+
 @dataclass
 class RemoteGPTRMCriticClient:
     cfg: DictConfig
@@ -94,20 +137,27 @@ class RemoteGPTRMCriticClient:
     def __post_init__(self):
         cfg = self.cfg
 
-        critic_ip_and_port = (cfg.critic.ip, cfg.critic.port)
-        server_dict = {
-            cfg.critic.name.train: critic_ip_and_port,
-            cfg.critic.name.infer: critic_ip_and_port,
-            cfg.critic.name.save: critic_ip_and_port,
-        }
-
-        if not cfg.combine_rm_and_critic_server:
-            server_dict[cfg.reward_model.name] = (cfg.reward_model.ip, cfg.reward_model.port)
+        server_dict = {}
+        server_dict[cfg.reward_model.name] = (cfg.reward_model.ip, cfg.reward_model.port)
 
         self.communicator = HTTPCommunicator.create_http_communicator_from_dict(server_dict)
         self.communicator.print_server_dict()
         self.combine_rm_and_critic_server = self.cfg.combine_rm_and_critic_server
         self.pad_to_length = self.cfg.pad_to_length
+
+    def infer_rm(self, texts):
+        new_texts = []
+        for text in texts:
+            user_text, assistant_text = extract_dialog(text)
+            text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
+
+            new_texts.append(text)
+
+        data = {"sentences": _str_list2numpy(new_texts)}
+        future = run_if_model_parallel_src(
+            self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=data,
+        )
+        return RMCriticFutureResult(future, None, self.combine_rm_and_critic_server, None)
 
     def infer_rm_critic(self, rollout_batch):
         response_tokens = rollout_batch["response_tokens"].cpu()
