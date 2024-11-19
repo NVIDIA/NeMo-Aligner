@@ -61,15 +61,15 @@
      - Mixtral
    * - :ref:`SFT <nemo-aligner-sft>`
      - 
-     - Yes<sub>✓</sub>
+     - Yes (✓)
      - Yes
      - Yes
      - Yes
-     - Yes<sub>✓</sub>
+     - Yes (✓)
      - 
    * - :ref:`SFT with Knowledge Distillation <nemo-aligner-knowledge-distillation>`
      - 
-     - Yes<sub>✓</sub>
+     - Yes (✓)
      - Yes
      - Yes
      - Yes
@@ -77,24 +77,24 @@
      - 
    * - :ref:`DPO <nemo-aligner-dpo>`
      - 
-     - Yes<sub>✓</sub>
+     - Yes (✓)
      - Yes
      - Yes
      - Yes
-     - Yes<sub>✓</sub>
+     - Yes (✓)
      - In active development
    * - :ref:`RLHF <nemo-aligner-rlhf>`
      - Yes
      - Yes
      - Yes
-     - Yes<sub>✓</sub>
+     - Yes (✓)
      - Yes
-     - Yes<sub>✓</sub>
+     - Yes (✓)
      - 
    * - :ref:`SteerLM <nemo-aligner-steerlm>`
      - 
      - Yes
-     - Yes<sub>✓</sub>
+     - Yes (✓)
      - Yes
      - Yes
      - Yes
@@ -120,7 +120,7 @@
      - Yes
      - Yes
      - Yes
-     - Yes<sub>✓</sub>
+     - Yes (✓)
      - Yes
      - 
 
@@ -132,11 +132,11 @@
    * - Algorithm
      - Stable Diffusion
    * - :ref:`Draft+ <nemo-aligner-draftp:>`
-     - Yes<sub>✓</sub>
+     - Yes (✓)
 
 .. note::
 
-   * <sub>✓</sub>: Indicates the model is verified to work with algorithm. Models without this demarcation are expected to work, but have not been formally verified yet.
+   * (✓): Indicates the model is verified to work with algorithm. Models without this demarcation are expected to work, but have not been formally verified yet.
 
 Hardware Requirements
 #####################
