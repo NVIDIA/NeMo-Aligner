@@ -148,7 +148,7 @@ class RemoteGPTRMCriticClient:
     def infer_rm(self, texts):
         new_texts = []
         for text in texts:
-            user_text, assistant_text = extract_dialog(text, end_string="<SPECIAL_12>")
+            user_text, assistant_text = extract_dialog(text, end_string="<SPECIAL_11>")
 
             if len(assistant_text) > 0:
                 text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
