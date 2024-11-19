@@ -352,9 +352,8 @@ class GRPOTrainer:
         logprobs = rollout_batch["logprobs"]
         is_end = rollout_batch["is_end"]
 
-        # TODO: NOTE THIS IS TERRIBAD FOR BT models!
-        # only works on verifier based
-        rewards = rewards * is_end
+        # rewards = rewards * is_end
+        rewards = rewards
 
         num_responses = self.cfg.num_responses_per_prompt
 
