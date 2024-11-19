@@ -50,12 +50,12 @@ OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
-PROMPT_TEMPLATE = """<extra_id_0>System
+PROMPT_TEMPLATE = """<SPECIAL_10>System
 
-<extra_id_1>User
+<SPECIAL_11>User
 Below is a math question. I want you to first reason through the steps required to reach the answer, then put the answer (and only answer) inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \\boxed{{42}}.
 {problem}
-<extra_id_1>Assistant
+<SPECIAL_11>Assistant
 """
 
 
@@ -82,9 +82,8 @@ class Game24Dataset:
         """
         Return a single prompt.
         """
-        assert self.use_text_field_from_data
-
-        text = self.data[idx]["text"]
+        # assert self.use_text_field_from_data
+        text = PROMPT_TEMPLATE.format(problem=self.data[idx]["conversations"][0]["content"])
         answer = self.data[idx]["input"]
         sample, _ = self.encode(text)
         sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
