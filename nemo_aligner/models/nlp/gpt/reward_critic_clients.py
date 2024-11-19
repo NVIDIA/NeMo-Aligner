@@ -148,14 +148,9 @@ class RemoteGPTRMCriticClient:
     def infer_rm(self, texts):
         new_texts = []
         for text in texts:
-            print(text)
             user_text, assistant_text = extract_dialog(text)
-            print(user_text)
-            print(assistant_text)
-
             text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
 
-            print(text)
             new_texts.append(text)
 
         data = {"sentences": _str_list2numpy(new_texts)}
