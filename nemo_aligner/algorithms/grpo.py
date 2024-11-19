@@ -441,6 +441,7 @@ class GRPOTrainer:
         ppo_rollout_metrics = {k: v / num_samples for k, v in ppo_rollout_metrics.items()}
 
         mask = ppo_rollout_data["mask"]
+        advantages = advantages.cuda()
 
         for key in ["advantages"]:
             tensor = advantages
