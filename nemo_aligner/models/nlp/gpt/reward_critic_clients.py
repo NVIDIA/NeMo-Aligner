@@ -30,9 +30,9 @@ from nemo_aligner.utils.server_utils import FutureResult
 """
 
 
-def extract_dialog(text):
+def extract_dialog(text, end_string="<SPECIAL_12>"):
     user_pattern = r"<SPECIAL_10>System\n\n<SPECIAL_11>User\n(.*?)\n<SPECIAL_11>Assistant\n"
-    assistant_pattern = r"\n<SPECIAL_11>Assistant\n(.*?)\n<SPECIAL_11>"
+    assistant_pattern = rf"\n<SPECIAL_11>Assistant\n(.*?)\n{end_string}"
     user_text = re.findall(user_pattern, text, re.DOTALL)
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
     return user_text, assistant_text
@@ -148,8 +148,10 @@ class RemoteGPTRMCriticClient:
     def infer_rm(self, texts):
         new_texts = []
         for text in texts:
-            user_text, assistant_text = extract_dialog(text)
-            text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
+            user_text, assistant_text = extract_dialog(text, end_string="<SPECIAL_12>")
+
+            if len(assistant_text) > 0:
+                text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
 
             new_texts.append(text)
 
