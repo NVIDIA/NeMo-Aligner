@@ -57,42 +57,48 @@
      - LLaMA2
      - LLaMA3
      - Mistral
-     - Nemotron
+     - Nemotron-4
+     - Mixtral
    * - :ref:`SFT <nemo-aligner-sft>`
      - 
+     - Yes<sub>✓</sub>
      - Yes
      - Yes
      - Yes
-     - Yes
-     - Yes
+     - Yes<sub>✓</sub>
+     - 
    * - :ref:`SFT with Knowledge Distillation <nemo-aligner-knowledge-distillation>`
      - 
+     - Yes<sub>✓</sub>
      - Yes
      - Yes
      - Yes
      - Yes
-     - Yes
+     - 
    * - :ref:`DPO <nemo-aligner-dpo>`
      - 
+     - Yes<sub>✓</sub>
      - Yes
      - Yes
      - Yes
-     - Yes
-     - Yes
+     - Yes<sub>✓</sub>
+     - In active development
    * - :ref:`RLHF <nemo-aligner-rlhf>`
      - Yes
      - Yes
      - Yes
+     - Yes<sub>✓</sub>
      - Yes
-     - Yes
-     - Yes
+     - Yes<sub>✓</sub>
+     - 
    * - :ref:`SteerLM <nemo-aligner-steerlm>`
      - 
      - Yes
+     - Yes<sub>✓</sub>
      - Yes
      - Yes
      - Yes
-     - Yes
+     - 
    * - :ref:`SteerLM 2.0 <nemo-aligner-steerlm2>`
      - 
      - Yes
@@ -100,6 +106,7 @@
      - Yes
      - Yes
      - Yes
+     - 
    * - :ref:`Rejection Sampling <nemo-aligner-rs>`
      - 
      - Yes
@@ -107,17 +114,15 @@
      - Yes
      - Yes
      - Yes
+     - 
    * - :ref:`CAI <nemo-aligner-cai>`
      - 
      - Yes
      - Yes
      - Yes
+     - Yes<sub>✓</sub>
      - Yes
-     - Yes
-
-.. note::
-
-   In general, NeMo-Aligner supports models trained from Megatron-LM.
+     - 
 
 .. list-table:: Algorithm vs. (Multimodal) Models
    :widths: auto
@@ -127,7 +132,11 @@
    * - Algorithm
      - Stable Diffusion
    * - :ref:`Draft+ <nemo-aligner-draftp:>`
-     - Yes
+     - Yes<sub>✓</sub>
+
+.. note::
+
+   * <sub>✓</sub>: Indicates the model is verified to work with algorithm. Models without this demarcation are expected to work, but have not been formally verified yet.
 
 Hardware Requirements
 #####################
