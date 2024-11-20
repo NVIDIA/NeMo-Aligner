@@ -267,6 +267,11 @@ def get_rloo_mean_std(grouped_rewards):
     ) / (num_responses - 1)
     grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt()
 
+    if grouped_reward_std.isnan().any():
+        print("#### grouped_reward_std NANED")
+        print("### MIN VALUE BEFORE SQRT", (grouped_square_mean - grouped_reward_mean.square()).min())
+        print("#### GROUPED REWARDS HAS NAN", grouped_rewards.isnan().any())
+
     return grouped_reward_mean, grouped_reward_std
 
 
