@@ -498,7 +498,7 @@ class GRPOTrainer:
 
             self.timer.start("generate")
 
-            futures = []
+            all_rewards = []
 
             for batch in batch_iterator:
                 # during val we want to use greedy sampling
@@ -510,7 +510,8 @@ class GRPOTrainer:
                     self.model.tokenizer.ids_to_text(item[:length].tolist())
                     for item, length in zip(rollout_batch["response_tokens"], rollout_batch["response_lengths"])
                 ]
-                futures.append(self.rm_critic.infer_rm(texts))
+
+                all_rewards.extend(rollout_batch["response_lengths"].tolist())
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -537,13 +538,10 @@ class GRPOTrainer:
             balanced_local_batch["init_logprobs"] = rollout_init_logprobs
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
-        all_rewards = []
-        for future in futures:
-            _, reward = future.result()
-            all_rewards.extend(reward.flatten())
-
-        all_rewards = torch.as_tensor(all_rewards)
-
+        # for future in futures:
+        #     _, reward = future.result()
+        #     all_rewards.extend(reward.flatten())
+        all_rewards = torch.as_tensor(all_rewards, dtype=torch.float32)
         balanced_local_batch.update({"rewards": all_rewards})
         # gather the global rollout batch
         global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
