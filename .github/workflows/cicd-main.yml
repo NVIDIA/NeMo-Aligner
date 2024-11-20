@@ -97,9 +97,10 @@ jobs:
           - sft-llama3
           - sft-llama3-cp
           - rm-llama3
+          - e2e-nemo2
     with:
       RUNNER: self-hosted-azure
       # Fairly aggresive timeout that all functional tests should try to adhere to
-      TIMEOUT: 8
+      TIMEOUT: 10
       SCRIPT: |
         bash /opt/NeMo-Aligner/tests/functional/test_cases/${{ matrix.test_case }}

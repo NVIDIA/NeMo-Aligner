@@ -49,14 +49,14 @@ torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
     ++model.dpo.preference_loss_weight=1.0 \
     pretrained_checkpoint.restore_from_path=${PRETRAINED_CHECKPOINT_NEMO_FILE} \
     "model.data.data_prefix={train: [${TRAIN_DATA_PATH}], validation: [${VALID_DATA_PATH}], test: [${VALID_DATA_PATH}]}" \
-    exp_manager.create_checkpoint_callback=False \
+    exp_manager.create_checkpoint_callback=${CREATE_CHECKPOINT_CALLBACK:-False} \
     model.data.num_workers=2 \
     ++model.tensor_model_parallel_size=1 \
     ++model.pipeline_model_parallel_size=1 \
     trainer.dpo.max_steps=${MAX_STEPS:-3} \
     trainer.dpo.val_check_interval=${MAX_STEPS:-3} \
     trainer.dpo.limit_val_batches=8 \
-    trainer.dpo.save_interval=0 \
+    trainer.dpo.save_interval=${SAVE_INTERVAL:-0} \
     exp_manager.explicit_log_dir=${RESULTS_DIR} \
     ++model.activations_checkpoint_granularity=full \
     ++model.activations_checkpoint_method=uniform \

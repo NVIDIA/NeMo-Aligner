@@ -103,6 +103,10 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     pip install -e ".[nlp]" && \
     cd nemo/collections/nlp/data/language_modeling/megatron && make
 
+# TODO: Allow installing from the default branch, but introduce a build
+#  arg if compatibility starts breaking
+RUN pip install --no-cache-dir git+https://github.com/NVIDIA/NeMo-Run.git
+    
 # MLM
 ARG MLM_TAG
 RUN pip uninstall -y megatron-core && \
@@ -115,7 +119,9 @@ RUN pip uninstall -y megatron-core && \
     fi && \
     pip install -e .
 
-RUN pip install --no-cache-dir lightning # can remove this when NEMO_TAG is bumped to include lightning install
+# TODO: This is redundant since NeMo installs this as of 24.12, but keep
+#  it until 25.03 to give folks enough time to transition.
+RUN pip install --no-cache-dir lightning
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
