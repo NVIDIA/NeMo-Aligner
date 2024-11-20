@@ -71,11 +71,14 @@ def tokenize_dataset(cfg: 'DictConfig'):
 
     combined_dataset = []
     for item in dataset:
+        if item["ignore_example"]:
+            continue
         input_ids = torch.cat((item["chosen"], item["rejected"])).numpy()
         labels = torch.cat((item["chosen_labels"], item["rejected_labels"])).numpy()
         reward = torch.tensor([item["chosen_reward"], item["rejected_reward"]]).numpy()
         boundary = len(item["chosen"])
-        lengths = np.array([item["chosen_length"], item["rejected_length"]])
+        lengths = np.array([item["chosen_length"], item["rejected_length"]]) ## TODO: why are these not the same?
+        #print(f'{lengths=}') ## This shouldn't be used for fwd I don't think
         new_item = {
             "input_ids": input_ids,
             "labels": labels,
@@ -147,6 +150,7 @@ def fill_packing_strategy(
             ## store the boundaries for the chosen, rejected sequences
             _seq_boundaries.append(previous_seq_len + ifile_handles[seq_length][4].pop())
             _seq_boundaries.append(len(_input_ids))
+            print(f'{seq_boundaries=}')
 
         input_ids[oindex] = _input_ids
         labels[oindex] = _labels
