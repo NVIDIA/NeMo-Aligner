@@ -53,15 +53,7 @@ from nemo_aligner.utils.utils import (
     retrieve_model_state_dict_in_cpu,
 )
 
-try:
-    from tensorrt_llm.bindings import GptSession
-
-    from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
-
-    GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
-    HAVE_TRTLLM = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TRTLLM = False
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 
 
 """
@@ -465,7 +457,7 @@ class SelfRewardingTrainer:
 
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
-            assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
+            #assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
             self.trtllm_generate = GPTGenerateTRTLLM(
                 model_cfg=self.model.cfg,
                 end_strings=self.sampling_params["end_strings"],
@@ -480,7 +472,7 @@ class SelfRewardingTrainer:
                 ),
                 generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
                 use_greedy=self.sampling_params.get("use_greedy", False),
-                trt_model_type=self.cfg.trt_llm.get("model_type", "llama"),
+                trt_model_type=self.cfg.trt_llm.get("model_type", "gptnext"),
                 seed=self.model.cfg.get("seed", None),
                 unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
                 reshard_model=False,
