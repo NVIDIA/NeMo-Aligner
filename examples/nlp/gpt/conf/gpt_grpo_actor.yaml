@@ -176,7 +176,7 @@ model:
       compute_logprob: False
       # will be used in NeMo version > 1.20.0
       # keeping it for now
-      end_strings: ["<SPECIAL_12>"]
+      end_strings: ["<SPECIAL_11>"]
 
     # length argument for autoregressive sampling
     # max length means max amount of tokens to generate

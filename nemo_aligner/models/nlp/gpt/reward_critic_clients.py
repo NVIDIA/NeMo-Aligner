@@ -30,7 +30,7 @@ from nemo_aligner.utils.server_utils import FutureResult
 """
 
 
-def extract_dialog(text, end_string="<SPECIAL_12>"):
+def extract_dialog(text, end_string="<SPECIAL_11>"):
     user_pattern = r"<SPECIAL_10>System\n\n<SPECIAL_11>User\n(.*?)\n<SPECIAL_11>Assistant\n"
     assistant_pattern = rf"\n<SPECIAL_11>Assistant\n(.*?)\n{end_string}"
     user_text = re.findall(user_pattern, text, re.DOTALL)
