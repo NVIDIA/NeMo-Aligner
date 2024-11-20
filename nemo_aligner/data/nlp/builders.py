@@ -16,12 +16,13 @@
 modified from: https://github.com/NVIDIA/NeMo/blob/2baef811f21372c3340dd2d82635d2377e78a660/nemo/collections/nlp/data/language_modeling/megatron/gpt_dataset.py
 to allow us to build SFT, RewardModel and RLHF datasets
 """
-
 import json
+import os
 from functools import partial
 
 import numpy as np
 import torch
+import torch.utils.data
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
@@ -43,6 +44,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
     DPOModelDataset,
+    KnowledgeDistillationDataset,
     KTOModelDataset,
     RegressionRewardModelDataset,
     RewardModelDataset,
@@ -52,15 +54,71 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
 
 
-def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_length, seed, tokenizer, name):
+class ChunkedJsonl:
+    CHUNK_ID_STRING = "CHUNK_ID"
+
+    def __init__(self, path_placeholder, n_chunks, n_examples_per_chunk):
+        assert (
+            self.CHUNK_ID_STRING in path_placeholder
+        ), f"{path_placeholder=} does not contain {repr(self.CHUNK_ID_STRING)}"
+        self.path_placeholder = path_placeholder
+
+        # get the maximum number of chunks
+        max_n_chunks = 0
+        for i in range(n_chunks):
+            max_n_chunks = i + 1  ## fix zero-indexing
+            if not os.path.exists(self.path_placeholder.replace(self.CHUNK_ID_STRING, str(i))):
+                break
+        assert max_n_chunks > 0, f"no files match the required path {path_placeholder}"
+        self.n_chunks = min(n_chunks, max_n_chunks)
+
+        print("Initializing chunked jsonl...")
+        lengths = [n_examples_per_chunk for _ in range(self.n_chunks)]
+        print(f"Number of Chunks = {self.n_chunks} | Number of Examples = {n_examples_per_chunk * self.n_chunks}")
+        self._lengths = np.asarray(lengths)
+        self._length_accumulated = np.cumsum(lengths)
+
+    def __len__(self):
+        return self._lengths.sum()
+
+    def __getitem__(self, i):
+        if i >= len(self):
+            raise ValueError(f"The item idx {i} is greater than the length of the dataset ({len(self)})")
+        chunk_id = np.searchsorted(self._length_accumulated, i, side="right")
+        idx_in_chunk = i if chunk_id == 0 else i - self._length_accumulated[chunk_id - 1]
+        with open(self.path_placeholder.replace(self.CHUNK_ID_STRING, str(chunk_id))) as f:
+            for line_idx, l in enumerate(f):
+                if line_idx == idx_in_chunk:
+                    return json.loads(l)
+        raise ValueError(f"Reading the item {i} failed. Computed chunk_id={chunk_id}, idx_in_chunk={idx_in_chunk}.")
+
+
+def build_dataset_generic(
+    cls,
+    cfg,
+    data_prefix,
+    data_impl,
+    num_samples,
+    seq_length,
+    seed,
+    tokenizer,
+    name,
+    n_chunks=None,
+    n_examples_per_chunk=None,
+):
     def _build_dataset(current_data_prefix, current_num_samples):
         if data_impl == "mmap":
             data_payload = get_indexed_dataset_(current_data_prefix, data_impl, cfg.data.get("skip_warmup", True))
         elif data_impl.startswith("json"):
             with open(current_data_prefix, "r", encoding="utf_8") as fr:
                 data_payload = [json.loads(line.strip()) for line in fr]
+        elif data_impl == "chunked_jsonl":
+            assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
+            data_payload = ChunkedJsonl(current_data_prefix, n_chunks, n_examples_per_chunk)
         else:
-            raise RuntimeError(f"data.data_impl must be either mmap or json or jsonl, but got {data_impl}")
+            raise RuntimeError(
+                f"data.data_impl must be one of mmap, json, jsonl or chunked_jsonl, but got {data_impl}"
+            )
         total_num_of_documents = len(data_payload)
 
         # Print stats about the splits.
@@ -97,7 +155,17 @@ def build_dataset_generic(cls, cfg, data_prefix, data_impl, num_samples, seq_len
 
 
 def build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer,
+    cls,
+    cfg,
+    data_prefix,
+    data_impl,
+    splits_string,
+    train_valid_test_num_samples,
+    seq_length,
+    seed,
+    tokenizer,
+    n_chunks=None,
+    n_examples_per_chunk=None,
 ):
     if isinstance(data_prefix, DictConfig):
         assert (
@@ -107,6 +175,25 @@ def build_train_valid_test_datasets(
         ), f"Data prefix dictionary should have train, test and validation keys.  data_prefix currently has only {data_prefix.keys()}"
         if cfg.data.splits_string is not None:
             logging.warning(cfg.data.splits_string + " ignored since data path is of type dictionary.")
+
+        if isinstance(n_examples_per_chunk, DictConfig):
+            train_examples_per_chunk = n_examples_per_chunk["train"]
+            validation_examples_per_chunk = n_examples_per_chunk["validation"]
+            test_examples_per_chunk = n_examples_per_chunk["test"]
+        else:
+            train_examples_per_chunk = n_examples_per_chunk
+            validation_examples_per_chunk = n_examples_per_chunk
+            test_examples_per_chunk = n_examples_per_chunk
+
+        if isinstance(n_chunks, DictConfig):
+            train_n_chunks = n_chunks["train"]
+            validation_n_chunks = n_chunks["validation"]
+            test_n_chunks = n_chunks["test"]
+        else:
+            train_n_chunks = n_chunks
+            validation_n_chunks = n_chunks
+            test_n_chunks = n_chunks
+
         train_ds = build_dataset_generic(
             cls=cls,
             cfg=cfg,
@@ -117,28 +204,34 @@ def build_train_valid_test_datasets(
             seed=seed,
             tokenizer=tokenizer,
             name="train",
+            n_chunks=train_n_chunks,
+            n_examples_per_chunk=train_examples_per_chunk,
         )
         validation_ds = build_dataset_generic(
             cls=cls,
             cfg=cfg,
             data_prefix=data_prefix["validation"],
             data_impl=data_impl,
-            num_samples=int(train_valid_test_num_samples[0]),
+            num_samples=int(train_valid_test_num_samples[1]),
             seq_length=seq_length,
             seed=seed,
             tokenizer=tokenizer,
             name="validation",
+            n_chunks=validation_n_chunks,
+            n_examples_per_chunk=validation_examples_per_chunk,
         )
         test_ds = build_dataset_generic(
             cls=cls,
             cfg=cfg,
             data_prefix=data_prefix["test"],
             data_impl=data_impl,
-            num_samples=int(train_valid_test_num_samples[0]),
+            num_samples=int(train_valid_test_num_samples[2]),
             seq_length=seq_length,
             seed=seed,
             tokenizer=tokenizer,
             name="test",
+            n_chunks=test_n_chunks,
+            n_examples_per_chunk=test_examples_per_chunk,
         )
         return train_ds, validation_ds, test_ds
 
@@ -155,6 +248,8 @@ def build_train_valid_test_datasets(
                 seq_length=seq_length,
                 seed=seed,
                 tokenizer=tokenizer,
+                n_chunks=n_chunks,
+                n_examples_per_chunk=n_examples_per_chunk,
             )
 
         # Blending dataset.
@@ -177,6 +272,8 @@ def build_train_valid_test_datasets(
                 seq_length=seq_length,
                 seed=seed,
                 tokenizer=tokenizer,
+                n_chunks=n_chunks,
+                n_examples_per_chunk=n_examples_per_chunk,
             )
             if train_ds:
                 train_datasets.append(train_ds)
@@ -202,7 +299,17 @@ def build_train_valid_test_datasets(
 
 
 def _build_train_valid_test_datasets(
-    cls, cfg, data_prefix, data_impl, splits_string, train_valid_test_num_samples, seq_length, seed, tokenizer,
+    cls,
+    cfg,
+    data_prefix,
+    data_impl,
+    splits_string,
+    train_valid_test_num_samples,
+    seq_length,
+    seed,
+    tokenizer,
+    n_chunks=None,
+    n_examples_per_chunk=None,
 ):
     """Build train, valid, and test datasets."""
 
@@ -212,8 +319,11 @@ def _build_train_valid_test_datasets(
     elif data_impl.startswith("json"):
         with open(data_prefix, "r", encoding="utf_8") as fr:
             data_payload = [json.loads(line.strip()) for line in fr]
+    elif data_impl == "chunked_jsonl":
+        assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
+        data_payload = ChunkedJsonl(data_prefix, n_chunks, n_examples_per_chunk)
     else:
-        raise RuntimeError(f"data.data_impl must be either mmap or json or jsonl, but got {data_impl}")
+        raise RuntimeError(f"data.data_impl must be one of mmap, json, jsonl or chunked_jsonl, but got {data_impl}")
     total_num_of_documents = len(data_payload)
     splits = get_train_valid_test_split_(splits_string, total_num_of_documents)
 
@@ -264,6 +374,9 @@ build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, Re
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
 build_train_valid_test_kto_datasets = partial(build_train_valid_test_datasets, KTOModelDataset)
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
+build_train_valid_test_knowledge_distillation_datasets = partial(
+    build_train_valid_test_datasets, KnowledgeDistillationDataset
+)
 
 
 def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None):
@@ -318,8 +431,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
 
 
 def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_masks_and_position_ids=True):
-    """collate function that pads each sequence to the max in the batch
-    """
+    """collate function that pads each sequence to the max in the batch"""
     return partial(
         collate_with_batch_max_sequence_length,
         response_token_length=max_seqlen,
@@ -329,6 +441,14 @@ def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_ma
         eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
         generate_masks_and_position_ids=generate_masks_and_position_ids,
     )
+
+
+def identity_collate(batch):
+    """
+    Useful since torch's data loader's default collate will crash with ragged sequences.
+    Also, this function is needed b/c lambda functions aren't pickle-able.
+    """
+    return batch
 
 
 def build_dataloader(

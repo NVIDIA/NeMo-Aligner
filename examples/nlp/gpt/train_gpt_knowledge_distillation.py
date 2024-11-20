@@ -13,15 +13,17 @@
 # limitations under the License.
 from functools import partial
 
+import torch
 import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
+from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.dpo import DPOTrainer, dpo_custom_collate
-from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_dpo_datasets, identity_collate
-from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
+from nemo_aligner.algorithms.supervised import SupervisedTrainer
+from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_knowledge_distillation_datasets
+from nemo_aligner.models.nlp.gpt.megatron_gpt_knowledge_distillation import GPTKnowledgeDistillationModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -33,7 +35,9 @@ from nemo_aligner.utils.train_script_utils import (
     resolve_and_create_trainer,
     retrieve_custom_trainer_state_dict,
 )
-from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
+from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
+
+"""Script to start knowledge_distillation training"""
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
@@ -41,19 +45,62 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 mp.set_start_method("spawn", force=True)
 
 
-@hydra_runner(config_path="conf", config_name="gpt_dpo")
+def _collate_fn(batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
+    tokens = [item["tokens"] for item in batch]
+    labels = [item["labels"] for item in batch]
+    loss_mask = [item["loss_mask"] for item in batch]
+
+    topk_logits = [item["topk_logits"] for item in batch]
+    topk_token_ids = [item["topk_token_ids"] for item in batch]
+    log_sum_exp_logits = [item["log_sum_exp_logits"] for item in batch]
+
+    tokens = torch.nn.utils.rnn.pad_sequence(tokens, batch_first=True, padding_value=eos_id)
+    labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=eos_id)
+    loss_mask = torch.nn.utils.rnn.pad_sequence(loss_mask, batch_first=True, padding_value=0)
+    assert len(tokens.shape) == 2, "tokens size should be [B, seq_length], got {tokens.shape}"
+    assert len(labels.shape) == 2, "labels size should be [B, seq_length], got {labels.shape}"
+    assert len(loss_mask.shape) == 2, "loss_mask size should be [B, seq_length], got {loss_mask.shape}"
+
+    topk_logits = torch.nn.utils.rnn.pad_sequence(topk_logits, batch_first=True, padding_value=0)
+    topk_token_ids = torch.nn.utils.rnn.pad_sequence(topk_token_ids, batch_first=True, padding_value=eos_id)
+    assert len(topk_logits.shape) == 3, "topk_logits size should be [B, seq_length], got {topk_logits.shape}"
+    assert len(topk_token_ids.shape) == 3, "topk_token_ids size should be [B, seq_length], got {topk_token_ids.shape}"
+
+    attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+        tokens, eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+    )
+    assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
+    if attention_mask.shape[0] == 1:
+        # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+        # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
+        attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+
+    output = {
+        "tokens": tokens,
+        "labels": labels,
+        "loss_mask": loss_mask,
+        "topk_logits": topk_logits,
+        "topk_token_ids": topk_token_ids,
+        "log_sum_exp_logits": log_sum_exp_logits,
+        "attention_mask": attention_mask,
+        "position_ids": position_ids,
+    }
+    return output
+
+
+@hydra_runner(config_path="conf", config_name="gpt_knowledge_distillation")
 def main(cfg) -> None:
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
-    trainer = resolve_and_create_trainer(cfg, "dpo")
+    trainer = resolve_and_create_trainer(cfg, "knowledge_distillation")
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
     ptl_model = load_from_nemo(
-        MegatronGPTDPOModel,
+        GPTKnowledgeDistillationModel,
         cfg.model,
         trainer,
         strict=True,
@@ -62,12 +109,6 @@ def main(cfg) -> None:
     )
 
     init_peft(ptl_model, cfg.model)
-
-    if cfg.model.peft.peft_scheme == "none":
-        ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
-        )
-        ptl_model.ref_policy_state_dict = ref_policy_state_dict
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
@@ -85,7 +126,7 @@ def main(cfg) -> None:
     # use the entire dataset
     train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
 
-    train_ds, validation_ds, _ = build_train_valid_test_dpo_datasets(
+    train_ds, validation_ds, _ = build_train_valid_test_knowledge_distillation_datasets(
         cfg=cfg.model,
         data_prefix=cfg.model.data.data_prefix,
         data_impl=cfg.model.data.data_impl,
@@ -94,6 +135,8 @@ def main(cfg) -> None:
         seq_length=cfg.model.data.seq_length,
         seed=cfg.model.seed,
         tokenizer=ptl_model.tokenizer,
+        n_chunks=cfg.model.data.n_chunks,
+        n_examples_per_chunk=cfg.model.data.n_examples_per_chunk,
     )
 
     train_dataloader = build_dataloader(
@@ -104,7 +147,13 @@ def main(cfg) -> None:
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
-        collate_fn=identity_collate,
+        collate_fn=partial(
+            _collate_fn,
+            eos_id=ptl_model.tokenizer.eos_id,
+            reset_position_ids=cfg.model.data.get("reset_position_ids", False),
+            reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
+            eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+        ),
     )
 
     val_dataloader = build_dataloader(
@@ -115,7 +164,13 @@ def main(cfg) -> None:
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
-        collate_fn=identity_collate,
+        collate_fn=partial(
+            _collate_fn,
+            eos_id=ptl_model.tokenizer.eos_id,
+            reset_position_ids=cfg.model.data.get("reset_position_ids", False),
+            reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
+            eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+        ),
         use_random_sampler=False,
     )
 
@@ -127,31 +182,23 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
-    dpo_trainer = DPOTrainer(
-        cfg=cfg.trainer.dpo,
+    kd_trainer = SupervisedTrainer(
+        cfg=cfg.trainer.knowledge_distillation,
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
         test_dataloader=None,
-        collate_fn=partial(
-            dpo_custom_collate,
-            eos_id=ptl_model.tokenizer.eos_id,
-            reset_position_ids=cfg.model.data.get("reset_position_ids", False),
-            reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
-            eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-            pad_length_to_multiple_of=cfg.model.data.get("pad_length_to_multiple_of", None),
-        ),
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
     )
 
     if custom_trainer_state_dict is not None:
-        dpo_trainer.load_state_dict(custom_trainer_state_dict)
+        kd_trainer.load_state_dict(custom_trainer_state_dict)
 
-    dpo_trainer.fit()
+    kd_trainer.fit()
 
 
 if __name__ == "__main__":
