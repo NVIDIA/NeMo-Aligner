@@ -32,15 +32,13 @@ from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy, verify_is_valid_and_clamp_range_
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import (
     batch_pad_to_fixed_len,
     clear_memory,
     cpu_weight_swap,
     retrieve_model_state_dict_in_cpu,
 )
-
-from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
-
 
 """
 GPTSFTChatDataset output is dict with keys: ['input_ids', 'mask', 'context_ids', 'answer_ids', 'metadata']
@@ -150,7 +148,7 @@ class SPINTrainer:
 
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
-            #assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
+            # assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
             self.trtllm_generate = GPTGenerateTRTLLM(
                 model_cfg=self.model.cfg,
                 end_strings=self.sampling_params["end_strings"],
@@ -160,7 +158,9 @@ class SPINTrainer:
                 sample_top_p=self.sampling_params["top_p"],
                 repetition_penalty=self.sampling_params["repetition_penalty"],
                 max_generation_length=self.length_params["max_length"],
-                max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length - self.length_params["max_length"]),
+                max_input_len=self.cfg.trt_llm.get(
+                    "max_input_len", self.model.cfg.encoder_seq_length - self.length_params["max_length"]
+                ),
                 generation_batch_size=self.model.cfg.spin.get("rollout_micro_batch_size", 4),
                 use_greedy=self.sampling_params.get("use_greedy", False),
                 trt_model_type=self.cfg.trt_llm.get("model_type", "gptnext"),
