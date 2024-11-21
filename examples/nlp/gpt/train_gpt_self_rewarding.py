@@ -15,16 +15,16 @@ from functools import partial
 
 import torch
 import torch.multiprocessing as mp
+from megatron.core import parallel_state
 from megatron.core.utils import divide
 from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.spin import SPINTrainer, spin_custom_collate
+from nemo_aligner.algorithms.self_rewarding import SelfRewardingTrainer, eye
 from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset, collate_with_pad_to_max_batch
 from nemo_aligner.models.nlp.gpt.megatron_gpt_spin_model import MegatronGPTSPINModel
-from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -37,7 +37,7 @@ from nemo_aligner.utils.train_script_utils import (
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
-"""Script to start SPIN training"""
+"""Script to start Self-Rewarding training"""
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
@@ -46,14 +46,14 @@ OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 mp.set_start_method("spawn", force=True)
 
 
-@hydra_runner(config_path="conf", config_name="gpt_spin")
+@hydra_runner(config_path="conf", config_name="gpt_self_rewarding")
 def main(cfg) -> None:
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
-    trainer = resolve_and_create_trainer(cfg, "spin")
+    trainer = resolve_and_create_trainer(cfg, "self_rewarding")
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
@@ -74,8 +74,6 @@ def main(cfg) -> None:
             ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
         ptl_model.ref_policy_state_dict = ref_policy_state_dict
-        # param_mean_ref = sum([v.mean().item() for k,v in ptl_model.ref_policy_state_dict.items() if isinstance(v, torch.Tensor)])
-        # print(f"*** ORIG_REF_POLICY [ {param_mean_ref} ]", flush=True)
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
@@ -95,10 +93,10 @@ def main(cfg) -> None:
 
     if cfg.model.data.get("sample", False):
         # if it is negative, num_samples is None
-        if cfg.trainer.spin.max_steps < 0:
+        if cfg.trainer.self_rewarding.max_steps < 0:
             num_samples = None
         else:
-            num_samples = cfg.trainer.spin.max_steps * cfg.model.global_batch_size
+            num_samples = cfg.trainer.self_rewarding.max_steps * cfg.model.global_batch_size
     else:
         num_samples = None
     train_ds = build_sft_dataset(
@@ -111,7 +109,7 @@ def main(cfg) -> None:
     )
 
     if cfg.model.data.get("sample", False):
-        num_samples = cfg.trainer.spin.limit_val_batches * val_data_cfg.global_batch_size
+        num_samples = cfg.trainer.self_rewarding.limit_val_batches * val_data_cfg.global_batch_size
     else:
         num_samples = None
     validation_ds = build_sft_dataset(
@@ -123,16 +121,16 @@ def main(cfg) -> None:
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
 
-    eos_id = ptl_model.tokenizer.eos_id
+    # eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    collate_fn = partial(
-        spin_custom_collate,
-        eos_id=eos_id,
-        reset_position_ids=cfg.model.data.get("reset_position_ids", False),
-        reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
-        eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-    )
+    # collate_fn = partial(
+    #    self_rewarding_custom_collate,
+    #    eos_id=eos_id,
+    #    reset_position_ids=cfg.model.data.get("reset_position_ids", False),
+    #    reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
+    #    eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+    # )
 
     train_dataloader = build_dataloader(
         cfg=cfg,
@@ -140,7 +138,7 @@ def main(cfg) -> None:
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
-        collate_fn=collate_fn,
+        collate_fn=eye,
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=False,
         load_gbs=True,
@@ -166,8 +164,8 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
 
-    spin_trainer = SPINTrainer(
-        cfg=cfg.trainer.spin,
+    self_rewarding_trainer = SelfRewardingTrainer(
+        cfg=cfg.trainer.self_rewarding,
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
@@ -181,11 +179,9 @@ def main(cfg) -> None:
     )
 
     if custom_trainer_state_dict is not None:
-        spin_trainer.load_state_dict(custom_trainer_state_dict)
-        # param_mean_ref = sum([v.mean().item() for k,v in ptl_model.ref_policy_state_dict.items() if isinstance(v, torch.Tensor)])
-        # print(f"*** REF_PARAM_MEAN: {param_mean_ref} ***", flush=True)
+        self_rewarding_trainer.load_state_dict(custom_trainer_state_dict)
 
-    spin_trainer.fit()
+    self_rewarding_trainer.fit()
 
 
 if __name__ == "__main__":
