@@ -27,9 +27,9 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import SyncTimer
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor_within_pp
 from nemo_aligner.utils.ppo_utils import create_mask
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
+from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy, verify_is_valid_and_clamp_range_
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import (
@@ -117,6 +117,14 @@ class SPINTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
+        
+        if isinstance(self.cfg.get("limit_train_batches", 1.0), int):
+            self.train_dataloader.batch_sampler.total_samples = min(
+                self.train_dataloader.batch_sampler.total_samples,
+                self.cfg.limit_train_batches * self.train_dataloader.batch_sampler.global_batch_size,
+            )
+            if hasattr(self.train_dataloader.batch_sampler, "last_batch_size"):
+                self.train_dataloader.batch_sampler.last_batch_size = 0
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
@@ -162,7 +170,7 @@ class SPINTrainer:
             )
 
         # for wandb table
-        self.train_df = pd.DataFrame(columns=["step", "prompt", "response"])
+        self.train_df = pd.DataFrame(columns=["step", "prompt", "chosen", "rejected"])
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -229,16 +237,22 @@ class SPINTrainer:
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
 
         num_samples = 0
-        gen_lengths = 0
+        chosen_lengths = 0
+        reject_lengths = 0
+        not_valids = 0
         num_samples += global_batch["chosen"].shape[0]
-        gen_lengths += global_batch["generated_lengths"].sum()
+        chosen_lengths += (global_batch["chosen_lengths"] - global_batch["prompt_lengths"]).sum()
+        reject_lengths += (global_batch["rejected_lengths"] - global_batch["prompt_lengths"]).sum()
+        not_valids += (~global_batch["is_valids"]).sum()
         tensor_to_accumulate = torch.tensor(
-            [gen_lengths, num_samples], dtype=torch.float32, device=torch.cuda.current_device(),
+            [chosen_lengths, reject_lengths, num_samples, not_valids], dtype=torch.float32, device=torch.cuda.current_device(),
         )
         torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())
 
-        (global_response_lengths, global_num_samples,) = tensor_to_accumulate.tolist()
-        metrics["generated_lengths"] = global_response_lengths / global_num_samples
+        (global_chosen_lengths, global_reject_lengths, global_num_samples, global_not_valids,) = tensor_to_accumulate.tolist()
+        metrics["chosen_lengths"] = global_chosen_lengths / global_num_samples
+        metrics["rejected_lengths"] = global_reject_lengths / global_num_samples
+        metrics["bad_valids_per_GBS"] = global_not_valids / global_num_samples
 
         return loss_mean, {**metrics, **trainer_metrics}
 
@@ -248,6 +262,7 @@ class SPINTrainer:
         if self.use_trtllm_generation:
             # at this point self.model is the reference policy from cpu_weight_swap
             self.trtllm_generate.refit(self.model)
+            clear_memory()
 
         prompt_lengths = torch.cat([b["prompt_lengths"] for b in list_of_batches], dim=0)
         batch_max_length = prompt_lengths.max().item()
@@ -267,15 +282,16 @@ class SPINTrainer:
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
+        
+        strategy = TrackLengthGPTModelTextGenerationStrategy(
+            model=self.model, context_lengths=prompt_lengths, max_length=adj_generation_length
+        )
 
         if self.use_trtllm_generation:
-            actor_output = self.trtllm_generate.generate(inputs)
-            response_tokens = actor_output["response_tokens"].cpu()
-            response_lengths = actor_output["response_lengths"].cpu()
+            generations = self.trtllm_generate.generate(inputs)
+            response_tokens = generations["response_tokens"]
+            response_lengths = generations["response_lengths"]
         else:
-            strategy = TrackLengthGPTModelTextGenerationStrategy(
-                model=self.model, context_lengths=prompt_lengths, max_length=adj_generation_length
-            )
             generations = self.model.generate(
                 inputs=inputs,
                 length_params=self.length_params | {"max_length": adj_generation_length},
@@ -284,9 +300,11 @@ class SPINTrainer:
             )
 
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
-            response_lengths = strategy.get_lengths().cpu()
+            response_tokens = torch.cuda.LongTensor(generations["token_ids"]) if generations else None
+            response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
+            response_lengths = strategy.get_lengths()
+
             max_response_length = response_lengths.max().item()
-            response_tokens = torch.LongTensor(generations["token_ids"]).cpu()
 
             # Sanity check to validate response length.
             if max_response_length != response_tokens.size(1):
@@ -302,12 +320,16 @@ class SPINTrainer:
                         f"max response length ({max_response_length}) does not match the size of "
                         f"`response_tokens` ({response_tokens.size(1)})"
                     )
+        
+        is_valid = verify_is_valid_and_clamp_range_(
+            response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
+        )
 
         self.model.finish_inference()
         if self.use_trtllm_generation:
             self.trtllm_generate.free()
 
-        return response_tokens, response_lengths
+        return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu(), is_valid.cpu()
 
     def fit(self):
         if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
@@ -399,22 +421,22 @@ class SPINTrainer:
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
                         if torch.distributed.get_rank() == 0:
-                            self.train_df.loc[len(self.train_df)] = [
-                                self.step - 1,
-                                self.model.tokenizer.ids_to_text(global_batch["prompts_only"][0].tolist()),
-                                self.model.tokenizer.ids_to_text(
-                                    global_batch["rejected"][0][
-                                        len(global_batch["prompts_only"][0]) : (
-                                            len(global_batch["prompts_only"][0])
-                                            + global_batch["generated_lengths"][0].item()
-                                        )
-                                    ].tolist()
-                                ),
-                            ]
-                            self.logger.log_table(
-                                key="table/train_generations", dataframe=self.train_df, step=self.step - 1,
-                            )
-                        torch.distributed.barrier()
+                            for idx, chk in enumerate(global_batch["is_valids"]):
+                                if chk:
+                                    self.train_df.loc[len(self.train_df)] = [
+                                        self.step,
+                                        self.model.tokenizer.ids_to_text(global_batch["prompts_only"][idx][:global_batch["prompt_lengths"][idx].item()].tolist()),
+                                        self.model.tokenizer.ids_to_text(
+                                            global_batch["chosen"][idx][global_batch["prompt_lengths"][idx].item():global_batch["chosen_lengths"][idx].item()].tolist()
+                                        ),
+                                        self.model.tokenizer.ids_to_text(
+                                            global_batch["rejected"][idx][global_batch["prompt_lengths"][idx].item():global_batch["rejected_lengths"][idx].item()].tolist()
+                                        ),
+                                    ]
+                                    self.logger.log_table(
+                                        key="table/train_generations", dataframe=self.train_df, step=self.step - 1,
+                                    )
+                                    break
 
                     global_pbar.set_postfix(metrics)
 
@@ -505,7 +527,7 @@ class SPINTrainer:
                     self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
                 ):
                     # Generation happens on GPU but the returned tensors are on CPU.
-                    gen_tokens_buf, gen_lengths_buf = self.get_generations(buffer)
+                    gen_tokens_buf, prompt_lengths_buf, gen_lengths_buf, is_valid_buf = self.get_generations(buffer)
 
                 start = 0
                 for batch in buffer:
@@ -513,6 +535,8 @@ class SPINTrainer:
 
                     gen_tokens = gen_tokens_buf[start : start + batch_size]
                     gen_lengths = gen_lengths_buf[start : start + batch_size]
+                    prompt_lengths = prompt_lengths_buf[start : start + batch_size]
+                    is_valids = is_valid_buf[start : start + batch_size]
 
                     act_tokens = batch["prompts_and_answers"]
                     act_lengths = batch["combined_lengths"]
@@ -525,8 +549,8 @@ class SPINTrainer:
                         gen_tokens, max_batch_len, pad_token=self.model.tokenizer.eos_id
                     )
 
-                    act_mask = create_mask(act_tokens_pad, batch["prompt_lengths"], act_lengths)
-                    gen_mask = create_mask(gen_tokens_pad, batch["prompt_lengths"], gen_lengths)
+                    act_mask = create_mask(act_tokens_pad, prompt_lengths, act_lengths) * is_valids.unsqueeze(-1)
+                    gen_mask = create_mask(gen_tokens_pad, prompt_lengths, gen_lengths) * is_valids.unsqueeze(-1)
 
                     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
                         act_tokens_pad,
@@ -551,8 +575,11 @@ class SPINTrainer:
                     new_batch["chosen_mask"] = act_mask
                     new_batch["rejected_mask"] = gen_mask
                     new_batch["prompts_only"] = batch["prompts_only"]
-                    new_batch["generated_lengths"] = gen_lengths - batch["prompt_lengths"]
-                    assert (gen_lengths - batch["prompt_lengths"] >= 0).all(), "negative generated length encountered"
+                    new_batch["prompt_lengths"] = prompt_lengths
+                    new_batch["chosen_lengths"] = act_lengths
+                    new_batch["rejected_lengths"] = gen_lengths
+                    new_batch["is_valids"] = is_valids
+                    assert (gen_lengths - prompt_lengths >= 0).all(), "negative generated length encountered"
 
                     logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
                     act_logps, gen_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)

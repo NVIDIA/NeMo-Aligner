@@ -16,11 +16,11 @@ trainer:
     # Accelerate training times by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
-      # reshard is not supported in generation
+      # reshard: False # reshard is not supported in generation
 
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
-      max_input_len: ${int_div:${model.encoder_seq_length}, 2}
+      max_input_len: ${subtract:${model.encoder_seq_length}, ${model.generation.length_params.max_length}}
 
       model_type: gptnext
 
@@ -40,11 +40,11 @@ exp_manager:
   explicit_log_dir: /results
   exp_dir: null
   name: megatron_gpt
-  max_time_per_run: ${trainer.max_time}
+  max_time_per_run: null
   create_wandb_logger: False
   wandb_logger_kwargs:
-    project: nemo_aligner_dpo
-    name: rlhf_gpt3_dpo
+    project: nemo_aligner_generation
+    name: rlhf_gpt3_generation
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   resume_if_exists: True
   resume_ignore_no_checkpoint: True
@@ -147,7 +147,7 @@ model:
       #   - 0.25
       #   - 0.25
       label_key: 'output'
-      add_eos: True
+      add_eos: False
       add_sep: False
       add_bos: False
       truncation_field: "input" # # Can be multiple keys separated with ',' Options: keys in prompt_template

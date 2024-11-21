@@ -37,6 +37,12 @@ from nemo_aligner.utils.train_script_utils import (
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
+try:
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+except:
+    pass
+
 """Script to start SPIN training"""
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
@@ -123,12 +129,10 @@ def main(cfg) -> None:
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
 
-    eos_id = ptl_model.tokenizer.eos_id
-
     # collate fn to pad to the max seq length in the batch
     collate_fn = partial(
         spin_custom_collate,
-        eos_id=eos_id,
+        eos_id=ptl_model.tokenizer.eos_id,
         reset_position_ids=cfg.model.data.get("reset_position_ids", False),
         reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
         eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),

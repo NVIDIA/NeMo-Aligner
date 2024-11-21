@@ -48,15 +48,7 @@ from nemo_aligner.utils.utils import (
     retrieve_model_state_dict_in_cpu,
 )
 
-try:
-    from tensorrt_llm.bindings import GptSession
-
-    from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
-
-    GptSession.refit_engine  # check if TRTLLM Cpp runtime was compiled with engine refitting
-    HAVE_TRTLLM = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TRTLLM = False
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 
 
 """
@@ -165,24 +157,26 @@ class GenerationTrainer:
 
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
-            assert HAVE_TRTLLM, "TRTLLM generation was enabled but TRTLLM libraries could not be successfully imported"
             self.trtllm_generate = GPTGenerateTRTLLM(
                 model_cfg=self.model.cfg,
-                max_generation_length=self.length_params["max_length"],
-                max_input_len=self.cfg.trt_llm.get("max_input_len", self.model.cfg.encoder_seq_length // 2),
-                generation_batch_size=dp_batch_size,
-                unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
-                trt_model_type=self.cfg.trt_llm.get("model_type", "gptnext"),
                 end_strings=self.sampling_params["end_strings"],
-                reshard_model=False,
+                tokenizer=self.model.tokenizer,
                 sample_temperature=self.sampling_params["temperature"],
                 sample_top_k=self.sampling_params["top_k"],
                 sample_top_p=self.sampling_params["top_p"],
                 repetition_penalty=self.sampling_params["repetition_penalty"],
+                max_generation_length=self.length_params["max_length"],
+                max_input_len=self.cfg.trt_llm.get(
+                    "max_input_len", self.model.cfg.encoder_seq_length - self.length_params["max_length"]
+                ),
+                generation_batch_size=dp_batch_size,
                 use_greedy=self.sampling_params.get("use_greedy", False),
-                tokenizer=self.model.tokenizer,
+                trt_model_type=self.cfg.trt_llm.get("model_type", "gptnext"),
                 seed=self.model.cfg.get("seed", None),
+                unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
+                reshard_model=False,
             )
+            
 
     @torch.no_grad()
     def get_generations(self, list_of_batches):
@@ -213,18 +207,6 @@ class GenerationTrainer:
             generations = self.trtllm_generate.generate(inputs)
             response_tokens = generations["response_tokens"]
             response_lengths = generations["response_lengths"]
-            """
-            prev = response_tokens[torch.arange(response_tokens.size(0)), response_lengths - 1]
-            # double check with nemo logic to make sure it ended
-            is_end = strategy.end_of_generation_condition(
-                response_tokens, prev, self.model.tokenizer.eos_id, self.sampling_params["end_strings"]
-            )
-            
-            for idx in range(len(response_tokens)):
-                if torch.min(response_tokens[idx]).item() < 0 or torch.max(response_tokens[idx]).item() >= self.model.tokenizer.vocab_size:
-                    is_end[idx] = False
-                    response_tokens[idx] = torch.clamp(response_tokens[idx], min=self.model.tokenizer.eos_id, max=self.model.tokenizer.vocab_size - 1)
-            """
         else:
             generations = self.model.generate(
                 inputs=inputs,
@@ -368,7 +350,7 @@ class GenerationTrainer:
             self.generations_fh.close()
 
         if self.use_trtllm_generation:
-            self.trtllm_generate.free(force_unload=True)
+            self.trtllm_generate.free()
 
     def save(self, extra_candidates=None, is_train_end=False):
         # load back in the adam states if needed
