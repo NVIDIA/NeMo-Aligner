@@ -314,7 +314,6 @@ class DPOModelDataset(Dataset):
 
         max_curr_seq_len = max(chosen_len, reject_len)
 
-        ## TODO: check whether this works wtih sequence packing!!!
         if max_curr_seq_len > self.seq_length:
             logging.warning(
                 f"WARNING: Tokenized text exceeds max seq length ({max_curr_seq_len} vs {self.seq_length})."
@@ -334,6 +333,7 @@ class DPOModelDataset(Dataset):
             torch.LongTensor(reject_labels), (0, max_curr_seq_len - len(reject_labels)), mode="constant", value=-100
         )
 
+        ignore_example = False
         # ignore the example whose tokenized text exceeds max seq length.
         if max_curr_seq_len > self.seq_length:
             chosen_tokens = chosen_tokens[: self.nograd_length]
@@ -342,6 +342,7 @@ class DPOModelDataset(Dataset):
             labels_reject_tokens = torch.ones_like(rejected_tokens) * (-100)
             chosen_len = self.nograd_length
             reject_len = self.nograd_length
+            ignore_example = True
 
         output = {
             "chosen": chosen_tokens,
@@ -352,6 +353,7 @@ class DPOModelDataset(Dataset):
             "rejected_labels": labels_reject_tokens,
             "chosen_reward": payload.get("chosen_reward", self.default_chosen_reward),
             "rejected_reward": payload.get("rejected_reward", self.default_rejected_reward),
+            "ignore_example": ignore_example
         }
         return output
 
@@ -360,7 +362,7 @@ class DPOPackedDataset(DPOModelDataset):
     """
 
     def __init__(
-        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True, return_cu_seqlen: bool = True
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True #, return_cu_seqlen: bool = True ## should always be true
     ):
 
         #np.random.seed(seed) ## TODO: why is this needed in sft dataset?
@@ -376,9 +378,6 @@ class DPOPackedDataset(DPOModelDataset):
             drop_last
         )
         self.data_prefix = data_prefix
-        ## cumulative sequence lengths
-        self.return_cu_seqlen = return_cu_seqlen
-
 
     ## TODO: when is shuffling done?
     def __getitem__(self, idx):
@@ -452,15 +451,37 @@ class DPOPackedDataset(DPOModelDataset):
 
         position_ids: List[List[int]] = []
         cu_seqlens: List[List[int]] = []
+        cu_seqlens_unpadded: List[List[int]] = []
         for item in batch:
             position_ids.append([])
             cu_seqlens.append([0])
+            cu_seqlens_unpadded.append([0])
             seqlens = np.array(item['seq_boundaries'][1:]) - np.array(item['seq_boundaries'][:-1])
             for l in seqlens:
                 position_ids[-1].extend(list(range(l-1))) ## l - 1 to exclude labels
                 cu_seqlens[-1].append(cu_seqlens[-1][-1] + l - 1)
-            # set last seq to the max seq len because rope and attn kernels expect no padding
-            cu_seqlens[-1][-1] = max_length
+            
+            # the last seq needs to be the max seq len because rope and attn kernels expect no padding
+            assert cu_seqlens[-1][-1] <= max_length
+
+            # since data is prepadded when cp_size > 1, there may be some extra padding at the end
+            # of the packed sequence. In this case, we need to add the max seq len to the end.
+            #if cu_seqlens[-1][-1] != max_length:
+            cu_seqlens[-1].append(max_length) ## TODO: see whether this works in TE. We need to know how many indices to ignore when unpacking the examples
+
+            for i in range(len(item['seq_boundaries']) - 1):
+                current_seq = item['input_ids'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
+
+                # since the data could be prepadded with tokenizer's eos_id, we can find out the index of all the eos_id
+                eos_idx = np.where(np.array(current_seq) == self.tokenizer.eos_id)
+
+                seqlen_unpadded = eos_idx[0][0] + 1 if eos_idx[0].any() else len(current_seq)
+                cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
+
+            # if extra paddings are added in the packed sequence, they can't be counted as
+            # actual tokens for training
+            if len(cu_seqlens[-1]) > len(cu_seqlens_unpadded[-1]):
+                cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1])
 
         assert len(input_ids[0]) == len(
             position_ids[0]
@@ -483,41 +504,31 @@ class DPOPackedDataset(DPOModelDataset):
             "position_ids": torch.LongTensor(position_ids), ## use this for loss computation -- to upweigh shorter examples
         }
 
-        if self.return_cu_seqlen:
-            cu_seqlens = self._collate_item(cu_seqlens, max_length=max(len(l) for l in cu_seqlens) + 1, pad_id=-1)
+        cu_seqlens = self._collate_item(cu_seqlens, max_length=max(len(l) for l in cu_seqlens) + 1, pad_id=-1)
+        cu_seqlens_unpadded = self._collate_item(
+            cu_seqlens_unpadded, max_length=max(len(l) for l in cu_seqlens_unpadded) + 1, pad_id=-1
+        )
 
-            # Pre-generate `cu_seqlens_argmin` and `max_seqlen` as CPU tensor to avoid device-to-host copies.
-            cu_seqlens = torch.IntTensor(cu_seqlens)
-            cu_seqlens_argmin = torch.argmin(cu_seqlens, dim=1, keepdim=True)
-            seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
-            max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
+        # Pre-generate `cu_seqlens_argmin` and `max_seqlen` as CPU tensor to avoid device-to-host copies.
+        cu_seqlens = torch.IntTensor(cu_seqlens)
+        cu_seqlens_argmin = torch.argmin(cu_seqlens, dim=1, keepdim=True)
+        seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
+        max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
+        cu_seqlens_unpadded = torch.IntTensor(cu_seqlens_unpadded)
+        cu_seqlens_unpadded_argmin = torch.argmin(cu_seqlens_unpadded, dim=1, keepdim=True)
 
-            output.update(
-                {
-                    'attention_mask': torch.LongTensor(
-                        [1] * len(input_ids)
-                    ),  # no attention mask is needed for packed seq, this serves as a placeholder
-                    'cu_seqlens': torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
-                    'cu_seqlens_argmin': cu_seqlens_argmin,  # only required for perf
-                    'max_seqlen': max_seqlen,  # only required for perf
-                }
-            )
-        else:
-            ## NOTE: this attention mask is just used as a placeholder.
-            ## You should not use this attention mask unless you have a specific use-case.
-            attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-                torch.LongTensor(chosen), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
-            )
-            assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
-            if attention_mask.shape[0] == 1:
-                # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
-                # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
-                attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
-                output.update(
-                {
-                    'attention_mask': torch.stack(attention_mask),
-                }
-            )
+        output.update(
+            {
+                'attention_mask': torch.LongTensor(
+                    [1] * len(input_ids)
+                ),  # no attention mask is needed for packed seq, this serves as a placeholder
+                'cu_seqlens': torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
+                'cu_seqlens_argmin': cu_seqlens_argmin,  # only required for perf
+                'max_seqlen': max_seqlen,  # only required for perf
+                'cu_seqlens_unpadded': torch.IntTensor(cu_seqlens_unpadded),
+                'cu_seqlens_unpadded_argmin': cu_seqlens_unpadded_argmin,
+            }
+        )
 
         return output
         
