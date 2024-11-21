@@ -322,8 +322,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         logps = logps.squeeze()
         labels = labels.squeeze()
         if cu_seqlens is not None:
-            
-            split = cu_seqlens[1:-2].long().cpu()  ## exclude 0 and, cu_seqlen and max_seq_len
+
+            ## cu_seqlens has an extra entry if the final example is padded.
+            ## we have to handle the case where the final example is padded and
+            ## the case where it is not separately.
+            split = cu_seqlens[1:-1] if len(cu_seqlens) % 2 == 1 else cu_seqlens[1:-2]
+            split = split.long().cpu()
             logp_unpacked = list(torch.tensor_split(logps, split, -1))
             labels_unpacked = list(torch.tensor_split(labels, split, -1))
             lengths = [ex.shape[-1] for ex in logp_unpacked]

@@ -466,8 +466,8 @@ class DPOPackedDataset(DPOModelDataset):
 
             # since data is prepadded when cp_size > 1, there may be some extra padding at the end
             # of the packed sequence. In this case, we need to add the max seq len to the end.
-            #if cu_seqlens[-1][-1] != max_length:
-            cu_seqlens[-1].append(max_length) ## TODO: see whether this works in TE. We need to know how many indices to ignore when unpacking the examples
+            if cu_seqlens[-1][-1] != max_length:
+                cu_seqlens[-1].append(max_length)
 
             for i in range(len(item['seq_boundaries']) - 1):
                 current_seq = item['input_ids'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
