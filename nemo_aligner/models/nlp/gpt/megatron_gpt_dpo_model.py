@@ -464,6 +464,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         # return in GPU, trainer needs to move to cpu
         return ref_log_probs
 
-class MegatronMambaDPOModel(MegatronMambaModel, MegatronGPTDPOModel): # @adithyare inherence order matters
+
+class MegatronMambaDPOModel(MegatronMambaModel, MegatronGPTDPOModel):  # @adithyare inherence order matters
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)

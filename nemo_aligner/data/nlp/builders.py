@@ -379,7 +379,9 @@ build_train_valid_test_knowledge_distillation_datasets = partial(
 )
 
 
-def build_sft_dataset(data_cfg, tokenizer, num_samples, is_mamba=False, answer_only_loss=True, is_chat=True, special_tokens=None):
+def build_sft_dataset(
+    data_cfg, tokenizer, num_samples, is_mamba=False, answer_only_loss=True, is_chat=True, special_tokens=None
+):
     packed_sequence = data_cfg.get("packed_sequence", False)
     dataset_kwargs = {}
 
