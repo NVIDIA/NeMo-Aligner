@@ -8,7 +8,7 @@
 SteerLM 2.0: Iterative Training for Attribute-Conditioned Language Model Alignment
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-**SteerLM 2.0** is a novel approach for aligning large language models (LLMs) to generate responses with desired attribute values, building upon the original `SteerLM <nemo-aligner-steerlm>`_ method [1]_ . While SteerLM conducts attribute-conditioned Supervised Fine-Tuning (SFT) to steer LLM outputs, SteerLM 2.0 introduces an iterative training procedure to explicitly enforce the generated responses to follow the desired attribute distribution.
+**SteerLM 2.0** is a novel approach for aligning large language models (LLMs) to generate responses with desired attribute values, building upon the original `SteerLM <nemo-aligner-steerlm>`_ method [1]_. While SteerLM conducts attribute-conditioned Supervised Fine-Tuning (SFT) to steer LLM outputs, SteerLM 2.0 introduces an iterative training procedure to explicitly enforce the generated responses to follow the desired attribute distribution.
 
 Overview
 ########
@@ -165,7 +165,7 @@ By organizing the data in this format, the SteerLM 2.0 model can be effectively 
 Inference
 ---------
 
-Since the SteerLM 2.0 Model is an extension of the original SteerLM model, the inference process is similar. Please refer to the `SteerLM <nemo-aligner-steerlm>`_ documentation for more details.
+Since the SteerLM 2.0 Model is an extension of the original SteerLM model, the inference process is similar. Refer to the `SteerLM <nemo-aligner-steerlm>`_ documentation for more details.
 
 References
 ----------
