@@ -14,7 +14,7 @@ ARG MAX_JOBS=8
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
 ARG PYTRITON_VERSION=0.5.10
 ARG NEMO_TAG=19668e5320a2e2af0199b6d5e0b841993be3a634  # On: main
-ARG MLM_TAG=25059d3bbf68be0751800f3644731df12a88f3f3   # On: main
+ARG MCORE_TAG=25059d3bbf68be0751800f3644731df12a88f3f3   # On: main
 ARG ALIGNER_COMMIT=main
 ARG TRTLLM_VERSION=v0.13.0
 ARG PROTOBUF_VERSION=4.24.4
@@ -49,8 +49,8 @@ RUN pip uninstall -y apex && \
     git clone https://github.com/NVIDIA/apex && \
     cd apex && \
     if [ ! -z $APEX_TAG ]; then \
-        git fetch origin $APEX_TAG && \
-        git checkout FETCH_HEAD; \
+    git fetch origin $APEX_TAG && \
+    git checkout FETCH_HEAD; \
     fi && \
     pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
 
@@ -77,18 +77,10 @@ RUN pip uninstall -y transformer-engine && \
     git clone https://github.com/NVIDIA/TransformerEngine.git && \
     cd TransformerEngine && \
     if [ ! -z $TE_TAG ]; then \
-        git fetch origin $TE_TAG && \
-        git checkout FETCH_HEAD; \
+    git fetch origin $TE_TAG && \
+    git checkout FETCH_HEAD; \
     fi && \
-    git submodule init && git submodule update && \
-    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
-
-# place any util pkgs here
-ARG PYTRITON_VERSION
-RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==$PYTRITON_VERSION
-ARG PROTOBUF_VERSION
-RUN pip install -U --no-deps protobuf==$PROTOBUF_VERSION
-RUN pip install --upgrade-strategy only-if-needed jsonlines
+    git submodule init && git submodule update
 
 # NeMo
 ARG NEMO_TAG
@@ -96,28 +88,26 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     cd NeMo && \
     git pull && \
     if [ ! -z $NEMO_TAG ]; then \
-        git fetch origin $NEMO_TAG && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    pip uninstall -y nemo_toolkit sacrebleu && \
-    pip install -e ".[nlp]" && \
-    cd nemo/collections/nlp/data/language_modeling/megatron && make
+    git fetch origin $NEMO_TAG && \
+    git checkout FETCH_HEAD; \
+    fi
 
 # MLM
-ARG MLM_TAG
+ARG MCORE_TAG
 RUN pip uninstall -y megatron-core && \
     git clone https://github.com/NVIDIA/Megatron-LM.git && \
     cd Megatron-LM && \
     git pull && \
-    if [ ! -z $MLM_TAG ]; then \
-        git fetch origin $MLM_TAG && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    pip install -e .
+    if [ ! -z $MCORE_TAG ]; then \
+    git fetch origin $MCORE_TAG && \
+    git checkout FETCH_HEAD; \
+    fi
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
+ARG PYTRITON_VERSION
+ARG PROTOBUF_VERSION
 RUN cd /opt/NeMo-Aligner && \
-    pip install --no-deps -e .
+    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
