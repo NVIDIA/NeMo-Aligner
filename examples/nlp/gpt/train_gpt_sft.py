@@ -52,6 +52,7 @@ mp.set_start_method("spawn", force=True)
 @hydra_runner(config_path="conf", config_name="gpt_sft")
 def main(cfg) -> None:
     cfg.model = load_and_override_model_config(cfg.model.restore_from_path, cfg.model)
+
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
