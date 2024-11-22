@@ -42,15 +42,15 @@ WORKDIR /opt
 # needed in case git complains that it can't detect a valid email, this email is fake but works
 RUN git config --global user.email "worker@nvidia.com"
 # install latest apex
-ARG APEX_TAG
-RUN pip uninstall -y apex && \
-    git clone https://github.com/NVIDIA/apex && \
-    cd apex && \
-    if [ ! -z $APEX_TAG ]; then \
-    git fetch origin $APEX_TAG && \
-    git checkout FETCH_HEAD; \
-    fi && \
-    pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
+# ARG APEX_TAG
+# RUN pip uninstall -y apex && \
+#     git clone https://github.com/NVIDIA/apex && \
+#     cd apex && \
+#     if [ ! -z $APEX_TAG ]; then \
+#     git fetch origin $APEX_TAG && \
+#     git checkout FETCH_HEAD; \
+#     fi && \
+#     pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
 
 # Git LFS
 RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
@@ -58,15 +58,15 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
     git lfs install && \
     apt-get clean
 
-# TRTLLM
-ARG TRTLLM_VERSION
-RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
-    cd TensorRT-LLM && \
-    git checkout ${TRTLLM_VERSION} && \
-    . docker/common/install_tensorrt.sh && \
-    python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt  --python_bindings --benchmarks && \
-    pip install -e .
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
+# # TRTLLM
+# ARG TRTLLM_VERSION
+# RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
+#     cd TensorRT-LLM && \
+#     git checkout ${TRTLLM_VERSION} && \
+#     . docker/common/install_tensorrt.sh && \
+#     python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt  --python_bindings --benchmarks && \
+#     pip install -e .
+# ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # install TransformerEngine
 ARG MAX_JOBS
