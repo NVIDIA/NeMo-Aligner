@@ -401,7 +401,7 @@ def pytest_collection_modifyitems(config, items):
 
 def pytest_sessionstart(session):
     # Remove the file at the start of the session, if it exists
-    if os.path.exists(SUCCESS_FILE):
+    if os.path.exists(SUCCESS_FILE) and os.environ["LOCAL_RANK"] == "0":
         os.remove(SUCCESS_FILE)
 
 
