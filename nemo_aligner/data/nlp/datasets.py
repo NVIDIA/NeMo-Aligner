@@ -418,11 +418,30 @@ class DPOPackedDataset(DPOModelDataset):
         lengths = combine_keys("lengths")
         rewards = combine_keys("reward")
         seq_boundaries = combine_keys("seq_boundaries")
+
+        def truncate_input_ids(item, i):
+            length = item["lengths"][i]
+            ## no padding, just take all but the last token
+            if length == item["seq_boundaries"][i+1] - item["seq_boundaries"][i]:
+                return item['input_ids'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
+            ## example is padded. In this case, exclude the final non-padding token
+            else:
+                return (
+                    ## exclude the last non-padding token
+                    item['input_ids'][
+                        item['seq_boundaries'][i] : (item['seq_boundaries'][i]
+                        + item["lengths"][i] - 1)
+                    ]
+                    ## append the padding tokens
+                    + item['input_ids'][
+                        item["lengths"][i] + item['seq_boundaries'][i] : item['seq_boundaries'][i+1]
+                    ]
+                )
+
         input_ids = [
             np.concatenate(
                 [
-                    item['input_ids'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
-                    for i in range(len(item['seq_boundaries']) - 1)
+                    truncate_input_ids(item, i) for i in range(len(item['seq_boundaries']) - 1)
                 ]
             )
             for item in batch
