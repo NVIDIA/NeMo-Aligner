@@ -141,10 +141,9 @@
 Hardware Requirements
 #####################
 
-NeMo-Aligner is powered by other NVIDIA libraries which support several NVIDIA GPU types.
-NeMo-Aligner is tested on H100, but also works on A100. Several tutorials assume GPUs with
-80GB VRAM, so if you are following along with GPUs with 40GB, please adjust your
-config accordingly.
+NeMo-Aligner is powered by other NVIDIA libraries that support several NVIDIA GPUs.
+NeMo-Aligner is tested on H100 but also works on A100. Several tutorials assume 80GB VRAM,
+so if you are following along with GPUs with 40GB, adjust your config accordingly.
 
 Examples of config adjustments are increasing node count, introducing more tensor/pipeline
 parallelism, lowering batch size, and increasing gradient accumulation.
