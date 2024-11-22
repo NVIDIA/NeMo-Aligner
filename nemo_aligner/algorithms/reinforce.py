@@ -372,9 +372,7 @@ class ReinforceTrainer:
     def run_validation(self):
         self.model.prepare_for_inference()
 
-        _, rollout_metrics = self._run_inference(
-            self.val_dataloader_builder, consumed_samples=0, is_validation=True
-        )
+        _, rollout_metrics = self._run_inference(self.val_dataloader_builder, consumed_samples=0, is_validation=True)
 
         self.model.finish_inference()
         return rollout_metrics
