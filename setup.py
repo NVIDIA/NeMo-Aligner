@@ -23,7 +23,7 @@ import os
 import subprocess
 from distutils import cmd as distutils_cmd
 from distutils import log as distutils_log
-import re 
+import re
 import setuptools
 
 spec = importlib.util.spec_from_file_location("package_info", "nemo_aligner/package_info.py")
@@ -65,17 +65,18 @@ else:
 # Function to replace ${VAR} or ${VAR:-default_value} with environment variable or default
 def replace_env_vars(text):
     # Regex to match ${VAR} or ${VAR:-default_value}
-    pattern = re.compile(r'\$\{(\w+)(:-([^}]*))?\}')
+    pattern = re.compile(r"\$\{(\w+)(:-([^}]*))?\}")
 
     def replace_var(match):
         var_name = match.group(1)  # The environment variable name
         default_value = match.group(3)  # The default value if provided
 
         # Return the environment variable value or the default (if available) or empty string
-        return os.environ.get(var_name, default_value if default_value is not None else f'${{{var_name}}}')
+        return os.environ.get(var_name, default_value if default_value is not None else f"${{{var_name}}}")
 
     # Substitute all patterns in the text
     return pattern.sub(replace_var, text)
+
 
 def req_file(filename, folder="requirements"):
     with open(os.path.join(folder, filename), encoding="utf-8") as f:
