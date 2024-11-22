@@ -124,6 +124,9 @@ def calculate_rloo_baseline(prompts, reward, mask):
 
     baseline = torch.zeros_like(reward)
     reward_device = reward.get_device()
+    if reward_device == -1:
+        reward_device = "cpu"
+
     for i in range(len(unique_prompts)):
         is_matching_prompt = (prompts == unique_prompts[i]).all(1)
         prompt_idx = torch.arange(len(prompts), device=reward_device)[is_matching_prompt]
