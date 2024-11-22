@@ -1,4 +1,4 @@
-jsonlines
-nemo_toolkit @ git+https://github.com/NVIDIA/NeMo.git@${NEMO_TAG}
-nvidia-pytriton==${PYTRITON_VERSION:-0.5.10}
-protobuf==${PROTOBUF_VERSION:-4.24.4}
+# jsonlines
+nemo_toolkit[nlp] @ git+https://github.com/NVIDIA/NeMo.git@${NEMO_TAG}#egg=nemo_toolkit[nlp]
+# nvidia-pytriton==${PYTRITON_VERSION:-0.5.10}
+# protobuf==${PROTOBUF_VERSION:-4.24.4}
