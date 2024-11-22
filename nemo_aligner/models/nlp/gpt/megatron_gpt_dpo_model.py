@@ -191,15 +191,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 if 'cu_seqlens' in batch:  # packed sequence from DPOPackedDataset
                     # these args are passed eventually into TEDotProductAttention.forward()
                     cu_seqlens = batch['cu_seqlens'].squeeze()  # remove batch size dimension (mbs=1)
-                    cu_seqlens_unpadded = batch['cu_seqlens_unpadded'].squeeze()
 
                     max_seqlen = batch['max_seqlen'].squeeze() if 'max_seqlen' in batch else None
                     cu_seqlens_argmin = batch['cu_seqlens_argmin'] if 'cu_seqlens_argmin' in batch else None
-                    cu_seqlens_unpadded_argmin = (
-                        batch['cu_seqlens_unpadded_argmin'] if 'cu_seqlens_unpadded_argmin' in batch else None
-                    )
-
-                    cu_seqlens_unpadded = cu_seqlens_unpadded[:cu_seqlens_unpadded_argmin.item()]
 
                     # remove -1 "paddings" added in collate_fn
                     if cu_seqlens_argmin is not None:
@@ -219,10 +213,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
                     ## these packed seq args require newer TE
                     forward_args['packed_seq_params'] = PackedSeqParams(
-                        cu_seqlens_q=cu_seqlens_unpadded,
-                        cu_seqlens_kv=cu_seqlens_unpadded,
-                        cu_seqlens_q_padded=cu_seqlens,
-                        cu_seqlens_kv_padded=cu_seqlens,
+                        cu_seqlens_q=cu_seqlens,
+                        cu_seqlens_kv=cu_seqlens,
                         max_seqlen_q=max_seqlen,
                         max_seqlen_kv=max_seqlen,
                         qkv_format='thd',
