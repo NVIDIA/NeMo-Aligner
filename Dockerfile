@@ -119,7 +119,7 @@ RUN pip install --no-cache-dir lightning # can remove this when NEMO_TAG is bump
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
-    pip install --no-deps -e . && \
+    pip install --no-deps -e .
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
