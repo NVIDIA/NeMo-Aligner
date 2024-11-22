@@ -82,7 +82,7 @@ python -u ${GPFS}/examples/nlp/gpt/serve_ppo_critic.py \
     ++model.global_batch_size=1 \
     ++model.tensor_model_parallel_size=1 \
     ++model.optim.bucket_cap_mb=200 \
-    ++model.optim.overlap_grad_sync=False \
+    ++model.optim.overlap_grad_sync=True \
     ++model.optim.contiguous_grad_buffer=True \
     ++trainer.ppo.pad_sequence_length_to_multiple=32 \
     model.reward_standardization.enable=True \
