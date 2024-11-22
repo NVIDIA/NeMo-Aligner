@@ -38,25 +38,8 @@ from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_an
 from nemo.collections.nlp.parts.nlp_overrides import NLPSaveRestoreConnector
 from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo.utils import AppState, logging
-from nemo.utils.exp_manager import NeMoModelCheckpoint
+from nemo.utils.callbacks.nemo_model_checkpoint import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-
-_SAVE_TOP_K = False
-
-
-def is_save_top_k():
-    global _SAVE_TOP_K
-    return _SAVE_TOP_K
-
-
-@contextmanager
-def saving_top_k():
-    global _SAVE_TOP_K
-    try:
-        _SAVE_TOP_K = True
-        yield
-    finally:
-        _SAVE_TOP_K = False
 
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
@@ -80,8 +63,7 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
 
 def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train_end=False, save_top_only=False):
     """work around used so we can save models manually"""
-    with saving_top_k():
-        super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
+    self._save_topk_checkpoint(trainer, monitor_candidates)
 
     if save_top_only:
         return
