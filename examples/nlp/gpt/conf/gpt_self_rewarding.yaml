@@ -73,18 +73,18 @@ model:
   micro_batch_size: 1
   global_batch_size: 64
   megatron_amp_O2: True
-  dist_ckpt_format: zarr
 
+  # This config section is named `spin` because the Self-Rewarding algorithm re-uses the SPIN model class.
   spin:
-    log_prob_forward_micro_batch_size: ${model.micro_batch_size}
+    log_prob_forward_micro_batch_size: ${divide:${.rollout_micro_batch_size}, 2}  # divide by 2 here because we have chosen/rejected per sample
     rollout_micro_batch_size: 32
     ref_policy_kl_penalty: 0.1  # Can also be a list of elements of size max_iterations, where each element will be the KL penalty used for that iteration
     offload_adam_states: True
     num_responses_to_gen: 4  # number of responses to generate per prompt
     num_evals_to_average: 3  # number of times to evaluate each response via LLM-as-a-judge (and then take the average score)
     length_control: 0.0      # the length control rho parameter to use as per the paper's implementation
-    use_meta_judge: False    # whether or not use the meta rewarding algorithm by generating DPO pairs for the LLM judge itself
-    meta_judge_pcnt: -1      # percentage of each GBS to dedicate to meta judge samples (if `use_mega_judge=True`)
+    use_meta_judge: False    # whether or not to use the meta rewarding algorithm by generating DPO pairs for the LLM judge itself
+    meta_judge_pcnt: -1      # percentage of each GBS to dedicate to meta judge samples (if `use_meta_judge=True`)
     first_iteration_sft: False  # whether the first iteration should be the SFT loss instead of DPO
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
@@ -100,7 +100,6 @@ model:
     meta_judge_reward_regex: "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
 
     # Current default judge prompt is copied from https://arxiv.org/abs/2401.10020
-    # Note that its template (the "<extra_id_..." lines) may need to be customized to your specific model
     llm_judge_prompt: |
       ${model.data.chat_prompt_tokens.system_turn_start}System
       
@@ -134,7 +133,6 @@ model:
       ${model.data.chat_prompt_tokens.turn_start}Assistant
 
     # Current default meta-judge prompt is copied from https://arxiv.org/abs/2407.19594
-    # Note that its template (the "<extra_id_..." lines) may need to be customized to your specific model
     llm_meta_judge_prompt: |
       ${model.data.chat_prompt_tokens.system_turn_start}System
       
