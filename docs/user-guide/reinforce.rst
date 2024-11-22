@@ -30,7 +30,7 @@ To launch the server:
 .. code-block:: bash 
 
    #!/bin/bash
-   CHECKPOINT_NEMO_FILE="/path/to/trained_rm.nemo"
+   RM_NEMO_FILE="/path/to/trained_rm.nemo"
    GPFS="/path/to/nemo-aligner-repo"
 
    RESULTS_DIR="critic_results_dir"
