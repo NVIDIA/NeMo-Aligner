@@ -136,7 +136,7 @@
 
 .. note::
 
-   * (✓): Indicates the model is verified to work with algorithm. Models without this demarcation are expected to work, but have not been formally verified yet.
+   * (✓): Indicates the model is verified to work with the algorithm. Models without this demarcation are expected to work but have not been formally verified yet.
 
 Hardware Requirements
 #####################
