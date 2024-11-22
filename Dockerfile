@@ -13,8 +13,8 @@ ARG MAX_JOBS=8
 # Git refs for dependencies
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
 ARG PYTRITON_VERSION=0.5.10
-ARG NEMO_TAG=aligner_export_mcore # On: main (TODO: change to upstream main commit after merge)
-ARG MLM_TAG=main # On: main (TODO: change to correct commit after merge)
+ARG NEMO_TAG=a153b8c58d56aa930749587017ee70d56f75445e # On: main
+ARG MLM_TAG=2e355b7889258fc0756bd6a8036d09a896cc9caa  # On: main
 ARG ALIGNER_COMMIT=main
 ARG TRTLLM_VERSION=v0.13.0
 ARG PROTOBUF_VERSION=4.24.4
