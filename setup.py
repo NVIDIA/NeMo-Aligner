@@ -23,7 +23,7 @@ import os
 import subprocess
 from distutils import cmd as distutils_cmd
 from distutils import log as distutils_log
-
+import re 
 import setuptools
 
 spec = importlib.util.spec_from_file_location("package_info", "nemo_aligner/package_info.py")
