@@ -17,7 +17,12 @@ import math
 import torch
 import torch.nn.functional as F
 
-from nemo_aligner.utils.ppo_utils import calculate_advantages_and_returns, calculate_entropy, calculate_ppo_rewards, calculate_rloo_baseline
+from nemo_aligner.utils.ppo_utils import (
+    calculate_advantages_and_returns,
+    calculate_entropy,
+    calculate_ppo_rewards,
+    calculate_rloo_baseline,
+)
 
 
 class TestCalculateEntropy:
@@ -125,22 +130,13 @@ class TestCalculateAdvantagesAndReturns:
 class TestCalculateRLOOBaseline:
     def test_calculate_rloo_baseline_small_example(self):
 
-        prompts = torch.Tensor([
-            [1, 0],
-            [1, 0],
-            [0, 1],
-            [1, 0],
-            [1, 0],
-            [0, 1],
-            [0, 1],
-            [0, 1],
-        ])
+        prompts = torch.Tensor([[1, 0], [1, 0], [0, 1], [1, 0], [1, 0], [0, 1], [0, 1], [0, 1],])
 
         rewards = torch.Tensor([1, 0, 2, -3, 5, 7, -1, 0])
         mask = torch.Tensor([1, 1, 1, 1, 1, 1, 1, 0])
 
         baseline = calculate_rloo_baseline(prompts, rewards, mask)
 
-        gt_baseline = torch.Tensor([2/3, 1., 3., 2., -2/3, 1/2, 9/2, 8/2])
+        gt_baseline = torch.Tensor([2 / 3, 1.0, 3.0, 2.0, -2 / 3, 1 / 2, 9 / 2, 8 / 2])
 
         assert torch.allclose(baseline, gt_baseline), "computed baseline is not the same as hand example"
