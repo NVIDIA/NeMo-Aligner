@@ -325,7 +325,7 @@ class GRPOTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(train_dataloader.batch_sampler)
         self.set_max_steps()
 
-        self.compute_init_policy_kl = self.cfg.initial_policy_kl_penalty > 0
+        self.compute_init_policy_kl = True
         # size to pad our rollout batch to
         self.rollout_batch_seq_length = self.cfg.rollout_batch_seq_length
 

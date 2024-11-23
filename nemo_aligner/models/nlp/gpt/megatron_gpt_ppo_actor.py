@@ -166,11 +166,10 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
                     loss = actor_loss - (scaled_entropy * self.entropy_bonus)
 
-                    if self.cfg.ppo.initial_policy_kl_penalty > 0:
-                        # TODO: add kl penalty here
-                        init_logprobs = batch["init_logprobs"]
-                        kl = masked_mean(calculate_kl_penalty(curr_log_probs, init_logprobs), is_end_mask)
-                        loss = loss + self.cfg.ppo.initial_policy_kl_penalty * kl
+                    init_logprobs = batch["init_logprobs"]
+                    kl = masked_mean(calculate_kl_penalty(curr_log_probs, init_logprobs), is_end_mask)
+                    loss = loss + self.cfg.ppo.initial_policy_kl_penalty * kl
+
                 else:
                     # hack to disable this update since there are no valid tokens
                     loss = loss1.view(-1)[0] * 0
