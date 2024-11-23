@@ -23,7 +23,7 @@
    In this section, we walk you through the most straightforward alignment method. We use a supervised dataset in the prompt-response pairs format to fine-tune the base model according to the desired behavior.
 
 :ref:`Supervised Fine-Tuning (SFT) with Knowledge Distillation <nemo-aligner-knowledge-distillation>`
-   In this section, we walk through a variation of SFT using Knowledge Distillation where we train a smaller "student" model using a much later "teacher" model.
+   In this section, we walk through a variation of SFT using Knowledge Distillation where we train a smaller "student" model using a larger "teacher" model.
 
 :ref:`Model Alignment by DPO, RPO and IPO <nemo-aligner-dpo>`
    DPO, RPO, and IPO are simpler alignment methods compared to RLHF. DPO introduces a novel parameterization of the reward model in RLHF, which allows us to extract the corresponding optimal policy. Similarly, RPO and IPO provide alternative parameterizations or optimization strategies, each contributing unique approaches to refining model alignment.
