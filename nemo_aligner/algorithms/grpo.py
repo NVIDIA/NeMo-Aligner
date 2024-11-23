@@ -267,6 +267,12 @@ def get_rloo_mean_std(grouped_rewards):
     ) / (num_responses - 1)
     grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt()
 
+    if torch.isnan(grouped_reward_std).any():
+        print("### NANED grouped reward std", grouped_reward_std.sum(-1))
+        print("### NANED grouped square mean", grouped_square_mean.sum(-1))
+        print("### NANED grouped reward mean", grouped_reward_mean.sum(-1))
+        print("### NANED grouped rewards", grouped_rewards.sum(-1))
+
     return grouped_reward_mean, grouped_reward_std
 
 
