@@ -150,7 +150,6 @@ def fill_packing_strategy(
             ## store the boundaries for the chosen, rejected sequences
             _seq_boundaries.append(previous_seq_len + ifile_handles[seq_length][4].pop())
             _seq_boundaries.append(len(_input_ids))
-            print(f'{seq_boundaries=}')
 
         input_ids[oindex] = _input_ids
         labels[oindex] = _labels

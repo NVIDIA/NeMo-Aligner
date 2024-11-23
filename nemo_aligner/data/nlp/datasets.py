@@ -317,7 +317,7 @@ class DPOModelDataset(Dataset):
         if max_curr_seq_len > self.seq_length:
             logging.warning(
                 f"WARNING: Tokenized text exceeds max seq length ({max_curr_seq_len} vs {self.seq_length})."
-                + f"The example will be ignored."
+                f" The example will be ignored."
             )
 
         ## comment this out for now.
@@ -334,6 +334,10 @@ class DPOModelDataset(Dataset):
         labels_reject_tokens = torch.nn.functional.pad(
             torch.LongTensor(reject_labels), (0, max_curr_seq_len - len(reject_labels)), mode="constant", value=-100
         )'''
+        chosen_tokens = torch.LongTensor(chosen)
+        rejected_tokens = torch.LongTensor(reject)
+        labels_chosen_tokens = torch.LongTensor(chosen_labels)
+        labels_reject_tokens = torch.LongTensor(reject_labels)
 
         ignore_example = False
         # ignore the example whose tokenized text exceeds max seq length.
