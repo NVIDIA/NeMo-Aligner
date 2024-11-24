@@ -15,6 +15,7 @@
 """Custom datasets for RLHF training"""
 
 import os
+import random
 
 import numpy as np
 import scipy
@@ -405,6 +406,113 @@ class DPOModelDataset(Dataset):
             "rejected_reward": payload.get("rejected_reward", self.default_rejected_reward),
         }
         return output
+
+
+class RPOModelDataset(Dataset):
+    """This class works only with jsonl files. It assumes each line of the json file is a dictionary
+       with the prompt, along with the chosen response (response only, no prompt), and the rejected response
+       (response only, no prompt). This Dataset will combine the prompt with each corresponding chosen and 
+       rejected response, and then tokenize it. It also returns the labels for each, which is the response tokens
+       with -100 for the prompt part.
+       
+       WARNING: This class will tokenize the text, but it will raise an exception on model max seq len violations!
+                Meaning it will not truncate tokens to fit to model max seq len, because of special prefix/suffix
+                strings such as <extra_id_1>, it would not know where it is safe to truncate for each model. Therefore,
+                the user must do all truncation logic in their preprocessing step when generating the jsonl
+                used by this class. Put all special truncation logic there specific to your model.
+    """
+
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.name = name
+        self.data = data
+        self.drop_last = drop_last
+        self.seq_length = seq_length
+        self.tokenizer = tokenizer
+
+        self.reset_position_ids = cfg.data.get("reset_position_ids", False)
+        self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
+        self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
+        self.eos_id = tokenizer.eos_id
+
+        self.nograd_length = 32
+
+        # Checks
+        assert np.min(documents) >= 0
+        assert np.max(documents) < len(self.data)
+
+    def __len__(self):
+        return len(self.data)
+
+    def encode(self, text, append_eod=False):
+        if self.cfg.data.get("apply_ftfy", False):
+            import ftfy
+
+            text = ftfy.fix_text(text)
+
+        text_ids = self.tokenizer.text_to_ids(text)
+
+        if len(text_ids) > 0 and append_eod:
+            text_ids.append(self.tokenizer.eos_id)
+
+        return text_ids, len(text_ids)
+
+    def __getitem__(self, idx):
+        """Returns a pair of chosen/rejected pairs, their respective lengths, and labels.
+        """
+        payload = self.data[idx]
+        prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
+        responses = []
+        labels = []
+
+        # loop on responses of the given prompt to encode them
+        for resp in payload["responses"]:
+            resp_tokens, resp_len = self.encode(resp, append_eod=self.cfg.data.get("append_eod", False))
+
+            resp_tokens = prompt + resp_tokens
+            resp_len = len(resp_tokens)
+
+            responses.append((resp_tokens, resp_len))
+            labels.append(([-100] * prompt_len) + resp_tokens[prompt_len:])
+
+            assert (
+                resp_tokens[0:prompt_len] == prompt
+            ), "the tokenizer for DPO has merged tokens between prompt and response"
+
+        max_curr_seq_len = max([i[1] for i in responses])
+        if max_curr_seq_len > self.seq_length:
+            logging.warning(
+                f"WARNING: Tokenized text exceeds max seq length ({max_curr_seq_len} vs {self.seq_length})."
+                + f"The example will be ignored."
+            )
+
+        rewards = payload.get("rewards", [random.random() for _ in range(len(responses))])
+        resp_dict = {}
+
+        for ind, (resp, resp_len) in enumerate(responses):
+            resp_tokens = torch.nn.functional.pad(
+                torch.LongTensor(resp), (0, max_curr_seq_len - resp_len), mode="constant", value=self.eos_id
+            )
+            label = labels[ind]
+            label_tokens = torch.nn.functional.pad(
+                torch.LongTensor(label), (0, max_curr_seq_len - len(label)), mode="constant", value=-100
+            )
+
+            # slice if necessary
+            if max_curr_seq_len > self.seq_length:
+                resp_tokens = resp_tokens[: self.nograd_length]
+                label_tokens = torch.ones_like(resp_tokens) * (-100)
+                resp_len = self.nograd_length
+
+            resp_dict["response_" + str(ind + 1)] = resp_tokens
+            resp_dict["labels_" + str(ind + 1)] = label_tokens
+            resp_dict["lengths_" + str(ind + 1)] = resp_len
+            resp_dict["rewards_" + str(ind + 1)] = rewards[ind]
+
+        return resp_dict
 
 
 class KTOModelDataset(Dataset):

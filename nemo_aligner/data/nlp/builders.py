@@ -49,6 +49,7 @@ from nemo_aligner.data.nlp.datasets import (
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
+    RPOModelDataset,
 )
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
@@ -372,6 +373,7 @@ def _build_train_valid_test_datasets(
 build_train_valid_test_rlhf_datasets = partial(build_train_valid_test_datasets, RLHFDataset)
 build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, RewardModelDataset)
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
+build_train_valid_test_rpo_datasets = partial(build_train_valid_test_datasets, RPOModelDataset)
 build_train_valid_test_kto_datasets = partial(build_train_valid_test_datasets, KTOModelDataset)
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
 build_train_valid_test_knowledge_distillation_datasets = partial(
@@ -475,7 +477,7 @@ def build_dataloader(
         "data_parallel_size": parallel_state.get_data_parallel_world_size(),
         "drop_last": drop_last,
         "global_batch_size": gbs,
-        "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
+        # "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
 
     if use_random_sampler:
