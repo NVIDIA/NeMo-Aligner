@@ -15,6 +15,7 @@
 import operator
 import re
 from collections import UserDict, defaultdict
+from concurrent.futures import Future
 from contextlib import nullcontext
 from dataclasses import dataclass
 from itertools import permutations, product
@@ -64,7 +65,7 @@ class DummyFuture:
         new_reward_dictionary = {}
 
         for k, v in self.reward_dictionary.items():
-            if isinstance(v, RMCriticFutureResult):
+            if isinstance(v, (RMCriticFutureResult, Future)):
                 _, v = v.result()
                 v = v.flatten().tolist()
 
