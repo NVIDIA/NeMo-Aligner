@@ -151,7 +151,7 @@ class MegatronMGPTDPOModel(MultimodalGPTModel, NLPAdapterModelMixin, SupervisedI
                 "attention_mask": attention_mask,
                 "labels": None,
                 "loss_mask": None,
-                "media": media,
+                "media": batch.get('media', None),
             }
 
             # TODO: we can remove this someday when we no longer support legacy models
@@ -517,7 +517,6 @@ class MegatronMGPTDPOModel(MultimodalGPTModel, NLPAdapterModelMixin, SupervisedI
         pos_ids = torch.cat((batch["position_ids"], batch["position_ids"]), dim=0)
         labels = torch.cat((batch["chosen_labels"], batch["rejected_labels"]), dim=0)
         
-        #media = torch.cat((batch["chosen_media"], batch["rejected_media"]), dim=0)
         media = TensorList.cat((batch["chosen_media"], batch["rejected_media"]))        
         global_batch = [tokens, masks, pos_ids, media, labels]
 

@@ -343,11 +343,10 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
     """get a copy of the model states in CPU
     """
     cpu_dict = {}
-
     for name, item in model.state_dict().items():
         if isinstance(item, torch.Tensor):
             item = item.detach().to(device="cpu", non_blocking=True, copy=True)
-
+            
         cpu_dict[name] = item
 
     if megatron_amp_O2:
@@ -391,6 +390,9 @@ def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O
     """swap the state dict with a specified state dict, and offload the current state dict onto CPU
         if needed
     """
+    # Unwrap the model if needed    
+    resident_model = resident_model._unwrap_model() if resident_model.use_mcore_dist_optim else resident_model
+        
     offloaded_weights = {}
 
     if offload_onto_cpu:

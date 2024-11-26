@@ -625,6 +625,7 @@ class MultimodalChatDataset(Dataset):
                 self.list_data_dict[i]['images'] = [self.list_data_dict[i]['images']]
 
             images = []
+            image_list = []
             for image_file in self.list_data_dict[i]['images']:
                 image = self.image_loader.open_image(image_file)
                 if image is None:
@@ -656,7 +657,7 @@ class MultimodalChatDataset(Dataset):
 
         current_num_images = len(image_list)
         if current_num_images < MIN_NUM_IMAGES:
-            image_list.append = torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float)
+            image_list.append(torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float))
         data_dict['image'] = image_list
         return data_dict
 

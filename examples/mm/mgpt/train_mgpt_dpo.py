@@ -39,6 +39,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("not", lambda x: not x, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
@@ -51,6 +52,7 @@ def main(cfg) -> None:
     with open_dict(cfg):
         cfg.model.mm_cfg.llm.from_pretrained = None
         cfg.model.mm_cfg.llm.freeze = False
+        cfg.model.position_embedding_type="rope"
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
@@ -67,12 +69,11 @@ def main(cfg) -> None:
         load_base_model_only=False,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
-
     init_peft(ptl_model, cfg.model)
-
+    
     if cfg.model.peft.peft_scheme == "none":
         ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-            ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
+            ptl_model._unwrap_model(), megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
         ptl_model.ref_policy_state_dict = ref_policy_state_dict
 
@@ -92,7 +93,10 @@ def main(cfg) -> None:
     # use the entire dataset
     train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
 
-    image_processor = ptl_model.model.module.image_processor if hasattr(ptl_model.model, "module") else ptl_model.model.image_processor
+    if ptl_model.use_mcore_dist_optim:
+        image_processor = ptl_model.model[0].module.image_processor if hasattr(ptl_model.model[0], "module") else ptl_model.model[0].image_processor
+    else:
+        image_processor = ptl_model.model.module.image_processor if hasattr(ptl_model.model, "module") else ptl_model.model.image_processor
     train_ds, validation_ds, test_ds = build_train_valid_test_dpo_datasets(
         cfg=cfg.model,
         data_prefix=cfg.model.data.data_prefix,

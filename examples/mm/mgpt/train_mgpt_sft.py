@@ -211,7 +211,10 @@ def main(cfg) -> None:
         num_samples = None
 
     collate_fn = DataCollatorForSupervisedDataset(cfg.model, ptl_model.tokenizer)
-    image_processor = ptl_model.model.module.image_processor if hasattr(ptl_model.model, "module") else ptl_model.model.image_processor
+    if ptl_model.use_mcore_dist_optim:
+        image_processor = ptl_model.model[0].module.image_processor if hasattr(ptl_model.model[0], "module") else ptl_model.model[0].image_processor
+    else:
+        image_processor = ptl_model.model.module.image_processor if hasattr(ptl_model.model, "module") else ptl_model.model.image_processor
     train_ds = build_mm_sft_dataset(
         cfg.model,
         train_data_cfg,
