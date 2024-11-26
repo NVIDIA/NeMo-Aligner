@@ -27,7 +27,7 @@ trainer:
 
       # TRTLLM preallocates activation memory according to the number of input tokens
       # By default, assume the max input length is half of the model sequence length
-      max_input_len: ${int_div:${model.encoder_seq_length}, 2}
+      max_input_len: ${subtract:${model.encoder_seq_length}, ${model.self_taught.length_params.max_length}}
       generation_batch_size: ${model.self_taught.rollout_micro_batch_size}
 
       model_type: gptnext
@@ -51,8 +51,8 @@ exp_manager:
   max_time_per_run: ${trainer.max_time}
   create_wandb_logger: False
   wandb_logger_kwargs:
-    project: nemo_aligner_dpo
-    name: rlhf_gpt3_dpo
+    project: nemo_aligner_self_taught
+    name: rlhf_gpt3_self_taught
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   resume_if_exists: True
   resume_ignore_no_checkpoint: True
@@ -75,7 +75,6 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
   offload_adam_states: True
-  dist_ckpt_format: zarr
 
   self_taught:
     rollout_micro_batch_size: 32
@@ -83,73 +82,59 @@ model:
     num_responses_to_gen: 4
     update_ref_policy: True
 
-    bad_response_regex_response: \"$'(?s)(?<=\[assistant modified instruction start\])(.*?)(?=\[assistant modified instruction end\])'\"
-    judgement_regex: \"$'[\[(A|B)\]\]'\"
+    bad_response_regex_response: \"$'(?i)(?s)(?<=\[assistant modified instruction start\])(.*?)(?=\[assistant modified instruction end\])'\"
+    judgement_regex: \"$'(?i)\[\[(A|B|\"A\"|\"B\")\]\]'\"
 
     bad_response_template: |
-      <extra_id_0>System
+      ${model.data.chat_prompt_tokens.system_turn_start}System
       
-      <extra_id_1>User
-      Review the user's question and the corresponding response using the additive 5-point
-      scoring system described below. Points are accumulated based on the satisfaction of each
-      criterion:
-      - Add 1 point if the response is relevant and provides some information related to
-      the user's inquiry, even if it is incomplete or contains some irrelevant content.
-      - Add another point if the response addresses a substantial portion of the user's question,
-      but does not completely resolve the query or provide a direct answer.
-      - Award a third point if the response answers the basic elements of the user's question in a
-      useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-      has elements typically found in blogs or search results.
-      - Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-      addressing the user's question directly and comprehensively, and is well-organized and
-      helpful, even if there is slight room for improvement in clarity, conciseness or focus.
-      - Bestow a fifth point for a response that is impeccably tailored to the user's question
-      by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-      demonstrating a high-quality, engaging, and insightful answer.
+      ${model.data.chat_prompt_tokens.turn_start}User
+      Below is a conversation between an user and an AI Assistant.
       
-      <prompt>{{ prompt }}</prompt>
-      <response>{{ response }}</response>
+      {{ orig_prompt }}
       
-      After examining the user's instruction and the response:
-      - Briefly justify your total score, up to 100 words.
-      - Conclude with the score using the format: "Score: <total points>"
-      Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
-      necessary. To evaluate the response in alignment with this additive scoring model, we'll
-      systematically attribute points based on the outlined criteria.
-      <extra_id_1>Assistant
+      The start of Assistant's Answer
+      {{ orig_response }}
+      The end of Assistant's Answer
+      
+      Please first generate a modified instruction that is highly relevant but not semantically identical to
+      the instruction above from the user. Then write a high-quality answer which is a good response to the
+      modified instruction but not a good response to the original user question. IMPORTANT: Please strictly
+      follow the following format:
+      
+      User Question Modified
+      <provide a modified instruction here>
+      
+      [assistant modified instruction start]
+      <provide a high-quality response to the modified instruction>
+      [assistant modified instruction end]
+      ${model.data.chat_prompt_tokens.turn_start}Assistant
 
     llm_judge_template: |
-      <extra_id_0>System
+      ${model.data.chat_prompt_tokens.system_turn_start}System
       
-      <extra_id_1>User
-      Review the user's question and the corresponding response, along with two judgments.
-      Determine which judgment is more accurate according to the rubric provided below. The
-      rubric used for the initial judgments is as follows:
-      - Add 1 point if the response is relevant and provides some information related to
-      the user's inquiry, even if it is incomplete or contains some irrelevant content.
-      - Add another point if the response addresses a substantial portion of the user's question,
-      but does not completely resolve the query or provide a direct answer.
-      - Award a third point if the response answers the basic elements of the user's question in a
-      useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-      has elements typically found in blogs or search results.
-      - Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-      addressing the user's question directly and comprehensively, and is well-organized and helpful,
-      even if there is slight room for improvement in clarity, conciseness or focus.
-      - Bestow a fifth point for a response that is impeccably tailored to the user's question
-      by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-      demonstrating a high-quality, engaging, and insightful answer.
+      ${model.data.chat_prompt_tokens.turn_start}User
+      Please act as an impartial judge and evaluate the quality of the responses provided by two AI assistants
+      to the user question displayed below. You should choose the assistant that follows the user's instructions
+      and answers the user's question better. Your evaluation should consider factors such as the helpfulness,
+      relevance, accuracy, depth, creativity, and level of detail of their responses. Begin your evaluation by
+      comparing the two responses and provide a short explanation. Avoid any position biases and ensure that
+      the order in which the responses were presented does not influence your decision. Do not allow the length
+      of the responses to influence your evaluation. Do not favor certain names of the assistants. Be as objective
+      as possible. After providing your explanation, output your final verdict by strictly following this format:
+      "[[A]]" if assistant A is better, "[[B]]" if assistant B is better.
       
-      <prompt>{{ prompt }}<prompt>
-      <response>{{ response }}<response>
-      <judgement A>{{ judgement_a }}<judgement A>
-      <judgement B>{{ judgement_b }}<judgement B>
+      [[User Question]]
+      {{ orig_prompt }}
       
-      After examining the original question, response, and both judgments:
-      - Explain which judgment is more accurate according to the original rubric and why.
-      Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
-      consistency in applying the criteria.
-      - Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
-      <extra_id_1>Assistant
+      [The Start of Assistant A's Answer]
+      {{ response_A }}
+      [The End of Assistant A's Answer]
+      
+      [The Start of Assistant B's Answer]
+      {{ response_B }}
+      [The End of Assistant B's Answer]
+      ${model.data.chat_prompt_tokens.turn_start}Assistant
 
 
     # params for generation

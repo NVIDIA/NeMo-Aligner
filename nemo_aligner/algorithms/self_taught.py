@@ -341,8 +341,8 @@ class SelfTaughtTrainer:
         else:
             self.tokenizer = self.model.tokenizer
 
-        self.bad_response_template = DEFAULT_BAD_RESPONSE_PROMPT_LLAMA3 #self.model.cfg.self_taught.get("bad_response_template", DEFAULT_BAD_RESPONSE_PROMPT)
-        self.llm_judge_template = DEFAULT_JUDGEMENT_ANNOTATION_LLAMA3 #self.model.cfg.self_taught.get("llm_judge_template", DEFAULT_JUDGEMENT_ANNOTATION)
+        self.bad_response_template = self.model.cfg.self_taught.get("bad_response_template", DEFAULT_BAD_RESPONSE_PROMPT).strip()
+        self.llm_judge_template = self.model.cfg.self_taught.get("llm_judge_template", DEFAULT_JUDGEMENT_ANNOTATION).strip()
         #self.bad_response_regex_prompt = self.model.cfg.self_taught.get("bad_response_regex_prompt", DEFAULT_BAD_REGEX_TEMPLATE_PROMPT)
         self.bad_response_regex_resp = DEFAULT_BAD_REGEX_TEMPLATE_RESP #self.model.cfg.self_taught.get("bad_response_regex_response", DEFAULT_BAD_REGEX_TEMPLATE_RESP)
         self.judgement_regex = DEFAULT_JUDGEMENT_REGEX_TEMPLATE #self.model.cfg.self_taught.get("judgement_regex", DEFAULT_JUDGEMENT_REGEX_TEMPLATE)

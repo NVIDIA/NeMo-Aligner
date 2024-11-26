@@ -37,10 +37,17 @@ from nemo_aligner.utils.train_script_utils import (
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
+try:
+    import torch._dynamo
+    torch._dynamo.config.suppress_errors = True
+except:
+    pass
+
 """Script to start Self-Taught training"""
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
+OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
