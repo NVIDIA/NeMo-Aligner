@@ -343,6 +343,7 @@ def get_rloo_mean_std(grouped_rewards):
         print("### NANED grouped square mean", grouped_square_mean.sum(-1))
         print("### NANED grouped reward mean", grouped_reward_mean.sum(-1))
         print("### NANED grouped rewards", grouped_rewards.sum(-1))
+        print("### NANED grouped rewards", grouped_rewards)
 
     return grouped_reward_mean, grouped_reward_std
 
