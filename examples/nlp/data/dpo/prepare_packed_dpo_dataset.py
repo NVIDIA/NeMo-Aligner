@@ -51,8 +51,13 @@ def tokenize_dataset(cfg: 'DictConfig'):
     if cfg.tokenizer_type=="huggingface":
         # pass in a Hugging Face folder which contains tokenizer.json
         tokenizer = get_nmt_tokenizer(library="huggingface", model_name=cfg.tokenizer_path, use_fast=True)
-    else:
+    elif cfg.tokenizer_type=="sentencepiece":
         tokenizer = get_nmt_tokenizer(library="sentencepiece", tokenizer_model=cfg.tokenizer_path)
+    elif cfg.tokenizer_type=="tiktoken":
+        ## TODO: tokenizer_model unused?
+        tokenizer = get_nmt_tokenizer(library="tiktoken", vocab_file=cfg.tokenizer_path, tokenizer_model=cfg.tokenizer_path)
+    else:
+        raise ValueError(f"{cfg.tokenizer_type=} not supported")
 
     with open(cfg.model.data.data_prefix, "r", encoding="utf_8") as fr:
         data_payload = [json.loads(line.strip()) for line in fr]
