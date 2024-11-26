@@ -897,7 +897,7 @@ class SelfRewardingTrainer:
         self.logger.finalize()
 
         if self.use_trtllm_generation:
-            self.trtllm_generate.free(force_unload=True)
+            self.trtllm_generate.free()
 
     def save(self, extra_candidates=None, is_train_end=False):
         # load back in the adam states if needed
