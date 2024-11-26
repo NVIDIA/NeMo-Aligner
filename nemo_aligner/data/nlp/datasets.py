@@ -21,6 +21,7 @@ import numpy as np
 import scipy
 import torch
 from omegaconf import OmegaConf
+from typing import Optional
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
