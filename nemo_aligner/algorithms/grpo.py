@@ -66,8 +66,8 @@ class DummyFuture:
 
         for k, v in self.reward_dictionary.items():
             if isinstance(v, (RMCriticFutureResult, Future)):
-                _, v = v.result()
-                v = v.flatten().tolist()
+                v = v.result()["rewards"]
+                v = list(v.flatten())
 
             new_reward_dictionary[k] = v
 
