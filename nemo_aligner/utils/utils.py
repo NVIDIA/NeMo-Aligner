@@ -333,14 +333,15 @@ def collate_with_batch_max_sequence_length(
     texts = [item["text"] for item in data_batch]
     loss_multipliers = torch.as_tensor([item["loss_multiplier"] for item in data_batch]).view(len(data_batch), 1)
     lengths = torch.as_tensor([item["length"] for item in data_batch])
-    # answer = [item["answer"] for item in data_batch]
+    answer = [item["answer"] for item in data_batch]
+    dataset = [item["dataset"] for item in data_batch]
     idx = [item["idx"] for item in data_batch]
 
     batch_max_length = lengths.max()
 
     texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
-    output = {"text": texts, "length": lengths, "idx": idx}
+    output = {"text": texts, "length": lengths, "idx": idx, "answer": answer, "dataset": dataset}
 
     other = {}
     if generate_masks_and_position_ids:

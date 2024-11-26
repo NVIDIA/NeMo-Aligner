@@ -156,10 +156,8 @@ class RemoteGPTRMCriticClient:
             new_texts.append(text)
 
         data = {"sentences": _str_list2numpy(new_texts)}
-        future = run_if_model_parallel_src(
-            self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=data,
-        )
-        return RMCriticFutureResult(future, None, self.combine_rm_and_critic_server, None)
+        future = self.communicator.send_data_to_server(server_name=self.cfg.reward_model.name, data=data,)
+        return future
 
     def infer_rm_critic(self, rollout_batch):
         response_tokens = rollout_batch["response_tokens"].cpu()

@@ -14,8 +14,9 @@
 
 import operator
 import re
-from collections import UserDict
+from collections import UserDict, defaultdict
 from contextlib import nullcontext
+from dataclasses import dataclass
 from itertools import permutations, product
 from typing import Dict, List, Optional
 
@@ -26,7 +27,7 @@ from megatron.core import parallel_state as mcore_parallel_state
 from megatron.core.utils import divide
 
 # from nemo_skills.code_execution.math_grader import extract_answer
-# from nemo_skills.code_execution.sandbox import get_sandbox
+from nemo_skills.code_execution.sandbox import get_sandbox
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 from typing_extensions import Self
@@ -35,6 +36,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import M
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
+from nemo_aligner.models.nlp.gpt.reward_critic_clients import RMCriticFutureResult
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     SyncTimer,
@@ -49,6 +51,74 @@ from nemo_aligner.utils.ppo_utils import calculate_ppo_rewards, create_mask
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict
+
+
+@dataclass
+class DummyFuture:
+    send_dictionary_ids: dict
+    reward_dictionary: list
+
+    def result(self):
+        max_idx = max(max(v) for v in self.send_dictionary_ids.values())
+        full_reward_list = [None for _ in range(max_idx + 1)]
+        new_reward_dictionary = {}
+
+        for k, v in self.reward_dictionary.items():
+            if isinstance(v, RMCriticFutureResult):
+                _, v = v.result()
+                v = v.flatten().tolist()
+
+            new_reward_dictionary[k] = v
+
+        for dataset in self.send_dictionary_ids:
+
+            for (idx, r) in zip(self.send_dictionary_ids[dataset], new_reward_dictionary[dataset]):
+                full_reward_list[idx] = r
+
+        return full_reward_list, new_reward_dictionary
+
+
+def get_verifier_results(rollout_batch, batch, tokenizer, rm_critic, sandbox):
+    send_dictionary = defaultdict(list)
+    send_dictionary_ids = defaultdict(list)
+
+    for i, (dataset, prompt_length, response_tokens, response_lengths, expected_answer) in enumerate(
+        zip(
+            batch["dataset"],
+            batch["length"],
+            rollout_batch["response_tokens"],
+            rollout_batch["response_lengths"],
+            batch["answer"],
+        )
+    ):
+        if dataset == "math":
+            text = extract_answer(tokenizer.ids_to_text(response_tokens[prompt_length:response_lengths].tolist()))
+            inputs = (text, expected_answer)
+            send_dictionary[dataset].append(inputs)
+
+        elif dataset == "helpsteer":
+            text = tokenizer.ids_to_text(response_tokens[:response_lengths].tolist())
+            send_dictionary[dataset].append(text)
+        else:
+            raise NotImplementedError(f"{dataset=} query is not implemented!")
+
+        send_dictionary_ids[dataset].append(i)
+
+    reward_dictionary = {}
+
+    for dataset, input_list in send_dictionary.items():
+        if dataset == "math":
+            rewards = [sandbox.is_output_correct(*item) for item in input_list]
+            rewards = [0 if r is None else r for r in rewards]
+        elif dataset == "helpsteer":
+            # TODO: query the helpsteer first
+            rewards = rm_critic.infer_rm(input_list)
+        else:
+            raise NotImplementedError(f"dataset query is not implemented!")
+
+        reward_dictionary[dataset] = rewards
+
+    return DummyFuture(send_dictionary_ids, reward_dictionary)
 
 
 def extract_answer(string: str, extract_from_boxed: bool = True, extract_regex: str = r"The final answer is (.+)$"):
@@ -308,7 +378,7 @@ class GRPOTrainer:
         self.ckpt_callback = ckpt_callback
 
         # TODO: we need to send it once per TP rank, but do that later i guess...
-        # self.sandbox = get_sandbox()
+        self.sandbox = get_sandbox()
 
         # sanity check
         # assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
@@ -511,12 +581,10 @@ class GRPOTrainer:
                 rollout_batch = self.model.infer(batch, use_greedy=is_validation)
                 rollout_batches.append(rollout_batch)
 
-                # futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
-                texts = [
-                    self.model.tokenizer.ids_to_text(item[:length].tolist())
-                    for item, length in zip(rollout_batch["response_tokens"], rollout_batch["response_lengths"])
-                ]
-                futures.append(self.rm_critic.infer_rm(texts))
+                future = run_if_model_parallel_src(
+                    get_verifier_results, rollout_batch, batch, self.model.tokenizer, self.rm_critic, self.sandbox
+                )
+                futures.append(future)
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -544,22 +612,41 @@ class GRPOTrainer:
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
         all_rewards = []
+        reward_dictionary_default = defaultdict(list)
         for future in futures:
-            _, reward = future.result()
-            all_rewards.extend(reward.flatten())
+            if future is not None:
+                reward, reward_dictionary = future.result()
 
-        all_rewards = torch.as_tensor(all_rewards)
+                for k, v in reward_dictionary.items():
+                    reward_dictionary_default[k].extend(v)
+
+                all_rewards.extend(reward)
+
+        all_rewards = torch.as_tensor(all_rewards, dtype=torch.float32)
+        all_rewards = broadcast_2d_tensor_within_mp(all_rewards.view(1, -1)).flatten()
+
+        obj_list = [None for _ in range(parallel_state.get_data_parallel_world_size())]
+        torch.distributed.all_gather_object(
+            obj_list, reward_dictionary_default, group=parallel_state.get_data_parallel_group()
+        )
+
+        reward_dictionary_all_together = defaultdict(list)
+        for item in obj_list:
+            for k, v in item.items():
+                reward_dictionary_all_together[k].extend(v)
 
         balanced_local_batch.update({"rewards": all_rewards})
         # gather the global rollout batch
         global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
         return (
             balanced_local_batch,
-            cpu_dict(self.compute_rollout_metrics(global_rollout_batch, num_responses)),
+            cpu_dict(
+                self.compute_rollout_metrics(global_rollout_batch, num_responses, reward_dictionary_all_together)
+            ),
             timer_metrics,
         )
 
-    def compute_rollout_metrics(self, rollout_batch, num_responses):
+    def compute_rollout_metrics(self, rollout_batch, num_responses, rewards_all_together):
         table = {}
 
         prompt_lengths = rollout_batch["prompt_lengths"]
@@ -578,6 +665,11 @@ class GRPOTrainer:
         table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
         table["response"] = self.model.tokenizer.ids_to_text(response_token[prompt_length:response_length].tolist())
 
+        _granular_metrics = {}
+        for k, v in rewards_all_together.items():
+            _granular_metrics[f"{k}_rewards"] = torch.as_tensor(v, dtype=torch.float32).mean().item()
+            _granular_metrics[f"{k}_count"] = len(v)
+
         metrics = {
             "table": table,
             "rollout_size": prompt_lengths.size(0) // num_responses,
@@ -586,7 +678,7 @@ class GRPOTrainer:
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
             "rewards": rewards.mean().item(),
             "fraction_of_samples_properly_ended": is_end.float().mean().item(),
-        }
+        } | _granular_metrics
 
         return metrics
 
