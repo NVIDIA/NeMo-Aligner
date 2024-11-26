@@ -15,14 +15,21 @@
 """Custom datasets for RLHF training"""
 
 import os
+from typing import Dict, List
 
 import numpy as np
 import scipy
 import torch
+from omegaconf import OmegaConf
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import (
+    GPTSFTChatDataset,
+    _get_header_conversation_type_mask_role,
+    get_prompt_template_example,
+)
 from nemo.core import Dataset
 from nemo.utils import logging
 
@@ -345,16 +352,97 @@ class DPOModelDataset(Dataset):
 
         return text_ids, len(text_ids)
 
+    @staticmethod
+    def _convert_messages(
+        input_list: List[Dict[str, str]]
+    ) -> Dict:  # TODO: (@adithyare) this method should live elsewhare..
+        """
+        args:
+            input_list: is a list of dicts in the openai format
+                for example:
+                [{"role": "system", "content": "you are helpful},
+                {"role": "user", "content": "Why is the sky blue?"},
+                {"role": "assistant", "content": "Because blablabla"},
+                ...]
+        returns:
+            output_dict: a dict in nemo's format {"system": "sytem prompt",
+                                                 "conversation": [],
+                                                 ...
+                                                } 
+        """
+        output_dict = {
+            "system": "",
+            "conversations": [],
+            "mask": "User",
+            "type": "VALUE_TO_TEXT",
+        }
+
+        # Extract the system message
+        num_system_msg = 0
+        for msg in input_list:
+            if msg["role"] == "system":
+                output_dict["system"] = msg["content"]
+                num_system_msg += 1
+            if num_system_msg > 1:
+                raise RuntimeError("Multiple system messages seen, please consolidate into a single system message.")
+
+        # Build the conversations list
+        for msg in input_list:
+            if msg["role"] != "system":
+                conversation_entry = {
+                    "from": msg["role"].capitalize(),  # Capitalize 'user' and 'assistant'
+                    "value": msg["content"],
+                    "label": None,
+                }
+                output_dict["conversations"].append(conversation_entry)
+
+        return output_dict
+
+    def convert(self, messages):
+        """
+        args:
+            messages: is a list of dicts in the openai format
+                for example:
+                [{"role": "system", "content": "you are helpful},
+                {"role": "user", "content": "Why is the sky blue?"},
+                {"role": "assistant", "content": "Because blablabla"},
+                ...]
+        returns:
+            conversation:  is a string formatted with the chat template
+        """
+        if OmegaConf.select(self.cfg, "data.chat_prompt_tokens") is None:
+            raise RuntimeError(
+                "You don't have a model (model_config.yaml) which has chat_prompt_tokens, are you sure this is a Chat/Instruction model?"
+            )
+        special_tokens = self.cfg.data.chat_prompt_tokens
+        nemo_source = self._convert_messages(messages)
+        header, conversation, data_type, mask_role = _get_header_conversation_type_mask_role(
+            nemo_source, special_tokens
+        )
+        return conversation
+
     def __getitem__(self, idx):
         """Returns a pair of chosen/rejected pairs, their respective lengths, and labels."""
         payload = self.data[idx]
-        prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
-        chosen, chosen_len = self.encode(
-            payload["prompt"] + payload["chosen_response"], append_eod=self.cfg.data.get("append_eod", False)
-        )
-        reject, reject_len = self.encode(
-            payload["prompt"] + payload["rejected_response"], append_eod=self.cfg.data.get("append_eod", False)
-        )
+
+        if isinstance(payload["prompt"], str):
+            # (@adithyare) format with hardcoded chat tokens
+            # will allow this for the time being.
+            prompt_fmtd = payload["prompt"]
+            chosen_fmtd = payload["prompt"] + payload["chosen_response"]
+            rejected_fmtd = payload["prompt"] + payload["rejected_response"]
+            logging.warning(
+                "Pre-formatting chat conversation as string with hardcoded chat tokens will be deprecated."
+            )  # (@adithyare) this will spam the console for now.
+        else:
+            prompt_fmtd = self.convert(payload["prompt"])  # (@adithyare) read var as "prompt formatted"
+            chosen_fmtd = self.convert(payload["prompt"] + [payload["chosen_response"]])
+            rejected_fmtd = self.convert(payload["prompt"] + [payload["rejected_response"]])
+
+        prompt, prompt_len = self.encode(prompt_fmtd, append_eod=False)
+        chosen, chosen_len = self.encode(chosen_fmtd, append_eod=self.cfg.data.get("append_eod", False))
+        reject, reject_len = self.encode(rejected_fmtd, append_eod=self.cfg.data.get("append_eod", False))
+
         # chosen_response_only, chosen_response_len = self.encode(payload['chosen_response'])
         # reject_response_only, reject_response_len = self.encode(payload['rejected_response'])
         chosen_labels = ([-100] * prompt_len) + chosen[prompt_len:]

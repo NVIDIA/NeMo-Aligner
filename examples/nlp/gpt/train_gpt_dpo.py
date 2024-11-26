@@ -26,7 +26,7 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_dpo_packed_datasets,
     identity_collate,
 )
-from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
+from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel, MegatronMambaDPOModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -58,7 +58,7 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
 
     ptl_model = load_from_nemo(
-        MegatronGPTDPOModel,
+        MegatronMambaDPOModel if cfg.model.mamba_hybrid else MegatronGPTDPOModel,
         cfg.model,
         trainer,
         strict=True,
