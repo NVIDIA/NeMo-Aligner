@@ -27,6 +27,59 @@ from nemo.core import Dataset
 from nemo.utils import logging
 
 
+class KnowledgeDistillationDataset(Dataset):
+    """The knowledge distillation dataset takes in raw tokens, labels, loss masks, and the teacher models' predictive top tokens & logits.
+    """
+
+    def __init__(
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+    ):
+        super().__init__()
+        self.cfg = cfg
+        self.name = name
+        self.data = data
+        self.seq_length = seq_length
+
+        self.nograd_length = 32
+
+        # Checks
+        assert np.min(documents) >= 0
+        assert np.max(documents) < len(self.data)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        """Returns a SFT example with topk_logits, topk_token_ids and target log_sum_exp_logits
+        """
+        payload = self.data[idx]
+        for key in ["tokens", "labels", "loss_mask", "topk_token_ids"]:
+            assert key in payload, f"{key} not in the data"
+            payload[key] = torch.tensor(payload[key], dtype=torch.int64)
+        for key in ["topk_logits", "log_sum_exp_logits"]:
+            assert key in payload, f"{key} not in the data"
+            payload[key] = torch.tensor(payload[key], dtype=torch.float32)
+
+        if self.cfg.data.top_k is not None:
+            payload["topk_logits"] = payload["topk_logits"][..., : self.cfg.data.top_k]
+            payload["topk_token_ids"] = payload["topk_token_ids"][..., : self.cfg.data.top_k]
+
+        length = len(payload["tokens"])
+        if length > self.seq_length:
+            logging.warning(
+                f"WARNING: Tokenized text exceeds max seq length ({length} vs {self.seq_length})."
+                + f"The example will be ignored."
+            )
+            # ignore the example whose tokenized text exceeds max seq length.
+            for key in ["tokens", "labels", "topk_logits", "topk_token_ids", "log_sum_exp_logits"]:
+                payload[key] = payload[key][
+                    : self.nograd_length
+                ]  ## make dummy example very short to reduce computation
+            payload["loss_mask"] = torch.zeros_like(payload["tokens"])
+
+        return payload
+
+
 class RLHFDataset(Dataset):
     def __init__(
         self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
@@ -135,7 +188,7 @@ class RLHFDataset(Dataset):
 
 class RewardModelDataset(Dataset):
     """This class assumes that we only have 2 responses per prompt that is ranked. Chosen is the better
-        one(even index) whereas Rejected is the worse response(odd index)
+    one(even index) whereas Rejected is the worse response(odd index)
     """
 
     def __init__(
@@ -185,8 +238,7 @@ class RewardModelDataset(Dataset):
         return text_ids, len(text_ids)
 
     def __getitem__(self, idx, multiple=2):
-        """Returns a pair of chosen/rejected pairs, and their respective lengths.
-        """
+        """Returns a pair of chosen/rejected pairs, and their respective lengths."""
         found = False
         while not found:
             chosen = self.data[multiple * idx]
@@ -241,16 +293,16 @@ class RewardModelDataset(Dataset):
 
 class DPOModelDataset(Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
-       with the prompt, along with the chosen response (response only, no prompt), and the rejected response
-       (response only, no prompt). This Dataset will combine the prompt with each corresponding chosen and 
-       rejected response, and then tokenize it. It also returns the labels for each, which is the response tokens
-       with -100 for the prompt part.
-       
-       WARNING: This class will tokenize the text, but it will raise an exception on model max seq len violations!
-                Meaning it will not truncate tokens to fit to model max seq len, because of special prefix/suffix
-                strings such as <extra_id_1>, it would not know where it is safe to truncate for each model. Therefore,
-                the user must do all truncation logic in their preprocessing step when generating the jsonl
-                used by this class. Put all special truncation logic there specific to your model.
+    with the prompt, along with the chosen response (response only, no prompt), and the rejected response
+    (response only, no prompt). This Dataset will combine the prompt with each corresponding chosen and
+    rejected response, and then tokenize it. It also returns the labels for each, which is the response tokens
+    with -100 for the prompt part.
+
+    WARNING: This class will tokenize the text, but it will raise an exception on model max seq len violations!
+             Meaning it will not truncate tokens to fit to model max seq len, because of special prefix/suffix
+             strings such as <extra_id_1>, it would not know where it is safe to truncate for each model. Therefore,
+             the user must do all truncation logic in their preprocessing step when generating the jsonl
+             used by this class. Put all special truncation logic there specific to your model.
     """
 
     def __init__(
@@ -294,8 +346,7 @@ class DPOModelDataset(Dataset):
         return text_ids, len(text_ids)
 
     def __getitem__(self, idx):
-        """Returns a pair of chosen/rejected pairs, their respective lengths, and labels.
-        """
+        """Returns a pair of chosen/rejected pairs, their respective lengths, and labels."""
         payload = self.data[idx]
         prompt, prompt_len = self.encode(payload["prompt"], append_eod=False)
         chosen, chosen_len = self.encode(
@@ -309,16 +360,14 @@ class DPOModelDataset(Dataset):
         chosen_labels = ([-100] * prompt_len) + chosen[prompt_len:]
         reject_labels = ([-100] * prompt_len) + reject[prompt_len:]
 
-        assert chosen[0:prompt_len] == prompt, "the tokenizer for DPO has merged tokens between prompt and response"
-        assert reject[0:prompt_len] == prompt, "the tokenizer for DPO has merged tokens between prompt and response"
+        assert (
+            chosen[0:prompt_len] == prompt
+        ), f"The tokenizer for DPO has merged tokens between prompt and response for {idx=}:\n[[prompt]]={repr(payload['prompt'])}\n[[chosen_response]]={repr(payload['chosen_response'])}"
+        assert (
+            reject[0:prompt_len] == prompt
+        ), f"The tokenizer for DPO has merged tokens between prompt and response for {idx=}:\n[[prompt]]={repr(payload['prompt'])}\n[[rejected_response]]={repr(payload['rejected_response'])}"
 
         max_curr_seq_len = max(chosen_len, reject_len)
-
-        if max_curr_seq_len > self.seq_length:
-            logging.warning(
-                f"WARNING: Tokenized text exceeds max seq length ({max_curr_seq_len} vs {self.seq_length})."
-                f" The example will be ignored."
-            )
 
         ## comment this out for now.
         ## we don't want padding between sequences when packing
@@ -342,6 +391,10 @@ class DPOModelDataset(Dataset):
         ignore_example = False
         # ignore the example whose tokenized text exceeds max seq length.
         if max_curr_seq_len > self.seq_length:
+            logging.warning(
+                f"WARNING: Tokenized text exceeds max seq length ({max_curr_seq_len} vs {self.seq_length})."
+                + f"The example will be ignored."
+            )
             chosen_tokens = chosen_tokens[: self.nograd_length]
             rejected_tokens = rejected_tokens[: self.nograd_length]
             labels_chosen_tokens = torch.ones_like(chosen_tokens) * (-100)
@@ -368,7 +421,7 @@ class DPOPackedDataset(DPOModelDataset):
     """
 
     def __init__(
-        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True #, return_cu_seqlen: bool = True ## should always be true
+        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True, # return_cu_seqlen: bool = True ## should always be true
     ):
 
         #np.random.seed(seed) ## TODO: why is this needed in sft dataset?
@@ -417,7 +470,7 @@ class DPOPackedDataset(DPOModelDataset):
         return final_item
 
     ## TODO: unused arguments
-    def collate_fn(self, batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False):
+    def collate_fn(self, batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False, pad_length_to_multiple_of: Optional[int] = None):
         def combine_keys(key):
             return [item[key] for item in batch]
 
@@ -457,6 +510,7 @@ class DPOPackedDataset(DPOModelDataset):
         max_length = min(self.seq_length, self._ceil_to_nearest(max_length, 16)) ##self.pad_seq_length_to_mult)) ## TODO: support
         assert max_length <= self.seq_length
 
+        ## TODO: double check position_ids
         position_ids: List[List[int]] = []
         cu_seqlens: List[List[int]] = []
         for item in batch:
@@ -472,7 +526,14 @@ class DPOPackedDataset(DPOModelDataset):
         assert len(input_ids[0]) == len(
             position_ids[0]
         ), "Dataset problem: input_ids and position_ids lengths don't match"
-        
+
+        if pad_length_to_multiple_of:
+            max_seq_len = torch.tensor(input_ids.shape[1], device=torch.cuda.current_device())
+            torch.distributed.all_reduce(
+                max_seq_len, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
+            )
+            max_length = math.ceil(max_seq_len / pad_length_to_multiple_of) * pad_length_to_multiple_of
+
         input_ids = self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
         labels = self._collate_item(labels, max_length=max_length, pad_id=-100)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
@@ -514,16 +575,16 @@ class DPOPackedDataset(DPOModelDataset):
 
 class KTOModelDataset(Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
-       with the prompt, along with the response (response only, no prompt), and the status denoting whether the response is
-       chosen or rejected. This Dataset will combine the prompt with the corresponding response, and then tokenize it. It 
-       will also create a score field that has 1 if the sample is chosen and 0 if rejected. It also returns the labels for 
-       each, which is the response tokens with -100 for the prompt part.
-       
-       WARNING: This class will tokenize the text, but it will raise an exception on model max seq len violations!
-                Meaning it will not truncate tokens to fit to model max seq len, because of special prefix/suffix
-                strings such as <extra_id_1>, it would not know where it is safe to truncate for each model. Therefore,
-                the user must do all truncation logic in their preprocessing step when generating the jsonl
-                used by this class. Put all special truncation logic there specific to your model.
+    with the prompt, along with the response (response only, no prompt), and the status denoting whether the response is
+    chosen or rejected. This Dataset will combine the prompt with the corresponding response, and then tokenize it. It
+    will also create a score field that has 1 if the sample is chosen and 0 if rejected. It also returns the labels for
+    each, which is the response tokens with -100 for the prompt part.
+
+    WARNING: This class will tokenize the text, but it will raise an exception on model max seq len violations!
+             Meaning it will not truncate tokens to fit to model max seq len, because of special prefix/suffix
+             strings such as <extra_id_1>, it would not know where it is safe to truncate for each model. Therefore,
+             the user must do all truncation logic in their preprocessing step when generating the jsonl
+             used by this class. Put all special truncation logic there specific to your model.
     """
 
     def __init__(
@@ -607,14 +668,14 @@ class KTOModelDataset(Dataset):
 
 
 class RegressionRewardModelDataset(RewardModelDataset):
-    """This class assumes each line of the dataset file is a dictionary with "text" and "label" field, 
-        where "text" is a string representing the input prompt, and "label" is a list of float or int values. 
-        Note that when training the model with multiple datasets which contain different attributes,
-        we should set missing attributes to model.regression.loss_mask_val(according to training_rm.yaml)
-        in the dataset files so that their losses are masked. At least one attribute should be present for each sample.
+    """This class assumes each line of the dataset file is a dictionary with "text" and "label" field,
+    where "text" is a string representing the input prompt, and "label" is a list of float or int values.
+    Note that when training the model with multiple datasets which contain different attributes,
+    we should set missing attributes to model.regression.loss_mask_val(according to training_rm.yaml)
+    in the dataset files so that their losses are masked. At least one attribute should be present for each sample.
 
-        WARNING: It's recommended to preprocess your data in advance to ensure all samples are within self.seq_length.
-                 Otherwise if all samples in a batch are longer than self.seq_length, you may get NaN loss.
+    WARNING: It's recommended to preprocess your data in advance to ensure all samples are within self.seq_length.
+             Otherwise if all samples in a batch are longer than self.seq_length, you may get NaN loss.
     """
 
     def __init__(

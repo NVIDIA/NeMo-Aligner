@@ -37,7 +37,7 @@ MIN_LR=$(awk -v var="$LR" 'BEGIN {print var - 1e-11}')
 TRAIN_DATA_PATH=$SCRIPT_DIR/test_data/synthetic-123.jsonl
 VALID_DATA_PATH=$SCRIPT_DIR/test_data/synthetic-123.jsonl
 
-NAME="ppo_test"
+NAME="reinforce_test"
 
 # PARAMETERS
 RESULTS_DIR="/tmp/${NAME}"
@@ -46,64 +46,36 @@ mkdir -p $RESULTS_DIR
 GPFS=$(git rev-parse --show-toplevel)
 
 # W&B Logging
-PROJECT=ppo_test
+PROJECT=reinforce_test
 
-CRITIC_CONFIG_PATH="$GPFS/examples/nlp/gpt/conf/"
-CRITIC_CONFIG_NAME="gpt_ppo_critic"
+REWARD_LOG_DIR="${RESULTS_DIR}/reward_results"
+REWARD_PORT=5555
 
-CRITIC_LOG_DIR="${RESULTS_DIR}/critic_results"
-CRITIC_PORT=5567
+mkdir -p $REWARD_LOG_DIR
 
-mkdir -p $CRITIC_LOG_DIR
+REWARD_NAME="${NAME}_reward"
 
-CRITIC_NAME="${NAME}_critic"
-
-critic() {
+reward() {
 export CUDA_VISIBLE_DEVICES=0
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
-python -u ${GPFS}/examples/nlp/gpt/serve_ppo_critic.py \
-    --config-path=${CRITIC_CONFIG_PATH} \
-    --config-name=${CRITIC_CONFIG_NAME} \
+python -u ${GPFS}/examples/nlp/gpt/serve_reward_model.py \
     trainer.devices=1 \
     trainer.num_nodes=1 \
-    exp_manager.explicit_log_dir=${CRITIC_LOG_DIR} \
-    exp_manager.create_wandb_logger=True \
-    exp_manager.wandb_logger_kwargs.name=${CRITIC_NAME} \
-    exp_manager.wandb_logger_kwargs.project=${PROJECT} \
-    trainer.ppo.inference_micro_batch_size=1 \
+    inference.port=${REWARD_PORT} \
     ++model.tensor_model_parallel_size=1 \
     ++model.pipeline_model_parallel_size=1 \
-    trainer.ppo.port=${CRITIC_PORT} \
-    ++model.reward_model_type=regression \
-    ++model.regression.num_attributes=1 \
-    ++model.forward_mbs=1 \
-    ++model.micro_batch_size=1 \
-    ++model.global_batch_size=1 \
-    ++model.tensor_model_parallel_size=1 \
-    ++model.optim.bucket_cap_mb=200 \
-    ++model.optim.overlap_grad_sync=False \
-    ++model.optim.contiguous_grad_buffer=True \
-    ++trainer.ppo.pad_sequence_length_to_multiple=32 \
-    model.reward_standardization.enable=True \
-    model.reward_standardization.mean=5.3735 \
-    model.reward_standardization.std=1.2723 \
-    pretrained_checkpoint.restore_from_path=${RM_NEMO_FILE} \
-    ++model.mcore_gpt=True \
-    exp_manager.create_checkpoint_callback=False \
-    \
-    exp_manager.create_wandb_logger=False \
-    model.encoder_seq_length=$((1024+512)) # generation + input len
-
+    ++model.dist_ckpt_load_strictness=log_all \
+    rm_model_file=${RM_NEMO_FILE}
 }
-critic_log_file=$(mktemp /tmp/critic-ppo-log-XXXXXX)
+reward_log_file=$(mktemp /tmp/reward-reinforce-log-XXXXXX)
 if [[ $RUN_ONLY =~ actor* ]]; then
-    echo SKIPPING CRITIC
-elif [[ $RUN_ONLY == critic ]]; then
-    critic 2>&1 | stdbuf -o0 sed 's/^/[CRITIC_SERVER]: /' | tee $critic_log_file
+    echo SKIPPING REWARD
+elif [[ $RUN_ONLY == reward ]]; then
+    reward 2>&1 | stdbuf -o0 sed 's/^/[REWARD_SERVER]: /' | tee $reward_log_file
     exit $?
 else
-    critic 2>&1 | stdbuf -o0 sed 's/^/[CRITIC_SERVER]: /' | tee $critic_log_file &
+    reward 2>&1 | stdbuf -o0 sed 's/^/[REWARD_SERVER]: /' | tee $reward_log_file &
 fi
 
 if [[ -z "${FAST:-}" ]]; then
@@ -111,22 +83,17 @@ if [[ -z "${FAST:-}" ]]; then
 fi
 #########################################################################################
 
-CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
-CONF_NAME="gpt_ppo_actor"
-
 ACTOR_LOG_DIR="${RESULTS_DIR}/actor_results"
 mkdir -p $ACTOR_LOG_DIR
 
 ACTOR_NAME="${NAME}_actor"
-host_critic=localhost
+host_reward=localhost
 
 actor() {
 export CUDA_VISIBLE_DEVICES=0,1
 export PYTHONPATH="${GPFS}:${PYTHONPATH:-}"
 export HYDRA_FULL_ERROR=1
-mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_ppo_actor.py \
-    --config-path=${CONF_DIR} \
-    --config-name=${CONF_NAME} \
+mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_reinforce_actor.py \
     "++model.data.data_prefix={train: [${TRAIN_DATA_PATH}], validation: [${VALID_DATA_PATH}], test: [${VALID_DATA_PATH}]}" \
     pretrained_checkpoint.restore_from_path=${ACTOR_NEMO_FILE} \
     exp_manager.explicit_log_dir=${ACTOR_LOG_DIR} \
@@ -136,26 +103,26 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_pp
     exp_manager.create_checkpoint_callback=True \
     trainer.num_nodes=1 \
     trainer.devices=2 \
-    trainer.ppo.trt_llm.enable=True \
+    trainer.reinforce.trt_llm.enable=True \
     ++model.offload_adam_states=False \
-    trainer.ppo.trt_llm.reshard=${RESHARD} \
-    trainer.ppo.val_check_interval=2 \
-    ++trainer.ppo.save_interval=2 \
+    trainer.reinforce.trt_llm.reshard=${RESHARD} \
+    trainer.reinforce.val_check_interval=2 \
+    ++trainer.reinforce.save_interval=2 \
     ++model.micro_batch_size=1 \
     ++model.global_batch_size=${GBS} \
     ++model.tensor_model_parallel_size=${TP_SIZE} \
     ++model.pipeline_model_parallel_size=${PP_SIZE} \
-    ++model.ppo.entropy_bonus=0.0 \
-    ++model.ppo.ratio_eps=0.2 \
+    ++model.reinforce.entropy_bonus=0.0 \
+    ++model.reinforce.ratio_eps=0.2 \
     ++model.encoder_seq_length=64 \
     ++exp_manager.checkpoint_callback_params.save_top_k=10 \
-    ++model.ppo.num_rollout_samples=${GBS} \
-    ++model.ppo.rollout_micro_batch_size=1 \
-    ++model.ppo.length_params.max_length=32      \
-    ++model.ppo.forward_micro_batch_size=1 \
-    trainer.ppo.initial_policy_kl_penalty="${KL}" \
-    trainer.ppo.rollout_batch_seq_length=32        \
-    ++trainer.ppo.flask_server.enable=True \
+    ++model.reinforce.num_rollout_samples=${GBS} \
+    ++model.reinforce.rollout_micro_batch_size=1 \
+    ++model.reinforce.length_params.max_length=32      \
+    ++model.reinforce.forward_micro_batch_size=1 \
+    trainer.reinforce.initial_policy_kl_penalty="${KL}" \
+    trainer.reinforce.rollout_batch_seq_length=32        \
+    ++trainer.reinforce.flask_server.enable=True \
     ++model.optim.lr=${LR} \
     ++model.optim.sched.min_lr=${MIN_LR} \
     ++model.activations_checkpoint_granularity=full \
@@ -165,36 +132,38 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_pp
     ++model.optim.overlap_grad_sync=False \
     ++model.optim.contiguous_grad_buffer=True \
     ++model.enable_nge=True \
-    remote_critic_rm.critic.ip=${host_critic} \
-    remote_critic_rm.critic.port=${CRITIC_PORT} \
+    remote_rm.reward_model.ip=${host_reward} \
+    remote_rm.reward_model.port=${REWARD_PORT} \
     \
     +model.overwrite_base_config.optim=True \
     '~model.optim' \
     '++model.optim={name:sgd}' \
-    model.ppo.sampling_params.use_greedy=True \
-    trainer.ppo.save_interval=0 \
-    trainer.ppo.max_steps=3 \
-    trainer.ppo.trt_llm.model_type=llama \
+    model.reinforce.sampling_params.use_greedy=True \
+    trainer.reinforce.save_interval=0 \
+    trainer.reinforce.max_steps=3 \
+    trainer.reinforce.trt_llm.model_type=llama \
     ++exp_manager=null \
-    remote_critic_rm.pad_to_length=$((512+256)) $@ # (match critic) generation + prompt = model.ppo.length_params.max_length + model.ppo.trt_llm.max_input_len (512) = self.trtllm_generate.max_generation_length + self.trtllm_generate.max_input_len
+    \
+    ++model.dist_ckpt_load_strictness=log_all \
+    $@
 }
 
-actor_log_file=$(mktemp /tmp/actor-ppo-log-XXXXXX)
+actor_log_file=$(mktemp /tmp/actor-reinforce-log-XXXXXX)
 if [[ -z "$RUN_ONLY" || "$RUN_ONLY" == actor_trt || "$RUN_ONLY" == trt ]]; then
   actor 2>&1 | stdbuf -o0 sed 's/^/[ACTOR_TRT]: /'
 elif [[ "$RUN_ONLY" == actor_nemo || "$RUN_ONLY" == nemo ]]; then
-  actor trainer.ppo.trt_llm.enable=False 2>&1 | stdbuf -o0 sed 's/^/[ACTOR_NEMO]: /'
+  actor trainer.reinforce.trt_llm.enable=False 2>&1 | stdbuf -o0 sed 's/^/[ACTOR_NEMO]: /'
 else
   echo "Only accepts RUN_ONLY=actor_nemo or actor_trt"
   exit 1
 fi | tee $actor_log_file || true
 
-CRITIC_ID=$(grep -oP "kill -SIGINT \K\d+" $critic_log_file)
-if [[ $CRITIC_ID =~ ^[0-9]+$ ]]; then
-    echo "Valid integer: $CRITIC_ID"
-    kill -SIGINT $CRITIC_ID
+REWARD_ID=$(grep -oP "kill -SIGINT \K\d+" $reward_log_file)
+if [[ $REWARD_ID =~ ^[0-9]+$ ]]; then
+    echo "Valid integer: $REWARD_ID"
+    kill -SIGINT $REWARD_ID
 else
-    echo "Invalid CRITIC_ID=$CRITIC_ID detected!"
+    echo "Invalid REWARD_ID=$REWARD_ID detected!"
     exit 1
 fi
 
