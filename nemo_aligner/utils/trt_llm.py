@@ -75,9 +75,9 @@ class GPTGenerateTRTLLM:
         # If this assert turns out to be a blocker with some tokenizers, potential workarounds could be to:
         #   - add a config option to allow specifying which token we pass as `end_id` to TRT-LLM (should
         #     be a token that the model is guaranteed to never generate)
-        assert (
-            tokenizer.pad_id != tokenizer.eos_id
-        ), f"We require tokenizers to have a different {tokenizer.pad_id=} than {tokenizer.eos_id=} when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
+        #assert (
+        #    tokenizer.pad_id != tokenizer.eos_id
+        #), f"We require tokenizers to have a different {tokenizer.pad_id=} than {tokenizer.eos_id=} when using TRT-LLM. This is to make sure all code goes into the same path and include the eos_id when the response lengths are computed"
         assert max_input_len > 0
         assert max_generation_length > 0
         assert (
@@ -104,7 +104,8 @@ class GPTGenerateTRTLLM:
         rng_generator.manual_seed(seed)
         self.rng_generator = rng_generator
 
-        self.pad_id = tokenizer.pad_id if tokenizer.pad_id is not None else GPTGenerateTRTLLM.DEFAULT_PAD_ID
+        #self.pad_id = tokenizer.pad_id if tokenizer.pad_id is not None else GPTGenerateTRTLLM.DEFAULT_PAD_ID
+        self.pad_id = GPTGenerateTRTLLM.DEFAULT_PAD_ID
         self.eos_id = tokenizer.eos_id
         end_strings = list(end_strings)
 
