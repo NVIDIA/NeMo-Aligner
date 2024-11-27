@@ -138,8 +138,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 is_end = batch["is_end"]
 
                 # TODO: is this advantage thing legit ?
-                is_end_mask = mask * is_end.view(-1, 1) * (advantages != 0)
-                # is_end_mask = mask * (advantages != 0)
+                # is_end_mask = mask * is_end.view(-1, 1) * (advantages != 0)
+                is_end_mask = mask * (advantages != 0)
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
