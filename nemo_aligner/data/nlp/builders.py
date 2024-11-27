@@ -113,10 +113,8 @@ def build_dataset_generic(
         elif data_impl.startswith("json"):
             with open(current_data_prefix, "r", encoding="utf_8") as fr:
                 data_payload = [json.loads(line.strip()) for line in fr]
-                ## TODO: return_cu_seqlen
         elif data_impl == "packed_jsonl":
             data_payload = np.load(current_data_prefix, allow_pickle=True)
-        ## TODO: fix for packed dataset
         elif data_impl == "chunked_jsonl":
             assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
             data_payload = ChunkedJsonl(current_data_prefix, n_chunks, n_examples_per_chunk)

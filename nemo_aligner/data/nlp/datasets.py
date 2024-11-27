@@ -19,7 +19,6 @@ import os
 import numpy as np
 import scipy
 import torch
-from typing import Optional
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
@@ -469,18 +468,11 @@ class DPOPackedDataset(DPOModelDataset):
         item = self._maybe_cast_to_list(item)
         # max_length = max([len(x) for x in item]) if item else 0
         # here [0] should be tokenizer.pad_id
-        #item = [x + [pad_id] * (max_length - len(x)) for x in item]
-        final_item = []
-        for x in item:
-            if len(x) <= max_length:
-                final_item.append(x + [pad_id] * (max_length - len(x)))
-            ### TODO: this is a hacky WAR. Find a better way to deal with long sequences
-            else:
-                final_item.append(x[:max_length])
+        item = [x + [pad_id] * (max_length - len(x)) for x in item]
         return final_item
 
-    ## TODO: unused arguments
-    def collate_fn(self, batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False, pad_length_to_multiple_of: Optional[int] = None):
+    ## reset_position_ids, reset_attention_mask and eod_mask_loss are unused but are needed to match the API of dpo_custom_collate
+    def collate_fn(self, batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False, pad_length_to_multiple_of: int | None = None):
         def combine_keys(key):
             return [item[key] for item in batch]
 
@@ -508,19 +500,20 @@ class DPOPackedDataset(DPOModelDataset):
             for item in batch
         ]
 
-        """if self.pad_to_max_length:
-            max_length_chosen = self.max_seq_length
-            max_length_rejected = self.max_seq_length
-        else:"""
-        # pad to the nearest multiple of 16 for FP8 training
-        # for many datasets in practice, all packed sequence lengths are very close to the
-        # target length (2048, 4096, 8192), so there is very minimal padding
-        max_length = max(len(l) for l in input_ids)
-
-        max_length = min(self.seq_length, self._ceil_to_nearest(max_length, 16)) ##self.pad_seq_length_to_mult)) ## TODO: support
+        if pad_length_to_multiple_of:
+            max_seq_len = torch.tensor(input_ids.shape[1], device=torch.cuda.current_device())
+            torch.distributed.all_reduce(
+                max_seq_len, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
+            )
+            max_length = math.ceil(max_seq_len / pad_length_to_multiple_of) * pad_length_to_multiple_of
+        else:
+            # pad to the nearest multiple of 16 for FP8 training
+            # for many datasets in practice, all packed sequence lengths are very close to the
+            # target length (2048, 4096, 8192), so there is very minimal padding
+            max_length = max(len(l) for l in input_ids)
+            max_length = min(self.seq_length, self._ceil_to_nearest(max_length, 16))
         assert max_length <= self.seq_length
 
-        ## TODO: double check position_ids
         position_ids: List[List[int]] = []
         cu_seqlens: List[List[int]] = []
         for item in batch:
@@ -537,28 +530,18 @@ class DPOPackedDataset(DPOModelDataset):
             position_ids[0]
         ), "Dataset problem: input_ids and position_ids lengths don't match"
 
-        if pad_length_to_multiple_of:
-            max_seq_len = torch.tensor(input_ids.shape[1], device=torch.cuda.current_device())
-            torch.distributed.all_reduce(
-                max_seq_len, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
-            )
-            max_length = math.ceil(max_seq_len / pad_length_to_multiple_of) * pad_length_to_multiple_of
-
         input_ids = self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
         labels = self._collate_item(labels, max_length=max_length, pad_id=-100)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
         
         max_num_sequences = max(len(l) for l in lengths)
-        ## TODO: figure out whether this is the right way to pad length and reward
-        lengths = self._collate_item(lengths, max_length=max_num_sequences, pad_id=0)
-        rewards = self._collate_item(rewards, max_length=max_num_sequences, pad_id=-1)
 
         output = {
             "input_ids": torch.LongTensor(input_ids),
             "labels": torch.LongTensor(labels),
             "lengths": torch.LongTensor(lengths),
-            "rewards": torch.LongTensor(rewards), ## TODO: is this the right shape? -- compare to non-packed version
-            "position_ids": torch.LongTensor(position_ids), ## use this for loss computation -- to upweigh shorter examples
+            "rewards": torch.LongTensor(rewards),
+            "position_ids": torch.LongTensor(position_ids),
         }
 
         cu_seqlens = self._collate_item(cu_seqlens, max_length=max(len(l) for l in cu_seqlens) + 1, pad_id=-1)
