@@ -122,8 +122,8 @@ The following is an example of running the packing script to prepare your DPO da
 
 .. code-block:: bash
 
-   python examples/gpt/data/dpo/prepare_packed_dpo_dataset.py \
-      model.data.data_prefix=[/path/to/training.jsonl] \
+   python examples/nlp/data/dpo/prepare_packed_dpo_dataset.py \
+      model.data.data_prefix=/path/to/training.jsonl \
       +model.encoder_seq_length=2048 \
       +tokenizer_path=/path/to/tokenizer/model \
       +output_dir=/path/to/output_folder \

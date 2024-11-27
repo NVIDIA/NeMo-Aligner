@@ -475,7 +475,7 @@ class DPOPackedDataset(DPOModelDataset):
         # max_length = max([len(x) for x in item]) if item else 0
         # here [0] should be tokenizer.pad_id
         item = [x + [pad_id] * (max_length - len(x)) for x in item]
-        return final_item
+        return item
 
     ## reset_position_ids, reset_attention_mask and eod_mask_loss are unused but are needed to match the API of dpo_custom_collate
     def collate_fn(

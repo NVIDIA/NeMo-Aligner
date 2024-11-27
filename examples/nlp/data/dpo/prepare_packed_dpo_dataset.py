@@ -95,7 +95,7 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
     logging.info("Tokenizing dataset...")
 
     if tokenizer_type == "huggingface":
-        # pass in a Hugging Face folder which contains tokenizer.json
+        # pass in either a local Hugging Face folder which contains tokenizer.json or a path to the tokenizer on huggingface
         tokenizer = get_nmt_tokenizer(library="huggingface", model_name=cfg.tokenizer_path, use_fast=True)
     elif tokenizer_type == "sentencepiece":
         tokenizer = get_nmt_tokenizer(library="sentencepiece", tokenizer_model=cfg.tokenizer_path)
@@ -114,7 +114,7 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
         data=data_payload,
         seq_length=cfg.model.data.seq_length,
         seed=cfg.model.seed,
-        drop_last=cfg.model.data.train_ds.drop_last,
+        drop_last=True, ## False not currently supported
         pad_chosen_rejected_to_max=False,
     )
 
