@@ -108,8 +108,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 # there is a problem with apex ignoring the mask on the older models
                 # so we will always give the attention mask
                 required_keys.add("attention_mask")
-                if 'cu_seqlens' in batch:
-                    required_keys.add('cu_seqlens')
+                if "cu_seqlens" in batch:
+                    required_keys.add("cu_seqlens")
 
                 if parallel_state.is_pipeline_first_stage():
                     if packed:
@@ -132,17 +132,13 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                         )
                     else:
                         required_keys.update(
-                            (
-                                "ref_policy_log_probs", ## chosen and rejected interleaved
-                                "labels",
-                                "rewards",
-                            )
-                        )  
+                            ("ref_policy_log_probs", "labels", "rewards",)  ## chosen and rejected interleaved
+                        )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
             tokens, labels, ref_logprobs, gt_rewards, ref_logprobs = None, None, None, None, None
-            if packed: ## packed sequence
+            if packed:  ## packed sequence
                 tokens = batch["input_ids"]
                 labels = batch["labels"]
                 gt_rewards = batch["rewards"]
@@ -162,7 +158,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
                 if batch["chosen_rewards"] is not None and batch["rejected_rewards"] is not None:
                     gt_rewards = torch.cat((batch["chosen_rewards"], batch["rejected_rewards"]), dim=0)
-            
+
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
             # these two lines ensure your position_ids and attn_mask are always B=1
             # position_ids = batch["position_ids"][0:1]
@@ -187,12 +183,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             else:
                 forward_args.pop("loss_mask")
 
-                if 'cu_seqlens' in batch:  # packed sequence from DPOPackedDataset
+                if "cu_seqlens" in batch:  # packed sequence from DPOPackedDataset
                     # these args are passed eventually into TEDotProductAttention.forward()
-                    cu_seqlens = batch['cu_seqlens'].squeeze()  # remove batch size dimension (mbs=1)
+                    cu_seqlens = batch["cu_seqlens"].squeeze()  # remove batch size dimension (mbs=1)
 
-                    max_seqlen = batch['max_seqlen'].squeeze() if 'max_seqlen' in batch else None
-                    cu_seqlens_argmin = batch['cu_seqlens_argmin'] if 'cu_seqlens_argmin' in batch else None
+                    max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
+                    cu_seqlens_argmin = batch["cu_seqlens_argmin"] if "cu_seqlens_argmin" in batch else None
 
                     # remove -1 "paddings" added in collate_fn
                     if cu_seqlens_argmin is not None:
@@ -203,7 +199,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     try:
                         from megatron.core.packed_seq_params import PackedSeqParams
                     except (ImportError, ModuleNotFoundError) as e:
-                        mcore_version = packaging.version.Version(version('megatron-core'))
+                        mcore_version = packaging.version.Version(version("megatron-core"))
                         logging.error(
                             f"megatron-core v{mcore_version} does not support training with packed sequence. "
                             "Please use megatron-core >= 0.5.0, or set model.data.train_ds.packed_sequence=False"
@@ -211,12 +207,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                         raise e
 
                     ## these packed seq args require newer TE
-                    forward_args['packed_seq_params'] = PackedSeqParams(
+                    forward_args["packed_seq_params"] = PackedSeqParams(
                         cu_seqlens_q=cu_seqlens,
                         cu_seqlens_kv=cu_seqlens,
                         max_seqlen_q=max_seqlen,
                         max_seqlen_kv=max_seqlen,
-                        qkv_format='thd',
+                        qkv_format="thd",
                     )
 
             output_tensor = model(**forward_args)
@@ -232,7 +228,11 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 assert non_loss_data
 
                 logprobs = from_parallel_logits_to_logprobs(
-                    vocab_parallel_logits=output_tensor, target=labels, inference_only=True, higher_stability=True,ignore_last=not packed,
+                    vocab_parallel_logits=output_tensor,
+                    target=labels,
+                    inference_only=True,
+                    higher_stability=True,
+                    ignore_last=not packed,
                 )
                 return {"logprobs": logprobs}
 
@@ -276,7 +276,11 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss, acc_chosen])
 
                 out_chosen, out_rejected = self.gather_and_split_rewards(
-                    per_token_logps, ref_logprobs, labels_for_loss, cu_seqlens, average_log_probs=self.preference_avg_log_probs
+                    per_token_logps,
+                    ref_logprobs,
+                    labels_for_loss,
+                    cu_seqlens,
+                    average_log_probs=self.preference_avg_log_probs,
                 )
 
                 return (
@@ -308,7 +312,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         ## TODO: make this more efficient and only compute it once
         ## also make sure we don't get the padding at the end of the last example
         ## also, this assumes MBS is 1. Make sure this is enforced so we don't silently fail!!
-        
+
         ## mbs = 1
         logps = logps.squeeze()
         labels = labels.squeeze()
@@ -325,11 +329,15 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             max_length = max(lengths)
 
             for i in range(len(logp_unpacked)):
-                logp_unpacked[i] = torch.nn.functional.pad(logp_unpacked[i], (0, max_length - logp_unpacked[i].shape[-1]), "constant",)
-                labels_unpacked[i] = torch.nn.functional.pad(labels_unpacked[i], (0, max_length - labels_unpacked[i].shape[-1]), "constant", -100)
-            
-            unpacked_logps = logp_unpacked[::2] ## chosen
-            unpacked_logps_rejected = logp_unpacked[1::2] ## rejected
+                logp_unpacked[i] = torch.nn.functional.pad(
+                    logp_unpacked[i], (0, max_length - logp_unpacked[i].shape[-1]), "constant",
+                )
+                labels_unpacked[i] = torch.nn.functional.pad(
+                    labels_unpacked[i], (0, max_length - labels_unpacked[i].shape[-1]), "constant", -100
+                )
+
+            unpacked_logps = logp_unpacked[::2]  ## chosen
+            unpacked_logps_rejected = logp_unpacked[1::2]  ## rejected
             unpacked_labels = labels_unpacked[::2]
             unpacked_labels_rejected = labels_unpacked[1::2]
 
@@ -337,7 +345,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             unpacked_labels.extend(unpacked_labels_rejected)
             logps = torch.stack(unpacked_logps, 0)
             labels = torch.stack(unpacked_labels, 0)
-        
+
         loss_mask = (labels > -1).float()
 
         if average_log_probs:
@@ -358,7 +366,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
             logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
 
-            if cu_seqlens is not None: ## packed sequence
+            if cu_seqlens is not None:  ## packed sequence
                 chosen_gt_rewards, reject_gt_rewards = gt_rewards[0][::2], gt_rewards[0][1::2]
             else:
                 chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
@@ -374,7 +382,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
             logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
 
-            if cu_seqlens is not None: ## packed sequence
+            if cu_seqlens is not None:  ## packed sequence
                 chosen_gt_rewards, reject_gt_rewards = gt_rewards[0][::2], gt_rewards[0][1::2]
             else:
                 chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
@@ -389,7 +397,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         elif self.preference_loss == "ipo":
             loss = torch.mean((chosen_rewards - reject_rewards - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2, 0)
         elif self.preference_loss == "rpo_sq":
-            if cu_seqlens is not None: ## packed sequence
+            if cu_seqlens is not None:  ## packed sequence
                 chosen_gt_rewards, reject_gt_rewards = gt_rewards[0][::2], gt_rewards[0][1::2]
             else:
                 chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
@@ -406,7 +414,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return loss, acc_chosen
 
     def sft_loss_func(self, pi_logprobs, labels, cu_seqlens=None, average_log_probs=False):
-        logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, cu_seqlens=cu_seqlens, average_log_probs=average_log_probs)
+        logprobs = self.get_reduced_masked_logps(
+            pi_logprobs, labels, cu_seqlens=cu_seqlens, average_log_probs=average_log_probs
+        )
         chosen_logprobs, _ = self.split_output_tensor(logprobs)
         return -chosen_logprobs.mean(0)
 
@@ -431,7 +441,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 f"Packed sequence is only supported with micro batch size 1,"
                 f" but your micro batch size is {micro_batch_size}."
             )
-            assert self.cfg.get('transformer_engine', False), "Transformer Engine should be enabled when using sequence packing."
+            assert self.cfg.get(
+                "transformer_engine", False
+            ), "Transformer Engine should be enabled when using sequence packing."
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_forward_output_and_loss_func(forward_only, logprobs_only=False),

@@ -328,7 +328,9 @@ def _build_train_valid_test_datasets(
         assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
         data_payload = ChunkedJsonl(data_prefix, n_chunks, n_examples_per_chunk)
     else:
-        raise RuntimeError(f"data.data_impl must be one of mmap, json, jsonl, packed_jsonl, or chunked_jsonl, but got {data_impl}")
+        raise RuntimeError(
+            f"data.data_impl must be one of mmap, json, jsonl, packed_jsonl, or chunked_jsonl, but got {data_impl}"
+        )
     total_num_of_documents = len(data_payload)
     splits = get_train_valid_test_split_(splits_string, total_num_of_documents)
 
