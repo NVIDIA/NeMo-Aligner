@@ -99,6 +99,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
     def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
             batch = next(dataloader_iter)
+            packed = "input_ids" in batch
 
             required_keys = set()
             if parallel_state.get_pipeline_model_parallel_world_size() == 1:
@@ -111,13 +112,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     required_keys.add('cu_seqlens')
 
                 if parallel_state.is_pipeline_first_stage():
-                    ## indicates that batch is packed
-                    if "input_ids" in batch:
-                        packed = False
+                    if packed:
                         required_keys.update(("input_ids", "position_ids"))
                     ## batch not packed --> chosen and rejected are separate keys
                     else:
-                        packed = True
                         required_keys.update(("chosen", "rejected", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
@@ -144,7 +142,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
             tokens, labels, ref_logprobs, gt_rewards, ref_logprobs = None, None, None, None, None
-            packed = "chosen" not in batch
             if packed: ## packed sequence
                 tokens = batch["input_ids"]
                 labels = batch["labels"]
@@ -403,7 +400,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         return -chosen_logprobs.mean(0)
 
     def get_loss_and_metrics(self, batch, forward_only):
-        packed = not "chosen" in batch
+        packed = "input_ids" in batch
         if packed:
             seq_length = batch["input_ids"].shape[1]
         else:
@@ -414,6 +411,11 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         fwd_bwd_function = get_forward_backward_func()
 
+        micro_batch_size = self.cfg.micro_batch_size
+        if not packed:
+            # each minibatch has 2 comparisons so tensor shape will be mbs * 2
+            micro_batch_size *= 2
+
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_forward_output_and_loss_func(forward_only, logprobs_only=False),
             data_iterator=data_iter,
@@ -421,8 +423,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.micro_batch_size
-            * 2,  # each minibatch has 2 comparisons so tensor shape will be mbs * 2
+            micro_batch_size=micro_batch_size,
         )
 
         # only the last stages of the pipeline return losses
@@ -506,7 +507,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
     @torch.no_grad()
     def get_logprob_batch(self, batch):
-        packed = "chosen" not in batch
+        packed = "input_ids" in batch
         if packed:
             k = "input_ids"
         else:
@@ -515,6 +516,11 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         batch_size = batch[k].shape[0]
 
         num_microbatches = divide(batch_size, self.cfg.dpo.log_prob_forward_micro_batch_size)
+        micro_batch_size = self.cfg.dpo.log_prob_forward_micro_batch_size
+        if not packed:
+            # each minibatch has 2 comparisons so tensor shape will be mbs * 2
+            micro_batch_size *= 2
+
         data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only=True)
 
@@ -527,7 +533,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             num_microbatches=num_microbatches,
             forward_only=True,
             seq_length=seq_length,
-            micro_batch_size=self.cfg.dpo.log_prob_forward_micro_batch_size * 2,
+            micro_batch_size=micro_batch_size,
             collect_non_loss_data=True,
         )
 
