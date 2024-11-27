@@ -29,7 +29,10 @@ from unittest.mock import patch
 
 import torch
 from megatron.core.dist_checkpointing.mapping import LocalNonpersistentObject, ShardedObject, ShardedTensorFactory
-from megatron.core.num_microbatches_calculator import reconfigure_num_microbatches_calculator
+try:
+    from megatron.core.num_microbatches_calculator import reconfigure_num_microbatches_calculator
+except:
+    from megatron.core.num_microbatches_calculator import reconfigure_microbatch_calculator as reconfigure_num_microbatches_calculator
 from omegaconf import DictConfig, OmegaConf
 from torch.masked import as_masked_tensor
 

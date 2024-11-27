@@ -300,7 +300,9 @@ class SPINTrainer:
             )
 
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
-            response_tokens = torch.cuda.LongTensor(generations["token_ids"]) if generations else None
+            max_len_list = max([len(x) for x in generations["token_ids"]])
+            padded_list = [x + [self.model.tokenizer.eos_id] * (max_len_list - len(x)) for x in generations["token_ids"]]
+            response_tokens = torch.cuda.LongTensor(padded_list)
             response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
 
