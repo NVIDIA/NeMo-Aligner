@@ -30,12 +30,16 @@ from nemo_aligner.utils.server_utils import FutureResult
 """
 
 
-def extract_dialog(text, end_string="<SPECIAL_11>"):
-    user_pattern = r"<SPECIAL_10>System\n\n<SPECIAL_11>User\n(.*?)\n<SPECIAL_11>Assistant\n"
-    assistant_pattern = rf"\n<SPECIAL_11>Assistant\n(.*?)\n{end_string}"
-    user_text = re.findall(user_pattern, text, re.DOTALL)
-    assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
-    return user_text, assistant_text
+def extract_dialog(text):
+    # Patterns to match User and Assistant dialogues
+    pattern_user = re.compile(r"<SPECIAL_11>User\n(.*?)\n(?=<SPECIAL_11>|$)", re.DOTALL)
+    pattern_assistant = re.compile(r"<SPECIAL_11>Assistant\n(.*?)\n(?=<SPECIAL_11>|$)", re.DOTALL)
+
+    # Extract dialogues
+    user_dialogues = pattern_user.findall(text)
+    assistant_dialogues = pattern_assistant.findall(text)
+
+    return user_dialogues, assistant_dialogues
 
 
 class HelpsteerTemplate:
@@ -148,7 +152,7 @@ class RemoteGPTRMCriticClient:
     def infer_rm(self, texts):
         new_texts = []
         for text in texts:
-            user_text, assistant_text = extract_dialog(text, end_string="<SPECIAL_11>")
+            user_text, assistant_text = extract_dialog(text)
 
             if len(assistant_text) > 0:
                 text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
