@@ -17,11 +17,11 @@ CAI allows training a harmless, but non-evasive AI assistant that engages with h
 
 CAI
 ###
-The basic steps of CAI are described in this section and illustrated in the figure below (`Figure 1 <https://arxiv.org/abs/2212.08073>`_).
+The basic steps of CAI are described in this section and illustrated in the `figure below <nemo-aligner-cai-flow-diagram>`_.
 
 (Supervised Stage) Critique → Revision → Supervised Learning: The AI generates responses to harmfulness prompts using a helpful-only AI assistant, then critiques and revises its own responses according to a principle in the constitution, and then fine-tunes the original model on the revised responses.
 
-(RL Stage) AI Comparison Evaluations → Reward Model → Reinforcement Learning: The AI generates pairs of responses to harmfulness prompts using the finetuned model, then evaluates which response is better according to a principle in the constitution, and then trains a reward model based on this dataset of AI preferences and a human helpfulness preferences. The AI then trains with RL using the learned reward model.
+(RL Stage) AI Comparison Evaluations → Reward Model → Reinforcement Learning: The AI generates pairs of responses to harmfulness prompts using the fine-tuned model, then evaluates which response is better according to a principle in the constitution, and then trains a reward model based on this dataset of AI preferences and a human helpfulness preferences. The AI then trains with RL using the learned reward model.
 
 .. image:: ../assets/cai_diagram.png
    :alt: basic steps of the CAI process
@@ -34,22 +34,19 @@ Motivation
 ##########
 Constitutional AI motivation refers to designing AI systems in such a way that their objectives and behaviors are guided by a set of predefined rules or principles. It includes the following:
 
-Scaling supervision: using AI to help humans supervise other AIs more efficiently and effectively, especially for tasks where AI capabilities may exceed human ones.
+- Scaling Supervision: Use AI to assist humans in supervising other AIs more efficiently and effectively, particularly for tasks where AI capabilities may surpass human ones.
+- A Harmless but Non-Evasive Assistant: Minimize the tension between helpfulness and harmlessness, and avoid evasive responses that reduce transparency and helpfulness.
+- Simplicity and Transparency: Encode training goals in a straightforward list of natural language instructions or principles, and employ chain-of-thought reasoning to make AI decision-making explicit and understandable.
+- Reducing Iteration Time: Eliminate the need to collect new human feedback labels when modifying objectives or testing different behaviors.
 
-A harmless but non-evasive assistant: reducing the tension between helpfulness and harmlessness, and avoiding evasive responses that reduce transparency and helpfulness.
-
-Simplicity and transparency: encoding the training goals in a simple list of natural language instructions or principles, and using chain-of-thought reasoning to make AI decision making explicit and understandable.
-
-Reducing iteration time: obviating the need to collect new human feedback labels when altering the objective or testing different behaviors.
-
-Train a CAI model
+Train a CAI Model
 #################
 
 This section is a step-by-step tutorial that walks you through how to run a full CAI pipeline with a ``Mistral-7B`` LLM model. It includes the following:
 
-1. Data download and preprocessing.
+1. Download the models and datasets.
 
-2. Generate responses to harmfulness prompts using a helpful-only AI assistant. Ask the model to critique its response according to a principle in the constitution, and then revise the original response in light of the critique.
+2. Generate and revise responses to harmful prompts creating the SL-CAI dataset. Ask the model to critique its response according to a principle in the constitution, and then revise the original response in light of the critique.
 
 3. Fine-tune ``Mistral-7B`` with SFT on the revised responses to create a ``Mistral-7B-SL-CAI`` model.
 
@@ -58,19 +55,22 @@ This section is a step-by-step tutorial that walks you through how to run a full
    b. Formulate each prompt and pair into a multiple choice question, where we ask ``Mixtral-8x7B`` which response is best according to the constitution.
    c. Blend the AI feedback preference dataset (prompts and pairs) with human feedback helpfulness dataset.
 
-5. Train a Reward Model (RM).
+5. Train the Reward Model (RM).
 
 6. Fine-tune the ``Mistral-7B-SL-CAI`` with Proximal Policy Optimization (PPO) and the RM to train a ``Mistral-7B-RL-CAI`` model.
 
 7. Run inference.
 
+.. _nemo-aligner-cai-flow-diagram:
+
 .. image:: ../assets/cai_flow.png
 
-Step 1: Download models and datasets
-####################################
-1. Download ``Mistral-7B-Instruct`` and ``Mistral-7B`` LLM models from https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 and https://huggingface.co/mistralai/Mistral-7B-v0.1 into the models folder.
+Step 1: Download the models and datasets
+########################################
 
-   Then, convert into .nemo format:
+1. Download the ``Mistral-7B-Instruct`` and ``Mistral-7B`` LLM models from https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1 and https://huggingface.co/mistralai/Mistral-7B-v0.1 into the models folder.
+
+   Then, convert them into .nemo format:
    
    .. code-block:: bash
    
@@ -89,7 +89,7 @@ Step 1: Download models and datasets
    This command will download the dataset to ``/path/to/anthropic_red_team_attempts_train.json``
 
 
-3. Download SFT helpfulness dataset:
+3. Download the SFT helpfulness dataset:
    
    .. code-block:: bash
    
@@ -98,7 +98,7 @@ Step 1: Download models and datasets
    This command will download the dataset to ``/path/to/nvidia_sft_datablend_v1_train.json``
 
 
-4. Download and process preference helpfulness dataset:
+4. Download and process the preference helpfulness dataset:
    
    .. code-block:: bash
    
@@ -155,12 +155,12 @@ Please wait for the server to be ready before proceeding.
       --apply_chat_template False \
       --response_extract_pattern "[/INST]"
 
-This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``
+This will generate an SL-CAI dataset of prompts and revised responses as ``cai_revisions_aligner_chat_template.json``.
 
-The few-shot samples should be provided following the template in ``few_shot_samples_example.json`` (filling in the `content` tags, and choosing how many samples to use), and should include a red teaming prompt, a response from the helpful model (e.g. ``Mistral-7B`` in this tutorial), critique and revision requests and responses. An example is shown in the `Anthropic repo <https://github.com/anthropics/ConstitutionalHarmlessnessPaper/blob/main/prompts/CritiqueRevisionFewShotPrompts.json>`_.
+The few-shot samples should be provided following the template in ``few_shot_samples_example.json``. Fill in the `content` tags and choose how many samples to use. The samples should include a red teaming prompt, a response from the helpful model (e.g., ``Mistral-7B`` in this tutorial), critique and revision requests, and responses. An example is shown in the `Anthropic repo <https://github.com/anthropics/ConstitutionalHarmlessnessPaper/blob/main/prompts/CritiqueRevisionFewShotPrompts.json>`_.
 
-*NOTE: The tokenizer file can be found by extracting the .nemo checkpoint using `tar -xf /models/mistral/mistral-7b-Instruct.nemo`.
-There are 2 tokenizer files that end with `.model` in the model checkpoint and they are the same, so you can use either one for data processing.*
+.. note::
+     The tokenizer file can be found by extracting the .nemo checkpoint using `tar -xf /models/mistral/mistral-7b-Instruct.nemo`. There are two tokenizer files that end with `.model` in the model checkpoint, and they are identical. You can use either one for data processing.
 
 
 Step 3: Fine-tune Mistral-7B on the revised responses to create a Mistral-7B-SL-CAI model
@@ -198,8 +198,7 @@ Note that you would need to set up multi-node training run in your cluster env, 
 Step 4: Generate the RL-CAI (preference) dataset for RM and PPO training
 ########################################################################
 
-The following section runs an inference server with the SL-CAI model that we've previously trained, and queries it with red teaming prompts asking for several responses per prompt.
-The responses will then be ranked by a judge LLM being run from NVIDIA's NGC. An NGC API key can be acquired `here`_.
+The following section runs an inference server with the SL-CAI model that we've previously trained. It queries the server with red teaming prompts, requesting several responses per prompt. These responses will then be ranked by a judge LLM running from NVIDIA's NGC. You can acquire an NGC API key `here`_.
 
 The following command will run the inference server:
 
@@ -254,8 +253,8 @@ Using a different terminal, run the following command to start the RL-CAI datase
 This command will create the ``rl-cai`` dataset files in the defined output folder with the given output filename prefix.
 
 
-Step 5: Train the RM
-####################
+Step 5: Train the Reward Model (RM)
+###################################
 
 Run the following command to train the RM:
 
@@ -282,8 +281,8 @@ Run the following command to train the RM:
 
 The trained RM checkpoint will be saved to output dir given by ``exp_manager.explicit_log_dir``.
 
-Step 6: Fine-tune Mistral-7B-SL-CAI with PPO and the RM to train a Mistral-7B-RL-CAI model
-##########################################################################################
+Step 6: Fine-tune the Mistral-7B-SL-CAI with PPO and the RM to train a Mistral-7B-RL-CAI model
+##############################################################################################
 Run the following command in the background to launch a RM and PPO critic training server:
 
 .. code-block:: bash
@@ -326,8 +325,8 @@ Run the following command to launch actor training and a reference policy server
 
 The trained LLM policy checkpoint will be saved to the output dir given by ``exp_manager.explicit_log_dir``.
 
-Step 7: Inference
-#################
+Step 7: Run inference
+#####################
 To start inference, run an inference server in the background using the following command:
 
 .. code-block:: bash
