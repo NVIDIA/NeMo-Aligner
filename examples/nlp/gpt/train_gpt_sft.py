@@ -85,7 +85,10 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
             gpt_cfg.tensor_model_parallel_size = cfg.model.get("tensor_model_parallel_size", 1)
         if cfg.model.get("pipeline_model_parallel_size", 1) > 0:
             gpt_cfg.pipeline_model_parallel_size = cfg.model.get("pipeline_model_parallel_size", 1)
+        if cfg.model.get("context_parallel_size", 1) > 0:
+            gpt_cfg.context_parallel_size = cfg.model.get("context_parallel_size", 1)
         gpt_cfg.pipeline_model_parallel_split_rank = cfg.model.get("pipeline_model_parallel_split_rank", 0)
+        gpt_cfg.transformer_engine = cfg.model.get("transformer_engine", False)
 
         if cfg.model.data.get("chat", False):
             # chat model, overwrite the prompt template
