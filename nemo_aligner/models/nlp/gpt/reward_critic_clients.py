@@ -152,10 +152,16 @@ class RemoteGPTRMCriticClient:
     def infer_rm(self, texts):
         new_texts = []
         for text in texts:
+            print("### PRE FORMAT TEXT", text)
             user_text, assistant_text = extract_dialog(text)
 
-            if len(assistant_text) > 0:
+            # TODO: issue with this approach is that if we can't format it the prompt still
+            # gets included in the baseline
+            if len(user_text) == len(assistant_text) and len(assistant_text) > 0:
                 text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
+                print("### POST FORMAT TEXT", text)
+            else:
+                print("### CANNOT FORMAT TEXT", text)
 
             new_texts.append(text)
 
