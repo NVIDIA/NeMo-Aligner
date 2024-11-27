@@ -1,8 +1,8 @@
 
-.. _model-aligner-intro:
+.. _nemo-aligner-intro:
 
-Model Alignment
-!!!!!!!!!!!!!!!
+NeMo-Aligner
+!!!!!!!!!!!!
 
 Introduction
 ############
@@ -13,6 +13,8 @@ The NeMo-Aligner toolkit is built using the `NeMo Toolkit <https://github.com/NV
 
 The toolkit is currently in its early stages. We are committed to improving the toolkit to make it easier for developers to pick and choose different alignment algorithms to build safe, helpful, and reliable models.
 
+.. _nemo-aligner-getting-started:
+
 Get Started
 ###########
 
@@ -20,16 +22,39 @@ NeMo-Aligner comes preinstalled in NVIDIA NeMo containers. NeMo containers are l
 
 To get access to the container, log in to the NVIDIA GPU Cloud (NGC) platform or create a free NGC account here: `NVIDIA NGC <https://ngc.nvidia.com/signin>`__. Once you have logged in, you can get the container here: `NVIDIA NGC NeMo Framework <https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo>`__.
 
-To use a pre-built container, run the following code:
+To run interactively using a pre-built container, run the following code:
 
     .. code-block:: bash
 
-        docker run -it --gpus=all  --shm-size=8g --workdir /opt/NeMo-Aligner nvcr.io/nvidia/nemo:24.09
+        docker run --rm -it \
+          --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --shm-size=8g \
+          --workdir /opt/NeMo-Aligner \
+          nvcr.io/nvidia/nemo:24.09
 
     Please use the latest tag in the form yy.mm.(patch).
 
-.. note::
+.. important::
    - Some of the subsequent tutorials require accessing gated Hugging Face models. For details on how to access these models, refer to `this document <https://docs.nvidia.com/nemo-framework/user-guide/latest/best-practices.html#working-with-hugging-face-models>`__.
    - If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 
+Build a NeMo-Aligner Dockerfile
+###############################
+
+NeMo-Aligner also provides its own `dockerfile <https://github.com/NVIDIA/NeMo-Aligner/blob/main/Dockerfile>`__ if you want to customize the environment.
+Run the following to build the image:
+
+    .. code-block:: bash
+        git clone https://github.com/NVIDIA/NeMo-Aligner.git
+        cd NeMo-Aligner
+
+        # Replace with branch to build from
+        ALIGNER_COMMIT=main
+        TARGET_IMAGE=aligner-custom
+
+        docker buildx build \
+            -t $TARGET_IMAGE \
+            --build-arg=ALIGNER_COMMIT=$ALIGNER_COMMIT \
+            .
+
+        # Run the image using the above command in "Get Started" and swap out "nvcr.io/nvidia/nemo:24.09" with "aligner-custom".
