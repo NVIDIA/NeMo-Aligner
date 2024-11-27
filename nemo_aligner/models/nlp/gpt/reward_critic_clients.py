@@ -160,6 +160,10 @@ class RemoteGPTRMCriticClient:
                 text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
             else:
                 print("### CANNOT FORMAT TEXT", text)
+                text = text + "\n<SPECIAL_11>"
+                print("### MODIFIED TO FOR RM ONLY", text)
+                user_text, assistant_text = extract_dialog(text)
+                text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
 
             new_texts.append(text)
 
