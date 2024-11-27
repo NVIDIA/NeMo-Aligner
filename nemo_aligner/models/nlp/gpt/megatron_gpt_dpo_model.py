@@ -358,7 +358,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
             logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
 
-            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            if cu_seqlens is not None: ## packed sequence
+                chosen_gt_rewards, reject_gt_rewards = gt_rewards[0][::2], gt_rewards[0][1::2]
+            else:
+                chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
             gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
             logalpha_hat_chosen = torch.nn.functional.logsigmoid(gt_rewards_delta)
             logalpha_hat_rejected = torch.nn.functional.logsigmoid(-gt_rewards_delta)
@@ -371,7 +374,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
             logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
 
-            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            if cu_seqlens is not None: ## packed sequence
+                chosen_gt_rewards, reject_gt_rewards = gt_rewards[0][::2], gt_rewards[0][1::2]
+            else:
+                chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
             gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
             logalpha_hat_chosen = torch.nn.functional.logsigmoid(gt_rewards_delta)
             logalpha_hat_rejected = torch.nn.functional.logsigmoid(-gt_rewards_delta)
@@ -383,7 +389,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         elif self.preference_loss == "ipo":
             loss = torch.mean((chosen_rewards - reject_rewards - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2, 0)
         elif self.preference_loss == "rpo_sq":
-            chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
+            if cu_seqlens is not None: ## packed sequence
+                chosen_gt_rewards, reject_gt_rewards = gt_rewards[0][::2], gt_rewards[0][1::2]
+            else:
+                chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
             gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
 
             loss = torch.mean((self.ref_policy_kl_penalty * rewards_delta - gt_rewards_delta) ** 2, 0)

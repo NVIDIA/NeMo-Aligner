@@ -115,8 +115,9 @@ def tokenize_dataset(cfg: 'DictConfig', tokenizer_type):
         documents=documents,
         data=data_payload,
         seq_length=cfg.model.data.seq_length,
-        seed=1234, ## TODO: make sure shuffling is actually happening here!!!! If not, maybe we have an iid data issue!
+        seed=cfg.model.seed,
         drop_last=cfg.model.data.train_ds.drop_last,
+        pad_chosen_rejected_to_max=False,
     )
 
     combined_dataset = []
@@ -250,12 +251,12 @@ def main(cfg: 'DictConfig') -> None:
         np.save(output_path, output_data)
         logging.info(f"Done, output written to {output_path}")
 
-### TODO: Update!!
+    ## TODO: udpate!
     logging.info(
         f"""
 ✅ Packed datasets with pack sizes {args.pack_sizes} are prepared successfully. 
-To train with packed sequences, you need to make changes to the DPO config file. See NeMo Documentation 
-for more details: <https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/features/throughput_optimizations.html#sequence-packing-for-sft-peft>
+To train with packed sequences, you need to make changes to the DPO config file.
+See the NeMo-Aligner sequence packing documentation for more details. 
 """
     )
 

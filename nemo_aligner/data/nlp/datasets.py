@@ -307,7 +307,17 @@ class DPOModelDataset(Dataset):
     """
 
     def __init__(
-        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+        self,
+        cfg,
+        tokenizer,
+        name,
+        data_prefix,
+        documents,
+        data,
+        seq_length,
+        seed,
+        drop_last=True,
+        pad_chosen_rejected_to_max=True,
     ):
         super().__init__()
         self.cfg = cfg
@@ -316,6 +326,10 @@ class DPOModelDataset(Dataset):
         self.drop_last = drop_last
         self.seq_length = seq_length
         self.tokenizer = tokenizer
+
+        ## pad_chosen_rejected_to_max should be true unless iterating through the
+        ## dataset as a data preparation step for packing
+        self.pad_chosen_rejected_to_max = pad_chosen_rejected_to_max
 
         self.reset_position_ids = cfg.data.get("reset_position_ids", False)
         self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
@@ -370,24 +384,24 @@ class DPOModelDataset(Dataset):
 
         max_curr_seq_len = max(chosen_len, reject_len)
 
-        ## comment this out for now.
-        ## we don't want padding between sequences when packing
-        '''chosen_tokens = torch.nn.functional.pad(
-            torch.LongTensor(chosen), (0, max_curr_seq_len - chosen_len), mode="constant", value=self.eos_id
-        )
-        rejected_tokens = torch.nn.functional.pad(
-            torch.LongTensor(reject), (0, max_curr_seq_len - reject_len), mode="constant", value=self.eos_id
-        )
-        labels_chosen_tokens = torch.nn.functional.pad(
-            torch.LongTensor(chosen_labels), (0, max_curr_seq_len - len(chosen_labels)), mode="constant", value=-100
-        )
-        labels_reject_tokens = torch.nn.functional.pad(
-            torch.LongTensor(reject_labels), (0, max_curr_seq_len - len(reject_labels)), mode="constant", value=-100
-        )'''
-        chosen_tokens = torch.LongTensor(chosen)
-        rejected_tokens = torch.LongTensor(reject)
-        labels_chosen_tokens = torch.LongTensor(chosen_labels)
-        labels_reject_tokens = torch.LongTensor(reject_labels)
+        if self.pad_chosen_rejected_to_max:
+            chosen_tokens = torch.nn.functional.pad(
+                torch.LongTensor(chosen), (0, max_curr_seq_len - chosen_len), mode="constant", value=self.eos_id
+            )
+            rejected_tokens = torch.nn.functional.pad(
+                torch.LongTensor(reject), (0, max_curr_seq_len - reject_len), mode="constant", value=self.eos_id
+            )
+            labels_chosen_tokens = torch.nn.functional.pad(
+                torch.LongTensor(chosen_labels), (0, max_curr_seq_len - len(chosen_labels)), mode="constant", value=-100
+            )
+            labels_reject_tokens = torch.nn.functional.pad(
+                torch.LongTensor(reject_labels), (0, max_curr_seq_len - len(reject_labels)), mode="constant", value=-100
+            )
+        else:
+            chosen_tokens = torch.LongTensor(chosen)
+            rejected_tokens = torch.LongTensor(reject)
+            labels_chosen_tokens = torch.LongTensor(chosen_labels)
+            labels_reject_tokens = torch.LongTensor(reject_labels)
 
         ignore_example = False
         # ignore the example whose tokenized text exceeds max seq length.
@@ -418,14 +432,14 @@ class DPOModelDataset(Dataset):
         return output
 
 class DPOPackedDataset(DPOModelDataset):
-    """TODO: docstring
+    """A dataset class for DPO with sequence packing. Data is expected to be 
+    pre-tokenized and pre-packed using examples/nlp/data/dpo/prepare_packed_dpo_dataset.py.
     """
 
     def __init__(
         self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True, # return_cu_seqlen: bool = True ## should always be true
     ):
 
-        #np.random.seed(seed) ## TODO: why is this needed in sft dataset?
         super().__init__(
             cfg,
             tokenizer,
