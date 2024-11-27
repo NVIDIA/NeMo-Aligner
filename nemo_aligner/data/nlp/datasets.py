@@ -439,12 +439,7 @@ class DPOPackedDataset(DPOModelDataset):
         )
         self.data_prefix = data_prefix
 
-    ## TODO: when is shuffling done?
     def __getitem__(self, idx):
-        #if self.samples_mapping is not None:
-        #    # assert idx < len(self.samples_mapping)
-        #    idx = self.samples_mapping[idx]
-
         return self.data[idx]
 
     def __len__(self):

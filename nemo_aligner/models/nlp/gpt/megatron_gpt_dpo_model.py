@@ -166,7 +166,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             # this is necessary if MBS > 1 with the new GBS padding logic, as you may get batch dim > 1 in some configs
             # these two lines ensure your position_ids and attn_mask are always B=1
             # position_ids = batch["position_ids"][0:1]
-            attention_mask = batch["attention_mask"][0:1] ## TODO: make sure this works for packed sequence 
+
+            ## if using packing via TE, attention mask is generated in TE
+            attention_mask = batch["attention_mask"][0:1] if not packed else None
 
             # Model forward pass
             forward_args = {
