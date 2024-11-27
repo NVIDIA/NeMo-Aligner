@@ -50,12 +50,8 @@ OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
-helpsteer_template = """<SPECIAL_10>System
-
-<SPECIAL_11>User
-{problem}
-<SPECIAL_11>Assistant
-"""
+# helpsteer is already formatted
+helpsteer_template = """{problem}"""
 
 math_template = """<SPECIAL_10>System
 
