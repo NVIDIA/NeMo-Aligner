@@ -18,12 +18,14 @@ from collections import UserDict, defaultdict
 from concurrent.futures import Future
 from contextlib import nullcontext
 from dataclasses import dataclass
-from itertools import permutations, product
+from functools import partial
+from itertools import permutations, product, starmap
 from typing import Dict, List, Optional
 
 import pandas as pd
 import torch
 import torch.distributed
+from instruction_following_eval.evaluation_main import InputExample, test_instruction_following_strict
 from megatron.core import parallel_state as mcore_parallel_state
 from megatron.core.utils import divide
 
@@ -37,7 +39,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import M
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
-from nemo_aligner.models.nlp.gpt.reward_critic_clients import RMCriticFutureResult
+from nemo_aligner.models.nlp.gpt.reward_critic_clients import RMCriticFutureResult, extract_dialog
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     SyncTimer,
@@ -79,27 +81,62 @@ class DummyFuture:
         return full_reward_list, new_reward_dictionary
 
 
+def verify_math(sandbox, answer, extra_verifier_info, is_end):
+    if not is_end:
+        return 0
+
+    reward = sandbox.is_output_correct(answer, extra_verifier_info)
+
+    if reward is None:
+        return 0
+
+    return reward
+
+
+def verify_ifeval(text, kwargs, is_end):
+    if not is_end:
+        return 0
+
+    user_text, assistant_text = extract_dialog(text)
+    prompt = user_text[-1]
+    response = assistant_text[-1]
+
+    example = InputExample(
+        key="", instruction_id_list=kwargs["instruction_id_list"], prompt=prompt, kwargs=kwargs["instruction_kwargs"]
+    )
+
+    try:
+        output = float(all(test_instruction_following_strict(example, {prompt: response}).follow_instruction_list))
+    except:
+        output = 0
+
+    return output
+
+
 def get_verifier_results(rollout_batch, batch, tokenizer, rm_critic, sandbox):
     send_dictionary = defaultdict(list)
     send_dictionary_ids = defaultdict(list)
 
-    for i, (dataset, prompt_length, response_tokens, response_lengths, expected_answer) in enumerate(
+    for i, (dataset, prompt_length, response_tokens, response_lengths, extra_verifier_info, is_end) in enumerate(
         zip(
             batch["dataset"],
             batch["length"],
             rollout_batch["response_tokens"],
             rollout_batch["response_lengths"],
-            batch["answer"],
+            batch["extra_verifier_info"],
+            rollout_batch["is_end"].tolist(),
         )
     ):
         if dataset == "math":
             text = extract_answer(tokenizer.ids_to_text(response_tokens[prompt_length:response_lengths].tolist()))
-            inputs = (text, expected_answer)
+            inputs = (text, extra_verifier_info, is_end)
             send_dictionary[dataset].append(inputs)
-
         elif dataset == "helpsteer":
             text = tokenizer.ids_to_text(response_tokens[:response_lengths].tolist())
             send_dictionary[dataset].append(text)
+        elif dataset == "ifeval":
+            text = tokenizer.ids_to_text(response_tokens[:response_lengths].tolist())
+            send_dictionary[dataset].append((text, extra_verifier_info, is_end))
         else:
             raise NotImplementedError(f"{dataset=} query is not implemented!")
 
@@ -109,11 +146,13 @@ def get_verifier_results(rollout_batch, batch, tokenizer, rm_critic, sandbox):
 
     for dataset, input_list in send_dictionary.items():
         if dataset == "math":
-            rewards = [sandbox.is_output_correct(*item) for item in input_list]
-            rewards = [0 if r is None else r for r in rewards]
+            rewards = list(starmap(partial(verify_math, sandbox), input_list))
+
         elif dataset == "helpsteer":
-            # TODO: query the helpsteer first
+            # TODO: query the helpsteer first + add is_end
             rewards = rm_critic.infer_rm(input_list)
+        elif dataset == "ifeval":
+            rewards = list(starmap(verify_ifeval, input_list))
         else:
             raise NotImplementedError(f"dataset query is not implemented!")
 
@@ -429,9 +468,6 @@ class GRPOTrainer:
 
         logprobs = rollout_batch["logprobs"]
         is_end = rollout_batch["is_end"]
-
-        # rewards = rewards * is_end
-        rewards = rewards
 
         num_responses = self.cfg.num_responses_per_prompt
 

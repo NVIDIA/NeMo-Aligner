@@ -61,9 +61,12 @@ Below is a math question. I want you to first reason through the steps required 
 <SPECIAL_11>Assistant
 """
 
+ifeval_template = """{problem}"""
+
 PROMPT_TEMPLATE_DICT = {
     "helpsteer": helpsteer_template,
     "math": math_template,
+    "ifeval": ifeval_template,
 }
 
 
@@ -94,13 +97,17 @@ class GenericDataset:
         text = PROMPT_TEMPLATE_DICT[self.data[idx]["dataset"]].format(problem=self.data[idx]["text"])
         sample, _ = self.encode(text)
         sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
+
         expected_answer = self.data[idx].get("expected_answer", None)
+
+        if self.data[idx]["dataset"] == "ifeval":
+            expected_answer = {k: v for k, v in self.data[idx].items() if k not in {"text", "dataset"}}
 
         output = {
             "text": sample_tensor,
             "length": sample_tensor.shape[0],
             "loss_multiplier": True,
-            "answer": expected_answer,
+            "extra_verifier_info": expected_answer,
             "idx": idx,
             "dataset": self.data[idx]["dataset"],
         }
