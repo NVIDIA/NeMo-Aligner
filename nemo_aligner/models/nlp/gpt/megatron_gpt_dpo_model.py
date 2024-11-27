@@ -426,6 +426,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         if not packed:
             # each minibatch has 2 comparisons so tensor shape will be mbs * 2
             micro_batch_size *= 2
+        else:
+            assert micro_batch_size == 1, (
+                f"Packed sequence is only supported with micro batch size 1,"
+                f" but your micro batch size is {micro_batch_size}."
+            )
+            assert self.cfg.get('transformer_engine', False), "Transformer Engine should be enabled when using sequence packing."
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_forward_output_and_loss_func(forward_only, logprobs_only=False),
