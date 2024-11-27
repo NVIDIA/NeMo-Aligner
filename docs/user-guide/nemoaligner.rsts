@@ -38,8 +38,8 @@ To run interactively using a pre-built container, run the following code:
    - If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 
-Building NeMo-Aligner Dockerfile
-################################
+Build a NeMo-Aligner Dockerfile
+###############################
 
 NeMo-Aligner also provides its own `dockerfile <https://github.com/NVIDIA/NeMo-Aligner/blob/main/Dockerfile>`__ if you want to customize the environment.
 Run the following to build the image:
@@ -57,4 +57,4 @@ Run the following to build the image:
             --build-arg=ALIGNER_COMMIT=$ALIGNER_COMMIT \
             .
 
-        # Run the image using the above command in "Getting Started" and swap out "nvcr.io/nvidia/nemo:24.09" with "aligner-custom"
+        # Run the image using the above command in "Get Started" and swap out "nvcr.io/nvidia/nemo:24.09" with "aligner-custom".
