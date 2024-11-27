@@ -274,9 +274,9 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
     # When using sequence parallel, sequence will further be split by TP size
     # When using context parallel, sequence is split by CP size as well
     pad_seq_length_to_mult = (
-        8 * self.cfg.get('tensor_model_parallel_size', 1) if self.cfg.get('sequence_parallel', False) else 16
+        8 * self.cfg.get("tensor_model_parallel_size", 1) if self.cfg.get("sequence_parallel", False) else 16
     )
-    pad_seq_length_to_mult *= self.cfg.get('context_parallel_size', 1)
+    pad_seq_length_to_mult *= self.cfg.get("context_parallel_size", 1)
 
     if is_chat:
         assert not packed_sequence, "Sequence packing is currently not supported with chat datasets."
