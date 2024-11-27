@@ -1,19 +1,20 @@
 .. include:: /content/nemo.rsts
 
-.. _model-aligner-draftp:
+.. include:: aligner-algo-header.rst
 
-Fine-tuning Stable Diffusion with DRaFT+
+.. _nemo-aligner-draftp:
+
+Fine-Tuning Stable Diffusion with DRaFT+
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-In this tutorial, we will go through the step-by-step guide for fine-tuning Stable Diffusion model using DRaFT+ algorithm by NVIDIA. 
-DRaFT+ is an improvement over the `DRaFT <https://arxiv.org/pdf/2309.17400.pdf>`__ algorithm by alleviating the mode collapse and improving diversity through regularization. 
+In this tutorial, we will go through the step-by-step guide for fine-tuning a Stable Diffusion model using DRaFT+ algorithm by NVIDIA.
+DRaFT+ enhances the DRaFT `DRaFT <https://arxiv.org/pdf/2309.17400.pdf>`__ algorithm by mitigating mode collapse and improving diversity through regularization.
 For more technical details on the DRaFT+ algorithm, check out our technical blog.
 
-
-Data Input for running DRaFT+
+Data Input for Running DRaFT+
 #############################
 
-The data for running DRaFT+ should be a ``.tar`` file consisting of a plain prompt. You can generate a tarfile from a ``.txt``
+The data for running DRaFT+ should be a ``.tar`` file consisting of a plain prompt. You can generate a tar file from a ``.txt``
 file containing the prompts separated by new lines, such as following format::
 
     prompt1
@@ -35,7 +36,7 @@ Use the following script to download and save the prompts from the `Pick a pic <
             for caption in captions:
                 file.write(caption + '\n')
 
-You can then run the following snipet to convert it to a ``.tar`` file:
+You can then run the following snippet to convert it to a ``.tar`` file:
 
    .. code-block:: bash 
 
@@ -64,8 +65,8 @@ you can use the `conversion script <https://github.com/NVIDIA/NeMo/blob/main/exa
 DRaFT+ Training
 ###############
 
-To launch reward model training, you must have checkpoints for `UNet <https://huggingface.co/runwayml/stable-diffusion-v1-5/tree/main/unet>`__ and 
-`VAE <https://huggingface.co/runwayml/stable-diffusion-v1-5/tree/main/vae>`__ of a trained Stable Diffusion model and a checkpoint for the Reward Model. 
+To start reward model training, you need checkpoints for both the `UNet <https://huggingface.co/runwayml/stable-diffusion-v1-5/tree/main/unet>`__ and
+`VAE <https://huggingface.co/runwayml/stable-diffusion-v1-5/tree/main/vae>`__ components of a trained Stable Diffusion model, as well as a checkpoint for the Reward Model.
 
 .. tab-set::
 
@@ -162,12 +163,12 @@ To launch reward model training, you must have checkpoints for `UNet <https://hu
                exp_manager.wandb_logger_kwargs.project=${PROJECT}
             EOF
 
-            srun -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
+            srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
             set +x
 
 
 .. note::
-   For more info on DRaFT+ hyperparameters please see the model config files (for SD and SDXL respectively):
+   For more information on DRaFT+ hyperparameters, please see the model config files (for SD and SDXL respectively):
    
     ``NeMo-Aligner/examples/mm/stable_diffusion/conf/draftp_sd.yaml``
     ``NeMo-Aligner/examples/mm/stable_diffusion/conf/draftp_sdxl.yaml``
@@ -179,10 +180,10 @@ Once you have completed fine-tuning Stable Diffusion with DRaFT+, you can run in
 and `sd_lora_infer.py <https://github.com/NVIDIA/NeMo/blob/main/examples/multimodal/text_to_image/stable_diffusion/sd_lora_infer.py>`__  scripts from the NeMo codebase. The generated images with the fine-tuned model should have 
 better prompt alignment and aesthetic quality.
 
-User controllable finetuning with Annealed Importance Guidance (AIG)
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+User-controllable Fine-Tuning with Annealed Importance Guidance (AIG)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-AIG provides the inference-time flexibility to interpolate between the base Stable Diffusion model (with low rewards and high diversity) and DRaFT-finetuned model (with high rewards and low diversity) to obtain images with high rewards and high diversity. AIG inference is easily done by specifying comma-separated `weight_type` strategies to interpolate between the base and finetuned model.
+AIG provides the inference-time flexibility to interpolate between the base Stable Diffusion model (with low rewards and high diversity) and a DRaFT+ fine-tuned model (with high rewards and low diversity) to obtain images with high rewards and high diversity. AIG inference is easily done by specifying comma-separated ``weight_type`` strategies to interpolate between the base and fine-tuned model.
 
 .. tab-set::
     .. tab-item:: AIG on Stable Diffusion XL 

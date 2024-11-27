@@ -1,28 +1,30 @@
 .. include:: /content/nemo.rsts
 
-.. _model-aligner-rs:
+.. include:: aligner-algo-header.rst
+
+.. _nemo-aligner-rs:
 
 Model Alignment by Rejection Sampling
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
-In this tutorial, we will guide you through the process of aligning a NeMo Framework model using rejection sampling. This method can be applied to various models, including LLaMa2 and Mistral, with our scripts functioning consistently across different models.
+In this tutorial, we will guide you through the process of aligning a NeMo Framework model using rejection sampling. This method can be applied to various models, including LLaMa and Mistral, with our scripts functioning consistently across different models.
 
 Rejection Sampling is usually preceded by a Supervised Fine-Tuning (SFT). We should first follow the :ref:`Prerequisite guide <prerequisite>` and the :ref:`SFT guide <sft>`. After obtaining the SFT model, we will also need to train a reward model as in :ref:`PPO guide <ppo>`. We will use the rejection sampling algorithm on the `Anthropic-HH-RLHF <https://huggingface.co/datasets/Anthropic/hh-rlhf>`__ dataset.
 
 Rejection Sampling Training
-############
+###########################
 
-After you have fine-tuned a GPT model using Supervised Fine-Tuning (SFT), and trained a reward model as explained in the preceding section, you can start aligning the policy using rejection sampling.
+After you have fine-tuned a GPT model using SFT and trained a reward model as explained in the preceding section, you can start aligning the policy using rejection sampling.
 
-During rejection sampling training, we have two models interacting with each other, which Aligner runs in separate jobs:
+During rejection sampling training, we have two models interacting with each other, which NeMo-Aligner runs in separate jobs:
 
 #. The Policy Network: This is the model we are training and it should start from an SFT model.
 #. The Reward Model (RM): This model accepts a prompt combined with a response as input and produces a single scalar value, known as the reward. The rejection sampling algorithm aims to maximize this reward.
 
 The next section discusses how to launch each of these two jobs.
 
-Launching the Reward Model and Critic Server
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Launch the Reward Model and Critic Server
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 To launch the server:
 
@@ -43,12 +45,12 @@ To launch the server:
       rm_model_file=${RM_NEMO_FILE}
 
 
-The above example launches the reward model server on 8 GPUs and 1 node. Please make sure to change trainer.devices, trainer.num_nodes depending on your model size and scale. Aligner will work on any scale. Also, make sure to tune the trainer.rs.inference_micro_batch_size argument. This argument sets the size of the batch the RS actor is allowed to send to the critic per DP rank.
+The above example launches the reward model server on 8 GPUs and 1 node. Please make sure to change ``trainer.devices`` and ``trainer.num_nodes`` depending on your model size and scale. NeMo-Aligner will work on any scale. Also, make sure to tune the ``trainer.rs.inference_micro_batch_size`` argument. This argument sets the size of the batch the RS actor is allowed to send to the critic per DP rank.
 
 Launch the Initial Policy and RS Actor Training
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-The RS Actor training job contains the master controller that makes the HTTP calls to all servers when needed. To launch the RS Actor and Initial Policy server:
+The RS actor training job contains the master controller that makes the HTTP calls to all servers when needed. To launch the RS actor and initial policy server:
 
 .. code-block:: bash 
 
@@ -95,12 +97,12 @@ The RS Actor training job contains the master controller that makes the HTTP cal
       model.rs.num_rollouts_per_prompt=8 \
       model.rs.top_n_rollouts=1
 
-The above command launches the initial and actor server on 1 node with 8 GPUs.
+The above command launches the RS actor and initial policy server on 1 node with 8 GPUs.
 
-Launching Both Servers for Rejection Sampling training
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+Launch Both Servers for Rejection Sampling Training
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-You can use slurm to launch the 2 jobs and get them to coordinate together in a full Rejection Sampling job via the following:
+You can use Slurm to launch the two jobs and get them to coordinate together in a full rejection sampling job via the following:
 
 .. code-block:: bash 
 
@@ -157,7 +159,7 @@ You can use slurm to launch the 2 jobs and get them to coordinate together in a 
       inference.port=${CRITIC_PORT}
    EOF
 
-   srun --het-group=0 -o $CRITIC_OUTFILE -e $CRITIC_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_critic_inference}" &
+   srun --no-container-mount-home --het-group=0 -o $CRITIC_OUTFILE -e $CRITIC_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_critic_inference}" &
 
    sleep 30
 
@@ -213,11 +215,11 @@ You can use slurm to launch the 2 jobs and get them to coordinate together in a 
       model.rs.top_n_rollouts=1
    EOF
 
-   srun --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_rs}" &
+   srun --no-container-mount-home --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_rs}" &
 
    wait
 
-The above script runs the reward model server on 1 node and the actor on 1 node.
+The above script runs the reward model server on 1 node and the RS actor on 1 node.
 
 It is important to launch all jobs with ``&`` after the srun command, to ensure they do not block each other. 
 

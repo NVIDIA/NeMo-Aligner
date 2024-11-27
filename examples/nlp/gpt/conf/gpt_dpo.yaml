@@ -114,6 +114,7 @@ model:
     data_impl: jsonl
     splits_string: null
     seq_length: ${model.encoder_seq_length}
+    pad_length_to_multiple_of: null  # If using sequence_parallel, ensure divisible by tensor_model_parallel_size
     skip_warmup: True
     num_workers: 0
     reset_position_ids: False # Reset position ids after end-of-document token

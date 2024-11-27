@@ -7,7 +7,7 @@
 
 ## Introduction
 
-NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state-of-the- art model alignment algorithms such as SteerLM, DPO, and Reinforcement Learning from Human Feedback (RLHF). These algorithms enable users to align language models to be more safe, harmless, and helpful. Users can perform end-to-end model alignment on a wide range of model sizes and take advantage of all the parallelism techniques to ensure their model alignment is done in a performant and resource-efficient manner. For more technical details, please refer to our [paper](https://arxiv.org/abs/2405.01481).
+NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit has support for state-of-the-art model alignment algorithms such as SteerLM, DPO, and Reinforcement Learning from Human Feedback (RLHF). These algorithms enable users to align language models to be more safe, harmless, and helpful. Users can perform end-to-end model alignment on a wide range of model sizes and take advantage of all the parallelism techniques to ensure their model alignment is done in a performant and resource-efficient manner. For more technical details, please refer to our [paper](https://arxiv.org/abs/2405.01481).
 
 The NeMo-Aligner toolkit is built using the NeMo Framework, which enables scalable training across thousands of GPUs using tensor, data, and pipeline parallelism for all alignment components. Additionally, our checkpoints are cross-compatible with the NeMo ecosystem, facilitating inference deployment and further customization (https://github.com/NVIDIA/NeMo-Aligner).
 
@@ -15,7 +15,7 @@ The toolkit is currently in it's early stages. We are committed to improving the
 
 ## Key Features
 
-* **SteerLM: Attribute Conditioned SFT as an (User-Steerable) alternative to RLHF** 
+* **SteerLM: Attribute Conditioned SFT as an (User-Steerable) alternative to RLHF.** 
     * [Llama3-70B-SteerLM-Chat](https://huggingface.co/nvidia/Llama3-70B-SteerLM-Chat) aligned with NeMo-Aligner.
     * Corresponding reward model [Llama3-70B-SteerLM-RM](https://huggingface.co/nvidia/Llama3-70B-SteerLM-RM).
     * Learn more at our [SteerLM](https://arxiv.org/abs/2310.05344) and [HelpSteer2](https://arxiv.org/abs/2406.08673) papers.
@@ -23,6 +23,8 @@ The toolkit is currently in it's early stages. We are committed to improving the
 * **Reward Model Training**
 * **Reinforcement Learning from Human Feedback using the [PPO](https://arxiv.org/pdf/1707.06347.pdf) Algorithm**
     * [Llama3-70B-PPO-Chat](https://huggingface.co/nvidia/Llama3-70B-PPO-Chat) aligned with NeMo-Aligner using TRT-LLM.
+* **Reinforcement Learning from Human Feedback using the REINFORCE Algorithm**
+    * [Llama-3.1-Nemotron-70B-Instruct](https://huggingface.co/nvidia/Llama-3.1-Nemotron-70B-Instruct) aligned with NeMo-Aligner using TRT-LLM.
 * **Direct Preference Optimization** as described in [Direct Preference Optimization: Your Language Model is Secretly a Reward Model](https://arxiv.org/pdf/2305.18290)
     * [Llama3-70B-DPO-Chat](https://huggingface.co/nvidia/Llama3-70B-DPO-Chat) aligned with NeMo Aligner.
 * **Self-Play Fine-Tuning (SPIN)** as described in [Self-Play Fine-Tuning Converts Weak Language Models to Strong Language Models](https://arxiv.org/pdf/2401.01335)
@@ -41,6 +43,13 @@ For the latest stable release, please see the [releases page](https://github.com
 
 ### Requirements
 NeMo-Aligner has the same requirements as the [NeMo Toolkit Requirements](https://github.com/NVIDIA/NeMo#requirements) with the addition of [PyTriton](https://github.com/triton-inference-server/pytriton).
+
+### Quick start inside NeMo container
+NeMo Aligner comes included with NeMo containers. On a machine with NVIDIA GPUs and drivers installed run NeMo container:
+```bash
+docker run --gpus all -it --rm --shm-size=8g --ulimit memlock=-1 --ulimit stack=67108864  nvcr.io/nvidia/nemo:24.07
+```
+Once you are inside the container, NeMo-Aligner is already installed and together with NeMo and other tools can be found under ```/opt/``` folder.
 
 ### Install NeMo-Aligner
 Please follow the same steps as outlined in the [NeMo Toolkit Installation Guide](https://github.com/NVIDIA/NeMo#installation).  After installing NeMo, execute the following additional command:

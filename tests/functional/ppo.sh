@@ -1,5 +1,19 @@
 #!/bin/bash
 
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 set -eoux pipefail
@@ -10,8 +24,10 @@ export NVTE_APPLY_QK_LAYER_SCALING=1
 KL=${KL:-0.03}
 LR=${LR:-9e-7}
 RUN_ONLY=${RUN_ONLY:-}
-GBS=${GBS:-64}
-RESHARD=${RESHARD:-False}
+GBS=${GBS:-2}
+TP_SIZE=${TP_SIZE:-1}
+PP_SIZE=${PP_SIZE:-2}
+RESHARD=${RESHARD:-True}
 RM_NEMO_FILE=${RM_NEMO_FILE}
 ACTOR_NEMO_FILE=${ACTOR_NEMO_FILE}
 
@@ -21,7 +37,7 @@ MIN_LR=$(awk -v var="$LR" 'BEGIN {print var - 1e-11}')
 TRAIN_DATA_PATH=$SCRIPT_DIR/test_data/synthetic-123.jsonl
 VALID_DATA_PATH=$SCRIPT_DIR/test_data/synthetic-123.jsonl
 
-NAME="llama3_test"
+NAME="ppo_test"
 
 # PARAMETERS
 RESULTS_DIR="/tmp/${NAME}"
@@ -30,7 +46,7 @@ mkdir -p $RESULTS_DIR
 GPFS=$(git rev-parse --show-toplevel)
 
 # W&B Logging
-PROJECT=llama3_ppo_test
+PROJECT=ppo_test
 
 CRITIC_CONFIG_PATH="$GPFS/examples/nlp/gpt/conf/"
 CRITIC_CONFIG_NAME="gpt_ppo_critic"
@@ -95,20 +111,13 @@ if [[ -z "${FAST:-}" ]]; then
 fi
 #########################################################################################
 
-# START HETEROGENEUS JOB 3
 CONF_DIR="${GPFS}/examples/nlp/gpt/conf/"
 CONF_NAME="gpt_ppo_actor"
 
 ACTOR_LOG_DIR="${RESULTS_DIR}/actor_results"
-CHECKPOINT_DIR="${ACTOR_LOG_DIR}/checkpoints"
-TENSOBOARD_DIR="${ACTOR_LOG_DIR}/tensorboard"
-
 mkdir -p $ACTOR_LOG_DIR
-mkdir -p $TENSOBOARD_DIR
-mkdir -p $CHECKPOINT_DIR
 
 ACTOR_NAME="${NAME}_actor"
-
 host_critic=localhost
 
 actor() {
@@ -133,14 +142,14 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_pp
     trainer.ppo.val_check_interval=2 \
     ++trainer.ppo.save_interval=2 \
     ++model.micro_batch_size=1 \
-    ++model.global_batch_size=1 \
-    ++model.tensor_model_parallel_size=1 \
-    ++model.pipeline_model_parallel_size=2 \
+    ++model.global_batch_size=${GBS} \
+    ++model.tensor_model_parallel_size=${TP_SIZE} \
+    ++model.pipeline_model_parallel_size=${PP_SIZE} \
     ++model.ppo.entropy_bonus=0.0 \
     ++model.ppo.ratio_eps=0.2 \
     ++model.encoder_seq_length=64 \
     ++exp_manager.checkpoint_callback_params.save_top_k=10 \
-    ++model.ppo.num_rollout_samples=1 \
+    ++model.ppo.num_rollout_samples=${GBS} \
     ++model.ppo.rollout_micro_batch_size=1 \
     ++model.ppo.length_params.max_length=32      \
     ++model.ppo.forward_micro_batch_size=1 \
@@ -167,7 +176,7 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_pp
     trainer.ppo.max_steps=3 \
     trainer.ppo.trt_llm.model_type=llama \
     ++exp_manager=null \
-    remote_critic_rm.pad_to_length=$((512+256)) $@ # (match critic) generation + prompt = model.ppo.length_params.max_length + model.ppo.trt_llm.max_input_len ( 512) = self.trtllm_generate.max_generation_length + self.trtllm_generate.max_input_len
+    remote_critic_rm.pad_to_length=$((512+256)) $@ # (match critic) generation + prompt = model.ppo.length_params.max_length + model.ppo.trt_llm.max_input_len (512) = self.trtllm_generate.max_generation_length + self.trtllm_generate.max_input_len
 }
 
 actor_log_file=$(mktemp /tmp/actor-ppo-log-XXXXXX)
