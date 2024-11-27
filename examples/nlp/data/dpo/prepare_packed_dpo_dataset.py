@@ -114,7 +114,7 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
         data=data_payload,
         seq_length=cfg.model.data.seq_length,
         seed=cfg.model.seed,
-        drop_last=True, ## False not currently supported
+        drop_last=True,  ## False not currently supported
         pad_chosen_rejected_to_max=False,
     )
 
