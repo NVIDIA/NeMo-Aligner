@@ -12,22 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import json
-import torch
-
+import os
 from dataclasses import dataclass
-from typing import Dict, List, TYPE_CHECKING, Tuple
-from tqdm import tqdm
+from typing import TYPE_CHECKING, Dict, List, Tuple
 
 import numpy as np
+import torch
+from tqdm import tqdm
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset
 from nemo.collections.nlp.modules.common.tokenizer_utils import get_nmt_tokenizer
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.sequence_packing_utils import create_hist, create_packing_strategy
-
 from nemo_aligner.data.nlp.builders import build_train_valid_test_dpo_datasets
 from nemo_aligner.data.nlp.datasets import DPOModelDataset
 
@@ -81,7 +79,7 @@ Note:
 """
 
 
-def tokenize_dataset(cfg: 'DictConfig', tokenizer_type):
+def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
     """
     Tokenizes a dataset using the same configuration file as DPOModelDataset.
 
@@ -96,10 +94,10 @@ def tokenize_dataset(cfg: 'DictConfig', tokenizer_type):
 
     logging.info("Tokenizing dataset...")
 
-    if tokenizer_type=="huggingface":
+    if tokenizer_type == "huggingface":
         # pass in a Hugging Face folder which contains tokenizer.json
         tokenizer = get_nmt_tokenizer(library="huggingface", model_name=cfg.tokenizer_path, use_fast=True)
-    elif tokenizer_type=="sentencepiece":
+    elif tokenizer_type == "sentencepiece":
         tokenizer = get_nmt_tokenizer(library="sentencepiece", tokenizer_model=cfg.tokenizer_path)
     else:
         raise ValueError(f"unsupported tokenizer type {tokenizer_type}")
@@ -134,7 +132,7 @@ def tokenize_dataset(cfg: 'DictConfig', tokenizer_type):
             "labels": labels,
             "reward": reward,
             "lengths": lengths,
-            "boundary": boundary
+            "boundary": boundary,
         }
         combined_dataset.append(new_item)
 
@@ -173,11 +171,11 @@ def fill_packing_strategy(
             perm = np.random.permutation(len(per_seq_data))
 
             perm = np.random.permutation(len(per_seq_data))
-            input_ids = np.array([x['input_ids'] for x in per_seq_data])[perm].tolist()
-            labels = np.array([x['labels'] for x in per_seq_data])[perm].tolist()
-            reward = np.array([x['reward'] for x in per_seq_data])[perm].tolist()
-            lengths = np.array([x['lengths'] for x in per_seq_data])[perm].tolist()
-            boundary = np.array([x['boundary'] for x in per_seq_data])[perm].tolist()
+            input_ids = np.array([x["input_ids"] for x in per_seq_data])[perm].tolist()
+            labels = np.array([x["labels"] for x in per_seq_data])[perm].tolist()
+            reward = np.array([x["reward"] for x in per_seq_data])[perm].tolist()
+            lengths = np.array([x["lengths"] for x in per_seq_data])[perm].tolist()
+            boundary = np.array([x["boundary"] for x in per_seq_data])[perm].tolist()
 
             ifile_handles[seq_len] = (input_ids, labels, reward, lengths, boundary)
 
@@ -207,13 +205,22 @@ def fill_packing_strategy(
 
     output_data = []
     for i in range(len(input_ids)):
-        item_dict = {'input_ids': input_ids[i], 'labels': labels[i], 'reward': reward[i], 'lengths': lengths[i], 'seq_boundaries': seq_boundaries[i]}
+        item_dict = {
+            "input_ids": input_ids[i],
+            "labels": labels[i],
+            "reward": reward[i],
+            "lengths": lengths[i],
+            "seq_boundaries": seq_boundaries[i],
+        }
         output_data.append(item_dict)
 
     # (input_ids, labels, reward, lengths, boundary) = length 5
     for i in range(5):
-        assert all(not seq[i] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
+        assert all(
+            not seq[i] for seq in ifile_handles.values()
+        ), "Error: There are items left over from the assignment"
     return output_data
+
 
 @dataclass
 class PackingArgs:
@@ -221,10 +228,10 @@ class PackingArgs:
     pack_sizes: Tuple[int] = (2048,)
     packing_algorithm: str = "first_fit_shuffle"
     seed: int = 0
-    tokenizer_type: str = "sentencepiece" ## one of "huggingface" or "sentencepiece"
+    tokenizer_type: str = "sentencepiece"  ## one of "huggingface" or "sentencepiece"
 
-    def from_config(self, cfg: 'DictConfig'):
-        for required_arg in ('output_dir', 'pack_sizes'):
+    def from_config(self, cfg: "DictConfig"):
+        for required_arg in ("output_dir", "pack_sizes"):
             assert cfg.get(required_arg, None), f"Please specify +{required_arg}=..."
         self.output_dir = cfg.output_dir
         self.pack_sizes = cfg.pack_sizes
@@ -234,20 +241,20 @@ class PackingArgs:
         return self
 
 
-@hydra_runner(
-    config_path="../../gpt/conf", config_name="gpt_dpo"
-)
-def main(cfg: 'DictConfig') -> None:
+@hydra_runner(config_path="../../gpt/conf", config_name="gpt_dpo")
+def main(cfg: "DictConfig") -> None:
     args = PackingArgs().from_config(cfg)
     dataset = tokenize_dataset(cfg, args.tokenizer_type)
-    sequences, histogram = create_hist(dataset, 2*cfg.model.data.seq_length) ## multiply by 2 because packed sequences include chosen and rejected
+    sequences, histogram = create_hist(
+        dataset, 2 * cfg.model.data.seq_length
+    )  ## multiply by 2 because packed sequences include chosen and rejected
     for pack_size in args.pack_sizes:
         assignments = create_packing_strategy(histogram, pack_size, args.packing_algorithm)
         output_data = fill_packing_strategy(assignments, sequences, pack_size)
 
         # save output data
         os.makedirs(args.output_dir, exist_ok=True)
-        output_path = os.path.join(args.output_dir, f'packed_{pack_size}_seed{args.seed}.npy')
+        output_path = os.path.join(args.output_dir, f"packed_{pack_size}_seed{args.seed}.npy")
         np.save(output_path, output_data)
         logging.info(f"Done, output written to {output_path}")
 
@@ -261,5 +268,5 @@ See the NeMo-Aligner sequence packing documentation for more details.
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

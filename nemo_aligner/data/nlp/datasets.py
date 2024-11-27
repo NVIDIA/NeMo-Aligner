@@ -391,10 +391,16 @@ class DPOModelDataset(Dataset):
                 torch.LongTensor(reject), (0, max_curr_seq_len - reject_len), mode="constant", value=self.eos_id
             )
             labels_chosen_tokens = torch.nn.functional.pad(
-                torch.LongTensor(chosen_labels), (0, max_curr_seq_len - len(chosen_labels)), mode="constant", value=-100
+                torch.LongTensor(chosen_labels),
+                (0, max_curr_seq_len - len(chosen_labels)),
+                mode="constant",
+                value=-100,
             )
             labels_reject_tokens = torch.nn.functional.pad(
-                torch.LongTensor(reject_labels), (0, max_curr_seq_len - len(reject_labels)), mode="constant", value=-100
+                torch.LongTensor(reject_labels),
+                (0, max_curr_seq_len - len(reject_labels)),
+                mode="constant",
+                value=-100,
             )
         else:
             chosen_tokens = torch.LongTensor(chosen)
@@ -426,9 +432,10 @@ class DPOModelDataset(Dataset):
             "rejected_labels": labels_reject_tokens,
             "chosen_reward": payload.get("chosen_reward", self.default_chosen_reward),
             "rejected_reward": payload.get("rejected_reward", self.default_rejected_reward),
-            "ignore_example": ignore_example
+            "ignore_example": ignore_example,
         }
         return output
+
 
 class DPOPackedDataset(DPOModelDataset):
     """A dataset class for DPO with sequence packing. Data is expected to be 
@@ -436,20 +443,19 @@ class DPOPackedDataset(DPOModelDataset):
     """
 
     def __init__(
-        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True, # return_cu_seqlen: bool = True ## should always be true
+        self,
+        cfg,
+        tokenizer,
+        name,
+        data_prefix,
+        documents,
+        data,
+        seq_length,
+        seed,
+        drop_last=True,  # return_cu_seqlen: bool = True ## should always be true
     ):
 
-        super().__init__(
-            cfg,
-            tokenizer,
-            name,
-            data_prefix,
-            documents,
-            data,
-            seq_length,
-            seed,
-            drop_last
-        )
+        super().__init__(cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last)
         self.data_prefix = data_prefix
 
     def __getitem__(self, idx):
@@ -460,7 +466,7 @@ class DPOPackedDataset(DPOModelDataset):
 
     def _ceil_to_nearest(self, n, m):
         return (n + m - 1) // m * m
-    
+
     def _maybe_cast_to_list(self, x):
         return [item.tolist() if isinstance(item, np.ndarray) else item for item in x]
 
@@ -472,7 +478,15 @@ class DPOPackedDataset(DPOModelDataset):
         return final_item
 
     ## reset_position_ids, reset_attention_mask and eod_mask_loss are unused but are needed to match the API of dpo_custom_collate
-    def collate_fn(self, batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False, pad_length_to_multiple_of: int | None = None):
+    def collate_fn(
+        self,
+        batch,
+        eos_id,
+        reset_position_ids=False,
+        reset_attention_mask=False,
+        eod_mask_loss=False,
+        pad_length_to_multiple_of: int | None = None,
+    ):
         def combine_keys(key):
             return [item[key] for item in batch]
 
@@ -483,9 +497,9 @@ class DPOPackedDataset(DPOModelDataset):
         input_ids = [
             np.concatenate(
                 [
-                    #truncate_input_ids(item, i) for i in range(len(item['seq_boundaries']) - 1)
-                    item['input_ids'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
-                    for i in range(len(item['seq_boundaries']) - 1)
+                    # truncate_input_ids(item, i) for i in range(len(item['seq_boundaries']) - 1)
+                    item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
+                    for i in range(len(item["seq_boundaries"]) - 1)
                 ]
             )
             for item in batch
@@ -493,8 +507,8 @@ class DPOPackedDataset(DPOModelDataset):
         labels = [
             np.concatenate(
                 [
-                    item['labels'][item['seq_boundaries'][i] + 1 : item['seq_boundaries'][i + 1]]
-                    for i in range(len(item['seq_boundaries']) - 1)
+                    item["labels"][item["seq_boundaries"][i] + 1 : item["seq_boundaries"][i + 1]]
+                    for i in range(len(item["seq_boundaries"]) - 1)
                 ]
             )
             for item in batch
@@ -519,9 +533,9 @@ class DPOPackedDataset(DPOModelDataset):
         for item in batch:
             position_ids.append([])
             cu_seqlens.append([0])
-            seqlens = np.array(item['seq_boundaries'][1:]) - np.array(item['seq_boundaries'][:-1])
+            seqlens = np.array(item["seq_boundaries"][1:]) - np.array(item["seq_boundaries"][:-1])
             for l in seqlens:
-                position_ids[-1].extend(list(range(l-1))) ## l - 1 to exclude labels
+                position_ids[-1].extend(list(range(l - 1)))  ## l - 1 to exclude labels
                 cu_seqlens[-1].append(cu_seqlens[-1][-1] + l - 1)
             # set last seq to the max seq len because rope and attn kernels expect no padding
             cu_seqlens[-1][-1] = max_length
@@ -533,7 +547,7 @@ class DPOPackedDataset(DPOModelDataset):
         input_ids = self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
         labels = self._collate_item(labels, max_length=max_length, pad_id=-100)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
-        
+
         max_num_sequences = max(len(l) for l in lengths)
 
         output = {
@@ -554,17 +568,17 @@ class DPOPackedDataset(DPOModelDataset):
 
         output.update(
             {
-                'attention_mask': torch.LongTensor(
+                "attention_mask": torch.LongTensor(
                     [1] * len(input_ids)
                 ),  # no attention mask is needed for packed seq, this serves as a placeholder
-                'cu_seqlens': torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
-                'cu_seqlens_argmin': cu_seqlens_argmin,  # only required for perf
-                'max_seqlen': max_seqlen,  # only required for perf
+                "cu_seqlens": torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
+                "cu_seqlens_argmin": cu_seqlens_argmin,  # only required for perf
+                "max_seqlen": max_seqlen,  # only required for perf
             }
         )
-        
+
         return output
-        
+
 
 class KTOModelDataset(Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
