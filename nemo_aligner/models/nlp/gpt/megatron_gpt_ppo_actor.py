@@ -170,6 +170,13 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     kl = masked_mean(calculate_kl_penalty(curr_log_probs, init_logprobs), is_end_mask)
                     loss = loss + self.cfg.ppo.initial_policy_kl_penalty * kl
 
+                    if loss.isnan().any():
+                        print("### LOSS NANED")
+                        print("### IS RATIO NANED", ratios.isnan().any())
+                        print("### IS ADVANTAGES NANED", advantages.isnan().any())
+                        print("### IS KL NANED", kl.isnan().any())
+                        print("### IS ENTROPY NANED", scaled_entropy.isnan().any())
+
                 else:
                     # hack to disable this update since there are no valid tokens
                     loss = loss1.view(-1)[0] * 0

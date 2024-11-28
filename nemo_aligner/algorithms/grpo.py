@@ -97,12 +97,9 @@ def verify_ifeval(text, kwargs, is_end):
     if not is_end:
         return 0
 
-    print("### TEXT is", text)
     user_text, assistant_text = extract_dialog(text)
     prompt = user_text[-1]
     response = assistant_text[-1]
-    print("### PROMPT IS", prompt)
-    print("### RESPONSE IS", response)
 
     example = InputExample(
         key="", instruction_id_list=kwargs["instruction_id_list"], prompt=prompt, kwargs=kwargs["instruction_kwargs"]
@@ -110,8 +107,7 @@ def verify_ifeval(text, kwargs, is_end):
 
     try:
         instruct = test_instruction_following_strict(example, {prompt: response}).follow_instruction_list
-        output = float(all(instruct))
-        print("### REWARD ACTUALLY IS", instruct)
+        output = int(all(instruct))
     except:
         output = 0
 
