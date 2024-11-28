@@ -98,12 +98,6 @@ def verify_ifeval(text, kwargs, is_end):
         return 0
 
     user_text, assistant_text = extract_dialog(text)
-
-    if len(user_text) != len(assistant_text) or len(assistant_text) == 0:
-        print("### TEXT CANNOT BE FORMATTED", text)
-        print("### ASSUMING REWARD IS JUST 0 FOR IFEVAL")
-        return 0
-
     prompt = user_text[-1]
     response = assistant_text[-1]
 
@@ -139,7 +133,7 @@ def get_verifier_results(rollout_batch, batch, tokenizer, rm_critic, sandbox):
             send_dictionary[dataset].append(inputs)
         elif dataset == "helpsteer":
             text = tokenizer.ids_to_text(response_tokens[:response_lengths].tolist())
-            send_dictionary[dataset].append(text)
+            send_dictionary[dataset].append((text, is_end))
         elif dataset == "ifeval":
             text = tokenizer.ids_to_text(response_tokens[:response_lengths].tolist())
             send_dictionary[dataset].append((text, extra_verifier_info, is_end))

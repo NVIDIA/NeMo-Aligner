@@ -33,7 +33,7 @@ from nemo_aligner.utils.server_utils import FutureResult
 def extract_dialog(text):
     # Patterns to match User and Assistant dialogues
     pattern_user = re.compile(r"<SPECIAL_11>User\n(.*?)\n(?=<SPECIAL_11>|$)", re.DOTALL)
-    pattern_assistant = re.compile(r"<SPECIAL_11>Assistant\n(.*?)\n(?=<SPECIAL_11>|$)", re.DOTALL)
+    pattern_assistant = re.compile(r"<SPECIAL_11>Assistant\n(.*?)(?:\n)?(?=<SPECIAL_11>|$)", re.DOTALL)
 
     # Extract dialogues
     user_dialogues = pattern_user.findall(text)
@@ -149,22 +149,14 @@ class RemoteGPTRMCriticClient:
         self.combine_rm_and_critic_server = self.cfg.combine_rm_and_critic_server
         self.pad_to_length = self.cfg.pad_to_length
 
-    def infer_rm(self, texts):
+    def infer_rm(self, inputs):
         new_texts = []
-        for text in texts:
-            user_text, assistant_text = extract_dialog(text)
-
-            # TODO: issue with this approach is that if we can't format it the prompt still
-            # gets included in the baseline
-            if len(user_text) == len(assistant_text) and len(assistant_text) > 0:
-                text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
-            else:
-                print("### CANNOT FORMAT TEXT", text)
+        for (text, is_end) in inputs:
+            if not is_end:
                 text = text + "\n<SPECIAL_11>"
-                print("### MODIFIED TO FOR RM ONLY", text)
-                user_text, assistant_text = extract_dialog(text)
-                text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
 
+            user_text, assistant_text = extract_dialog(text)
+            text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
             new_texts.append(text)
 
         data = {"sentences": _str_list2numpy(new_texts)}
