@@ -98,6 +98,12 @@ def verify_ifeval(text, kwargs, is_end):
         return 0
 
     user_text, assistant_text = extract_dialog(text)
+
+    if len(user_text) != len(assistant_text) or len(assistant_text) == 0:
+        print("### TEXT CANNOT BE FORMATTED", text)
+        print("### ASSUMING REWARD IS JUST 0 FOR IFEVAL")
+        return 0
+
     prompt = user_text[-1]
     response = assistant_text[-1]
 
