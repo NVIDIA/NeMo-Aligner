@@ -140,7 +140,7 @@ def main(cfg) -> None:
     init_policy_state_dict = None
 
     # only need this if we are running with inital kl penalty & full-parameter tuning
-    if cfg.trainer.ppo.initial_policy_kl_penalty > 0 and cfg.model.peft.peft_scheme == "none":
+    if cfg.model.peft.peft_scheme == "none":
         init_policy_state_dict = retrieve_model_state_dict_in_cpu(
             ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
