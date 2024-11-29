@@ -155,6 +155,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 kl = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
 
                 # Calculate clipped PPO surrogate loss function.
+
                 ratios = (curr_log_probs - prev_log_probs).exp()
                 ratios_clamped = ratios.clamp(1.0 - self.ratio_eps, 1.0 + self.ratio_eps)
 
@@ -184,6 +185,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 with torch.no_grad():
                     ppo_ratio = masked_mean(ratios.detach(), mask)
                     ppo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
+                    curr_log_probs = masked_mean(curr_log_probs.detach(), mask)
                     scaled_entropy = scaled_entropy.detach()
 
                 (
@@ -192,8 +194,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     ppo_ratio_clamped,
                     scaled_entropy,
                     kl,
+                    curr_log_probs,
                 ) = average_losses_across_data_parallel_group(
-                    [loss, ppo_ratio, ppo_ratio_clamped, scaled_entropy, kl.detach()]
+                    [loss, ppo_ratio, ppo_ratio_clamped, scaled_entropy, kl.detach(), curr_log_probs]
                 )
                 return (
                     loss,
@@ -204,6 +207,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         "scaled_entropy": scaled_entropy,
                         "kl": kl,
                         "vectorized_entropy": vectorized_entropy,
+                        "curr_log_probs": curr_log_probs,
                     },
                 )
 
@@ -245,8 +249,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         )
 
         metrics = {}
-
-        for key in ["loss", "ppo_ratio", "ppo_ratio_clamped", "scaled_entropy", "kl"]:
+        for key in ["loss", "ppo_ratio", "ppo_ratio_clamped", "scaled_entropy", "kl", "curr_log_probs"]:
             if losses_reduced_per_micro_batch:
                 metric_mean = torch.stack(
                     [loss_reduced[key] for loss_reduced in losses_reduced_per_micro_batch]
