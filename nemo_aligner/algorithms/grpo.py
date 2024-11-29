@@ -376,15 +376,10 @@ def get_rloo_mean_std(grouped_rewards):
         grouped_rewards.square()
         @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
     ) / (num_responses - 1)
-    grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt()
 
-    if torch.isnan(grouped_reward_std).any():
-        print("### NANED grouped reward std", grouped_reward_std.sum(-1))
-        print("### NANED grouped square mean", grouped_square_mean.sum(-1))
-        print("### NANED grouped reward mean", grouped_reward_mean.sum(-1))
-        print("### NANED grouped rewards", grouped_rewards.sum(-1))
-        print("### NANED grouped rewards", grouped_rewards)
-
+    # if the model generates all responses with the SAME reward, this calculation will NaN
+    # we should just set this case to 0
+    grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt().nan_to_num(0)
     return grouped_reward_mean, grouped_reward_std
 
 
