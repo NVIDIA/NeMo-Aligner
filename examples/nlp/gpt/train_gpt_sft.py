@@ -85,7 +85,7 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
             gpt_cfg.tensor_model_parallel_size = cfg.model.get("tensor_model_parallel_size", 1)
         if cfg.model.get("pipeline_model_parallel_size", 1) > 0:
             gpt_cfg.pipeline_model_parallel_size = cfg.model.get("pipeline_model_parallel_size", 1)
-        if cfg.model.get("context_parallel_size", 1) > 0:
+        if cfg.model.get("ontext_parallel_size", 1) > 0:
             gpt_cfg.context_parallel_size = cfg.model.get("context_parallel_size", 1)
         gpt_cfg.pipeline_model_parallel_split_rank = cfg.model.get("pipeline_model_parallel_split_rank", 0)
         if cfg.model.get("dist_ckpt_load_strictness", None) is not None:
@@ -182,7 +182,7 @@ def main(cfg) -> None:
         answer_only_loss=True,
         is_chat=cfg.model.data.chat,
         special_tokens=cfg.model.data.chat_prompt_tokens,
-        model_config=cfg.model,
+        model_cfg=cfg.model,
     )
     if cfg.model.data.get("sample", False):
         num_samples = cfg.trainer.sft.limit_val_batches * val_data_cfg.global_batch_size
@@ -195,7 +195,7 @@ def main(cfg) -> None:
         answer_only_loss=True,
         is_chat=cfg.model.data.chat,
         special_tokens=cfg.model.data.chat_prompt_tokens,
-        model_config=cfg.model,
+        model_cfg=cfg.model,
     )
 
     train_dataloader = build_dataloader(
