@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import operator
-import re
-from collections import UserDict
+from collections import UserDict, defaultdict
+from concurrent.futures import Future
 from contextlib import nullcontext
-from itertools import permutations, product
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -24,7 +23,6 @@ import torch
 import torch.distributed
 from megatron.core import parallel_state as mcore_parallel_state
 from megatron.core.utils import divide
-from nemo_skills.code_execution.math_grader import extract_answer
 from nemo_skills.code_execution.sandbox import get_sandbox
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
@@ -33,6 +31,7 @@ from typing_extensions import Self
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingRandomSampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
+from nemo_aligner.algorithms.verifiers import get_verifier_results
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
@@ -44,94 +43,10 @@ from nemo_aligner.utils.distributed import (
     run_if_model_parallel_src,
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
-from nemo_aligner.utils.ppo_utils import calculate_ppo_rewards, create_mask
+from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict
-
-
-def solve_24(numbers):
-    ops = {"+": operator.add, "-": operator.sub, "*": operator.mul, "/": operator.truediv}
-
-    for nums in permutations(numbers):
-        for op1, op2, op3 in product(ops, repeat=3):
-            # ((a op1 b) op2 c) op3 d
-            try:
-                if abs(ops[op3](ops[op2](ops[op1](nums[0], nums[1]), nums[2]), nums[3]) - 24) < 1e-10:
-                    return f"(({nums[0]} {op1} {nums[1]}) {op2} {nums[2]}) {op3} {nums[3]}"
-            except ZeroDivisionError:
-                continue
-
-            # (a op1 b) op2 (c op3 d)
-            try:
-                if abs(ops[op2](ops[op1](nums[0], nums[1]), ops[op3](nums[2], nums[3])) - 24) < 1e-10:
-                    return f"({nums[0]} {op1} {nums[1]}) {op2} ({nums[2]} {op3} {nums[3]})"
-            except ZeroDivisionError:
-                continue
-
-    return "Impossible"
-
-
-def extract_box_content(text):
-    # Pattern to match \box{} and capture its content
-    pattern = r"\\boxed\{([^}]*)\}"
-    # Find all matches
-    matches = re.findall(pattern, text)
-    return matches
-
-
-def evaluate_all(sandbox, answers):
-    rewards = []
-
-    for (*output, is_game_24) in answers:
-        if is_game_24:
-            rewards.append(judget_game24(*output)[0])
-        else:
-            r = sandbox.is_output_correct(*output)
-            if r is None:
-                r = False
-            rewards.append(r)
-
-    return rewards
-
-
-def judget_game24(answer: str, input: str) -> bool:
-    if answer == "" or answer is None:
-        return False, "No answer provided"
-    # strip away the content after the '=' sign
-    answer = answer.split("=")[0].strip()
-
-    # convert input to list of integers
-    input_list = list(map(int, input.split(",")))
-    solver_ans = solve_24(input_list)
-    if solver_ans == "Impossible":
-        # check if 'impossible' is a substring of the answer
-        if "impossible" in answer.lower():
-            return True, "there is no solution and the answer says impossible"
-        else:
-            return False, "there is no solution, but the answer is not impossible"
-    # there must be a solution
-    if answer == "Impossible":
-        return False, "there is a solution, but the answer is impossible"
-    try:
-        # extract out the numbers from the answer
-        numbers = re.findall(r"\d+", answer)
-        if len(numbers) != 4:
-            return False, "there are not exactly 4 numbers in the answer"
-        # check if the numbers in the answer are the same as the input
-        if set(map(int, numbers)) != set(input_list):
-            return False, "the numbers in the answer are not the same as the input"
-
-        # check if the answer evaluates to 24
-        if eval(answer) != 24:
-            return False, "the answer does not evaluate to 24"
-        return True, "the answer is correct"
-    except:
-        return False, "the answer is not a valid arithmetic"
-
-
-def sandbox_call(sandbox, answers):
-    return [sandbox.is_output_correct(*item) for item in answers]
 
 
 class PPORolloutBatch(UserDict):
@@ -228,8 +143,10 @@ def get_rloo_mean_std(grouped_rewards):
         grouped_rewards.square()
         @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
     ) / (num_responses - 1)
-    grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt().nan_to_num(0)
 
+    # if the model generates all responses with the SAME reward, this calculation will NaN
+    # we should just set this case to 0
+    grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt().nan_to_num(0)
     return grouped_reward_mean, grouped_reward_std
 
 
@@ -268,7 +185,7 @@ class GRPOTrainer:
         self.sandbox = get_sandbox()
 
         # sanity check
-        assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
+        # assert self.sandbox.is_output_correct("123", "123.0"), "sandbox messed up"
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -314,10 +231,6 @@ class GRPOTrainer:
 
         logprobs = rollout_batch["logprobs"]
         is_end = rollout_batch["is_end"]
-
-        # TODO: NOTE THIS IS TERRIBAD FOR BT models!
-        # only works on verifier based
-        rewards = rewards * is_end
 
         num_responses = self.cfg.num_responses_per_prompt
 
@@ -405,6 +318,7 @@ class GRPOTrainer:
         ppo_rollout_metrics = {k: v / num_samples for k, v in ppo_rollout_metrics.items()}
 
         mask = ppo_rollout_data["mask"]
+        advantages = advantages.cuda()
 
         for key in ["advantages"]:
             tensor = advantages
@@ -461,25 +375,17 @@ class GRPOTrainer:
 
             self.timer.start("generate")
 
-            is_game_24 = []
+            futures = []
 
             for batch in batch_iterator:
                 # during val we want to use greedy sampling
                 rollout_batch = self.model.infer(batch, use_greedy=is_validation)
                 rollout_batches.append(rollout_batch)
 
-                # futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
-                texts = [
-                    self.model.tokenizer.ids_to_text(item[length:].tolist())
-                    for item, length in zip(rollout_batch["response_tokens"], batch["length"])
-                ]
-                answers = [(extract_answer(t), a, g) for t, a, g in zip(texts, batch["answers"], batch["is_game_24"])]
-                # TODO: need to make this async for real
-                output = run_if_model_parallel_src(evaluate_all, self.sandbox, answers)
-                if output is not None:
-                    all_rewards.extend(output)
-
-                is_game_24.append(batch["is_game_24"])
+                future = run_if_model_parallel_src(
+                    get_verifier_results, rollout_batch, batch, self.model.tokenizer, self.rm_critic, self.sandbox
+                )
+                futures.append(future)
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 
@@ -506,34 +412,42 @@ class GRPOTrainer:
             balanced_local_batch["init_logprobs"] = rollout_init_logprobs
             timer_metrics["init_logprobs"] = self.timer.stop_and_get_time("init_logprobs")
 
-        if len(all_rewards) > 0:
-            new_all_rewards = []
+        all_rewards = []
+        reward_dictionary_default = defaultdict(list)
+        for future in futures:
+            if future is not None:
+                reward, reward_dictionary = future.result()
 
-            for item in all_rewards:
-                if item is None:
-                    item = 0.0
-                new_all_rewards.append(item)
+                for k, v in reward_dictionary.items():
+                    reward_dictionary_default[k].extend(v)
 
-            all_rewards = torch.as_tensor(
-                new_all_rewards, dtype=torch.float32, device=torch.cuda.current_device()
-            ).view(-1, 1)
+                all_rewards.extend(reward)
 
-        is_game_24_tensor = torch.as_tensor(
-            is_game_24, dtype=torch.float32, device=torch.cuda.current_device()
-        ).flatten()
+        all_rewards = torch.as_tensor(all_rewards, dtype=torch.float32)
+        all_rewards = broadcast_2d_tensor_within_mp(all_rewards.view(1, -1)).flatten()
 
-        all_rewards = broadcast_2d_tensor_within_mp(all_rewards).flatten()
+        obj_list = [None for _ in range(parallel_state.get_data_parallel_world_size())]
+        torch.distributed.all_gather_object(
+            obj_list, reward_dictionary_default, group=parallel_state.get_data_parallel_group()
+        )
 
-        balanced_local_batch.update({"rewards": all_rewards, "is_game_24": is_game_24_tensor})
+        reward_dictionary_all_together = defaultdict(list)
+        for item in obj_list:
+            for k, v in item.items():
+                reward_dictionary_all_together[k].extend(v)
+
+        balanced_local_batch.update({"rewards": all_rewards})
         # gather the global rollout batch
         global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
         return (
             balanced_local_batch,
-            cpu_dict(self.compute_rollout_metrics(global_rollout_batch, num_responses)),
+            cpu_dict(
+                self.compute_rollout_metrics(global_rollout_batch, num_responses, reward_dictionary_all_together)
+            ),
             timer_metrics,
         )
 
-    def compute_rollout_metrics(self, rollout_batch, num_responses):
+    def compute_rollout_metrics(self, rollout_batch, num_responses, rewards_all_together):
         table = {}
 
         prompt_lengths = rollout_batch["prompt_lengths"]
@@ -541,7 +455,6 @@ class GRPOTrainer:
         response_tokens = rollout_batch["response_tokens"]
         rewards = rollout_batch["rewards"]
         is_end = rollout_batch["is_end"]
-        is_game_24 = rollout_batch["is_game_24"]
 
         # take the first sample for logging
         reward = rewards[0]
@@ -550,12 +463,15 @@ class GRPOTrainer:
         response_token = response_tokens[0]
 
         table["reward"] = reward.item()
-        table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
-        table["response"] = self.model.tokenizer.ids_to_text(response_token[prompt_length:response_length].tolist())
+        table["prompt"] = self.model.tokenizer.tokenizer.decode(response_token[:prompt_length].tolist())
+        table["response"] = self.model.tokenizer.tokenizer.decode(
+            response_token[prompt_length:response_length].tolist()
+        )
 
-        game_24_rewards = (rewards * is_game_24).sum() / is_game_24.sum()
-        is_math = 1 - is_game_24
-        math_rewards = (rewards * is_math).sum() / is_math.sum()
+        _granular_metrics = {}
+        for k, v in rewards_all_together.items():
+            _granular_metrics[f"{k}_rewards"] = torch.as_tensor(v, dtype=torch.float32).mean().item()
+            _granular_metrics[f"{k}_count"] = len(v)
 
         metrics = {
             "table": table,
@@ -564,10 +480,8 @@ class GRPOTrainer:
             "prompt_lengths": prompt_lengths.float().mean().item(),
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
             "rewards": rewards.mean().item(),
-            "game_24_rewards": game_24_rewards.item(),
-            "math_rewards": math_rewards.item(),
             "fraction_of_samples_properly_ended": is_end.float().mean().item(),
-        }
+        } | _granular_metrics
 
         return metrics
 
