@@ -32,8 +32,8 @@ from nemo_aligner.utils.server_utils import FutureResult
 
 def extract_dialog(text):
     # Patterns to match User and Assistant dialogues
-    pattern_user = re.compile(r"<SPECIAL_11>User\n(.*?)\n(?=<SPECIAL_11>|$)", re.DOTALL)
-    pattern_assistant = re.compile(r"<SPECIAL_11>Assistant\n(.*?)(?:\n)?(?=<SPECIAL_11>|$)", re.DOTALL)
+    pattern_user = re.compile(r"<SPECIAL_11>User\n(.*?)\n<SPECIAL_11>", re.DOTALL)
+    pattern_assistant = re.compile(r"<SPECIAL_11>Assistant\n(.*?)(?:\n)?<SPECIAL_11>", re.DOTALL)
 
     # Extract dialogues
     user_dialogues = pattern_user.findall(text)
