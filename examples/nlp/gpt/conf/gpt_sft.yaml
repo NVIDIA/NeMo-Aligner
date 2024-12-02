@@ -64,7 +64,7 @@ model:
   sync_batch_comm: False
   megatron_amp_O2: False
   encoder_seq_length: 4096  # the sequence length of the encoder model, it will be overwriten by loaded GPT model
-  transformer_engine: False
+  transformer_engine: True
 
   ## Sequence Parallelism
   # Makes tensor parallelism more memory efficient for LLMs (20B+) by parallelizing layer norms and dropout sequentially
