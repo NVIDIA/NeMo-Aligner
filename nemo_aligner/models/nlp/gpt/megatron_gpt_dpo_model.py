@@ -137,7 +137,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            tokens, labels, ref_logprobs, gt_rewards, ref_logprobs = None, None, None, None, None
+            tokens, labels, ref_logprobs, gt_rewards, ref_logprobs, cu_seqlens = None, None, None, None, None, None
             if packed:  ## packed sequence
                 tokens = batch["input_ids"]
                 labels = batch["labels"]
