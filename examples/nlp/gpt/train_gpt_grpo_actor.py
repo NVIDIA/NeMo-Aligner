@@ -77,8 +77,7 @@ class GenericDataset:
         """
         Return a single prompt.
         """
-        key = self.data[idx].get("question") or self.data[idx].get("problem")
-        problem = self.data[idx][key]
+        problem = self.data[idx]["problem"]
 
         chat = [
             {
