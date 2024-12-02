@@ -98,10 +98,11 @@ class GenericDataset:
             ]
             text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
             extra_verifier_info = self.data[idx]["expected_answer"]
+        elif dataset == "helpsteer":
+            chat = [{"role": "system", "content": SYSTEM_PROMPT_TEMPLATE["system1"]}] + self.data[idx]["conversations"]
+            text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
         else:
-            # helpsteer is multiturn so need to format it ourselves :(
-            # TODO:
-            ...
+            raise NotImplementedError(f"{dataset=} is not implemented")
 
         answer = self.data[idx].get("expected_answer")
 
