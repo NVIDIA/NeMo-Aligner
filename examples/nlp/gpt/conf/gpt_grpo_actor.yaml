@@ -136,8 +136,6 @@ exp_manager:
 pretrained_checkpoint:
   restore_from_path: null
 
-use_text_field_from_data: False
-
 model:
 
   ppo:
