@@ -50,9 +50,18 @@ OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
+SYSTEM_PROMPT_TEMPLATE = {
+    "system2": "Follow the instructions and provide a detailed system 2 answer with reasoning chain.",
+    "system1": "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions.",
+}
+
 MATH_USER_TEMPLATE = """Below is a math question. I want you to first reason through the steps required to reach the answer, then put the answer (and only answer) inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \\boxed{{42}}.
 {problem}
 """
+
+USER_PROMPT_TEMPLATE = {
+    "math": MATH_USER_TEMPLATE,
+}
 
 
 class GenericDataset:
@@ -77,17 +86,24 @@ class GenericDataset:
         """
         Return a single prompt.
         """
-        problem = self.data[idx]["problem"]
+        dataset = self.data[idx]["dataset"]
+        extra_verifier_info = None
 
-        chat = [
-            {
-                "role": "system",
-                "content": "Follow the instructions and provide a detailed system 2 answer with reasoning chain.",
-            },
-            {"role": "user", "content": MATH_USER_TEMPLATE.format(problem=problem)},
-        ]
-        text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False)
-        answer = self.data[idx]["expected_answer"]
+        if dataset == "math":
+            problem = self.data[idx]["problem"]
+            chat = [
+                {"role": "system", "content": SYSTEM_PROMPT_TEMPLATE["system2"],},
+                # need to extend this to helpsteer
+                {"role": "user", "content": USER_PROMPT_TEMPLATE["math"].format(problem=problem)},
+            ]
+            text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
+            extra_verifier_info = self.data[idx]["expected_answer"]
+        else:
+            # helpsteer is multiturn so need to format it ourselves :(
+            # TODO:
+            ...
+
+        answer = self.data[idx].get("expected_answer")
 
         sample, _ = self.encode(text)
         sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
@@ -95,10 +111,10 @@ class GenericDataset:
         output = {
             "text": sample_tensor,
             "length": sample_tensor.shape[0],
-            "answer": answer,
+            "extra_verifier_info": extra_verifier_info,
             "loss_multiplier": True,
             "idx": idx,
-            "is_game_24": False,
+            "dataset": dataset,
         }
         return output
 

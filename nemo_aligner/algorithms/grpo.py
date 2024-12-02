@@ -228,7 +228,7 @@ def get_rloo_mean_std(grouped_rewards):
         grouped_rewards.square()
         @ (1 - torch.eye(num_responses, dtype=grouped_rewards.dtype, device=grouped_rewards.device))
     ) / (num_responses - 1)
-    grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt()
+    grouped_reward_std = (grouped_square_mean - grouped_reward_mean.square()).sqrt().nan_to_num(0)
 
     return grouped_reward_mean, grouped_reward_std
 
@@ -288,7 +288,7 @@ class GRPOTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(train_dataloader.batch_sampler)
         self.set_max_steps()
 
-        self.compute_init_policy_kl = self.cfg.initial_policy_kl_penalty > 0
+        self.compute_init_policy_kl = True
         # size to pad our rollout batch to
         self.rollout_batch_seq_length = self.cfg.rollout_batch_seq_length
 
