@@ -50,16 +50,12 @@ OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
-PROMPT_TEMPLATE = """<extra_id_0>System
-
-<extra_id_1>User
-Below is a math question. I want you to first reason through the steps required to reach the answer, then put the answer (and only answer) inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \\boxed{{42}}.
+MATH_USER_TEMPLATE = """Below is a math question. I want you to first reason through the steps required to reach the answer, then put the answer (and only answer) inside \\boxed{{}}. For instance, if the answer is 42 then your response must end with \\boxed{{42}}.
 {problem}
-<extra_id_1>Assistant
 """
 
 
-class Game24Dataset:
+class GenericDataset:
     def __init__(self, data_path, tokenizer, use_text_field_from_data=False):
         super().__init__()
         self.data_path = data_path
@@ -82,57 +78,15 @@ class Game24Dataset:
         """
         Return a single prompt.
         """
-        assert self.use_text_field_from_data
-        text = self.data[idx]["text"]
-        is_game_24 = "input" in self.data[idx]
-
-        if is_game_24:
-            answer = self.data[idx]["input"]
-        else:
-            answer = self.data[idx]["expected_answer"]
-
-        sample, _ = self.encode(text)
-        sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
-
-        output = {
-            "text": sample_tensor,
-            "length": sample_tensor.shape[0],
-            "answer": answer,
-            "loss_multiplier": True,
-            "idx": idx,
-            "is_game_24": is_game_24,
-        }
-        return output
-
-
-class MathDataset:
-    def __init__(self, data_path, tokenizer, use_text_field_from_data=False):
-        super().__init__()
-        self.data_path = data_path
-        self.tokenizer = tokenizer
-        self.use_text_field_from_data = use_text_field_from_data
-
-        assert os.path.exists(self.data_path), f"{self.data_path} must exist"
-
-        with jsonlines.open(self.data_path) as reader:
-            self.data = [obj for obj in reader]
-
-    def __len__(self):
-        return len(self.data)
-
-    def encode(self, text):
-        text_ids = self.tokenizer.text_to_ids(text)
-        return text_ids, len(text_ids)
-
-    def __getitem__(self, idx):
-        """
-        Return a single prompt.
-        """
-        if self.use_text_field_from_data:
-            text = self.data[idx]["text"]
-        else:
-            text = PROMPT_TEMPLATE.format(problem=self.data[idx]["problem"])
-
+        problem = self.data[idx]["question"]
+        chat = [
+            {
+                "role": "system",
+                "content": "Follow the instructions and provide a detailed system 2 answer with reasoning chain.",
+            },
+            {"role": "user", "content": MATH_USER_TEMPLATE.format(problem=problem)},
+        ]
+        text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False)
         answer = self.data[idx]["expected_answer"]
 
         sample, _ = self.encode(text)
@@ -144,6 +98,7 @@ class MathDataset:
             "answer": answer,
             "loss_multiplier": True,
             "idx": idx,
+            "is_game_24": False,
         }
         return output
 
@@ -192,12 +147,12 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_ds = Game24Dataset(
+    train_ds = GenericDataset(
         cfg.model.data.data_prefix["train"][0],
         ptl_model.tokenizer,
         use_text_field_from_data=cfg.use_text_field_from_data,
     )
-    validation_ds = Game24Dataset(
+    validation_ds = GenericDataset(
         cfg.model.data.data_prefix["validation"][0],
         ptl_model.tokenizer,
         use_text_field_from_data=cfg.use_text_field_from_data,
