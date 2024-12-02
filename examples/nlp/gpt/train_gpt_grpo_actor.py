@@ -129,7 +129,7 @@ def main(cfg) -> None:
     init_policy_state_dict = None
 
     # only need this if we are running with inital kl penalty & full-parameter tuning
-    if cfg.trainer.ppo.initial_policy_kl_penalty > 0 and cfg.model.peft.peft_scheme == "none":
+    if cfg.model.peft.peft_scheme == "none":
         init_policy_state_dict = retrieve_model_state_dict_in_cpu(
             ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
@@ -199,8 +199,7 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
-    # rm_critic = RemoteGPTRMCriticClient(cfg.remote_critic_rm)
-    rm_critic = None
+    rm_critic = RemoteGPTRMCriticClient(cfg.remote_critic_rm)
     timer = Timer(cfg.exp_manager.get("max_time_per_run"))
 
     batch_iterator_cfg = cfg.trainer.ppo.get("batch_iterator", {})
