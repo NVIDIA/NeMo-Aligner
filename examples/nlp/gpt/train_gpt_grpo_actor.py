@@ -56,11 +56,10 @@ MATH_USER_TEMPLATE = """Below is a math question. I want you to first reason thr
 
 
 class GenericDataset:
-    def __init__(self, data_path, tokenizer, use_text_field_from_data=False):
+    def __init__(self, data_path, tokenizer):
         super().__init__()
         self.data_path = data_path
         self.tokenizer = tokenizer
-        self.use_text_field_from_data = use_text_field_from_data
 
         assert os.path.exists(self.data_path), f"{self.data_path} must exist"
 
@@ -149,16 +148,8 @@ def main(cfg) -> None:
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
 
-    train_ds = GenericDataset(
-        cfg.model.data.data_prefix["train"][0],
-        ptl_model.tokenizer,
-        use_text_field_from_data=cfg.use_text_field_from_data,
-    )
-    validation_ds = GenericDataset(
-        cfg.model.data.data_prefix["validation"][0],
-        ptl_model.tokenizer,
-        use_text_field_from_data=cfg.use_text_field_from_data,
-    )
+    train_ds = GenericDataset(cfg.model.data.data_prefix["train"][0], ptl_model.tokenizer,)
+    validation_ds = GenericDataset(cfg.model.data.data_prefix["validation"][0], ptl_model.tokenizer,)
 
     max_seqlen = cfg.model.ppo.length_params.max_length
     eos_id = ptl_model.tokenizer.eos_id
