@@ -25,7 +25,7 @@ Run Evaluations
 ###############
 
 A detailed description of running evaluation with ``.nemo`` models can be found in Eleuther AI's `documentation <https://github.com/EleutherAI/lm-evaluation-harness?tab=readme-ov-file#nvidia-nemo-models>`_.
-Single- and multi-GPU evaluation is supported. The following is an example of running evaluation on the ``hellaswag`` task using a ``.nemo`` file from NeMo-Aligner.
+Single- and multi-GPU evaluation is supported. The following is an example of running evaluation on the ``hellaswag``, ``super_glue``, and ``winogrande`` tasks using a ``.nemo`` file from NeMo-Aligner.
 Note that it is recommended, but not required, to unzip your ``.nemo`` file prior to running evaluations.
 
 .. code-block:: bash
@@ -35,5 +35,5 @@ Note that it is recommended, but not required, to unzip your ``.nemo`` file prio
 
    PYTHONPATH=/path/to/lm-evaluation-harness:${PYTHONPATH} torchrun --nproc-per-node=8 --no-python  lm_eval --model nemo_lm \
      --model_args path='unzipped_checkpoint',devices=8,tensor_model_parallel_size=8 \
-     --tasks hellaswag \
+     --tasks lambada_openai,super-glue-lm-eval-v1,winogrande \
      --batch_size 8
