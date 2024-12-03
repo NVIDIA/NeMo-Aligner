@@ -308,14 +308,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
     def get_reduced_masked_logps(self, logps, labels, cu_seqlens=None, average_log_probs=False):
         assert logps.shape == labels.shape, "logps and labels shape mismatch"
-        ## break up the packed batch into an unpacked batch
-        ## TODO: make this more efficient and only compute it once
-        ## also make sure we don't get the padding at the end of the last example
-        ## also, this assumes MBS is 1. Make sure this is enforced so we don't silently fail!!
 
         ## mbs = 1
         logps = logps.squeeze()
         labels = labels.squeeze()
+
+        ## break up the packed batch into an unpacked batch
         if cu_seqlens is not None:
 
             ## cu_seqlens has an extra entry if the final example is padded.
