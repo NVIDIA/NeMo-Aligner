@@ -3,4 +3,4 @@
 
    If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
-   After completing this tutorial, refer to the "ref:`evaluation documentation <nemo-aligner-eval>` for tips on evaluating a trained model.
+   After completing this tutorial, refer to the :ref:`evaluation documentation <nemo-aligner-eval>` for tips on evaluating a trained model.
