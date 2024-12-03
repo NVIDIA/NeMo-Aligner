@@ -21,7 +21,7 @@ trainer:
       # TRTLLM preallocates activation memory according to the number of input tokens
       max_input_len: ${subtract:${model.encoder_seq_length}, ${model.generation.length_params.max_length}}
 
-      model_type: gptnext
+      model_type: gptnext # can be gptj, gptnext, llama, gemma, falcon
 
       # Unload and reload the TRTLLM engine before and after the training stage 
       # Reloading the engine incurs a constant time overhead
