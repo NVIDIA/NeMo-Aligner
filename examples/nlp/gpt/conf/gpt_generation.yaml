@@ -13,7 +13,7 @@ trainer:
     max_steps: -1
     limit_train_batches: 1.0
 
-    # Accelerate training times by accelerating inference stage using TRTLLM
+    # Speed-up training by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
       # reshard: False # reshard is not supported in generation
