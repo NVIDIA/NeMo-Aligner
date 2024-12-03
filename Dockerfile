@@ -121,26 +121,3 @@ RUN cd /opt/NeMo-Aligner && \
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
-# TODO(terryk): This layer should be deleted ASAP after NeMo is bumped to include all of these PRs
-RUN <<"EOF" bash -exu
-cd NeMo
-# Ensures we don't cherry-pick "future" origin/main commits
-git fetch -a
-# 0c92fe17df4642ffc33d5d8c0c83fda729e3910c: [fix] Ensures disabling exp_manager with exp_manager=null does not error NeMo#10651
-# 60e677423667c029dd05875da72bf0719774f844: [feat] Update get_model_parallel_src_rank to support tp-pp-dp ordering NeMo#10652
-# 0deaf6716cb4f20766c995ce25d129795f1ae200: fix[export]: update API for disabling device reassignment in TRTLLM for Aligner NeMo#10863
-# (superceded by 10863) 148543d6e9c66ff1f8562e84484448202249811d: feat: Migrate GPTSession refit path in Nemo export to ModelRunner for Aligner NeMo#10654
-for pr_and_commit in \
-  "10651 0c92fe17df4642ffc33d5d8c0c83fda729e3910c" \
-  "10652 60e677423667c029dd05875da72bf0719774f844" \
-  "10863 0deaf6716cb4f20766c995ce25d129795f1ae200" \
-; do
-  pr=$(cut -f1 -d' ' <<<"$pr_and_commit")
-  head_pr_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")
-  git fetch origin $head_pr_commit:PR-${pr}
-  # cherry-picks all commits between main and the top of the PR
-  git cherry-pick --allow-empty $(git merge-base origin/main PR-${pr})..PR-${pr}
-  # Tag cherry-picks to help
-  git tag cherry-pick-PR-${pr}
-done
-EOF
