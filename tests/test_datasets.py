@@ -169,7 +169,7 @@ def test_dpo_dataset_conversion():
     # (@adithyare) bonus test! convert oai style messages back into a string using Jinja
     # Attempt to import jinja2 via importorskip
     jinja2 = pytest.importorskip("jinja2", reason="jinja2 library is not installed")
-    
+
     # Now it's safe to use jinja2
     from jinja2 import Template
 
