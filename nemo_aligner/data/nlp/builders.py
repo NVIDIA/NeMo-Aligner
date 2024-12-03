@@ -380,11 +380,8 @@ build_train_valid_test_knowledge_distillation_datasets = partial(
 
 
 def build_sft_dataset(
-    cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None, validation=False
+    data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None, model_cfg=None
 ):
-
-    data_cfg = cfg.model.data.validation_ds if validation else cfg.model.data.train_ds
-
     packed_sequence = data_cfg.get("packed_sequence", False)
     dataset_kwargs = {}
 
@@ -392,10 +389,11 @@ def build_sft_dataset(
     # When using sequence parallel, sequence will further be split by TP size
     # When using context parallel, sequence is split by CP size as well
     pad_seq_length_to_mult = 16
-    pad_seq_length_to_mult = (
-        8 * cfg.get("tensor_model_parallel_size", 1) if cfg.get("sequence_parallel", False) else 16
-    )
-    pad_seq_length_to_mult *= cfg.get("context_parallel_size", 1)
+    if model_cfg is not None:
+        pad_seq_length_to_mult = (
+            8 * model_cfg.get("tensor_model_parallel_size", 1) if model_cfg.get("sequence_parallel", False) else 16
+        )
+        pad_seq_length_to_mult *= model_cfg.get("context_parallel_size", 1)
 
     if is_chat:
         assert not packed_sequence, "Sequence packing is currently not supported with chat datasets."
