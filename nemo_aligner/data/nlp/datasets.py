@@ -549,6 +549,8 @@ class DPOPackedDataset(DPOModelDataset):
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
 
         max_num_sequences = max(len(l) for l in lengths)
+        lengths = self._collate_item(lengths, max_length=max_num_sequences, pad_id=0)
+        rewards = self._collate_item(rewards, max_length=max_num_sequences, pad_id=-1000)
 
         output = {
             "input_ids": torch.LongTensor(input_ids),

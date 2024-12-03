@@ -366,8 +366,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
             logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
 
+            ### -1000 used as padding token
+            gt_rewards = gt_rewards[gt_rewards != -1000]
             if cu_seqlens is not None:  ## packed sequence
-                chosen_gt_rewards, reject_gt_rewards = gt_rewards[0][::2], gt_rewards[0][1::2]
+                chosen_gt_rewards, reject_gt_rewards = gt_rewards[::2], gt_rewards[1::2]
             else:
                 chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
             gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
@@ -382,8 +384,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
             logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
 
+            ### -1000 used as padding token
+            gt_rewards = gt_rewards[gt_rewards != -1000]
             if cu_seqlens is not None:  ## packed sequence
-                chosen_gt_rewards, reject_gt_rewards = gt_rewards[0][::2], gt_rewards[0][1::2]
+                chosen_gt_rewards, reject_gt_rewards = gt_rewards[::2], gt_rewards[1::2]
             else:
                 chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
             gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
@@ -397,8 +401,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         elif self.preference_loss == "ipo":
             loss = torch.mean((chosen_rewards - reject_rewards - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2, 0)
         elif self.preference_loss == "rpo_sq":
+            ### -1000 used as padding token
+            gt_rewards = gt_rewards[gt_rewards != -1000]
             if cu_seqlens is not None:  ## packed sequence
-                chosen_gt_rewards, reject_gt_rewards = gt_rewards[0][::2], gt_rewards[0][1::2]
+                chosen_gt_rewards, reject_gt_rewards = gt_rewards[::2], gt_rewards[1::2]
             else:
                 chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
             gt_rewards_delta = self.gt_reward_scale * (chosen_gt_rewards - reject_gt_rewards)
