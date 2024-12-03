@@ -19,7 +19,6 @@ trainer:
       # reshard: False # reshard is not supported in generation
 
       # TRTLLM preallocates activation memory according to the number of input tokens
-      # By default, assume the max input length is half of the model sequence length
       max_input_len: ${subtract:${model.encoder_seq_length}, ${model.generation.length_params.max_length}}
 
       model_type: gptnext
