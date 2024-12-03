@@ -191,7 +191,7 @@ model:
       output_original_text: True  # needed for the proper metrics support
 
   optim:
-    name: distributed_fused_adam # Supports distributed optimizer for memory savings. To enable, set to 'distributed_fused_adam'. Needs Apex to be built with specific args to work.
+    name: fused_adam # Supports distributed optimizer for memory savings. To enable, set to 'distributed_fused_adam'. Needs Apex to be built with specific args to work.
     lr: 3e-5
     weight_decay: 0.01
     betas:
