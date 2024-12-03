@@ -189,8 +189,6 @@ def test_dpo_dataset_conversion():
         )  # (@adithyare) jinja will add the ending of message token which we should remove to make a prompt.
         assert prompt_str == prompt_str_jinja_rendered
 
-    return True
-
 
 @pytest.mark.run_only_on("GPU")
 def test_dpo_loader_original(init_model_parallel, make_tmp_jsonl, llama3_tokenizer):
