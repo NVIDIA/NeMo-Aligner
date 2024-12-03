@@ -25,13 +25,6 @@ from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_t
 from nemo_aligner.data.nlp.scripts.undo_special_tokens import format_conversation
 from nemo_aligner.utils import parallel_state
 
-try:
-    from jinja2 import Template
-
-    HAS_JINJA2 = True
-except:
-    HAS_JINJA2 = False
-
 
 @pytest.fixture
 def llama3_tokenizer():
@@ -173,21 +166,25 @@ def test_dpo_dataset_conversion():
     oai_messages_prompt = format_conversation(prompt_str)
     assert expected_oai_messages == oai_messages_prompt
 
-    if HAS_JINJA2:
-        # (@adithyare) bonus test! convert oai style messages back into a string using Jinja
+    # (@adithyare) bonus test! convert oai style messages back into a string using Jinja
+    # Attempt to import jinja2 via importorskip
+    jinja2 = pytest.importorskip("jinja2", reason="jinja2 library is not installed")
+    
+    # Now it's safe to use jinja2
+    from jinja2 import Template
 
-        def remove_trailing(s, t):
-            if s.endswith(t):
-                s = s[: -len(t)]
-            return s
+    def remove_trailing(s, t):
+        if s.endswith(t):
+            s = s[: -len(t)]
+        return s
 
-        jinja_template = """{% for message in conversation %}{%- if message.role == "system" -%}<extra_id_0>System\n{{ message.content }}\n{% elif message.role == "user" -%}<extra_id_1>User\n{{ message.content }}\n{% elif message.role == "assistant" -%}<extra_id_1>Assistant\n{{ message.content }}\n{% endif %}{% endfor %}"""
-        jinja_template = Template(jinja_template)
-        prompt_str_jinja_rendered = jinja_template.render(conversation=oai_messages_prompt)
-        prompt_str_jinja_rendered = remove_trailing(
-            prompt_str_jinja_rendered, "\n"
-        )  # (@adithyare) jinja will add the ending of message token which we should remove to make a prompt.
-        assert prompt_str == prompt_str_jinja_rendered
+    jinja_template = """{% for message in conversation %}{%- if message.role == "system" -%}<extra_id_0>System\n{{ message.content }}\n{% elif message.role == "user" -%}<extra_id_1>User\n{{ message.content }}\n{% elif message.role == "assistant" -%}<extra_id_1>Assistant\n{{ message.content }}\n{% endif %}{% endfor %}"""
+    jinja_template = Template(jinja_template)
+    prompt_str_jinja_rendered = jinja_template.render(conversation=oai_messages_prompt)
+    prompt_str_jinja_rendered = remove_trailing(
+        prompt_str_jinja_rendered, "\n"
+    )  # (@adithyare) jinja will add the ending of message token which we should remove to make a prompt.
+    assert prompt_str == prompt_str_jinja_rendered
 
 
 @pytest.mark.run_only_on("GPU")
