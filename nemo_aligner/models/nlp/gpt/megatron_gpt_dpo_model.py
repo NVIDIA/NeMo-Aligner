@@ -137,7 +137,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
-            tokens, labels, ref_logprobs, gt_rewards, ref_logprobs, cu_seqlens = None, None, None, None, None, None
+            tokens, labels, ref_logprobs, gt_rewards, cu_seqlens = None, None, None, None, None
             if packed:  ## packed sequence
                 tokens = batch["input_ids"]
                 labels = batch["labels"]
@@ -349,6 +349,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         loss_mask = (labels > -1).float()
 
         if average_log_probs:
+            # need to guard against divide by zero in case labels are all -100
             return (logps * loss_mask).sum(-1) / loss_mask.sum(-1).clamp(min=1)
         else:
             return (logps * loss_mask).sum(-1)

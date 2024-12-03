@@ -472,8 +472,6 @@ class DPOPackedDataset(DPOModelDataset):
 
     def _collate_item(self, item, max_length, pad_id):
         item = self._maybe_cast_to_list(item)
-        # max_length = max([len(x) for x in item]) if item else 0
-        # here [0] should be tokenizer.pad_id
         item = [x + [pad_id] * (max_length - len(x)) for x in item]
         return item
 
@@ -497,7 +495,6 @@ class DPOPackedDataset(DPOModelDataset):
         input_ids = [
             np.concatenate(
                 [
-                    # truncate_input_ids(item, i) for i in range(len(item['seq_boundaries']) - 1)
                     item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
                     for i in range(len(item["seq_boundaries"]) - 1)
                 ]
