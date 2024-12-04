@@ -32,7 +32,7 @@ from nemo_aligner.utils.ppo_utils import calculate_entropy
 """A file to test the core distributed function calls in RLHF"""
 
 
-def slow_from_parallel_logits_to_logprobs(parallel_logits, tokens):
+def slow_from_parallel_logits_to_logprobs(parallel_logits, tokens, ignore_last=True):
     """a slow but very safe way of computing logits -> logprobs. Uses a lot of memory but good for testing"""
     # Gather logits across all TP ranks for testing
     logits = tensor_parallel.gather_from_tensor_model_parallel_region(parallel_logits)
@@ -40,8 +40,12 @@ def slow_from_parallel_logits_to_logprobs(parallel_logits, tokens):
     # Convert from logits to log-probs.
     full_log_probs = torch.nn.functional.log_softmax(logits, dim=2)
 
-    full_log_probs = full_log_probs[:, :-1, :].contiguous()
-    indices = tokens[:, 1:].unsqueeze(-1)
+    if ignore_last:
+        full_log_probs = full_log_probs[:, :-1, :]
+        indices = tokens[:, 1:].unsqueeze(-1)
+    else:
+        indices = tokens.unsqueeze(-1)
+    full_log_probs = full_log_probs.contiguous()
     log_probs = torch.gather(input=full_log_probs, dim=2, index=indices).squeeze(dim=-1).contiguous()
     return log_probs
 
@@ -150,23 +154,25 @@ def test_distributed_masked_global_mean_var(init_model_parallel):
 
 @pytest.mark.run_only_on("GPU")
 @pytest.mark.parametrize(
-    "batch_size,seed,dtype,atol,rtol,higher_stability",
+    "batch_size,seed,dtype,atol,rtol,higher_stability,ignore_last",
     [
-        (1, 9999, torch.float32, 1e-08, 1e-05, False),
-        (4, 100, torch.float32, 1e-08, 1e-05, False),
-        (8, 1234, torch.float32, 1e-08, 1e-05, False),
-        (1, 9999, torch.float32, 1e-08, 1e-05, True),
-        (4, 100, torch.float32, 1e-08, 1e-05, True),
-        (8, 1234, torch.float32, 1e-08, 1e-05, True),
-        (1, 746, torch.bfloat16, 0.005, 0.01, False),
-        (4, 334, torch.bfloat16, 0.005, 0.01, False),
-        (8, 123456, torch.bfloat16, 0.005, 0.01, False),
-        (1, 746, torch.bfloat16, 0.005, 0.01, True),
-        (4, 334, torch.bfloat16, 0.005, 0.01, True),
-        (8, 123456, torch.bfloat16, 0.005, 0.01, True),
+        (1, 9999, torch.float32, 1e-08, 1e-05, False, True),
+        (4, 100, torch.float32, 1e-08, 1e-05, False, True),
+        (8, 1234, torch.float32, 1e-08, 1e-05, False, True),
+        (1, 9999, torch.float32, 1e-08, 1e-05, True, True),
+        (4, 100, torch.float32, 1e-08, 1e-05, True, True),
+        (8, 1234, torch.float32, 1e-08, 1e-05, True, True),
+        (1, 746, torch.bfloat16, 0.005, 0.01, False, True),
+        (4, 334, torch.bfloat16, 0.005, 0.01, False, True),
+        (8, 123456, torch.bfloat16, 0.005, 0.01, False, True),
+        (1, 746, torch.bfloat16, 0.005, 0.01, True, True),
+        (4, 334, torch.bfloat16, 0.005, 0.01, True, True),
+        (8, 123456, torch.bfloat16, 0.005, 0.01, True, True),
+        (1, 9999, torch.float32, 1e-08, 1e-05, True, False),
+        (8, 1234, torch.float32, 1e-08, 1e-05, True, False),
     ],
 )
-def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, atol, rtol, higher_stability):
+def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, atol, rtol, higher_stability, ignore_last):
     """This function is used to test our custom log prob function, we compare it against
         the more memory intensive naive implementation in the fwd and bwd pass
     """
@@ -197,11 +203,11 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
     target = torch.randint(0, V_total, size=(B, S), device=device, generator=generator)
 
     with torch.no_grad():
-        log_probs_fast = from_parallel_logits_to_logprobs(fake_output, target, higher_stability=higher_stability)
-        log_probs_slow = slow_from_parallel_logits_to_logprobs(fake_output, target)
+        log_probs_fast = from_parallel_logits_to_logprobs(fake_output, target, higher_stability=higher_stability, ignore_last=ignore_last)
+        log_probs_slow = slow_from_parallel_logits_to_logprobs(fake_output, target, ignore_last=ignore_last)
 
         log_probs_slow_inf_only = from_parallel_logits_to_logprobs(
-            fake_output, target, inference_only=True, higher_stability=higher_stability
+            fake_output, target, inference_only=True, higher_stability=higher_stability, ignore_last=ignore_last,
         )
 
         torch.testing.assert_close(
@@ -219,12 +225,12 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
             msg="forward pass between fast, slow and log prob calculation is not the same!",
         )
 
-    slow_from_parallel_logits_to_logprobs(fake_output, target).sum().backward()
+    slow_from_parallel_logits_to_logprobs(fake_output, target, ignore_last=ignore_last).sum().backward()
 
     fake_output_grad_slow = fake_output.grad.detach().clone()
 
     fake_output.grad = None
-    from_parallel_logits_to_logprobs(fake_output, target, higher_stability=higher_stability).sum().backward()
+    from_parallel_logits_to_logprobs(fake_output, target, higher_stability=higher_stability, ignore_last=ignore_last).sum().backward()
     fake_output_grad_fast = fake_output.grad.detach().clone()
 
     torch.testing.assert_close(
