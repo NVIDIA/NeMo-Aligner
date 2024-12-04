@@ -103,9 +103,9 @@ Sequence Packing with DPO
 
 We also support packed sequence training with DPO. Sequence packing is a training technique in which multiple training examples are concatenated to create one longer sequence. This approach eliminates the need for padding and improves GPU utilization.
 Refer to the `sequence packing documentation <https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#>`_ for a detailed overview of sequence packing and its advantages. This document 
-discusses sequence packing for SFT in particular, but the same benefits apply to DPO, as well.
+discusses sequence packing for SFT in particular, but the same benefits apply to DPO.
 
-Packing your DPO dataset is done as a preprocessing step in NeMo and NeMo-Aligner. We provide a `script https://github.com/NVIDIA/NeMo-Aligner/blob/ashors/dpo-packing/examples/nlp/data/dpo/prepare_packed_dpo_dataset.py`_ to pack you DPO dataset. This script assumes you alrady have a prepared DPO-format dataset. Three main steps are run in this script:
+Packing your DPO dataset is done as a preprocessing step in NeMo and NeMo-Aligner. We provide a `script https://github.com/NVIDIA/NeMo-Aligner/blob/ashors/dpo-packing/examples/nlp/data/dpo/prepare_packed_dpo_dataset.py`_ to pack your DPO dataset. This script assumes you already have a prepared DPO-format dataset. Three main steps are run in this script:
 
   #. The online processing code in ``DPOModelDataset`` is run. This includes tasks such as prompt template manipulation and tokenization. The result is an array of tokenized sequences, represented by indices.
   #. Chosen and rejected sequences are concatenated.
@@ -145,7 +145,7 @@ To use the packed dataset during training, add the following line to your train 
 
 A few notes to keep in mind when running training with sequence packing:
 
-  #. Make sure to pack your train, validation and test datasets.
+  #. Make sure to pack your train, validation, and test datasets.
   #. Sequence packing can only be run with a micro batch size of 1.
   #. Sequence packing is supported via Transformer Engine, so be sure to enable transformer engine in your config by setting `++model.transformer_engine=True`.
   #. Sequence packing increases the number of examples processed per global batch. Try to scale your global batch size accordingly by setting the new
