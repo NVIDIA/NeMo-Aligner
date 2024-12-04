@@ -326,7 +326,7 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
         {
             "input_ids": np.ones(15),
             "labels": np.concatenate((-100 * np.ones(7), np.ones(8))),
-            "reward": np.ones(8),
+            "reward": np.ones(4),
             "lengths": [5, 3, 4, 3],
             "seq_boundaries": [0, 5, 8, 12, 15],
         },
@@ -382,27 +382,23 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
     num_mini_batches = 0
     for mbatch in train_dataloader:
         mbatch = distributed_collate_fn(mbatch)
-        print(f'{mbatch=}')
         padded_seq_len = mbatch["input_ids"].shape[1]
         for in_name, in_tensor in mbatch.items():
             assert in_tensor.shape[0] == minibs, f"Expected {in_name}.shape={in_tensor.shape} first dim to be {minibs}"
 
         assert mbatch["input_ids"].shape == (minibs, padded_seq_len)
+        assert mbatch["labels"].shape == (minibs, padded_seq_len)
         assert mbatch["lengths"].shape == (minibs,len(np_data[0]["lengths"]))
+        assert mbatch["rewards"].shape == (minibs,len(np_data[0]["lengths"]))
         ### last cu_seqlen set to max_length, the we add one padding element which gets removed during training
-        #assert mbatch["cu_seqlens"][0] == torch.tensor([0, 4, 6, 9, 16, -1])
-        #assert mbatch["max_seqlen"] == [4]
-        
-        print(f'{mbatch.keys()=}')
+        assert torch.equal(mbatch["cu_seqlens"][0], torch.tensor([0, 4, 6, 9, 16, -1]))
+        assert mbatch["cu_seqlens_argmin"][0] == torch.tensor([5])
+        ### this will end up being the final example because it's padded
+        ### should be fine because final padding tokens are not included in the loss
+        assert mbatch["max_seqlen"][0] == torch.tensor([7])
 
-        ## TODO: continue!! add some asserts for cu_seqlens and aeq boundaries too
-        """assert mbatch["chosen_labels"].shape == (minibs, padded_seq_len)
-        assert mbatch["rejected_labels"].shape == (minibs, padded_seq_len)
-        assert mbatch["attention_mask"].shape == (minibs, 1, padded_seq_len, padded_seq_len)
-        assert mbatch["position_ids"].shape == (minibs, padded_seq_len)
-        assert mbatch["chosen_rewards"].shape == (minibs,)
-        assert mbatch["rejected_rewards"].shape == (minibs,)"""
-        num_mini_batches += 1
+        num_mini_batches +=1
+
     assert num_mini_batches == 2
 
     tmp_dir.cleanup()
