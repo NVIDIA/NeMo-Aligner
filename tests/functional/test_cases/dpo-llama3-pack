@@ -22,5 +22,5 @@ PRETRAINED_CHECKPOINT_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/tiny-llama3-result
 TRAIN_DATA_PATH=$SCRIPT_DIR/test_data/dummy-dpo.jsonl \
 NAME=dpo_pack_test \
 MAX_STEPS=10 \
-bash ../dpo_pack.sh \
+bash ../dpo.sh \
     ++model.data.data_impl=packed_jsonl \
