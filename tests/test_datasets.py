@@ -27,6 +27,7 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_dpo_datasets,
     build_train_valid_test_dpo_packed_datasets,
 )
+from nemo_aligner.data.nlp.scripts.undo_special_tokens import format_conversation
 from nemo_aligner.utils import parallel_state
 
 
@@ -139,6 +140,56 @@ def test_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer):
         assert mbatch["rejected_rewards"].shape == (minibs,)
         num_mini_batches += 1
     assert num_mini_batches == 2
+
+
+@pytest.mark.run_only_on("GPU")
+def test_dpo_dataset_conversion():
+    prompt_str = """<extra_id_0>System\n\n<extra_id_1>User\nDoes GPT-4 use RNN or Transformer models, and which one is better for this type of project?\n<extra_id_1>Assistant\nGPT-4 uses a transformer architecture, not a recurrent neural network. Both models are commonly used for natural language processing tasks, and both have advantages and disadvantages, so it depends on the specific application of the model.\n<extra_id_1>User\nCould you explain in detail both the advantages and disadvantages from different perspectives?\n<extra_id_1>Assistant\nYes, here are a few different perspectives on the pros and cons of RNN and transformer models:\n \n\n The RNN model has better sequential memory and can better model sequences of data, whereas the transformer model has better parallel computation and can better model large input datasets. This makes RNNs better for applications like speech recognition and machine translation, where the input is a sequence of sounds or words, and transformers better for applications like natural language processing and text classification, where the input is a large collection of documents or social media posts.\n \n\n RNNs are more straightforward and easier to understand and debug, whereas transformers are more flexible and can be used for more diverse applications. This makes RNNs better for teaching and research, and transformers better for actual applications in industry and the real world.\n \n\n RNNs are more efficient and faster to run, whereas transformers are more accurate and produce better results. This makes RNNs better for fast prototyping and testing, and transformers better for actual deployment in production applications.\n<extra_id_1>User\ncould you add more in a table\n<extra_id_1>Assistant\n"""
+
+    expected_oai_messages = [
+        {"role": "system", "content": ""},
+        {
+            "role": "user",
+            "content": "Does GPT-4 use RNN or Transformer models, and which one is better for this type of project?",
+        },
+        {
+            "role": "assistant",
+            "content": "GPT-4 uses a transformer architecture, not a recurrent neural network. Both models are commonly used for natural language processing tasks, and both have advantages and disadvantages, so it depends on the specific application of the model.",
+        },
+        {
+            "role": "user",
+            "content": "Could you explain in detail both the advantages and disadvantages from different perspectives?",
+        },
+        {
+            "role": "assistant",
+            "content": """Yes, here are a few different perspectives on the pros and cons of RNN and transformer models:\n \n\n The RNN model has better sequential memory and can better model sequences of data, whereas the transformer model has better parallel computation and can better model large input datasets. This makes RNNs better for applications like speech recognition and machine translation, where the input is a sequence of sounds or words, and transformers better for applications like natural language processing and text classification, where the input is a large collection of documents or social media posts.\n \n\n RNNs are more straightforward and easier to understand and debug, whereas transformers are more flexible and can be used for more diverse applications. This makes RNNs better for teaching and research, and transformers better for actual applications in industry and the real world.\n \n\n RNNs are more efficient and faster to run, whereas transformers are more accurate and produce better results. This makes RNNs better for fast prototyping and testing, and transformers better for actual deployment in production applications.""",
+        },
+        {"role": "user", "content": "could you add more in a table"},
+        {"role": "assistant", "content": ""},
+    ]
+
+    oai_messages_prompt = format_conversation(prompt_str)
+    assert expected_oai_messages == oai_messages_prompt
+
+    # (@adithyare) bonus test! convert oai style messages back into a string using Jinja
+    # Attempt to import jinja2 via importorskip
+    jinja2 = pytest.importorskip("jinja2", reason="jinja2 library is not installed")
+
+    # Now it's safe to use jinja2
+    from jinja2 import Template
+
+    def remove_trailing(s, t):
+        if s.endswith(t):
+            s = s[: -len(t)]
+        return s
+
+    jinja_template = """{% for message in conversation %}{%- if message.role == "system" -%}<extra_id_0>System\n{{ message.content }}\n{% elif message.role == "user" -%}<extra_id_1>User\n{{ message.content }}\n{% elif message.role == "assistant" -%}<extra_id_1>Assistant\n{{ message.content }}\n{% endif %}{% endfor %}"""
+    jinja_template = Template(jinja_template)
+    prompt_str_jinja_rendered = jinja_template.render(conversation=oai_messages_prompt)
+    prompt_str_jinja_rendered = remove_trailing(
+        prompt_str_jinja_rendered, "\n"
+    )  # (@adithyare) jinja will add the ending of message token which we should remove to make a prompt.
+    assert prompt_str == prompt_str_jinja_rendered
 
 
 @pytest.mark.run_only_on("GPU")
