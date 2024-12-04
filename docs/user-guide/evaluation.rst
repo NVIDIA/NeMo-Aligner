@@ -2,15 +2,15 @@
 
 .. _nemo-aligner-eval:
 
-Evaluating a Trained Model
-@@@@@@@@@@@@@@@@@@@@@@@@@@
+Evaluate a Trained Model
+@@@@@@@@@@@@@@@@@@@@@@@@
 
 After training a model, you may want to run evaluation to understand how the model performs on unseen tasks. You can use Eleuther AI's `Language Model Evaluation Harness <https://github.com/EleutherAI/lm-evaluation-harness>`_
 to quickly run a variety of popular benchmarks, including MMLU, SuperGLUE, HellaSwag, and WinoGrande.
 A full list of supported tasks can be found `here <https://github.com/EleutherAI/lm-evaluation-harness/blob/main/lm_eval/tasks/README.md>`_.
 
-Install LM Evaluation Harness
-#############################
+Install the LM Evaluation Harness
+#################################
 
 Run the following commands inside of a NeMo container to install the LM Evaluation Harness:
 
@@ -26,7 +26,7 @@ Run Evaluations
 
 A detailed description of running evaluation with ``.nemo`` models can be found in Eleuther AI's `documentation <https://github.com/EleutherAI/lm-evaluation-harness?tab=readme-ov-file#nvidia-nemo-models>`_.
 Single- and multi-GPU evaluation is supported. The following is an example of running evaluation on the ``hellaswag``, ``super_glue``, and ``winogrande`` tasks using a ``.nemo`` file from NeMo-Aligner.
-Note that it is recommended, but not required, to unzip your ``.nemo`` file prior to running evaluations.
+Please note that while it is recommended, you are not required to unzip your .nemo file before running evaluations.
 
 .. code-block:: bash
 
