@@ -381,7 +381,7 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
             "lengths": [5, 3, 4, 3],
             "seq_boundaries": [0, 5, 8, 12, 15],
         },
-    ] * 8)
+    ] * 50)
 
     tmp_dir = TemporaryDirectory()
     data_path = f"{tmp_dir.name}/data.npy"
@@ -467,7 +467,7 @@ def test_packed_dpo_loader_pad_to_multiple(init_model_parallel, make_tmp_jsonl, 
             "lengths": [5, 3, 4, 3],
             "seq_boundaries": [0, 5, 8, 12, 15],
         },
-    ] * 8)
+    ] * 50)
 
     tmp_dir = TemporaryDirectory()
     data_path = f"{tmp_dir.name}/data.npy"
