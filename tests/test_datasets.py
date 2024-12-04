@@ -15,13 +15,18 @@ import json
 from functools import partial
 from tempfile import TemporaryDirectory
 
+import numpy as np
 import pytest
 import torch.distributed
 from omegaconf import OmegaConf
 
 from nemo.collections.common.tokenizers.huggingface.auto_tokenizer import AutoTokenizer
 from nemo_aligner.algorithms.dpo import dpo_custom_collate
-from nemo_aligner.data.nlp.builders import build_dataloader, build_train_valid_test_dpo_datasets
+from nemo_aligner.data.nlp.builders import (
+    build_dataloader,
+    build_train_valid_test_dpo_datasets,
+    build_train_valid_test_dpo_packed_datasets,
+)
 from nemo_aligner.data.nlp.scripts.undo_special_tokens import format_conversation
 from nemo_aligner.utils import parallel_state
 
@@ -173,23 +178,25 @@ def test_dpo_dataset_conversion():
     oai_messages_prompt = format_conversation(prompt_str)
     assert expected_oai_messages == oai_messages_prompt
 
-    if HAS_JINJA2:
-        # (@adithyare) bonus test! convert oai style messages back into a string using Jinja
+    # (@adithyare) bonus test! convert oai style messages back into a string using Jinja
+    # Attempt to import jinja2 via importorskip
+    jinja2 = pytest.importorskip("jinja2", reason="jinja2 library is not installed")
 
-        def remove_trailing(s, t):
-            if s.endswith(t):
-                s = s[: -len(t)]
-            return s
+    # Now it's safe to use jinja2
+    from jinja2 import Template
 
-        jinja_template = """{% for message in conversation %}{%- if message.role == "system" -%}<extra_id_0>System\n{{ message.content }}\n{% elif message.role == "user" -%}<extra_id_1>User\n{{ message.content }}\n{% elif message.role == "assistant" -%}<extra_id_1>Assistant\n{{ message.content }}\n{% endif %}{% endfor %}"""
-        jinja_template = Template(jinja_template)
-        prompt_str_jinja_rendered = jinja_template.render(conversation=oai_messages_prompt)
-        prompt_str_jinja_rendered = remove_trailing(
-            prompt_str_jinja_rendered, "\n"
-        )  # (@adithyare) jinja will add the ending of message token which we should remove to make a prompt.
-        assert prompt_str == prompt_str_jinja_rendered
+    def remove_trailing(s, t):
+        if s.endswith(t):
+            s = s[: -len(t)]
+        return s
 
-    return True
+    jinja_template = """{% for message in conversation %}{%- if message.role == "system" -%}<extra_id_0>System\n{{ message.content }}\n{% elif message.role == "user" -%}<extra_id_1>User\n{{ message.content }}\n{% elif message.role == "assistant" -%}<extra_id_1>Assistant\n{{ message.content }}\n{% endif %}{% endfor %}"""
+    jinja_template = Template(jinja_template)
+    prompt_str_jinja_rendered = jinja_template.render(conversation=oai_messages_prompt)
+    prompt_str_jinja_rendered = remove_trailing(
+        prompt_str_jinja_rendered, "\n"
+    )  # (@adithyare) jinja will add the ending of message token which we should remove to make a prompt.
+    assert prompt_str == prompt_str_jinja_rendered
 
 
 @pytest.mark.run_only_on("GPU")
@@ -364,3 +371,179 @@ def test_dpo_loader_pad_to_multiple(init_model_parallel, make_tmp_jsonl, str_to_
         num_mini_batches += 1
 
     assert num_mini_batches == 2
+
+
+@pytest.mark.run_only_on("GPU")
+def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer):
+    init_model_parallel(tensor_model_parallel_size=1, pipeline_model_parallel_size=1)
+
+    np_data = np.array(
+        [
+            {
+                "input_ids": np.ones(15),
+                "labels": np.concatenate((-100 * np.ones(7), np.ones(8))),
+                "reward": np.ones(4),
+                "lengths": [5, 3, 4, 3],
+                "seq_boundaries": [0, 5, 8, 12, 15],
+            },
+        ]
+        * 50
+    )
+
+    tmp_dir = TemporaryDirectory()
+    data_path = f"{tmp_dir.name}/data.npy"
+    np.save(data_path, np_data)
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "data": {
+                    "data_prefix": {"train": [data_path], "validation": [data_path], "test": [data_path]},
+                    "splits_string": None,
+                    "num_workers": 2,
+                },
+                "seed": 42,
+            }
+        }
+    )
+    mbs = 1
+    minibs = 2
+    gbs = minibs * torch.distributed.get_world_size()
+
+    train_ds, _, _ = build_train_valid_test_dpo_packed_datasets(
+        cfg=cfg.model,
+        data_prefix=cfg.model.data.data_prefix,
+        data_impl="packed_jsonl",
+        splits_string=None,
+        train_valid_test_num_samples=[-1 * gbs] * 3,
+        seq_length=1024,
+        seed=cfg.model.seed,
+        tokenizer=llama3_tokenizer,
+    )
+
+    train_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset=train_ds,
+        consumed_samples=0,
+        mbs=mbs,
+        gbs=gbs,
+        load_gbs=True,
+        pad_samples_to_global_batch_size=False,
+        collate_fn=lambda x: x,
+    )
+
+    distributed_collate_fn = partial(train_ds.global_collate_fn, eos_id=llama3_tokenizer.eos_id,)
+
+    num_mini_batches = 0
+    for mbatch in train_dataloader:
+        mbatch = distributed_collate_fn(mbatch)
+        padded_seq_len = mbatch["input_ids"].shape[1]
+        for in_name, in_tensor in mbatch.items():
+            assert in_tensor.shape[0] == minibs, f"Expected {in_name}.shape={in_tensor.shape} first dim to be {minibs}"
+
+        assert mbatch["input_ids"].shape == (minibs, padded_seq_len)
+        assert mbatch["labels"].shape == (minibs, padded_seq_len)
+        assert mbatch["lengths"].shape == (minibs, len(np_data[0]["lengths"]))
+        assert mbatch["rewards"].shape == (minibs, len(np_data[0]["lengths"]))
+        ### last cu_seqlen set to max_length, the we add one padding element which gets removed during training
+        assert torch.equal(mbatch["cu_seqlens"][0], torch.tensor([0, 4, 6, 9, 16, -1]))
+        assert mbatch["cu_seqlens_argmin"][0] == torch.tensor([5])
+        ### this will end up being the final example because it's padded
+        ### should be fine because final padding tokens are not included in the loss
+        assert mbatch["max_seqlen"][0] == torch.tensor([7])
+
+        num_mini_batches += 1
+
+    assert num_mini_batches == 2
+
+    tmp_dir.cleanup()
+
+
+@pytest.mark.run_only_on("GPU")
+def test_packed_dpo_loader_pad_to_multiple(init_model_parallel, make_tmp_jsonl, str_to_list_tokenizer):
+    init_model_parallel(tensor_model_parallel_size=1, pipeline_model_parallel_size=1)
+
+    np_data = np.array(
+        [
+            {
+                "input_ids": np.ones(15),
+                "labels": np.concatenate((-100 * np.ones(7), np.ones(8))),
+                "reward": np.ones(8),
+                "lengths": [5, 3, 4, 3],
+                "seq_boundaries": [0, 5, 8, 12, 15],
+            },
+        ]
+        * 50
+    )
+
+    tmp_dir = TemporaryDirectory()
+    data_path = f"{tmp_dir.name}/data.npy"
+    np.save(data_path, np_data)
+
+    cfg = OmegaConf.create(
+        {
+            "model": {
+                "data": {
+                    "data_prefix": {"train": [data_path], "validation": [data_path], "test": [data_path]},
+                    "splits_string": None,
+                    "num_workers": 2,
+                },
+                "seed": 42,
+            }
+        }
+    )
+    mbs = 1
+    minibs = 2
+    gbs = minibs * torch.distributed.get_world_size()
+    expected_seq_len_multiple = 29  # pick a prime to make sure
+
+    train_ds, _, _ = train_ds, _, _ = build_train_valid_test_dpo_packed_datasets(
+        cfg=cfg.model,
+        data_prefix=cfg.model.data.data_prefix,
+        data_impl="packed_jsonl",
+        splits_string=None,
+        train_valid_test_num_samples=[-1 * gbs] * 3,
+        seq_length=1024,
+        seed=cfg.model.seed,
+        tokenizer=str_to_list_tokenizer,
+    )
+
+    train_dataloader = build_dataloader(
+        cfg=cfg,
+        dataset=train_ds,
+        consumed_samples=0,
+        mbs=mbs,
+        gbs=gbs,
+        load_gbs=True,
+        pad_samples_to_global_batch_size=False,
+        collate_fn=lambda x: x,
+    )
+
+    distributed_collate_fn = partial(
+        train_ds.global_collate_fn,
+        eos_id=str_to_list_tokenizer.eos_id,
+        reset_position_ids=False,
+        reset_attention_mask=False,
+        eod_mask_loss=False,
+        pad_length_to_multiple_of=expected_seq_len_multiple,
+    )
+
+    num_mini_batches = 0
+    for mbatch in train_dataloader:
+
+        mbatch = distributed_collate_fn(mbatch)
+        for k in ["input_ids", "labels", "position_ids"]:
+            assert mbatch[k].shape[1] % expected_seq_len_multiple == 0
+
+        # Check that all ranks have the same length
+        max_chosen_seq_length = torch.tensor(mbatch["input_ids"].shape[1], device="cuda")
+        torch.distributed.all_reduce(
+            max_chosen_seq_length, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
+        )
+        assert mbatch["input_ids"].shape[1] == max_chosen_seq_length.item()
+
+        num_mini_batches += 1
+
+    assert num_mini_batches == 2
+
+    tmp_dir.cleanup()

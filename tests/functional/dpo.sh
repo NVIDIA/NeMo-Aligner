@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+SCRIPT_DIR=${SCRIPT_DIR}
 cd $SCRIPT_DIR
 set -eoux pipefail
 
@@ -12,10 +12,10 @@ GBS=${GBS:-4}
 PRETRAINED_CHECKPOINT_NEMO_FILE=${PRETRAINED_CHECKPOINT_NEMO_FILE}
 
 
-TRAIN_DATA_PATH=$SCRIPT_DIR/test_data/dummy-dpo.jsonl
-VALID_DATA_PATH=$SCRIPT_DIR/test_data/dummy-dpo.jsonl
+TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-"${SCRIPT_DIR}/test_data/dummy-dpo.jsonl"}
+VALID_DATA_PATH=$TRAIN_DATA_PATH
 
-NAME="dpo_test"
+NAME=${NAME:-"dpo_test"}
 
 # PARAMETERS
 RESULTS_DIR="/tmp/${NAME}"
@@ -38,7 +38,6 @@ torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
     --config-name=${CONF_NAME} \
     trainer.num_nodes=1 \
     trainer.devices=2 \
-    ++model.data.data_impl=jsonl \
     ++model.data.seq_length=128 \
     ++model.global_batch_size=${GBS} \
     ++model.micro_batch_size=1 \
@@ -55,8 +54,8 @@ torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
     model.data.num_workers=2 \
     ++model.tensor_model_parallel_size=1 \
     ++model.pipeline_model_parallel_size=1 \
-    trainer.dpo.max_steps=3 \
-    trainer.dpo.val_check_interval=3 \
+    trainer.dpo.max_steps=${MAX_STEPS:-3} \
+    trainer.dpo.val_check_interval=${MAX_STEPS:-3} \
     trainer.dpo.limit_val_batches=8 \
     trainer.dpo.save_interval=0 \
     exp_manager.explicit_log_dir=${RESULTS_DIR} \

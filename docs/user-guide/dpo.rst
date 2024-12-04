@@ -1,14 +1,11 @@
 .. include:: /content/nemo.rsts
 
-.. _model-aligner-dpo:
+.. include:: aligner-algo-header.rst
+
+.. _nemo-aligner-dpo:
 
 Model Alignment by DPO, RPO, and IPO
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
-
-.. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
-   
-   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 The NeMo Framework supports efficient model alignment via the NeMo-Aligner codebase.
 
@@ -22,7 +19,7 @@ In full-parameter DPO, there exists an actor and a reference model. The actor is
 For LoRA-based DPO, the actor is initialized by the reference model plus LoRA weights, where only the LoRA weights are trainable. Therefore, it allows us to switch between the actor/reference models by simply enabling or disabling LoRA. In addition, there is no need to store two sets of LLM weights.
 
 RPO and IPO Variations
-#######################
+######################
 
 Besides the vanilla DPO algorithm, we support other variants of DPO algorithms, including Identity Preference Optimization (IPO) and Reward-aware Preference Optimization (RPO).
 
@@ -30,8 +27,9 @@ The algorithm is identified with the ``dpo.preference_loss`` config variable. We
 
 To use the RPO algorithm, each dataset example should have ``chosen_reward`` and ``rejected_reward``, which might come from human labelers or reward models. If ``chosen_reward`` and ``rejected_reward`` are not existent in the data, ``dpo.default_chosen_reward`` and ``dpo.default_rejected_reward`` are used.
 
+
 Obtain a Pretrained Model
-############################
+#########################
 To start, we must first get a pretrained model to align. There are two models we recommend to get started. The rest of the tutorial will work with either model, but for demonstration purposes, we will use the smaller 2B model. 
 
 .. tab-set::
@@ -81,7 +79,10 @@ Instruction Following Taught by Supervised Fine-Tuning (SFT)
 For best DPO training performance, it is recommended that you start with a SFT model, rather than the base model. For a full guide on how to perform SFT on a Megatron GPT model, please refer to the :ref:`SFT guide <sft>`.
 
 DPO Model Training
-#####################
+##################
+
+Prepare your Dataset
+====================
 
 Before running the core DPO training, you must prepare your training and validation data to the format required for DPO training. DPO expects ``.jsonl`` files where each line is a JSON dict corresponding to a single, complete sample, as shown below::
 
@@ -97,8 +98,84 @@ Always follow the prompt-response template format used during your SFT training 
 
 Your JSONL file must contain at least as many samples as the Global Batch Size (GBS) you plan to use during training. For example, if GBS = 64, ensure that both your training and validation files include at least 64 samples. Using a file with fewer samples than the GBS will result in a crash.
 
+Sequence Packing with DPO
+=========================
+
+We also support packed sequence training with DPO. Sequence packing is a training technique in which multiple training examples are concatenated to create one longer sequence. This approach eliminates the need for padding and improves GPU utilization.
+Refer to the `sequence packing documentation <https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#>`_ for a detailed overview of sequence packing and its advantages. This document 
+discusses sequence packing for SFT in particular, but the same benefits apply to DPO, as well.
+
+Packing your DPO dataset is done as a preprocessing step in NeMo and NeMo-Aligner. We provide a `script https://github.com/NVIDIA/NeMo-Aligner/blob/ashors/dpo-packing/examples/nlp/data/dpo/prepare_packed_dpo_dataset.py`_ to pack you DPO dataset. This script assumes you alrady have a prepared DPO-format dataset. Three main steps are run in this script:
+
+  #. The online processing code in ``DPOModelDataset`` is run. This includes tasks such as prompt template manipulation and tokenization. The result is an array of tokenized sequences, represented by indices.
+  #. Chosen and rejected sequences are concatenated.
+  #. The tokenized sequences are grouped by length and a packing algorithm is run.
+
+
+You can read more about packing algorithms  `here <https://en.wikipedia.org/wiki/Bin_packing_problem#Offline_algorithms>`_. Currently, two variants of ``first_fit`` are supported:
+
+  #. ``first_fit_decreasing``: sorts the sequences in decreasing order before applying the first-fit algorithm. It generates a more optimal packing, but it tends to keep all short sequences together, which may have an impact for convergence.
+  #. ``first_fit_shuffle``: runs first-fit in a random order. Packing is less optimal but it keeps the dataset order random. The recommendation is to run first_fit_shuffle and check the packed sequence lengths. If they are similar to the target length (i.e. efficient packing), then use shuffle. Otherwise try first_fit_decreasing.
+
+
+The following is an example of running the packing script to prepare your DPO dataset:
+
+.. code-block:: bash
+
+   python examples/nlp/data/dpo/prepare_packed_dpo_dataset.py \
+      model.data.data_prefix=/path/to/training.jsonl \
+      +model.encoder_seq_length=2048 \
+      +tokenizer_path=/path/to/tokenizer/model \
+      +output_dir=/path/to/output_folder \
+      +pack_sizes=[4096] \
+      +tokenizer_type=<huggingface or sentencpiece>
+   [  +packing_algorithm=first_fit_shuffle \  ]
+   [  +seed=0                                 ]
+
+
+Because this script packs chosen and rejected sequences together, ``pack_sizes`` should always be at least double ``model.encoder_seq_length``.
+When running training using the packed dataset, ``model.encoder_seq_length`` should be set to the ``packed_size`` used for the packed dataset.
+
+To use the packed dataset during training, add the following line to your train command:
+
+.. code-block:: bash
+
+   ++model.data.data_impl=packed_jsonl
+
+
+A few notes to keep in mind when running training with sequence packing:
+
+  #. Make sure to pack your train, validation and test datasets.
+  #. Sequence packing can only be run with a micro batch size of 1.
+  #. Sequence packing is supported via Transformer Engine, so be sure to enable transformer engine in your config by setting `++model.transformer_engine=True`.
+  #. Sequence packing increases the number of examples processed per global batch. Try to scale your global batch size accordingly by setting the new
+     global batch size to approximately ``unpacked_global_batch_size / avg_num_sequences_per_pack``. The average number of sequences per pack is printed to stdout after ``prepare_packed_dpo_dataset.py`` completes.
+
+
+Begin Training
+==============
+
 Once your data is processed into the correct format, you are ready to begin DPO training. You must start with a pretrained or SFT trained model. For this section, we will use the SFT model trained in the previous step to train the DPO model.
 For the purposes of the following sections, we assume that your training ``.jsonl`` file is located in ``/path/to/train_dpo_format.jsonl`` and your validation ``.jsonl`` file is located in ``/path/to/valid_dpo_format.jsonl``.
+
+.. tip::
+
+   If you don't have a DPO dataset readily available, you can generate a toy one to get started. Here's
+   an example to generate ``NUM_EXAMPLES_TO_GENERATE`` examples. Ensure this value is larger than the
+   global_batch_size.
+
+      .. code-block:: bash
+
+         # Generates a dummy dataset in /path/to/train_dpo_format.jsonl /path/to/valid_dpo_format.jsonl 
+
+         NUM_EXAMPLES_TO_GENERATE=200
+
+         mkdir -p /path/to
+         for i in $(seq 1 $NUM_EXAMPLES_TO_GENERATE); do
+            cat <<EOF
+         {"prompt": "<extra_id_0>System\n\n<extra_id_1>User\n${i}*10=?\n<extra_id_1>Assistant\n", "chosen_response": "$((i * 10))\n<extra_id_1>", "rejected_response": "I refuse to answer this question.\n<extra_id_1>"}
+         EOF
+         done | tee /path/to/train_dpo_format.jsonl /path/to/valid_dpo_format.jsonl >/dev/null
 
 For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` corresponds to the beta parameter in the DPO paper.
 
@@ -111,7 +188,7 @@ For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` correspond
 
          .. code-block:: bash 
 
-            export GPFS="/path/to/nemo-aligner-repo"
+            export GPFS="/opt/NeMo-Aligner"
             export TRAIN_DATA_PATH="/path/to/train_dpo_format.jsonl"
             export VALID_DATA_PATH="/path/to/valid_dpo_format.jsonl"
 
@@ -147,7 +224,7 @@ For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` correspond
             #SBATCH --exclusive
             #SBATCH --overcommit
 
-            GPFS="/path/to/nemo-aligner-repo"
+            export GPFS="/opt/NeMo-Aligner"
             PRETRAINED_CHECKPOINT_NEMO_FILE="/path/to/megatron_gpt_sft.nemo"
 
             TRAIN_DATA_PATH="/path/to/train_comparisons.jsonl"
@@ -187,7 +264,6 @@ For the following parameters, the ``model.dpo.ref_policy_kl_penalty`` correspond
             EOF
 
             srun --no-container-mount-home -o $OUTFILE -e $ERRFILE --container-image=$CONTAINER $MOUNTS bash -c "${cmd}"
-            set +x
 
 The default DPO training tunes all parameters. To use LoRA, we can set ``model.peft.peft_scheme=lora`` and use different parameters in ``model.peft.lora_tuning``. Please check the parameters in `the config file <https://github.com/NVIDIA/NeMo-Aligner/blob/main/examples/nlp/gpt/conf/gpt_dpo.yaml>`__.
 

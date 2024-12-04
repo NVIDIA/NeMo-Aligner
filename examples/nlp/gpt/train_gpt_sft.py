@@ -65,11 +65,7 @@ def main(cfg) -> None:
         cfg.model.precision = cfg.trainer.precision
 
     ptl_model = load_from_nemo(
-        MambaSFTModel if cfg.model.get("mamba_hybrid", False) else GPTSFTModel,
-        cfg,
-        trainer,
-        strict=True,
-        restore_path=cfg.model.restore_from_path,
+        GPTSFTModel, cfg, trainer, strict=True, restore_path=cfg.model.restore_from_path, return_updated_cfg=False,
     )
 
     init_peft(ptl_model, cfg.model)

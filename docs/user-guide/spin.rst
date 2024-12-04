@@ -1,5 +1,7 @@
 .. include:: /content/nemo.rsts
 
+.. include:: aligner-algo-header.rst
+
 Model Alignment by Self-Play Fine-Tuning (SPIN)
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
@@ -8,11 +10,6 @@ The NeMo Framework supports efficient model alignment via the NeMo-Aligner codeb
 All algorithms in NeMo-Aligner will work with any GPT-based model that is from Megatron Core (in the config, ``mcore_gpt=True``). For the purposes of this tutorial, we will go through the entire SPIN pipeline using the newly released `2B GPT model with 4096 sequence length <https://huggingface.co/nvidia/GPT-2B-001>`__.  This same tutorial also works for GPT models (such as LLaMa3) of any size.
 
 For details on the SPIN algorithm, refer to the paper: `https://arxiv.org/abs/2401.01335 <https://arxiv.org/abs/2401.01335>`__.
-
-.. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
-   
-   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 Obtain a Pretrained Model
 #########################

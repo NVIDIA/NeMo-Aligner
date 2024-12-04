@@ -367,7 +367,7 @@ class DPOTrainer:
                 batch = next(iter_dataloader)
                 batch = self.collate_fn(batch)
                 logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
-                packed = (not "chosen" in batch)
+                packed = "input_ids" in batch
                 if not packed:
                     chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
                     batch["ref_policy_log_probs_chosen"] = chosen_logps
