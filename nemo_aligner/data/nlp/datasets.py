@@ -16,9 +16,12 @@
 
 import os
 
+import math
 import numpy as np
 import scipy
 import torch
+
+from megatron.core import parallel_state
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
@@ -318,6 +321,8 @@ class DPOModelDataset(Dataset):
         drop_last=True,
         pad_chosen_rejected_to_max=True,
     ):
+
+        #print(f'{num_samples=}')
         super().__init__()
         self.cfg = cfg
         self.name = name
@@ -512,7 +517,8 @@ class DPOPackedDataset(DPOModelDataset):
         ]
 
         if pad_length_to_multiple_of:
-            max_seq_len = torch.tensor(input_ids.shape[1], device=torch.cuda.current_device())
+            max_seq_len = torch.tensor(max(ex.shape[0] for ex in input_ids), device=torch.cuda.current_device())
+            #max_seq_len = torch.tensor(input_ids.shape[1], device=torch.cuda.current_device())
             torch.distributed.all_reduce(
                 max_seq_len, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
             )
@@ -535,6 +541,7 @@ class DPOPackedDataset(DPOModelDataset):
                 position_ids[-1].extend(list(range(l - 1)))  ## l - 1 to exclude labels
                 cu_seqlens[-1].append(cu_seqlens[-1][-1] + l - 1)
             # set last seq to the max seq len because rope and attn kernels expect no padding
+            ## TODO: check whether this affects convergence
             cu_seqlens[-1][-1] = max_length
 
         assert len(input_ids[0]) == len(
