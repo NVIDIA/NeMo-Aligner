@@ -258,12 +258,12 @@ def main(cfg: "DictConfig") -> None:
         np.save(output_path, output_data)
         logging.info(f"Done, output written to {output_path}")
 
-    ## TODO: udpate!
     logging.info(
         f"""
 ✅ Packed datasets with pack sizes {args.pack_sizes} are prepared successfully. 
 To train with packed sequences, you need to make changes to the DPO config file.
-See the NeMo-Aligner sequence packing documentation for more details. 
+See the NeMo-Aligner sequence packing documentation for more details:
+https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/user-guide/dpo.rst#sequence-packing-with-dpo 
 """
     )
 

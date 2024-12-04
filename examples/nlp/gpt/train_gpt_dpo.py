@@ -105,7 +105,7 @@ def main(cfg) -> None:
         tokenizer=ptl_model.tokenizer,
     )
 
-    collate = train_ds.collate_fn if cfg.model.data.data_impl == "packed_jsonl" else dpo_custom_collate
+    collate = train_ds.global_collate_fn if cfg.model.data.data_impl == "packed_jsonl" else dpo_custom_collate
     train_dataloader = build_dataloader(
         cfg=cfg,
         dataset=train_ds,
@@ -117,7 +117,6 @@ def main(cfg) -> None:
         collate_fn=identity_collate,
     )
 
-    # collate = validation_ds.collate_fn if cfg.model.data.data_impl=="packed_jsonl" else dpo_custom_collate
     val_dataloader = build_dataloader(
         cfg=cfg,
         dataset=validation_ds,

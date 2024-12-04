@@ -30,6 +30,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+from nemo_aligner.data.datasets import DPOPackedDataset
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, from_parallel_logits_to_logprobs
@@ -365,9 +366,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
             logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
 
-            ### -1000 used as padding token
-            gt_rewards = gt_rewards[gt_rewards != -1000]
             if cu_seqlens is not None:  ## packed sequence
+                gt_rewards = gt_rewards[gt_rewards != DPOPackedDataset.REWARDS_PAD_ID]
                 chosen_gt_rewards, reject_gt_rewards = gt_rewards[::2], gt_rewards[1::2]
             else:
                 chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
@@ -383,9 +383,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             logbeta_hat_chosen = torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta)
             logbeta_hat_rejected = torch.nn.functional.logsigmoid(-self.ref_policy_kl_penalty * rewards_delta)
 
-            ### -1000 used as padding token
-            gt_rewards = gt_rewards[gt_rewards != -1000]
             if cu_seqlens is not None:  ## packed sequence
+                gt_rewards = gt_rewards[gt_rewards != DPOPackedDataset.REWARDS_PAD_ID]
                 chosen_gt_rewards, reject_gt_rewards = gt_rewards[::2], gt_rewards[1::2]
             else:
                 chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)
@@ -400,9 +399,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         elif self.preference_loss == "ipo":
             loss = torch.mean((chosen_rewards - reject_rewards - 1.0 / (2.0 * self.ref_policy_kl_penalty)) ** 2, 0)
         elif self.preference_loss == "rpo_sq":
-            ### -1000 used as padding token
-            gt_rewards = gt_rewards[gt_rewards != -1000]
             if cu_seqlens is not None:  ## packed sequence
+                gt_rewards = gt_rewards[gt_rewards != DPOPackedDataset.REWARDS_PAD_ID]
                 chosen_gt_rewards, reject_gt_rewards = gt_rewards[::2], gt_rewards[1::2]
             else:
                 chosen_gt_rewards, reject_gt_rewards = self.split_output_tensor(gt_rewards)

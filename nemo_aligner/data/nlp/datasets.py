@@ -442,6 +442,9 @@ class DPOPackedDataset(DPOModelDataset):
     pre-tokenized and pre-packed using examples/nlp/data/dpo/prepare_packed_dpo_dataset.py.
     """
 
+    REWARDS_PAD_ID = -1000
+    LABELS_PAD_ID = -100
+
     def __init__(
         self,
         cfg,
@@ -461,9 +464,6 @@ class DPOPackedDataset(DPOModelDataset):
     def __getitem__(self, idx):
         return self.data[idx]
 
-    def __len__(self):
-        return len(self.data)
-
     def _ceil_to_nearest(self, n, m):
         return (n + m - 1) // m * m
 
@@ -476,7 +476,7 @@ class DPOPackedDataset(DPOModelDataset):
         return item
 
     ## reset_position_ids, reset_attention_mask and eod_mask_loss are unused but are needed to match the API of dpo_custom_collate
-    def collate_fn(
+    def global_collate_fn(
         self,
         batch,
         eos_id,
@@ -542,12 +542,12 @@ class DPOPackedDataset(DPOModelDataset):
         ), "Dataset problem: input_ids and position_ids lengths don't match"
 
         input_ids = self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
-        labels = self._collate_item(labels, max_length=max_length, pad_id=-100)
+        labels = self._collate_item(labels, max_length=max_length, pad_id=self.LABELS_PAD_ID)
         position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
 
         max_num_sequences = max(len(l) for l in lengths)
         lengths = self._collate_item(lengths, max_length=max_num_sequences, pad_id=0)
-        rewards = self._collate_item(rewards, max_length=max_num_sequences, pad_id=-1000)
+        rewards = self._collate_item(rewards, max_length=max_num_sequences, pad_id=self.REWARDS_PAD_ID)
 
         output = {
             "input_ids": torch.LongTensor(input_ids),
