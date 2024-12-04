@@ -90,6 +90,7 @@ jobs:
       matrix:
         test_case:
           - ppo-llama3-pp2-reshard
+          - reinforce-llama3-pp2-reshard
           - dpo-llama3
           - kd-llama3
           - sft-llama3
