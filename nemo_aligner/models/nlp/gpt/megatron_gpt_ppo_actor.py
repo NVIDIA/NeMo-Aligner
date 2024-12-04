@@ -384,7 +384,10 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 sampling_params=self._sampling_params,
                 strategy=strategy,
             )
-            response_tokens = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
+            max_len_list = max([len(x) for x in actor_output["token_ids"]])
+            padded_list = [x + [self.tokenizer.eos_id] * (max_len_list - len(x)) for x in actor_output["token_ids"]]
+            response_tokens = torch.cuda.LongTensor(padded_list)
+# response_tokens = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
             response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
 
