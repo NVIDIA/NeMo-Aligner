@@ -172,7 +172,9 @@ def test_distributed_masked_global_mean_var(init_model_parallel):
         (8, 1234, torch.float32, 1e-08, 1e-05, True, False),
     ],
 )
-def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, atol, rtol, higher_stability, ignore_last):
+def test_distributed_log_probs(
+    init_model_parallel, batch_size, seed, dtype, atol, rtol, higher_stability, ignore_last
+):
     """This function is used to test our custom log prob function, we compare it against
         the more memory intensive naive implementation in the fwd and bwd pass
     """
@@ -203,7 +205,9 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
     target = torch.randint(0, V_total, size=(B, S), device=device, generator=generator)
 
     with torch.no_grad():
-        log_probs_fast = from_parallel_logits_to_logprobs(fake_output, target, higher_stability=higher_stability, ignore_last=ignore_last)
+        log_probs_fast = from_parallel_logits_to_logprobs(
+            fake_output, target, higher_stability=higher_stability, ignore_last=ignore_last
+        )
         log_probs_slow = slow_from_parallel_logits_to_logprobs(fake_output, target, ignore_last=ignore_last)
 
         log_probs_slow_inf_only = from_parallel_logits_to_logprobs(
@@ -230,7 +234,9 @@ def test_distributed_log_probs(init_model_parallel, batch_size, seed, dtype, ato
     fake_output_grad_slow = fake_output.grad.detach().clone()
 
     fake_output.grad = None
-    from_parallel_logits_to_logprobs(fake_output, target, higher_stability=higher_stability, ignore_last=ignore_last).sum().backward()
+    from_parallel_logits_to_logprobs(
+        fake_output, target, higher_stability=higher_stability, ignore_last=ignore_last
+    ).sum().backward()
     fake_output_grad_fast = fake_output.grad.detach().clone()
 
     torch.testing.assert_close(
