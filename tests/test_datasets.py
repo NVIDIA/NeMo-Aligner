@@ -366,22 +366,22 @@ def test_dpo_loader_pad_to_multiple(init_model_parallel, make_tmp_jsonl, str_to_
     assert num_mini_batches == 2
 
 
-
-
-
 @pytest.mark.run_only_on("GPU")
 def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer):
     init_model_parallel(tensor_model_parallel_size=1, pipeline_model_parallel_size=1)
 
-    np_data = np.array([
-        {
-            "input_ids": np.ones(15),
-            "labels": np.concatenate((-100 * np.ones(7), np.ones(8))),
-            "reward": np.ones(4),
-            "lengths": [5, 3, 4, 3],
-            "seq_boundaries": [0, 5, 8, 12, 15],
-        },
-    ] * 50)
+    np_data = np.array(
+        [
+            {
+                "input_ids": np.ones(15),
+                "labels": np.concatenate((-100 * np.ones(7), np.ones(8))),
+                "reward": np.ones(4),
+                "lengths": [5, 3, 4, 3],
+                "seq_boundaries": [0, 5, 8, 12, 15],
+            },
+        ]
+        * 50
+    )
 
     tmp_dir = TemporaryDirectory()
     data_path = f"{tmp_dir.name}/data.npy"
@@ -425,10 +425,7 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
         collate_fn=lambda x: x,
     )
 
-    distributed_collate_fn = partial(
-        train_ds.global_collate_fn,
-        eos_id=llama3_tokenizer.eos_id,
-    )
+    distributed_collate_fn = partial(train_ds.global_collate_fn, eos_id=llama3_tokenizer.eos_id,)
 
     num_mini_batches = 0
     for mbatch in train_dataloader:
@@ -439,8 +436,8 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
 
         assert mbatch["input_ids"].shape == (minibs, padded_seq_len)
         assert mbatch["labels"].shape == (minibs, padded_seq_len)
-        assert mbatch["lengths"].shape == (minibs,len(np_data[0]["lengths"]))
-        assert mbatch["rewards"].shape == (minibs,len(np_data[0]["lengths"]))
+        assert mbatch["lengths"].shape == (minibs, len(np_data[0]["lengths"]))
+        assert mbatch["rewards"].shape == (minibs, len(np_data[0]["lengths"]))
         ### last cu_seqlen set to max_length, the we add one padding element which gets removed during training
         assert torch.equal(mbatch["cu_seqlens"][0], torch.tensor([0, 4, 6, 9, 16, -1]))
         assert mbatch["cu_seqlens_argmin"][0] == torch.tensor([5])
@@ -448,7 +445,7 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
         ### should be fine because final padding tokens are not included in the loss
         assert mbatch["max_seqlen"][0] == torch.tensor([7])
 
-        num_mini_batches +=1
+        num_mini_batches += 1
 
     assert num_mini_batches == 2
 
@@ -459,15 +456,18 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
 def test_packed_dpo_loader_pad_to_multiple(init_model_parallel, make_tmp_jsonl, str_to_list_tokenizer):
     init_model_parallel(tensor_model_parallel_size=1, pipeline_model_parallel_size=1)
 
-    np_data = np.array([
-        {
-            "input_ids": np.ones(15),
-            "labels": np.concatenate((-100 * np.ones(7), np.ones(8))),
-            "reward": np.ones(8),
-            "lengths": [5, 3, 4, 3],
-            "seq_boundaries": [0, 5, 8, 12, 15],
-        },
-    ] * 50)
+    np_data = np.array(
+        [
+            {
+                "input_ids": np.ones(15),
+                "labels": np.concatenate((-100 * np.ones(7), np.ones(8))),
+                "reward": np.ones(8),
+                "lengths": [5, 3, 4, 3],
+                "seq_boundaries": [0, 5, 8, 12, 15],
+            },
+        ]
+        * 50
+    )
 
     tmp_dir = TemporaryDirectory()
     data_path = f"{tmp_dir.name}/data.npy"
