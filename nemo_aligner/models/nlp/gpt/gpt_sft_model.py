@@ -16,10 +16,10 @@ from typing import List, Optional, Tuple, Union
 
 import hydra
 import torch
-from lightning.pytorch.trainer.trainer import Trainer
 from megatron.core.num_microbatches_calculator import get_micro_batch_size, get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
+from pytorch_lightning.trainer.trainer import Trainer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split

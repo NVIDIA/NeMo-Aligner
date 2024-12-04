@@ -15,8 +15,8 @@
 import os
 
 import pytest
-from lightning.pytorch import Trainer
 from omegaconf import DictConfig
+from pytorch_lightning import Trainer
 
 from nemo.collections.common.tokenizers.huggingface.auto_tokenizer import AutoTokenizer
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel

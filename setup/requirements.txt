@@ -1,6 +1,5 @@
 Jinja2~=3.1.4
 jsonlines
-lightning>2.2.1
 megatron_core>=0.8
 nemo_toolkit[nlp]
 nvidia-pytriton

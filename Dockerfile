@@ -115,8 +115,6 @@ RUN pip uninstall -y megatron-core && \
     fi && \
     pip install -e .
 
-RUN pip install --no-cache-dir lightning # can remove this when NEMO_TAG is bumped to include lightning install
-
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
     pip install --no-deps -e .
