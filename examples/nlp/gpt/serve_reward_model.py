@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import torch
-from lightning.pytorch.trainer.trainer import Trainer
+from pytorch_lightning.trainer.trainer import Trainer
 
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo.core.config import hydra_runner
