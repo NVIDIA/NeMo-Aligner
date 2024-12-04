@@ -91,7 +91,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tokenizer_path", type=str, required=True)
     parser.add_argument(
-        "--tokenizer_type", type=str, default="sentencepiece",
+        "--tokenizer_type",
+        type=str,
+        default="sentencepiece",
         help="The tokenizer type to use. Should be one of 'huggingface' or 'sentencepiece'.",
     )
     parser.add_argument("--dataset_file", type=str, required=True)
