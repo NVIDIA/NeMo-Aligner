@@ -38,7 +38,6 @@ torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
     --config-name=${CONF_NAME} \
     trainer.num_nodes=1 \
     trainer.devices=2 \
-    ++model.data.data_impl=jsonl \
     ++model.data.seq_length=128 \
     ++model.global_batch_size=${GBS} \
     ++model.micro_batch_size=1 \
