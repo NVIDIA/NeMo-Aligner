@@ -113,7 +113,7 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
         documents=documents,
         data=data_payload,
         seq_length=cfg.model.data.seq_length,
-        seed=cfg.model.seed,
+        seed=cfg.model.get('seed', 1234),
         drop_last=True,  ## False not currently supported
         pad_chosen_rejected_to_max=False,
     )
@@ -227,7 +227,6 @@ class PackingArgs:
     output_dir: str = "output"
     pack_sizes: Tuple[int] = (2048,)
     packing_algorithm: str = "first_fit_shuffle"
-    seed: int = 0
     tokenizer_type: str = "sentencepiece"  ## one of "huggingface" or "sentencepiece"
 
     def from_config(self, cfg: "DictConfig"):
@@ -237,7 +236,6 @@ class PackingArgs:
         self.pack_sizes = cfg.pack_sizes
         self.packing_algorithm = cfg.get("packing_algorithm", "first_fit_shuffle")
         self.tokenizer_type = cfg.tokenizer_type
-        self.seed = cfg.get("seed", 0)
         return self
 
 
@@ -254,7 +252,7 @@ def main(cfg: "DictConfig") -> None:
 
         # save output data
         os.makedirs(args.output_dir, exist_ok=True)
-        output_path = os.path.join(args.output_dir, f"packed_{pack_size}_seed{args.seed}.npy")
+        output_path = os.path.join(args.output_dir, f"packed_{pack_size}_seed{cfg.model.get("seed", 1234)}.npy")
         np.save(output_path, output_data)
         logging.info(f"Done, output written to {output_path}")
 

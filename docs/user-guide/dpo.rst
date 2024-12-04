@@ -130,7 +130,7 @@ The following is an example of running the packing script to prepare your DPO da
       +pack_sizes=[4096] \
       +tokenizer_type=<huggingface or sentencpiece>
    [  +packing_algorithm=first_fit_shuffle \  ]
-   [  +seed=0                                 ]
+   [  ++model.seed=0                          ]
 
 
 Because this script packs chosen and rejected sequences together, ``pack_sizes`` should always be at least double ``model.encoder_seq_length``.
