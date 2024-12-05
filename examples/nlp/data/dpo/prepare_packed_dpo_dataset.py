@@ -252,7 +252,7 @@ def main(cfg: "DictConfig") -> None:
 
         # save output data
         os.makedirs(args.output_dir, exist_ok=True)
-        output_path = os.path.join(args.output_dir, f"packed_{pack_size}_seed{cfg.model.get("seed", 1234)}.npy")
+        output_path = os.path.join(args.output_dir, f"packed_{pack_size}_seed{cfg.model.get('seed', 1234)}.npy")
         np.save(output_path, output_data)
         logging.info(f"Done, output written to {output_path}")
 
