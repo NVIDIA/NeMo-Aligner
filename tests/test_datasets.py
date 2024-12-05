@@ -447,7 +447,7 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
 
         num_mini_batches += 1
 
-    #assert num_mini_batches == 2
+    # assert num_mini_batches == 2
 
     tmp_dir.cleanup()
 
@@ -537,6 +537,6 @@ def test_packed_dpo_loader_pad_to_multiple(init_model_parallel, make_tmp_jsonl, 
 
         num_mini_batches += 1
 
-    #assert num_mini_batches == 2
+    # assert num_mini_batches == 2
 
     tmp_dir.cleanup()
