@@ -23,4 +23,4 @@ TRAIN_DATA_PATH=$SCRIPT_DIR/../test_data/dummy_dpo_packed_90.npy \
 NAME=dpo_pack_test \
 MAX_STEPS=10 \
 bash ../dpo.sh \
-    ++model.data.data_impl=packed_jsonl \
+    ++model.data.data_impl=packed_jsonl
