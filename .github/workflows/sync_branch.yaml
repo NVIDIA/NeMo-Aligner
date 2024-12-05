@@ -22,3 +22,7 @@ jobs:
           GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
           FROM_BRANCH: "main"
           TO_BRANCH: "dev"
+          PULL_REQUEST_TITLE: "chore: sync {FROM_BRANCH} to {TO_BRANCH}"
+          REVIEWERS: '["terrykong"]'
+          PULL_REQUEST_AUTO_MERGE_METHOD: "merge"
+          CONTENT_COMPARISON: true
