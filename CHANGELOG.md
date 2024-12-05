@@ -36,6 +36,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
     durations = timer.consume_durations()
     ```
 - Add code and instructions for replicating Reward Modeling training in HelpSteer2 and HelpSteer2-Preference
+- Implement REINFORCE algorithm.
 
 ### Breaking Changes
 - Upgrade TRTLLM dependency from v0.10.0 to v0.12.0 and migrate from `GPTSession` cpp runtime to `ModelRunner` python runtime. Please use the latest Dockerfile.
@@ -54,7 +55,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### New Features and Optimizations
 - Implement Kahneman-Tversky Optimization (KTO).
-- Sequence packing is now supported when running SFT with SFTChatDataset.
+- Sequence packing is now supported when running SFT with prompt-response datasets.
 
 ### Breaking Changes
 
@@ -74,7 +75,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Critic and Reward Model server refactored. Now the reward model will have a flag called `model.forward_micro_batch_size` which determines the micro batch size on which it runs inferences. This can be higher than the training micro batch size since during inference, we have less memory pressure.
 - In the critic and reward model server, it is now possible to specify `inference_micro_batch_size` as a list.  This allows us to provide more information to PyTriton regarding the preferred batch sizes for inference.
 - It is no longer a requirement to specify `num_rollout_samples` to be a multiple of `inference_micro_batch_size * dp size` in PPO.
-- Sequence packing is now supported when running SFT with SFTChatDataset.
+- Sequence packing is now supported when running SFT with prompt-response datasets.
 - Add online rejection sampling algorithm.
 
 ### Breaking Changes
