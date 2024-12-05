@@ -645,7 +645,7 @@ class DPOPackedDataset(DPOModelDataset):
             "input_ids": torch.LongTensor(input_ids),
             "labels": torch.LongTensor(labels),
             "lengths": torch.LongTensor(lengths),
-            "rewards": torch.LongTensor(rewards),
+            "rewards": torch.FloatTensor(rewards),
             "position_ids": torch.LongTensor(position_ids),
         }
 
