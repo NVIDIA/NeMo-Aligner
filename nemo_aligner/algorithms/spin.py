@@ -92,7 +92,6 @@ class SPINTrainer:
         logger,
         ckpt_callback,
         run_timer,
-        exp_manager,
     ):
         self.model = model
         self.train_dataloader = train_dataloader

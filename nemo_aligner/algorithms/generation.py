@@ -62,39 +62,22 @@ metadata: dict - with keys "system" for the preamble, and "mask" which is "User"
 """
 
 
-def generate_sft_custom_collate(
-    batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False
-):
-    # input_ids = [item["input_ids"] for item in batch]
-    # masks = [item["mask"] for item in batch]
+def generate_sft_custom_collate(batch, eos_id):
     context_ids = [item["context_ids"] for item in batch]
-    # answer_ids = [item["answer_ids"] for item in batch]
     context_lengths = torch.LongTensor([len(x) for x in context_ids])
-    # combined_lengths = torch.LongTensor([len(x) for x in input_ids])
 
-    # input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=eos_id)
-    # masks = torch.nn.utils.rnn.pad_sequence(masks, batch_first=True, padding_value=False)
     context_ids = torch.nn.utils.rnn.pad_sequence(context_ids, batch_first=True, padding_value=eos_id)
-    # answer_ids = torch.nn.utils.rnn.pad_sequence(answer_ids, batch_first=True, padding_value=eos_id)
 
     output = {
-        # "prompts_and_answers": input_ids,
-        # "masks": masks,
         "prompts_only": context_ids,
-        # "answers_only": answer_ids,
         "prompt_lengths": context_lengths,
-        # "combined_lengths": combined_lengths,
     }
 
     return output
 
 
-def eye(x):
-    return x
-
-
 class GenerationTrainer:
-    """Trainer to coordinate Self-Rewarding training
+    """Trainer class for running generation in aligner
     """
 
     def __init__(
@@ -112,6 +95,8 @@ class GenerationTrainer:
         self.consumed_samples = 0
 
         self.ckpt_callback = ckpt_callback
+
+        assert self.cfg.max_epochs == 1, "`generation.max_epochs` must be equal to 1 for generation"
 
         # compute `max_steps`
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
@@ -137,11 +122,6 @@ class GenerationTrainer:
         self.sampling_params = OmegaConf.to_container(self.model.cfg.generation.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
         dp_batch_size = self.model.cfg.global_batch_size // parallel_state.get_data_parallel_world_size()
-        # assert (
-        #    self.model.cfg.generation.rollout_micro_batch_size % dp_batch_size == 0
-        # ), f"rollout_micro_batch_size [{self.model.cfg.generation.rollout_micro_batch_size}] must be a multiple of GBS [{self.model.cfg.global_batch_size}] // DP [{parallel_state.get_data_parallel_world_size()}]"
-        # self.rollout_micro_batch_size = self.model.cfg.generation.rollout_micro_batch_size
-        # assert self.rollout_micro_batch_size > 0, "`rollout_micro_batch_size` must be > 0"
 
         # storage for generated responses which we want to save
         if torch.distributed.get_rank() == 0:
@@ -216,11 +196,6 @@ class GenerationTrainer:
             )
 
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
-            # response_lengths = strategy.get_lengths()
-            # max_response_length = response_lengths.max().item()
-            # response_tokens = torch.LongTensor(generations["token_ids"])
-
-            # this is a 1D LongTensor with the length of the responses where response is prompt+response
             response_tokens = torch.cuda.LongTensor(generations["token_ids"]) if generations else None
             response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
@@ -249,17 +224,6 @@ class GenerationTrainer:
         return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu(), is_valid.cpu()
 
     def generate(self):
-        if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
-            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
-        ):
-            # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
-            # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
-            # to fix this, you should use MegatronPretrainingRandomBatchSampler instead, which alleviates this issue and allows
-            # random shuffling for each epoch.
-            raise ValueError(
-                "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
-            )
-
         self.model._reset_activation_checkpointing_args()
         self.model._reset_sequence_parallelism_args()
         set_eval(self.model)
@@ -314,7 +278,7 @@ class GenerationTrainer:
                 self.consumed_samples += self.model.cfg.global_batch_size
                 self.step += 1
 
-                if torch.distributed.get_rank() == 0 and gen_tokens_list is not None:
+                if torch.distributed.get_rank() == 0:
                     for t, s, e, v in zip(gen_tokens_list, prompt_lens_list, gen_lens_list, valids_list):
                         buffer = [[] for _ in range(t.shape[1])]
                         for idx in range(len(t)):
@@ -346,40 +310,17 @@ class GenerationTrainer:
 
         self.logger.finalize()
 
-        if torch.distributed.get_rank() == 0 and self.generations_fh is not None:
+        if torch.distributed.get_rank() == 0:
             self.generations_fh.close()
 
         if self.use_trtllm_generation:
             self.trtllm_generate.free()
-
-    def save(self, extra_candidates=None, is_train_end=False):
-        # load back in the adam states if needed
-        self.model.prepare_for_training()
-        torch.cuda.synchronize()
-        torch.distributed.barrier()
-
-        if extra_candidates is None:
-            extra_candidates = {}
-
-        monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
-        monitor_candidates.update(extra_candidates)
-
-        self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
-
-        self.model.finish_training()
 
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
 
         if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
-
-    def state_dict(self):
-        return {
-            "step": self.step,
-            "consumed_samples": self.consumed_samples,
-            "epoch": self.epoch,
-        }
 
     def load_state_dict(self, state_dict):
         self.step = state_dict["step"]
@@ -395,78 +336,13 @@ class GenerationTrainer:
         # restore max steps we need to run for
         self.set_max_steps()
 
-    '''
-    def augment_dataloader(self, dataloader):
-        """Augment dataloader with generations"""
-        iter_dataloader = iter(dataloader)
-        buffer = []
-        done = False
-        while not done:
-            try:
-                batches = next(iter_dataloader)
-                batch = generate_sft_custom_collate(batches,
-                                                      eos_id=self.model.tokenizer.eos_id,
-                                                      reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
-                                                      reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
-                                                      eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
-                                                      )
-                print(f" rank [{torch.distributed.get_rank()}] *** RAW_BATCH_SHAPE: ", batch["prompts_only"].shape)
-            except StopIteration:
-                done = True
-            else:
-                buffer.append(batch)
-            
-            if (done and buffer) or sum(
-                [len(b["prompts_only"]) for b in buffer]
-            ) == self.rollout_micro_batch_size:
-                
-                #candidate_responses = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))]
-                #candidate_responses = []
-                gen_tokens, prompt_lens, gen_lens, valids = [], [], [], []
-                for _ in range(self.num_responses_to_gen):
-                    # Generation happens on GPU but returned tensors are on CPU so as not to blow up VRAM due to self.num_responses_to_gen
-                    gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end = self.get_generations(buffer)
-                    #candidate_responses.append((gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end))
-                    gen_tokens.append(gen_tokens_buf)
-                    prompt_lens.append(gen_prompt_lengths_buf)
-                    gen_lens.append(gen_lengths_buf)
-                    valids.append(is_end)
-                    
-                    #for idx, (t, s, e, end) in enumerate(zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist(), is_end.tolist())):
-                    #    candidate_responses[idx].append((t,s,e,end))
-                
-                #final_batch = []
-                #for cand_list in candidate_responses:
-                #    prompt_only = cand_list[0][0][:cand_list[0][1]]
-                #    resp_list = batch_pad_to_fixed_len([s[0][s[1]:s[2]] for s in cand_list], max_batch_len, pad_token=self.model.tokenizer.eos_id)
-                
-                new_batch = {
-                    "prompt_and_response": torch.stack([batch_pad_to_fixed_len(x, self.model.cfg.encoder_seq_length, pad_token=self.model.tokenizer.eos_id) for x in gen_tokens], dim=0).cuda(non_blocking=True),
-                    "prompt_lens": torch.stack(prompt_lens, dim=0).cuda(non_blocking=True),
-                    "gen_lens": torch.stack(gen_lens, dim=0).cuda(non_blocking=True),
-                    "valids": torch.stack(valids, dim=0).cuda(non_blocking=True),
-                }
-                
-                yield new_batch
-                del new_batch, gen_tokens, prompt_lens, gen_lens, valids
-
-                buffer.clear()
-    '''
-
     def augment_dataloader(self, dataloader):
         """Augment dataloader with generations"""
         iter_dataloader = iter(dataloader)
         while True:
             try:
                 batches = next(iter_dataloader)
-                batch = generate_sft_custom_collate(
-                    batches,
-                    eos_id=self.model.tokenizer.eos_id,
-                    reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
-                    reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
-                    eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
-                )
-                # print(f" rank [{torch.distributed.get_rank()}] *** RAW_BATCH_SHAPE: ", batch["prompts_only"].shape)
+                batch = generate_sft_custom_collate(batches, eos_id=self.model.tokenizer.eos_id)
 
                 gen_tokens, prompt_lens, gen_lens, valids = [], [], [], []
                 for _ in range(self.num_responses_to_gen):

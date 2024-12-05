@@ -23,7 +23,7 @@ from functools import partial
 import numpy as np
 import torch
 import torch.utils.data
-from omegaconf.dictconfig import DictConfig
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
     get_datasets_weights_and_num_samples,
@@ -390,7 +390,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
         if (
             data_cfg.get("hf_dataset", False)
             and data_cfg.max_seq_length is not None
-            and data_cfg.max_seq_length > 1
+            and (isinstance(data_cfg.max_seq_length, int) and data_cfg.max_seq_length > 1) or (isinstance(data_cfg.max_seq_length, (list, ListConfig)) and all([x > 1 for x in data_cfg.max_seq_length]))
             and num_samples is None
         ):
             dataset_cls = TruncatedGPTSFTChatDataset
@@ -407,7 +407,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
     dataset = dataset_cls(
         file_path=data_cfg.file_path,
         tokenizer=tokenizer,
-        max_seq_length=data_cfg.max_seq_length,
+        max_seq_length=OmegaConf.to_object(data_cfg.max_seq_length) if isinstance(data_cfg.max_seq_length, ListConfig) else data_cfg.max_seq_length,
         min_seq_length=data_cfg.min_seq_length,
         add_bos=data_cfg.get("add_bos", False),
         add_eos=data_cfg.get("add_eos", True),

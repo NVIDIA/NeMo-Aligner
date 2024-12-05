@@ -26,8 +26,8 @@ from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import Meg
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.algorithms.generation import GenerationTrainer, eye
-from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset, collate_with_pad_to_max_batch
+from nemo_aligner.algorithms.generation import GenerationTrainer
+from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset, collate_with_pad_to_max_batch, identity_collate
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -71,30 +71,12 @@ def main(cfg) -> None:
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
 
-    # TODO: log this restore path
-    if trainer_restore_path is not None:
-        custom_trainer_state_dict = retrieve_custom_trainer_state_dict(trainer)
-        consumed_samples = custom_trainer_state_dict["consumed_samples"]
-    else:
-        custom_trainer_state_dict = None
-        consumed_samples = 0
-
     if os.path.exists(gen_file := os.path.join(cfg.exp_manager.explicit_log_dir, "generations", "generations.jsonl")):
         js_line = json.loads(subprocess.check_output(["tail", "-1", gen_file]).decode("utf_8"))
         custom_trainer_state_dict = {"step": js_line["step"], "consumed_samples": js_line["consumed_samples"]}
         consumed_samples = js_line["consumed_samples"]
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
-    """
-    dp_group = parallel_state.get_data_parallel_group()
-    calc_gbs = cfg.model.generation.rollout_micro_batch_size * dp_group.size()
-    with open_dict(cfg):
-        cfg.model.global_batch_size = calc_gbs
-    with open_dict(ptl_model.cfg):
-        ptl_model.cfg.global_batch_size = calc_gbs
-    if hasattr(ptl_model, "global_batch_size"):
-        ptl_model.global_batch_size = calc_gbs
-    """
     train_data_cfg = cfg.model.data.train_ds
 
     if cfg.model.data.get("sample", False):
@@ -114,31 +96,19 @@ def main(cfg) -> None:
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
 
-    # eos_id = ptl_model.tokenizer.eos_id
-
-    # collate fn to pad to the max seq length in the batch
-    # collate_fn = partial(
-    #    self_rewarding_custom_collate,
-    #    eos_id=eos_id,
-    #    reset_position_ids=cfg.model.data.get("reset_position_ids", False),
-    #    reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
-    #    eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-    # )
-
     train_dataloader = build_dataloader(
         cfg=cfg,
         dataset=train_ds,
         consumed_samples=consumed_samples,
         mbs=cfg.model.micro_batch_size,
         gbs=cfg.model.global_batch_size,
-        collate_fn=eye,
+        collate_fn=identity_collate,
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=False,
         load_gbs=True,
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
-    # optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 

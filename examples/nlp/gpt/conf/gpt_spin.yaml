@@ -20,18 +20,17 @@ trainer:
     limit_val_batches: 1.0
     gradient_clip_val: 1.0
 
-    # Accelerate training times by accelerating inference stage using TRTLLM
+    # Speed-up training by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
       # reshard: False # reshard is not supported in SPIN
 
       # TRTLLM preallocates activation memory according to the number of input tokens
-      # By default, assume the max input length is half of the model sequence length
       max_input_len: ${subtract:${model.encoder_seq_length}, ${model.spin.length_params.max_length}}
 
       model_type: gptnext # can be gptj, gptnext, llama, gemma, falcon
 
-      # Unload and reload the TRTLLM engine before and after the training stage 
+      # Save GPU memory by unloading and reloading the TRTLLM engine before and after the training stage
       # Reloading the engine incurs a constant time overhead
       unload_engine_train: False
 
@@ -80,7 +79,7 @@ model:
   sft_loss_weight: 0 # the coefficient of the SFT loss
 
   spin:
-    log_prob_forward_micro_batch_size: ${model.micro_batch_size}
+    log_prob_forward_micro_batch_size: ${divide:${.rollout_micro_batch_size}, 2}  # divide by 2 here because we have chosen/rejected per sample
     rollout_micro_batch_size: 32
     ref_policy_kl_penalty: 0.2   # Can also be a list of elements == max_iterations, where each element will be the KL penalty used for that iteration
     offload_adam_states: True
@@ -165,7 +164,7 @@ model:
       add_eos: False
       add_sep: False
       add_bos: False
-      truncation_field: "input_ids" # # Can be multiple keys separated with ',' Options: keys in prompt_template
+      truncation_field: "context_ids,input_ids" # # Can be multiple keys separated with ',' Options: keys in prompt_template
       index_mapping_dir: null # Path to a directory to write index mapping files.
       prompt_template: null # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.

@@ -181,7 +181,6 @@ def main(cfg) -> None:
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
-        exp_manager=cfg.exp_manager,
     )
 
     if custom_trainer_state_dict is not None:

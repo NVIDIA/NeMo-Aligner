@@ -19,6 +19,7 @@ import math
 import os
 from collections import defaultdict
 from functools import partial
+from jinja2 import meta
 from statistics import mean
 from textwrap import dedent
 
@@ -65,9 +66,7 @@ metadata: dict - with keys "system" for the preamble, and "mask" which is "User"
 """
 
 
-def self_rewarding_custom_collate(
-    batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False
-):
+def self_rewarding_custom_collate(batch, eos_id):
     input_ids = [item["input_ids"] for item in batch]
     masks = [item["mask"] for item in batch]
     context_ids = [item["context_ids"] for item in batch]
@@ -104,10 +103,6 @@ def db(msg):
         print(f"*** rank[{torch.distributed.get_rank()}]  {msg}", flush=True)
 
 
-def eye(x):
-    return x
-
-
 def exists(v):
     return v is not None
 
@@ -117,8 +112,6 @@ def default(v, d):
 
 
 def find_variables_from_jinja_template(template: str):
-    from jinja2 import meta
-
     ast = jinja2_env.parse(template)
     return meta.find_undeclared_variables(ast)
 
@@ -126,8 +119,8 @@ def find_variables_from_jinja_template(template: str):
 def create_parse_reward_fn(reward_regex_template):
     assert find_variables_from_jinja_template(reward_regex_template) == {
         "reward"
-    }, 'reward template must include "score" variable'
-    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward="([0-9\.]+)")
+    }, 'reward template must include "reward" variable'
+    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward=r"([0-9\.]+)")
 
     def parse_reward_fn(llm_response: str) -> float:
         result = re.search(rf"{reward_regex_str}", llm_response)
@@ -150,8 +143,8 @@ def create_parse_reward_fn(reward_regex_template):
 def create_meta_parse_reward_fn(reward_regex_template):
     assert find_variables_from_jinja_template(reward_regex_template) == {
         "reward"
-    }, 'reward template must include "score" variable'
-    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward="([A-B\.]+)")
+    }, 'reward template must include "reward" variable'
+    reward_regex_str = jinja2_env.from_string(reward_regex_template).render(reward=r"([A-B\.]+)")
 
     # @always(lambda: randrange(0, 10))
     def parse_reward_fn(llm_response: str) -> float:
@@ -175,175 +168,7 @@ def divide_chunks(l, n):
         yield l[i : i + n]
 
 
-DEFAULT_LLM_AS_JUDGE_PROMPT = """<extra_id_0>System
-
-<extra_id_1>User
-Review the user's question and the corresponding response using the additive 5-point
-scoring system described below. Points are accumulated based on the satisfaction of each
-criterion:
-- Add 1 point if the response is relevant and provides some information related to
-the user's inquiry, even if it is incomplete or contains some irrelevant content.
-- Add another point if the response addresses a substantial portion of the user's question,
-but does not completely resolve the query or provide a direct answer.
-- Award a third point if the response answers the basic elements of the user's question in a
-useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-has elements typically found in blogs or search results.
-- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-addressing the user's question directly and comprehensively, and is well-organized and
-helpful, even if there is slight room for improvement in clarity, conciseness or focus.
-- Bestow a fifth point for a response that is impeccably tailored to the user's question
-by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-demonstrating a high-quality, engaging, and insightful answer.
-
-<prompt>{{ prompt }}</prompt>
-<response>{{ response }}</response>
-
-After examining the user's instruction and the response:
-- Briefly justify your total score, up to 100 words.
-- Conclude with the score using the format: "Score: <total points>"
-Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
-necessary. To evaluate the response in alignment with this additive scoring model, we'll
-systematically attribute points based on the outlined criteria.
-<extra_id_1>Assistant
-"""
-
-
-DEFAULT_LLM_AS_JUDGE_PROMPT_LLAMA3 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-Review the user's question and the corresponding response using the additive 5-point
-scoring system described below. Points are accumulated based on the satisfaction of each
-criterion:
-- Add 1 point if the response is relevant and provides some information related to
-the user's inquiry, even if it is incomplete or contains some irrelevant content.
-- Add another point if the response addresses a substantial portion of the user's question,
-but does not completely resolve the query or provide a direct answer.
-- Award a third point if the response answers the basic elements of the user's question in a
-useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-has elements typically found in blogs or search results.
-- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-addressing the user's question directly and comprehensively, and is well-organized and
-helpful, even if there is slight room for improvement in clarity, conciseness or focus.
-- Bestow a fifth point for a response that is impeccably tailored to the user's question
-by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-demonstrating a high-quality, engaging, and insightful answer.
-
-<prompt>{{ prompt }}</prompt>
-<response>{{ response }}</response>
-
-After examining the user's instruction and the response:
-- Briefly justify your total score, up to 100 words.
-- Conclude with the score using the format: "Score: <total points>"
-Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
-necessary. To evaluate the response in alignment with this additive scoring model, we'll
-systematically attribute points based on the outlined criteria.
-<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-"""
-
-
-DEFAULT_META_JUDGE_PROMPT = """<extra_id_0>System
-
-<extra_id_1>User
-Review the user's question and the corresponding response, along with two judgments.
-Determine which judgment is more accurate according to the rubric provided below. The
-rubric used for the initial judgments is as follows:
-- Add 1 point if the response is relevant and provides some information related to
-the user's inquiry, even if it is incomplete or contains some irrelevant content.
-- Add another point if the response addresses a substantial portion of the user's question,
-but does not completely resolve the query or provide a direct answer.
-- Award a third point if the response answers the basic elements of the user's question in a
-useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-has elements typically found in blogs or search results.
-- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-addressing the user's question directly and comprehensively, and is well-organized and helpful,
-even if there is slight room for improvement in clarity, conciseness or focus.
-- Bestow a fifth point for a response that is impeccably tailored to the user's question
-by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-demonstrating a high-quality, engaging, and insightful answer.
-
-<prompt>{{ prompt }}<prompt>
-<response>{{ response }}<response>
-<judgement A>{{ judgement_a }}<judgement A>
-<judgement B>{{ judgement_b }}<judgement B>
-
-After examining the original question, response, and both judgments:
-- Explain which judgment is more accurate according to the original rubric and why.
-Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
-consistency in applying the criteria.
-- Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
-<extra_id_1>Assistant
-"""
-
-
-DEFAULT_META_JUDGE_PROMPT_SELF_TAUGHT = """<extra_id_0>System
-
-<extra_id_1>User
-Please act as an impartial judge and evaluate the quality of the responses provided by two AI assistants
-to the user question displayed below. You should choose the assistant that follows the user's instructions
-and answers the user's question better. Your evaluation should consider factors such as the helpfulness,
-relevance, accuracy, depth, creativity, and level of detail of their responses. Begin your evaluation by
-comparing the two responses and provide a short explanation. Avoid any position biases and ensure that
-the order in which the responses were presented does not influence your decision. Do not allow the length
-of the responses to influence your evaluation. Do not favor certain names of the assistants. Be as objective
-as possible. After providing your explanation, output your final verdict by strictly following this format:
-"[[A]]" if assistant A is better, "[[B]]" if assistant B is better.
-
-[[User Question]]
-{{ orig_prompt }}
-
-[The Start of Assistant A's Answer]
-{{ response_A }}
-[The End of Assistant A's Answer]
-
-[The Start of Assistant B's Answer]
-{{ response_B }}
-[The End of Assistant B's Answer]
-<extra_id_1>Assistant
-"""
-
-
-DEFAULT_META_JUDGE_PROMPT_LLAMA3 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-
-<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-Review the user's question and the corresponding response, along with two judgments.
-Determine which judgment is more accurate according to the rubric provided below. The
-rubric used for the initial judgments is as follows:
-- Add 1 point if the response is relevant and provides some information related to
-the user's inquiry, even if it is incomplete or contains some irrelevant content.
-- Add another point if the response addresses a substantial portion of the user's question,
-but does not completely resolve the query or provide a direct answer.
-- Award a third point if the response answers the basic elements of the user's question in a
-useful way, regardless of whether it seems to have been written by an AI Assistant or if it
-has elements typically found in blogs or search results.
-- Grant a fourth point if the response is clearly written from an AI Assistant's perspective,
-addressing the user's question directly and comprehensively, and is well-organized and helpful,
-even if there is slight room for improvement in clarity, conciseness or focus.
-- Bestow a fifth point for a response that is impeccably tailored to the user's question
-by an AI Assistant, without extraneous information, reflecting expert knowledge, and
-demonstrating a high-quality, engaging, and insightful answer.
-
-<prompt>{{ prompt }}<prompt>
-<response>{{ response }}<response>
-<judgement A>{{ judgement_a }}<judgement A>
-<judgement B>{{ judgement_b }}<judgement B>
-
-After examining the original question, response, and both judgments:
-- Explain which judgment is more accurate according to the original rubric and why.
-Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
-consistency in applying the criteria.
-- Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
-<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-"""
-
-
-DEFAULT_REWARD_REGEX_TEMPLATE = "(?i)(?:Score|Points): {{ reward }}"
-DEFAULT_META_REWARD_REGEX_TEMPLATE = "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
-
-
+# Hyper-parameters of the Elo scores computation.
 SCALE = 400
 INIT_RATING = 1000
 
@@ -370,7 +195,6 @@ class SelfRewardingTrainer:
         logger,
         ckpt_callback,
         run_timer,
-        exp_manager,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -417,7 +241,7 @@ class SelfRewardingTrainer:
         self.spin_config = OmegaConf.to_container(self.model.cfg.spin, resolve=True)
         if isinstance(self.spin_config["length_control"], (float, int)):
             self.rho = self.spin_config["length_control"]
-        elif isinstance(self.spin_config["length_control"], list) or self.spin_config.get("length_control") is None:
+        elif isinstance(self.spin_config["length_control"], list):
             self.rho = 0.0
         else:
             raise TypeError(
@@ -442,18 +266,17 @@ class SelfRewardingTrainer:
         # for wandb table
         self.train_df = pd.DataFrame(columns=["step", "prompt", "chosen_response", "rejected_response"])
 
+        # This is a hack to work around the fact that, by default, `AutoTokenizer` discards special tokens in `ids_to_text()`.
         if isinstance(self.model.tokenizer, AutoTokenizer):
             self.tokenizer = copy.copy(self.model.tokenizer)
             self.tokenizer.ids_to_text = partial(ids_to_text, self.tokenizer)
         else:
             self.tokenizer = self.model.tokenizer
 
-        self.prompt_template = self.model.cfg.spin.get("llm_judge_prompt", DEFAULT_LLM_AS_JUDGE_PROMPT).strip()
-        self.meta_judge_template = self.model.cfg.spin.get("llm_meta_judge_prompt", DEFAULT_META_JUDGE_PROMPT).strip()
-        self.reward_regex_template = self.model.cfg.spin.get("judge_reward_regex", DEFAULT_REWARD_REGEX_TEMPLATE)
-        self.meta_judge_reward_regex_template = self.model.cfg.spin.get(
-            "meta_judge_reward_regex", DEFAULT_META_REWARD_REGEX_TEMPLATE
-        )
+        self.prompt_template = self.model.cfg.spin.get("llm_judge_prompt").strip()
+        self.meta_judge_template = self.model.cfg.spin.get("llm_meta_judge_prompt").strip()
+        self.reward_regex_template = self.model.cfg.spin.get("judge_reward_regex")
+        self.meta_judge_reward_regex_template = self.model.cfg.spin.get("meta_judge_reward_regex")
         self.judge_score_low = self.model.cfg.spin.get("judge_score_low", 0)
         self.judge_score_high = self.model.cfg.spin.get("judge_score_high", 5)
         self.meta_max_relative_pcnt = self.model.cfg.spin.get("meta_max_relative_pcnt", 0.4)
@@ -591,20 +414,13 @@ class SelfRewardingTrainer:
             trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
 
-        num_samples = 0
-        gen_lengths_chosen = 0
-        gen_lengths_reject = 0
-        num_bad_samples = 0
-        num_bad_ends = 0
-        sum_chosen_rewards = 0
-        sum_reject_rewards = 0
-        num_samples += global_batch["chosen"].shape[0]
-        num_bad_samples += global_batch["bad_samples"].sum()
-        num_bad_ends += global_batch["bad_ends"].sum()
-        gen_lengths_chosen += (global_batch["chosen_gen_lens"] - global_batch["chosen_prompt_lens"]).sum()
-        gen_lengths_reject += (global_batch["reject_gen_lens"] - global_batch["reject_prompt_lens"]).sum()
-        sum_chosen_rewards += global_batch["chosen_rewards"][global_batch["chosen_rewards"] != -1].sum()
-        sum_reject_rewards += global_batch["rejected_rewards"][global_batch["rejected_rewards"] != -1].sum()
+        num_samples = global_batch["chosen"].shape[0]
+        num_bad_samples = global_batch["bad_samples"].sum()
+        num_bad_ends = global_batch["bad_ends"].sum()
+        gen_lengths_chosen = (global_batch["chosen_gen_lens"] - global_batch["chosen_prompt_lens"]).sum()
+        gen_lengths_reject = (global_batch["reject_gen_lens"] - global_batch["reject_prompt_lens"]).sum()
+        sum_chosen_rewards = global_batch["chosen_rewards"][global_batch["chosen_rewards"] != -1].sum()
+        sum_reject_rewards = global_batch["rejected_rewards"][global_batch["rejected_rewards"] != -1].sum()
         tensor_to_accumulate = torch.tensor(
             [
                 gen_lengths_chosen,
@@ -732,7 +548,7 @@ class SelfRewardingTrainer:
                 reward_scores[idx].append(
                     r if ((r is not None) and (r >= self.judge_score_low and r <= self.judge_score_high)) else None
                 )
-                # should we include responses which only contain valid scores?
+                # we may want to also check is_end here too, but we currently don't
                 if self.use_meta_judge:
                     judge_responses[idx].append(
                         (t, s, e, end)
@@ -757,24 +573,20 @@ class SelfRewardingTrainer:
 
     def get_rewards_meta(self, list_of_batches):
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
-        for _ in range(1):
-            reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
-            batch_responses_str = []
-            for t, s, e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
-                response = self.tokenizer.ids_to_text(t[s:e].tolist())
-                batch_responses_str.append(response)
-            rewards = [self.meta_parse_reward_fn(resp_str) for resp_str in batch_responses_str]
-            for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
-                # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
-                # a valid score, it's all good, we don't need correctness beyond that
-                # reward_scores[idx].append(r if end else None)
-                reward_scores[idx].append(r if ((r is not None) and (r == "A" or r == "B")) else None)
+        reward_scores = []
+        reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
+        batch_responses_str = []
+        for t, s, e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
+            response = self.tokenizer.ids_to_text(t[s:e].tolist())
+            batch_responses_str.append(response)
+        rewards = [self.meta_parse_reward_fn(resp_str) for resp_str in batch_responses_str]
+        for idx, (r, end) in enumerate(zip(rewards, is_end.tolist())):
+            # we can choose to invalidate scores where is_end==False, but there's really no need because so long as we get
+            # a valid score, it's all good, we don't need correctness beyond that
+            # reward_scores[idx].append(r if end else None)
+            reward_scores.append(r if ((r is not None) and (r in ["A", "B"])) else None)
 
-        reward_scores = [[*filter(exists, b)] for b in reward_scores]
-
-        reward_means = [(b[0] if len(b) > 0 else None) for b in reward_scores]
-
-        return reward_means
+        return reward_scores
 
     def fit(self):
         if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
@@ -872,7 +684,7 @@ class SelfRewardingTrainer:
 
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
-                        if (not self.first_iteration_sft) and torch.distributed.get_rank() == 0:
+                        if (not (self.first_iteration_sft and self.iteration == 0)) and torch.distributed.get_rank() == 0:
                             for idx in range(len(global_batch["bad_samples"])):
                                 if not global_batch["bad_samples"][idx]:
                                     self.train_df.loc[len(self.train_df)] = [
@@ -976,25 +788,18 @@ class SelfRewardingTrainer:
 
     def augment_dataloader(self, dataloader):
         """Augment dataloader with generations and ref policy log probs"""
-        print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ]  ENTERED_AUGMENT ***")
         iter_dataloader = iter(dataloader)
         buffer = []
         meta_buffer_pending, meta_buffer_done = [], []
         done = False
-        cnt_tracker = np.array([0 for _ in range(6)])
+        cnt_tracker = np.array([1 for _ in range(self.judge_score_high + 1)])
         while not done:
             try:
                 batches = next(iter_dataloader)
                 if self.first_iteration_sft and self.iteration == 0:
                     batch = self.train_dataloader.dataset.collate_fn(batches)
                 else:
-                    batch = self_rewarding_custom_collate(
-                        batches,
-                        eos_id=self.model.tokenizer.eos_id,
-                        reset_position_ids=self.model.cfg.data.get("reset_position_ids", False),
-                        reset_attention_mask=self.model.cfg.data.get("reset_attention_mask", False),
-                        eod_mask_loss=self.model.cfg.data.get("eod_mask_loss", False),
-                    )
+                    batch = self_rewarding_custom_collate(batches, eos_id=self.model.tokenizer.eos_id)
             except StopIteration:
                 done = True
             else:
@@ -1175,14 +980,15 @@ class SelfRewardingTrainer:
                                 idx_chosen = chosen_cands[np.argmin([s[1] for s in chosen_cands])][-1]
                                 idx_reject = reject_cands[np.argmax([s[1] for s in reject_cands])][-1]
                             else:
+                                assert self.rho == 0
                                 # choose based on lowest variance of judgements
                                 idx_chosen = chosen_cands[np.argmin([s[2] for s in chosen_cands])][-1]
                                 idx_reject = reject_cands[np.argmin([s[2] for s in reject_cands])][-1]
-                            if self.rho == 0:
-                                assert all([s_max == s[0] for s in chosen_cands]), "chosen_cands violation"
-                                assert all([s_min == s[0] for s in reject_cands]), "reject_cands violation"
+                            #if self.rho == 0:
+                            #    assert all([s_max == s[0] for s in chosen_cands]), "chosen_cands violation"
+                            #    assert all([s_min == s[0] for s in reject_cands]), "reject_cands violation"
                         else:
-                            print(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
+                            logging.error(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
                             raise RuntimeError("hit strange score selection state, please investigate")
 
                         # 1 x max_len tensor
@@ -1202,9 +1008,9 @@ class SelfRewardingTrainer:
 
                         # meta-judge logic goes here
                         if self.use_meta_judge and len(filtered_variances) > 0:
-                            # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
-                            reward_tokens_raw = filtered_variances[np.argmax([s[0] for s in filtered_variances])][1]
-                            idx_for_cand = filtered_variances[np.argmax([s[0] for s in filtered_variances])][-1]
+                            highest_variance_idx = np.argmax([s[0] for s in filtered_variances])
+                            reward_tokens_raw = filtered_variances[highest_variance_idx][1]
+                            idx_for_cand = filtered_variances[highest_variance_idx][-1]
                             cand_for_meta = cand_list[idx_for_cand]
                             orig_prompt_str = self.tokenizer.ids_to_text(cand_for_meta[1][: cand_for_meta[2]].tolist())
                             orig_response_str = self.tokenizer.ids_to_text(
@@ -1218,6 +1024,8 @@ class SelfRewardingTrainer:
                                 score_b = self.parse_reward_fn(b)
                                 if score_a is None or score_b is None or a == b:
                                     continue
+                                # we remove the actual scores here because we want the judge to judge purely on the
+                                # CoT/explanation and not based on the numerical scores
                                 a = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", a)
                                 b = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", b)
                                 meta_str_ab = self.meta_judge_template_fn(
@@ -1246,9 +1054,16 @@ class SelfRewardingTrainer:
                                         "prompts_only": torch.LongTensor(meta_tokens_ba).unsqueeze(0),
                                     }
                                 )
-                            if len(meta_batch) > 1 and len(meta_buffer_done) < self.model.cfg.global_batch_size * 3:
+                            # we keep the meta_buffer_done at no more than GBS * 3 to avoid using too much memory
+                            # GBS * 3 should be more than enough of a buffer size to ensure we have sufficient samples to draw from
+                            if meta_batch and len(meta_buffer_done) < self.model.cfg.global_batch_size * 3:
                                 meta_buffer_pending.append((reward_tokens_raw, meta_batch))
 
+                        # due to DP sync issues, we cannot dynamically increase/decrease samples in the local DP batch
+                        # so the only thing we can do is replace/modify existing samples. Hence, at the moment, we only
+                        # replace the bad samples in each DP batch with meta-judge samples. This means that the true amount
+                        # of meta juddge samples will be between 0 and up to meta_judge_pcnt, so the meta_judge_pcnt param
+                        # is really an upper bound, not the exact replacement %. This can be easily altered though.
                         if (
                             self.use_meta_judge
                             and ((bad_ends > 0 or bad_sample) and (torch.rand((1,)) <= self.meta_judge_pcnt))
@@ -1315,8 +1130,6 @@ class SelfRewardingTrainer:
                     reject_tokens_pad = batch_pad_to_fixed_len(
                         [b["reject_tokens"] for b in batch], max_batch_len, pad_token=self.model.tokenizer.eos_id
                     )
-                    # chosen_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["chosen_prompt_len"]) + b["chosen_tokens"].tolist()[b["chosen_prompt_len"]:]) for b in batch], max_batch_len, pad_token=-100)
-                    # reject_labels = batch_pad_to_fixed_len([torch.LongTensor(([-100] * b["reject_prompt_len"]) + b["reject_tokens"].tolist()[b["reject_prompt_len"]:]) for b in batch], max_batch_len, pad_token=-100)
 
                     chosen_mask = create_mask(
                         chosen_tokens_pad, chosen_prompt_lens, chosen_gen_lens
@@ -1364,6 +1177,7 @@ class SelfRewardingTrainer:
                         reject_gen_lens - reject_prompt_lens >= 0
                     ).all(), "negative generated length encountered in rejected"
 
+                    # NB: this could be optimized by computing log probs earlier while the reference policy was still loaded.
                     logprobs = self.model.get_ref_policy_logprobs(new_batch).cpu()
                     chosen_logps, reject_logps = torch.split(logprobs, len(logprobs) // 2, dim=0)
 
@@ -1417,11 +1231,9 @@ class SelfRewardingTrainer:
                             chosen_prompt_len = reward_tokens_raw[meta_chosen_idx][1]
                             chosen_gen_len = reward_tokens_raw[meta_chosen_idx][2]
                             chosen_tokens = reward_tokens_raw[meta_chosen_idx][0][:chosen_gen_len]
-                            # chosen_score = 0.
                             reject_prompt_len = reward_tokens_raw[meta_reject_idx][1]
                             reject_gen_len = reward_tokens_raw[meta_reject_idx][2]
                             reject_tokens = reward_tokens_raw[meta_reject_idx][0][:reject_gen_len]
-                            # reject_score = 0.
                             meta_bad_ends = sum(
                                 ~np.array(
                                     [reward_tokens_raw[meta_chosen_idx][-1], reward_tokens_raw[meta_reject_idx][-1]]
@@ -1445,7 +1257,7 @@ class SelfRewardingTrainer:
 
                             if (
                                 meta_bad_ends == 0
-                                and bad_meta_sample == False
+                                and not bad_meta_sample
                                 and (
                                     (cnt_tracker / sum(cnt_tracker).clip(min=1.0))[int(chosen_score)]
                                     < self.meta_max_relative_pcnt
@@ -1511,7 +1323,7 @@ class SelfRewardingTrainer:
             if ab is not None and ba is not None:
                 ptbl_a_win[m_a, m_b] += int(ab == "A" and ba == "B")
                 ptbl_b_win[m_a, m_b] += int(ab == "B" and ba == "A")
-            ptbl_tie[m_a, m_b] += int(ab == ba)
+                ptbl_tie[m_a, m_b] += int(ab == ba)
 
         ptbl_win = ptbl_a_win * 1 + ptbl_b_win.T * 1 + (ptbl_tie + ptbl_tie.T)
 
