@@ -62,8 +62,9 @@ torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
     ++model.activations_checkpoint_granularity=full \
     ++model.activations_checkpoint_method=uniform \
     ++model.activations_checkpoint_num_layers=1 \
-    ++model.dist_ckpt_load_strictness=log_all
+    ++model.dist_ckpt_load_strictness=log_all \
+    "$@"
 }
 
 log_file=$(mktemp /tmp/dpo-log-XXXXXX)
-dpo | tee $log_file
+dpo "$@" | tee $log_file
