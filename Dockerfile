@@ -122,3 +122,27 @@ RUN cd /opt/NeMo-Aligner && \
     pip install --no-deps -e .
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
+
+# NOTE: Comment this layer out if it is not needed
+# NOTE: This section exists to allow cherry-picking PRs in cases where
+#  we do not wish to simply update to the top-of-tree. Sometimes PRs
+#  cannot be cherry-picked cleanly if rebased a few times to top-of-tree
+#  so this logic also requires you to select a SHA (can be dangling) from
+#  the PR.
+RUN <<"EOF" bash -exu
+cd NeMo
+# Ensures we don't cherry-pick "future" origin/main commits
+git fetch -a
+# 5aa2620cdd67130b17f5120e0dca39c07bbcd1af: fix: export converts properly if no model_prefix #11477
+for pr_and_commit in \
+  "11477 5aa2620cdd67130b17f5120e0dca39c07bbcd1af" \
+; do
+  pr=$(cut -f1 -d' ' <<<"$pr_and_commit")
+  head_pr_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")
+  git fetch origin $head_pr_commit:PR-${pr}
+  # cherry-picks all commits between main and the top of the PR
+  git cherry-pick --allow-empty $(git merge-base origin/main PR-${pr})..PR-${pr}
+  # Tag cherry-picks to help
+  git tag cherry-pick-PR-${pr}
+done
+EOF
