@@ -325,8 +325,6 @@ class DPOModelDataset(Dataset):
         drop_last=True,
         pad_chosen_rejected_to_max=True,
     ):
-
-        # print(f'{num_samples=}')
         super().__init__()
         self.cfg = cfg
         self.name = name

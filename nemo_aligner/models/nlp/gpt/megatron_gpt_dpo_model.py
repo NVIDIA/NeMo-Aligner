@@ -197,17 +197,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     else:
                         cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
 
-                    try:
-                        from megatron.core.packed_seq_params import PackedSeqParams
-                    except (ImportError, ModuleNotFoundError) as e:
-                        mcore_version = packaging.version.Version(version("megatron-core"))
-                        logging.error(
-                            f"megatron-core v{mcore_version} does not support training with packed sequence. "
-                            "Please use megatron-core >= 0.5.0, or set model.data.train_ds.packed_sequence=False"
-                        )
-                        raise e
-
-                    ## these packed seq args require newer TE
+                    from megatron.core.packed_seq_params import PackedSeqParams
                     forward_args["packed_seq_params"] = PackedSeqParams(
                         cu_seqlens_q=cu_seqlens,
                         cu_seqlens_kv=cu_seqlens,
