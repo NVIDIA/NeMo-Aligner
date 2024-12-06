@@ -534,5 +534,3 @@ def test_packed_dpo_loader_pad_to_multiple(init_model_parallel, tmp_path, str_to
         num_mini_batches += 1
 
     assert num_mini_batches == 2
-
-    tmp_dir.cleanup()
