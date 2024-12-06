@@ -94,6 +94,7 @@ jobs:
           - dpo-llama3
           - kd-llama3
           - sft-llama3
+          - sft-llama3-cp
           - rm-llama3
     with:
       RUNNER: self-hosted-azure
