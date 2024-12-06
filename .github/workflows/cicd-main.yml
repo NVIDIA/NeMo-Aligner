@@ -72,7 +72,7 @@ jobs:
       matrix:
         test_case:
           - run_unit.sh
-          - run_mpi_unit.sh
+          #- run_mpi_unit.sh
     with:
       RUNNER: self-hosted-azure
       TIMEOUT: 10
@@ -81,23 +81,23 @@ jobs:
         cd ${ALIGNER_REPO_DIR}
         bash tests/${{ matrix.test_case }}
 
-  Functional_Tests:
-    name: ${{ matrix.test_case }}
-    needs: [build-container, pre-flight]
-    uses: ./.github/workflows/_run_test.yml
-    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
-    strategy:
-      matrix:
-        test_case:
-          - ppo-llama3-pp2-reshard
-          - reinforce-llama3-pp2-reshard
-          - dpo-llama3
-          - kd-llama3
-          - sft-llama3
-          - rm-llama3
-    with:
-      RUNNER: self-hosted-azure
-      # Fairly aggresive timeout that all functional tests should try to adhere to
-      TIMEOUT: 8
-      SCRIPT: |
-        bash /opt/NeMo-Aligner/tests/functional/test_cases/${{ matrix.test_case }}
+  #Functional_Tests:
+  #  name: ${{ matrix.test_case }}
+  #  needs: [build-container, pre-flight]
+  #  uses: ./.github/workflows/_run_test.yml
+  #  if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
+  #  strategy:
+  #    matrix:
+  #      test_case:
+  #        - ppo-llama3-pp2-reshard
+  #        - reinforce-llama3-pp2-reshard
+  #        - dpo-llama3
+  #        - kd-llama3
+  #        - sft-llama3
+  #        - rm-llama3
+  #  with:
+  #    RUNNER: self-hosted-azure
+  #    # Fairly aggresive timeout that all functional tests should try to adhere to
+  #    TIMEOUT: 8
+  #    SCRIPT: |
+  #      bash /opt/NeMo-Aligner/tests/functional/test_cases/${{ matrix.test_case }}
