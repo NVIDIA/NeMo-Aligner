@@ -44,6 +44,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
     DPOModelDataset,
+    DPOPackedDataset,
     KnowledgeDistillationDataset,
     KTOModelDataset,
     RegressionRewardModelDataset,
@@ -112,12 +113,14 @@ def build_dataset_generic(
         elif data_impl.startswith("json"):
             with open(current_data_prefix, "r", encoding="utf_8") as fr:
                 data_payload = [json.loads(line.strip()) for line in fr]
+        elif data_impl == "packed_jsonl":
+            data_payload = np.load(current_data_prefix, allow_pickle=True)
         elif data_impl == "chunked_jsonl":
             assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
             data_payload = ChunkedJsonl(current_data_prefix, n_chunks, n_examples_per_chunk)
         else:
             raise RuntimeError(
-                f"data.data_impl must be one of mmap, json, jsonl or chunked_jsonl, but got {data_impl}"
+                f"data.data_impl must be one of mmap, json, jsonl, packed_jsonl, or chunked_jsonl, but got {data_impl}"
             )
         total_num_of_documents = len(data_payload)
 
@@ -319,11 +322,15 @@ def _build_train_valid_test_datasets(
     elif data_impl.startswith("json"):
         with open(data_prefix, "r", encoding="utf_8") as fr:
             data_payload = [json.loads(line.strip()) for line in fr]
+    elif data_impl == "packed_jsonl":
+        data_payload = np.load(data_prefix, allow_pickle=True)
     elif data_impl == "chunked_jsonl":
         assert isinstance(n_chunks, int) and n_chunks >= 1, f"Not valid n_chunks {n_chunks}"
         data_payload = ChunkedJsonl(data_prefix, n_chunks, n_examples_per_chunk)
     else:
-        raise RuntimeError(f"data.data_impl must be one of mmap, json, jsonl or chunked_jsonl, but got {data_impl}")
+        raise RuntimeError(
+            f"data.data_impl must be one of mmap, json, jsonl, packed_jsonl, or chunked_jsonl, but got {data_impl}"
+        )
     total_num_of_documents = len(data_payload)
     splits = get_train_valid_test_split_(splits_string, total_num_of_documents)
 
@@ -372,6 +379,7 @@ def _build_train_valid_test_datasets(
 build_train_valid_test_rlhf_datasets = partial(build_train_valid_test_datasets, RLHFDataset)
 build_train_valid_test_rm_datasets = partial(build_train_valid_test_datasets, RewardModelDataset)
 build_train_valid_test_dpo_datasets = partial(build_train_valid_test_datasets, DPOModelDataset)
+build_train_valid_test_dpo_packed_datasets = partial(build_train_valid_test_datasets, DPOPackedDataset)
 build_train_valid_test_kto_datasets = partial(build_train_valid_test_datasets, KTOModelDataset)
 build_train_valid_test_regression_rm_datasets = partial(build_train_valid_test_datasets, RegressionRewardModelDataset)
 build_train_valid_test_knowledge_distillation_datasets = partial(
