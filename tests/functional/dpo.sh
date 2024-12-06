@@ -1,7 +1,6 @@
 #!/bin/bash
 
-SCRIPT_DIR=${SCRIPT_DIR}
-cd $SCRIPT_DIR
+DATA_DIR=${DATA_DIR}
 set -eoux pipefail
 
 export NCCL_ALGO=Tree
@@ -12,7 +11,7 @@ GBS=${GBS:-4}
 PRETRAINED_CHECKPOINT_NEMO_FILE=${PRETRAINED_CHECKPOINT_NEMO_FILE}
 
 
-TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-"${SCRIPT_DIR}/test_data/dummy-dpo.jsonl"}
+TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-"${DATA_DIR}/dummy-dpo.jsonl"}
 VALID_DATA_PATH=$TRAIN_DATA_PATH
 
 NAME=${NAME:-"dpo_test"}

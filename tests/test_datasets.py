@@ -367,7 +367,7 @@ def test_dpo_loader_pad_to_multiple(init_model_parallel, make_tmp_jsonl, str_to_
 
 
 @pytest.mark.run_only_on("GPU")
-def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer):
+def test_packed_dpo_loader(init_model_parallel, tmp_path, llama3_tokenizer):
     init_model_parallel(tensor_model_parallel_size=1, pipeline_model_parallel_size=1)
 
     np_data = np.array(
@@ -383,8 +383,7 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
         * 8
     )
 
-    tmp_dir = TemporaryDirectory()
-    data_path = f"{tmp_dir.name}/data.npy"
+    data_path = tmp_path / data.npy
     np.save(data_path, np_data)
 
     cfg = OmegaConf.create(
@@ -449,11 +448,9 @@ def test_packed_dpo_loader(init_model_parallel, make_tmp_jsonl, llama3_tokenizer
 
     assert num_mini_batches == 2
 
-    tmp_dir.cleanup()
-
 
 @pytest.mark.run_only_on("GPU")
-def test_packed_dpo_loader_pad_to_multiple(init_model_parallel, make_tmp_jsonl, str_to_list_tokenizer):
+def test_packed_dpo_loader_pad_to_multiple(init_model_parallel, tmp_path, str_to_list_tokenizer):
     init_model_parallel(tensor_model_parallel_size=1, pipeline_model_parallel_size=1)
 
     np_data = np.array(
@@ -469,8 +466,7 @@ def test_packed_dpo_loader_pad_to_multiple(init_model_parallel, make_tmp_jsonl, 
         * 8
     )
 
-    tmp_dir = TemporaryDirectory()
-    data_path = f"{tmp_dir.name}/data.npy"
+    data_path = tmp_path /data.npy
     np.save(data_path, np_data)
 
     cfg = OmegaConf.create(

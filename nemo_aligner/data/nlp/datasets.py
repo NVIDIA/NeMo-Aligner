@@ -21,7 +21,7 @@ from typing import Dict, List
 import numpy as np
 import scipy
 import torch
-from megatron.core import parallel_state
+from nemo.aligner.utils import parallel_state
 from omegaconf import OmegaConf
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
