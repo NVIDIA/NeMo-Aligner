@@ -66,6 +66,7 @@ python -u ${GPFS}/examples/nlp/gpt/serve_reward_model.py \
     ++model.tensor_model_parallel_size=1 \
     ++model.pipeline_model_parallel_size=1 \
     ++model.dist_ckpt_load_strictness=log_all \
+    ++model.optim.overlap_param_sync=False \
     rm_model_file=${RM_NEMO_FILE}
 }
 reward_log_file=$(mktemp /tmp/reward-reinforce-log-XXXXXX)
@@ -150,9 +151,9 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_re
 
 actor_log_file=$(mktemp /tmp/actor-reinforce-log-XXXXXX)
 if [[ -z "$RUN_ONLY" || "$RUN_ONLY" == actor_trt || "$RUN_ONLY" == trt ]]; then
-  actor 2>&1 | stdbuf -o0 sed 's/^/[ACTOR_TRT]: /'
+  actor "$@" 2>&1 | stdbuf -o0 sed 's/^/[ACTOR_TRT]: /'
 elif [[ "$RUN_ONLY" == actor_nemo || "$RUN_ONLY" == nemo ]]; then
-  actor trainer.reinforce.trt_llm.enable=False 2>&1 | stdbuf -o0 sed 's/^/[ACTOR_NEMO]: /'
+  actor "$@" trainer.reinforce.trt_llm.enable=False 2>&1 | stdbuf -o0 sed 's/^/[ACTOR_NEMO]: /'
 else
   echo "Only accepts RUN_ONLY=actor_nemo or actor_trt"
   exit 1

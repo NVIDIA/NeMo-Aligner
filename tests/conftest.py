@@ -401,7 +401,9 @@ def pytest_collection_modifyitems(config, items):
 
 def pytest_sessionstart(session):
     # Remove the file at the start of the session, if it exists
-    if os.path.exists(SUCCESS_FILE) and os.environ["LOCAL_RANK"] == "0":
+    if os.path.exists(SUCCESS_FILE) and (
+        os.environ.get("LOCAL_RANK", None) == "0" or os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", None) == "0"
+    ):
         os.remove(SUCCESS_FILE)
 
 
@@ -413,6 +415,8 @@ def pytest_sessionfinish(session, exitstatus):
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
 
-    if exitstatus == 0:
+    if exitstatus == 0 and (
+        os.environ.get("LOCAL_RANK", None) == "0" or os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", None) == "0"
+    ):
         with open(SUCCESS_FILE, "w") as f:
             ...
