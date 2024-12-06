@@ -13,8 +13,8 @@ ARG MAX_JOBS=8
 # Git refs for dependencies
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
 ARG PYTRITON_VERSION=0.5.10
-ARG NEMO_TAG=8c921dc19a905d8b5a0f90f6e2a34607c2e0660d  # On: main
-ARG MLM_TAG=4821429d2bcd0cc8d7079f6400111f1ebe053dab   # On: main
+ARG NEMO_TAG=06eae2895c0fea09f8dd7c34feff0163e55c419a  # On: main
+ARG MLM_TAG=844119f5c856a3037ec7c7f6d6ef7b3518ceee6b   # On: main
 ARG ALIGNER_COMMIT=main
 ARG TRTLLM_VERSION=v0.13.0
 ARG PROTOBUF_VERSION=4.24.4
@@ -133,9 +133,9 @@ RUN <<"EOF" bash -exu
 cd NeMo
 # Ensures we don't cherry-pick "future" origin/main commits
 git fetch -a
-# 5aa2620cdd67130b17f5120e0dca39c07bbcd1af: fix: export converts properly if no model_prefix #11477
+# d27dd28b4186f6ecd9f46f1c5679a5eef9bad14e: fix: export weight name mapping if model is nemo model#11497
 for pr_and_commit in \
-  "11477 5aa2620cdd67130b17f5120e0dca39c07bbcd1af" \
+  "11497 d27dd28b4186f6ecd9f46f1c5679a5eef9bad14e" \
 ; do
   pr=$(cut -f1 -d' ' <<<"$pr_and_commit")
   head_pr_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")
