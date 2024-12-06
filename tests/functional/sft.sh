@@ -87,8 +87,9 @@ torchrun --nproc_per_node=2 ${GPFS}/examples/nlp/gpt/train_gpt_sft.py \
     ++model.activations_checkpoint_method=uniform \
     ++model.activations_checkpoint_num_layers=1 \
     ++model.dist_ckpt_load_strictness=log_all
+    "$@"
 }
 
 log_file=$(mktemp /tmp/sft-log-XXXXXX)
-sft | tee $log_file
+sft "$@" | tee $log_file
 echo "[Finished] $0"
