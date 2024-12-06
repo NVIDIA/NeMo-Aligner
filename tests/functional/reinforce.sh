@@ -66,7 +66,7 @@ python -u ${GPFS}/examples/nlp/gpt/serve_reward_model.py \
     ++model.tensor_model_parallel_size=1 \
     ++model.pipeline_model_parallel_size=1 \
     ++model.dist_ckpt_load_strictness=log_all \
-    ++model.optim.overlap_param_sync=False
+    ++model.optim.overlap_param_sync=False \
     rm_model_file=${RM_NEMO_FILE}
 }
 reward_log_file=$(mktemp /tmp/reward-reinforce-log-XXXXXX)
