@@ -236,14 +236,10 @@ class SPINTrainer:
             trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
 
-        num_samples = 0
-        chosen_lengths = 0
-        reject_lengths = 0
-        not_valids = 0
-        num_samples += global_batch["chosen"].shape[0]
-        chosen_lengths += (global_batch["chosen_lengths"] - global_batch["prompt_lengths"]).sum()
-        reject_lengths += (global_batch["rejected_lengths"] - global_batch["prompt_lengths"]).sum()
-        not_valids += (~global_batch["is_valids"]).sum()
+        num_samples = global_batch["chosen"].shape[0]
+        chosen_lengths = (global_batch["chosen_lengths"] - global_batch["prompt_lengths"]).sum()
+        reject_lengths = (global_batch["rejected_lengths"] - global_batch["prompt_lengths"]).sum()
+        not_valids = (~global_batch["is_valids"]).sum()
         tensor_to_accumulate = torch.tensor(
             [chosen_lengths, reject_lengths, num_samples, not_valids], dtype=torch.float32, device=torch.cuda.current_device(),
         )
