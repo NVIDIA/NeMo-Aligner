@@ -23,7 +23,6 @@ import scipy
 import torch
 from omegaconf import OmegaConf
 
-from nemo_aligner.utils import parallel_state
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import (
     GPTSFTChatDataset,
@@ -32,6 +31,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset i
 )
 from nemo.core import Dataset
 from nemo.utils import logging
+from nemo_aligner.utils import parallel_state
 
 
 class KnowledgeDistillationDataset(Dataset):
