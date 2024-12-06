@@ -624,7 +624,6 @@ class DPOPackedDataset(DPOModelDataset):
                 position_ids[-1].extend(list(range(l - 1)))  ## l - 1 to exclude labels
                 cu_seqlens[-1].append(cu_seqlens[-1][-1] + l - 1)
             # set last seq to the max seq len because rope and attn kernels expect no padding
-            ## TODO: check whether this affects convergence
             cu_seqlens[-1][-1] = max_length
 
         assert len(input_ids[0]) == len(

@@ -543,6 +543,11 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         if not packed:
             # each minibatch has 2 comparisons so tensor shape will be mbs * 2
             micro_batch_size *= 2
+        else:
+            assert micro_batch_size == 1, (
+                f"Packed sequence is only supported with forward micro batch size 1,"
+                f" but your forward micro batch size is {micro_batch_size}."
+            )
 
         data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only=True)
