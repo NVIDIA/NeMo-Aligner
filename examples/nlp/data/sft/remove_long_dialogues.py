@@ -25,7 +25,7 @@ Any example that does not have any non-masked tokens after truncation is removed
 Usage:
   python3 remove_long_dialogues.py \
     --tokenizer_path <PATH TO TOKENIZER MODEL> \
-    --tokenizer_type sentencepiece
+    --tokenizer_type sentencepiece \
     --dataset_file <PATH TO DATASET TO PREPROCESS> \
     --output_file <WHERE TO SAVE PREPROCESSED DATASET> \
     --seq_len <MAX_SEQ_LEN TO USE DURING TRAINING>
