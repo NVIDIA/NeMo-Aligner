@@ -612,7 +612,6 @@ class DPOPackedDataset(DPOModelDataset):
             # target length (2048, 4096, 8192), so there is very minimal padding
             max_length = max(len(l) for l in input_ids)
             max_length = min(self.seq_length, self._ceil_to_nearest(max_length, 16))
-        assert max_length <= self.seq_length
 
         position_ids: List[List[int]] = []
         cu_seqlens: List[List[int]] = []
