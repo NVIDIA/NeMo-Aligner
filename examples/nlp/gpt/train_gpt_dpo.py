@@ -105,6 +105,7 @@ def main(cfg) -> None:
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
         collate_fn=identity_collate,
+        limit_train_batches=cfg.trainer.dpo.limit_train_batches,
     )
 
     val_dataloader = build_dataloader(

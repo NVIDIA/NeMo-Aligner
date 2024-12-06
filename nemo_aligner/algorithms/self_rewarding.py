@@ -86,6 +86,7 @@ def self_rewarding_custom_collate(batch, eos_id):
         "answers_only": answer_ids,
         "prompt_lengths": context_lengths,
         "combined_lengths": combined_lengths,
+        "dataset_mask": batch[0]['metadata']['mask'] if 'metadata' in batch[0] else None,
     }
 
     return output
@@ -217,7 +218,7 @@ class SelfRewardingTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
-
+        '''
         if isinstance(self.cfg.get("limit_train_batches", 1.0), int):
             self.train_dataloader.batch_sampler.total_samples = min(
                 self.train_dataloader.batch_sampler.total_samples,
@@ -225,6 +226,7 @@ class SelfRewardingTrainer:
             )
             if hasattr(self.train_dataloader.batch_sampler, "last_batch_size"):
                 self.train_dataloader.batch_sampler.last_batch_size = 0
+        '''
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
@@ -786,10 +788,10 @@ class SelfRewardingTrainer:
         # restore max steps we need to run for
         self.set_max_steps()
     
-    def normalise_prompt(self, prompt, response):
+    def normalise_prompt(self, prompt, response, dataset_mask):
         if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
-            p_list = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt)
-            r_list = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt)
+            p_list = re.findall(rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})", prompt)
+            r_list = re.findall(rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask.replace('user', 'assistant')}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})", prompt)
             resp_raw = response.replace(self.model.cfg.data.chat_prompt_tokens.end_of_turn, "").strip()
         else:
             p_list = re.findall(rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})", prompt)
@@ -860,19 +862,20 @@ class SelfRewardingTrainer:
                                 )
                                 response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
                             '''
-                            prompt, response = self.normalise_prompt(self.tokenizer.ids_to_text(t[:s].tolist()), self.tokenizer.ids_to_text(t[s:e].tolist()))
+                            prompt, response = self.normalise_prompt(self.tokenizer.ids_to_text(t[:s].tolist()), self.tokenizer.ids_to_text(t[s:e].tolist()), buffer[0]["dataset_mask"])
                             reward_prompt_str = self.template_fn(prompt=prompt, response=response)
                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
                                 prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
+                                dataset_mask = buffer[0]["dataset_mask"]
                                 try:
                                     if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
                                         prompt_ft = re.findall(
-                                            r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)",
+                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
                                             prompt_and_response,
                                         )[0]
                                         response_ft = re.findall(
-                                            r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)",
+                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask.replace('user', 'assistant')}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
                                             prompt_and_response,
                                         )[0]
                                     else:

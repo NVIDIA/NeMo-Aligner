@@ -470,6 +470,7 @@ def build_dataloader(
     collate_fn=None,
     load_gbs=True,
     use_random_sampler=True,
+    limit_train_batches=None,
 ):
     """Buld dataloader given an input dataset."""
 
@@ -485,6 +486,17 @@ def build_dataloader(
         "global_batch_size": gbs,
         "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
+    
+    if (
+        limit_train_batches is None
+        or (isinstance(limit_train_batches, float) and limit_train_batches > 1.0)
+        or (limit_train_batches <= 0)
+    ):
+        limit_train_batches = 1.0
+    if isinstance(limit_train_batches, float):
+        common_params["total_samples"] = int(limit_train_batches * len(dataset))
+    elif isinstance(limit_train_batches, int):
+        common_params["total_samples"] = min(limit_train_batches * gbs, len(dataset))
 
     if use_random_sampler:
         cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler

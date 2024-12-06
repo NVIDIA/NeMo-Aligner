@@ -114,7 +114,7 @@ class SPINTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
-        
+        '''
         if isinstance(self.cfg.get("limit_train_batches", 1.0), int):
             self.train_dataloader.batch_sampler.total_samples = min(
                 self.train_dataloader.batch_sampler.total_samples,
@@ -122,6 +122,7 @@ class SPINTrainer:
             )
             if hasattr(self.train_dataloader.batch_sampler, "last_batch_size"):
                 self.train_dataloader.batch_sampler.last_batch_size = 0
+        '''
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
