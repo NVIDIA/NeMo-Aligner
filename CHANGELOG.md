@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ## [Next Version]
 
 ### New Features and Optimizations
+- Sequence packing is now supported when running DPO.
 - Added support for Knowledge Distillation with SFT. See the [tutorial](docs/user-guide/knowledge-distillation.rst) for details.
 - Added support for Megatron Core’s distributed optimizer, which can be configured using `++model.optim.name=mcore_distributed_optim`.
 - Introduced `ScopedTimer` as a successor to `SyncedTimer`. `SyncedTimer` is marked for deprecation and will be removed in the next version.
