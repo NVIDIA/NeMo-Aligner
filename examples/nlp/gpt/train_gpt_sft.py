@@ -110,6 +110,7 @@ def main(cfg) -> None:
         answer_only_loss=True,
         is_chat=cfg.model.data.chat,
         special_tokens=cfg.model.data.chat_prompt_tokens,
+        model_cfg=cfg.model,
     )
     if cfg.model.data.get("sample", False):
         num_samples = cfg.trainer.sft.limit_val_batches * val_data_cfg.global_batch_size
@@ -123,6 +124,7 @@ def main(cfg) -> None:
         answer_only_loss=True,
         is_chat=cfg.model.data.chat,
         special_tokens=cfg.model.data.chat_prompt_tokens,
+        model_cfg=cfg.model,
     )
 
     train_dataloader = build_dataloader(

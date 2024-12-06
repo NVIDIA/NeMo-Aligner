@@ -204,10 +204,15 @@ class SupervisedTrainer:
                 self.train_dataloader, initial=self.step, total=self.max_steps, leave=True, desc="Training steps"
             )
 
+
             for _, batch in zip(loop_iter, global_pbar):
 
                 self.timer.start("train_step_time")
+                #with torch.profiler.profile(activities=[torch.profiler.ProfilerActivity.CPU], profile_memory=True, record_shapes=True) as prof:
                 loss, metrics = self.train_single_step(batch)
+                
+                #print(prof.key_averages().table(sort_by="cpu_memory_usage", row_limit=10))
+
                 self.timer.stop("train_step_time")
                 train_step_time = self.timer.get("train_step_time")
 
@@ -243,10 +248,10 @@ class SupervisedTrainer:
 
                 global_pbar.set_postfix(metrics)
 
-                if save_model:
-                    # PTL save wants tensors only
-                    metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
-                    self.save(metrics, is_train_end=is_train_end)
+                #if save_model:
+                #    # PTL save wants tensors only
+                #    metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
+                #    self.save(metrics, is_train_end=is_train_end)
 
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")

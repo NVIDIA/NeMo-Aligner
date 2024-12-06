@@ -13,8 +13,8 @@ ARG MAX_JOBS=8
 # Git refs for dependencies
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
 ARG PYTRITON_VERSION=0.5.10
-ARG NEMO_TAG=19668e5320a2e2af0199b6d5e0b841993be3a634  # On: main
-ARG MLM_TAG=25059d3bbf68be0751800f3644731df12a88f3f3   # On: main
+ARG NEMO_TAG=06eae2895c0fea09f8dd7c34feff0163e55c419a  # On: main
+ARG MLM_TAG=844119f5c856a3037ec7c7f6d6ef7b3518ceee6b   # On: main
 ARG ALIGNER_COMMIT=main
 ARG TRTLLM_VERSION=v0.13.0
 ARG PROTOBUF_VERSION=4.24.4
@@ -123,3 +123,29 @@ RUN cd /opt/NeMo-Aligner && \
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
+<<<<<<< HEAD
+=======
+# NOTE: Comment this layer out if it is not needed
+# NOTE: This section exists to allow cherry-picking PRs in cases where
+#  we do not wish to simply update to the top-of-tree. Sometimes PRs
+#  cannot be cherry-picked cleanly if rebased a few times to top-of-tree
+#  so this logic also requires you to select a SHA (can be dangling) from
+#  the PR.
+RUN <<"EOF" bash -exu
+cd NeMo
+# Ensures we don't cherry-pick "future" origin/main commits
+git fetch -a
+# d27dd28b4186f6ecd9f46f1c5679a5eef9bad14e: fix: export weight name mapping if model is nemo model#11497
+for pr_and_commit in \
+  "11497 d27dd28b4186f6ecd9f46f1c5679a5eef9bad14e" \
+; do
+  pr=$(cut -f1 -d' ' <<<"$pr_and_commit")
+  head_pr_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")
+  git fetch origin $head_pr_commit:PR-${pr}
+  # cherry-picks all commits between main and the top of the PR
+  git cherry-pick --allow-empty $(git merge-base origin/main PR-${pr})..PR-${pr}
+  # Tag cherry-picks to help
+  git tag cherry-pick-PR-${pr}
+done
+EOF
+>>>>>>> 3604fc48 (feat: add context parallel support for SFT (#430))

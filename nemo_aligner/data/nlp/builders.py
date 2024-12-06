@@ -380,13 +380,23 @@ build_train_valid_test_knowledge_distillation_datasets = partial(
 
 
 def build_sft_dataset(
-    data_cfg, tokenizer, num_samples, is_mamba=False, answer_only_loss=True, is_chat=True, special_tokens=None
+    data_cfg, tokenizer, num_samples, is_mamba=False, answer_only_loss=True, is_chat=True, special_tokens=None, model_cfg=None
 ):
     packed_sequence = data_cfg.get("packed_sequence", False)
     dataset_kwargs = {}
 
+    # TE requires that the first input dim is divisible by 8 and the second by 16 for fp8
+    # When using sequence parallel, sequence will further be split by TP size
+    # When using context parallel, sequence is split by CP size as well
+    pad_seq_length_to_mult = 16
+    if model_cfg is not None:
+        pad_seq_length_to_mult = (
+            8 * model_cfg.get("tensor_model_parallel_size", 1) if model_cfg.get("sequence_parallel", False) else 16
+        )
+        pad_seq_length_to_mult *= model_cfg.get("context_parallel_size", 1)
+
     if is_chat:
-        assert not packed_sequence, "Sequence packing is currently not supported with chat datasets."
+        #assert not packed_sequence, "Sequence packing is currently not supported with chat datasets."
         dataset_cls = GPTSFTChatDataset
     elif packed_sequence:
         dataset_cls = GPTSFTPackedDataset
@@ -398,11 +408,15 @@ def build_sft_dataset(
     else:
         dataset_cls = GPTSFTDataset
 
+    min_pad_seq_length_to_mult=256 if is_mamba else 16
+    pad_seq_length_to_mult=max(pad_seq_length_to_mult, min_pad_seq_length_to_mult)
+
     dataset = dataset_cls(
         file_path=data_cfg.file_path,
         tokenizer=tokenizer,
         max_seq_length=data_cfg.max_seq_length,
         min_seq_length=data_cfg.min_seq_length,
+        pad_seq_length_to_mult=pad_seq_length_to_mult,
         add_bos=data_cfg.get("add_bos", False),
         add_eos=data_cfg.get("add_eos", True),
         add_sep=data_cfg.get("add_sep", False),
@@ -413,13 +427,12 @@ def build_sft_dataset(
         answer_only_loss=answer_only_loss,
         truncation_field=data_cfg.get("truncation_field", "text"),
         pad_to_max_length=data_cfg.get("pad_to_max_length", False),
-        pad_seq_length_to_mult=256 if is_mamba else 16,
         index_mapping_dir=data_cfg.get("index_mapping_dir", None),
         prompt_template=data_cfg.get("prompt_template", None),
         virtual_tokens=0,
         memmap_workers=data_cfg.get(
             "memmap_workers", None
-        ),  # used to set num. of workers to create the memmap index files
+            ),  # used to set num. of workers to create the memmap index files
         hf_dataset=data_cfg.get(
             "hf_dataset", False
         ),  # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
@@ -428,6 +441,7 @@ def build_sft_dataset(
         ),  # used to choose truncation method. Options: ['random', 'left', 'right']
         special_tokens=special_tokens,
         output_original_text=data_cfg.get("output_original_text", False),
+        get_attention_mask_from_fusion=data_cfg.get("get_attention_mask_from_fusion", True),
         **dataset_kwargs,
     )
     return dataset
