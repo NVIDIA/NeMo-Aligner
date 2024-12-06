@@ -69,12 +69,15 @@ def main(cfg) -> None:
         cfg.model.encoder_seq_length = ptl_model.cfg.encoder_seq_length
 
     # pull values from checkpoint
-    trainer_restore_path = trainer.ckpt_path
+    #trainer_restore_path = trainer.ckpt_path
 
     if os.path.exists(gen_file := os.path.join(cfg.exp_manager.explicit_log_dir, "generations", "generations.jsonl")):
         js_line = json.loads(subprocess.check_output(["tail", "-1", gen_file]).decode("utf_8"))
         custom_trainer_state_dict = {"step": js_line["step"], "consumed_samples": js_line["consumed_samples"]}
         consumed_samples = js_line["consumed_samples"]
+    else:
+        custom_trainer_state_dict = None
+        consumed_samples = 0
 
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
     train_data_cfg = cfg.model.data.train_ds
@@ -106,6 +109,7 @@ def main(cfg) -> None:
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=False,
         load_gbs=True,
+        use_random_sampler=False,
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)

@@ -125,11 +125,11 @@ model:
       # Example of how each dataset is formatted
       # {'input': 'John von Neumann\nVon Neumann made fundamental contributions .... Q: What did the math of artificial viscosity do?', 'output': 'smoothed the shock transition without sacrificing basic physics'}
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
-      shuffle: False  # we should use False but it may break the RandomSampler classes
+      shuffle: False
       memmap_workers: null
       max_seq_length: ${model.encoder_seq_length}
       min_seq_length: 1
-      drop_last: False
+      drop_last: True  # ideally we should use False but trainer_utils.compute_num_steps_per_epoch doesn't support it
       # Example of how to specify concat_sampling_probabilities
       # concat_sampling_probabilities:
       #   - 0.5
@@ -139,7 +139,7 @@ model:
       add_eos: False
       add_sep: False
       add_bos: False
-      truncation_field: "input" # # Can be multiple keys separated with ',' Options: keys in prompt_template
+      truncation_field: "context_ids" # # Can be multiple keys separated with ',' Options: keys in prompt_template
       index_mapping_dir: null # Path to a directory to write index mapping files.
       prompt_template: null # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.

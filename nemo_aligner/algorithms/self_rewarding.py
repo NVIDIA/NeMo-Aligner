@@ -785,6 +785,26 @@ class SelfRewardingTrainer:
         assert loaded_values == to_broadcast.tolist()
         # restore max steps we need to run for
         self.set_max_steps()
+    
+    def normalise_prompt(self, prompt, response):
+        if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
+            p_list = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt)
+            r_list = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt)
+            resp_raw = response.replace(self.model.cfg.data.chat_prompt_tokens.end_of_turn, "").strip()
+        else:
+            p_list = re.findall(rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})", prompt)
+            r_list = re.findall(rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})", prompt)
+            resp_raw = response.replace(f"\n{self.model.cfg.data.chat_prompt_tokens.turn_start}", "")
+        if len(p_list) == 1 and len(r_list) == 0:
+            return "User: " + p_list[0], resp_raw
+        elif len(p_list) == len(r_list) + 1:
+            comp = "User: " + p_list[0]
+            for p, r in zip(p_list[1:], r_list):
+                comp += "\n\nAssistant: " + r
+                comp += "\n\nUser: " + p
+            return comp, resp_raw
+        else:
+            raise RuntimeError(f"Received strange normalise payload PROMPT [ {prompt} ]  RESP [ {response} ]")
 
     def augment_dataloader(self, dataloader):
         """Augment dataloader with generations and ref policy log probs"""
@@ -826,6 +846,7 @@ class SelfRewardingTrainer:
                         # Transform into batch of LLM-as-judge template samples for reward scoring
                         reward_buffer = []
                         for t, s, e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
+                            '''
                             if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
                                 prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
                                     "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", ""
@@ -838,12 +859,10 @@ class SelfRewardingTrainer:
                                     "<extra_id_0>System\n\n", ""
                                 )
                                 response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
-                            # llama3
-                            # prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", "")
-                            # response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
+                            '''
+                            prompt, response = self.normalise_prompt(self.tokenizer.ids_to_text(t[:s].tolist()), self.tokenizer.ids_to_text(t[s:e].tolist()))
                             reward_prompt_str = self.template_fn(prompt=prompt, response=response)
                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                            # if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
                                 prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
                                 try:
@@ -858,10 +877,10 @@ class SelfRewardingTrainer:
                                         )[0]
                                     else:
                                         prompt_ft = re.findall(
-                                            r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response
+                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})", prompt_and_response
                                         )[0]
                                         response_ft = re.findall(
-                                            r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)",
+                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
                                             prompt_and_response,
                                         )[0]
                                     # llama3
