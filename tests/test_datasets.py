@@ -466,7 +466,7 @@ def test_packed_dpo_loader_pad_to_multiple(init_model_parallel, tmp_path, str_to
         * 8
     )
 
-    data_path = tmp_path /data.npy
+    data_path = tmp_path / data.npy
     np.save(data_path, np_data)
 
     cfg = OmegaConf.create(
