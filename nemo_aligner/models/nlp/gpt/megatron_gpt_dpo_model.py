@@ -213,7 +213,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                         )
                         raise e
 
-                    ## these packed seq args require newer TE
+                    ## TODO: cu_seqlens_unpadded, cu_seqlens_q_padded, etc.
+                    ## also reorder batch into THD format as is done in nemo PR
                     forward_args["packed_seq_params"] = PackedSeqParams(
                         cu_seqlens_q=cu_seqlens,
                         cu_seqlens_kv=cu_seqlens,
