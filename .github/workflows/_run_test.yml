@@ -57,6 +57,7 @@ jobs:
               --env HF_HOME=/home/TestData/aligner/hf_home \
               --env ALIGNER_CI_DIR=/home/TestData/aligner \
               --env ALIGNER_REPO_DIR=/opt/NeMo-Aligner \
+              --volume /mnt/datadrive/TestData/aligner/nlp-copy:/home/TestData/aligner/nlp-copy \
               --volume /mnt/datadrive/TestData/aligner/checkpoints:/home/TestData/aligner/checkpoints:ro \
               --volume /mnt/datadrive/TestData/aligner/hf_home/hub:/home/TestData/aligner/hf_home/hub:ro \
               nemoci.azurecr.io/nemo_aligner_container:${{ github.run_id }} \

@@ -14,7 +14,6 @@
 # limitations under the License.
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-export DATA_DIR=$SCRIPT_DIR/../test_data
 cd $SCRIPT_DIR
 
 set -eoux pipefail
