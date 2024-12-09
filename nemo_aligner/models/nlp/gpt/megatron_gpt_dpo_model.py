@@ -111,6 +111,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 required_keys.add("attention_mask")
                 if "cu_seqlens" in batch:
                     required_keys.add("cu_seqlens")
+                    required_keys.add("max_seqlen")
+                    required_keys.add("cu_seqlens_argmin")
 
                 if parallel_state.is_pipeline_first_stage():
                     if packed:
