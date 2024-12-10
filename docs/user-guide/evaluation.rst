@@ -33,7 +33,7 @@ Please note that while it is recommended, you are not required to unzip your .ne
    mkdir unzipped_checkpoint
    tar -xvf /path/to/model.nemo -c unzipped_checkpoint
 
-   torchrun --nproc-per-node=8 --no-python  lm_eval --model nemo_lm \
+   torchrun --nproc-per-node=8 --no-python lm_eval --model nemo_lm \
      --model_args path='unzipped_checkpoint',devices=8,tensor_model_parallel_size=8 \
      --tasks lambada_openai,super-glue-lm-eval-v1,winogrande \
      --batch_size 8
