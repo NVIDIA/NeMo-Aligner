@@ -25,7 +25,7 @@ Run Evaluations
 ###############
 
 A detailed description of running evaluation with ``.nemo`` models can be found in Eleuther AI's `documentation <https://github.com/EleutherAI/lm-evaluation-harness?tab=readme-ov-file#nvidia-nemo-models>`_.
-Single- and multi-GPU evaluation is supported. The following is an example of running evaluation on the ``hellaswag``, ``super_glue``, and ``winogrande`` tasks using a ``.nemo`` file from NeMo-Aligner.
+Single- and multi-GPU evaluation is supported. The following is an example of running evaluation using 8 GPUs on the ``hellaswag``, ``super_glue``, and ``winogrande`` tasks using a ``.nemo`` file from NeMo-Aligner.
 Please note that while it is recommended, you are not required to unzip your .nemo file before running evaluations.
 
 .. code-block:: bash
