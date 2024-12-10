@@ -83,7 +83,9 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
 
             tokens = batch["tokens"]
             labels = batch["labels"]
-            loss_mask = batch["loss_mask"].clamp(min=0, max=1)
+            loss_mask = batch["loss_mask"]
+            if loss_mask is not None:
+                loss_mask = loss_mask.clamp(min=0, max=1)
             target_topk_logits = batch["topk_logits"]
             target_topk_token_ids = batch["topk_token_ids"]
             # Model forward pass
