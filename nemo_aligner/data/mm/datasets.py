@@ -70,6 +70,8 @@ def _preprocess_media_tokens(conversation: str,
         replace_str = replace_strings.pop(0)
         conversation = conversation.replace("<placeholder>", replace_str, 1)
 
+    # logging.warning(f"_preprocess_media_tokens {conversation}")
+
     return conversation
 
 def process_media_tokens(
@@ -133,6 +135,8 @@ def maybe_process_prompt_and_media(
                 patch_size=image_patch_dim,
                 image_sizes=image_sizes
             )
+        else:
+            image_list = []
 
         # image exist in the data
         if is_multimodal:
@@ -375,7 +379,7 @@ class MultimodalChatDataset(Dataset):
             image_token_len=256,
             num_frames=-1,
             add_extra_token=1,
-            ignore_index=-1,
+            ignore_index=-100,
             splice_single_frame=None,
             sep_token_between_frames=False,
             add_speakers=False,
@@ -401,7 +405,7 @@ class MultimodalChatDataset(Dataset):
         
         self.patch_size = self.mm_cfg.vision_encoder.patch_dim
         
-        logging.warning("Loading images from the dataset")
+        logging.warning(f"Loading images from the dataset, using ignore_index={self.ignore_index}")
         self.list_data_dict = []
         for line in open(data_cfg.file_path, "r"):
             record = json.loads(line)
@@ -447,16 +451,18 @@ class MultimodalChatDataset(Dataset):
             prompt = f"{self.special_tokens['system_turn_start']}{system_token}{self.special_tokens['end_of_name']}"        
             prompt += f"{system_message}"
         else:
-            prompt = ""
+            prompt = f"{self.special_tokens['system_turn_start']}"
         
         prompt_dict.append({"system": prompt})
 
         for turn in messages:
-            if add_speakers:
-                speaker = f"{self.special_tokens['turn_start']}{turn['from']}{self.special_tokens['end_of_name']}"
+            if turn['from'].lower() == "assistant":
+                speaker = f""
+                message = f"{turn['value']}{self.special_tokens['end_of_name']}"
             else:
                 speaker = f"{self.special_tokens['turn_start']}"
-            message = f"{turn['value']}{self.special_tokens['end_of_turn']}"
+                message = f"{turn['value']}{self.special_tokens['end_of_turn']}"
+
             prompt += speaker + message
             prompt_dict.append(
                 {
@@ -465,6 +471,8 @@ class MultimodalChatDataset(Dataset):
                     "mask": turn['mask']
                 }
             )
+
+        # logging.warning(f"MultimodalChatDataset::getprompt, {prompt}, {prompt_dict}")
         return prompt, prompt_dict
     
     def _maybe_process_tokens(
@@ -510,6 +518,8 @@ class MultimodalChatDataset(Dataset):
 
         tokens[0, :len(tokens_list)] = torch.tensor(tokens_list)
         labels[0, :len(labels_list)] = torch.tensor(labels_list)
+
+        # logging.warning(f"MultimodalChatDataset::_maybe_process_tokens, {tokens}, {labels}")        
         return tokens, labels
         
     def preprocess_conversations(self, sources: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
@@ -565,7 +575,7 @@ class MultimodalChatDataset(Dataset):
         tokens, labels = self._maybe_process_tokens(tokens_list, labels_list, context_length, add_extra_token)
 
         # Check if masking works correctly
-        #print([x for x in zip(self.tokenizer.ids_to_tokens(tokens[0].numpy().tolist()), tokens[0].numpy().tolist(), labels[0].numpy().tolist())])
+        #logging.warning(f"Masking check: {[x for x in zip(self.tokenizer.ids_to_tokens(tokens[0].numpy().tolist()), tokens[0].numpy().tolist(), labels[0].numpy().tolist())]}")
 
         if self.add_extra_token:
             tokens = tokens[:, :-1].contiguous()
@@ -643,10 +653,13 @@ class MultimodalChatDataset(Dataset):
                     image_sizes = image_sizes[0]
 
                 sources = self.preprocess_media_tokens(sources=copy.deepcopy(sources), image_sizes=image_sizes)
+            else:
+                image_list = []
                       
         else:
-            logging.warning("media not found in sources")            
+            #logging.warning("media not found in sources")            
             sources = copy.deepcopy(sources)
+            image_list = []
 
         data_dict = self.preprocess_conversations(sources)
 
@@ -655,7 +668,7 @@ class MultimodalChatDataset(Dataset):
 
         current_num_images = len(image_list)
         if current_num_images < MIN_NUM_IMAGES:
-            image_list.append = torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float)
+            image_list.append(torch.zeros(3, crop_size[0], crop_size[1], dtype=torch.float))
         data_dict['image'] = image_list
         return data_dict
 
@@ -694,9 +707,10 @@ class DataCollatorForSupervisedDataset(object):
             reset_position_ids=False,
         )
 
-        loss_mask[labels == -1] = 0.0
-        tokens[tokens == -1] = 0
-        labels[labels == -1] = 0
+        loss_mask[labels <= -1] = 0.0
+        tokens[tokens <= -1] = 0
+        labels[labels <= -1] = 0
+        
 
         batch = {
             'tokens': tokens,
@@ -706,5 +720,9 @@ class DataCollatorForSupervisedDataset(object):
             'position_ids': position_ids,
             'media': media,
         }
+
+        # dump labels
+        #logging.warning(f"DataCollatorForSupervisedDataset, {batch['tokens']}, {batch['labels']}")
+
 
         return batch

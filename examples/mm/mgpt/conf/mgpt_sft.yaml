@@ -108,7 +108,6 @@ model:
     pretrain_mm_mlp_adapter: null # path to pretrained mm adapter
     mm_mlp_adapter_type: linear
     use_im_start_end: False
-    image_token: "[IMG]"
     image_patch_token: "[IMG]"
     im_start_token: "[IMG_BREAK]"
     im_end_token: "[IMG_END]"    
@@ -195,7 +194,6 @@ model:
       add_bos: True
       truncation_field: "input" # # Can be multiple keys separated with ',' Options: keys in prompt_template
       index_mapping_dir: null # Path to a directory to write index mapping files.
-      prompt_template: "{input} {output}" # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       hf_dataset: False # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
       truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
 

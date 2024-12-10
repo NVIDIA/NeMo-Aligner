@@ -49,6 +49,45 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 mp.set_start_method("spawn", force=True)
 
 
+
+def predict_test_impl(model, cfg):
+    """
+    This function is used to generate model responses for debugging.
+    """
+
+    inputs = {
+        "prompt" : "<s>[INST]\nQ: What is the capital of France?[/INST]\n",
+    }
+
+
+
+    length_params: LengthParam = {
+        "max_length": 32,
+        "min_length": 16,
+    }
+    sampling_params: SamplingParam = {
+        "use_greedy": False,
+        "temperature": 0.01,
+        "top_k": 0,
+        "top_p": 0.9,
+        "repetition_penalty": 1.2,
+        "add_BOS": True,
+        "all_probs": False,
+        "compute_logprob": False,
+        "end_strings": ["[END]"],
+        "random_seed": 1,
+    }
+
+    # Generate model responses
+    responses = model.generate(
+        inputs=inputs,  # Adjust based on your model's requirements
+        length_params=length_params,  # Define these parameters as in your original code
+        sampling_params=sampling_params,  # Define these parameters as in your original code
+    )
+
+    print(responses)
+
+
 def _modify_config(mgpt_cfg, cfg, add_cfg_to_tree=False):
     """
     This function modifies the original gpt pre-training config (gpt_cfg) with attributes from the finetuning config (cfg).
@@ -139,7 +178,7 @@ def _modify_config(mgpt_cfg, cfg, add_cfg_to_tree=False):
         mgpt_cfg.mm_cfg.im_start_token = cfg.model.mm_cfg.get("im_start_token", "[IMG_BREAK]")
         mgpt_cfg.mm_cfg.im_end_token = cfg.model.mm_cfg.get("im_end_token", "[IMG_END]")
         mgpt_cfg.mm_cfg.image_patch_token = cfg.model.mm_cfg.get("image_patch_token", "[IMG]")
-        mgpt_cfg.mm_cfg.image_patch_token = cfg.model.mm_cfg.get("image_token", "[IMG]")
+        mgpt_cfg.mm_cfg.image_token = cfg.model.mm_cfg.get("image_token", "[IMG]")
         
         # check if we are pretraining the adapter or finetuning the LLM
         if mgpt_cfg.mm_cfg.llm.freeze and mgpt_cfg.restore_from_path is None: # if pretraining
@@ -281,6 +320,8 @@ def main(cfg) -> None:
 
     if custom_trainer_state_dict is not None:
         sft_trainer.load_state_dict(custom_trainer_state_dict)
+
+    predict_test_impl(ptl_model, cfg)
 
     sft_trainer.fit()
 
