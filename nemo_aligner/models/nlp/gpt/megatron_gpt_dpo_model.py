@@ -113,6 +113,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     required_keys.add("cu_seqlens")
                     required_keys.add("max_seqlen")
                     required_keys.add("cu_seqlens_argmin")
+                    required_keys.add("cu_seqlens_unpadded")
 
                 if parallel_state.is_pipeline_first_stage():
                     if packed:
@@ -190,28 +191,62 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 forward_args.pop("loss_mask")
 
                 if "cu_seqlens" in batch:  # packed sequence from DPOPackedDataset
+                    
                     # these args are passed eventually into TEDotProductAttention.forward()
                     cu_seqlens = batch["cu_seqlens"].squeeze()  # remove batch size dimension (mbs=1)
-
-                    max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
-                    cu_seqlens_argmin = batch["cu_seqlens_argmin"] if "cu_seqlens_argmin" in batch else None
+                    max_seqlen = batch["max_seqlen"].squeeze()
+                    cu_seqlens_argmin = batch["cu_seqlens_argmin"]
+                    cu_seqlens_unpadded = batch['cu_seqlens_unpadded'].squeeze()
 
                     # remove -1 "paddings" added in collate_fn
-                    if cu_seqlens_argmin is not None:
-                        cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
-                    else:
-                        cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
+
+                    ## TODO: make sure this works with old preprocessing script + no CP as well
+                    ## i.e. if a user already has a packed DPO (CP=1) dataset, training will be unchanged
+                    cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
+                    cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
 
                     from megatron.core.packed_seq_params import PackedSeqParams
 
-                    ## TODO: cu_seqlens_unpadded, cu_seqlens_q_padded, etc.
-                    ## also reorder batch into THD format as is done in nemo PR
-                    forward_args["packed_seq_params"] = PackedSeqParams(
-                        cu_seqlens_q=cu_seqlens,
-                        cu_seqlens_kv=cu_seqlens,
+                    # get packed sequences for this context parallel rank
+                    cp_size = parallel_state.get_context_parallel_world_size()
+                    if cp_size > 1:
+                        try:
+                            import transformer_engine_torch as tex
+                        except ModuleNotFoundError as e:
+                            logging.error(
+                                "Please update Transformer Engine to >= 1.10 to use Context Parallel with THD format data"
+                            )
+                            raise e
+                        cp_rank = parallel_state.get_context_parallel_rank()
+
+                        ## TODO: what about lengths and rewards?
+                        ## they are only needed to compute the loss at the end
+                        for key in required_keys:
+                            val = batch[key]
+                            if key in {
+                                "input_ids",
+                                "labels",
+                                "position_ids",
+                                "attention_mask",
+                            }:
+                                index = tex.thd_get_partitioned_indices(cu_seqlens, val.size(1), cp_size, cp_rank)
+                                val = val.index_select(1, index)
+                                batch[key] = val
+                        forward_args = {
+                            'input_ids': batch['tokens'],
+                            'position_ids': batch['position_ids'],
+                            'attention_mask': None if self.get_attention_mask_from_fusion else batch['attention_mask'],
+                            'labels': batch['labels'] if 'labels' in batch else None,
+                        }
+
+                    forward_args['packed_seq_params'] = PackedSeqParams(
+                        cu_seqlens_q=cu_seqlens_unpadded,
+                        cu_seqlens_kv=cu_seqlens_unpadded,
+                        cu_seqlens_q_padded=cu_seqlens,
+                        cu_seqlens_kv_padded=cu_seqlens,
                         max_seqlen_q=max_seqlen,
                         max_seqlen_kv=max_seqlen,
-                        qkv_format="thd",
+                        qkv_format='thd',
                     )
 
             output_tensor = model(**forward_args)
@@ -317,6 +352,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         ## break up the packed batch into an unpacked batch
         if cu_seqlens is not None:
 
+            ## gets the sequence lengths on this context parallel rank
+            ## TODO!! we need both the chosen AND rejected sequences to have lengths divisible by cp_size * 2!!
+            ## in order to ensure each CP rank gets an even chunk of both sequences!!
+            ## make sure this is the case!
+            cu_seqlens = cu_seqlens // parallel_state.get_context_parallel_world_size()
+
             ## cu_seqlens has an extra entry if the final example is padded.
             ## we have to handle the case where the final example is padded and
             ## the case where it is not separately.
@@ -347,11 +388,22 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         loss_mask = (labels > -1).float()
 
+        reduced_probs = (logps * loss_mask).sum(-1)
+        if parallel_state.get_context_parallel_world_size() > 1:
+            torch.distributed.all_reduce(reduced_probs, group=parallel_state.get_context_parallel_group())
         if average_log_probs:
             # need to guard against divide by zero in case labels are all -100
-            return (logps * loss_mask).sum(-1) / loss_mask.sum(-1).clamp(min=1)
+            ## take into account loss_mask.sum(-1).clamp(min=1)
+            num_tokens_for_loss = loss_mask.sum(-1)
+            if parallel_state.get_context_parallel_world_size() > 1:
+                torch.distributed.all_reduce(
+                    num_tokens_for_loss, group=parallel_state.get_context_parallel_group()
+                )
+            ### at this point, all CP ranks should have the same value
+            ### so no need for an all-reduce later
+            return reduced_probs / num_tokens_for_loss.clamp(min=1)
         else:
-            return (logps * loss_mask).sum(-1)
+            return reduced_probs
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, cu_seqlens=None, average_log_probs=False):
         rewards = self.get_reduced_masked_logps(
@@ -413,10 +465,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         with torch.no_grad():
             comp = chosen_rewards > reject_rewards
             acc_chosen = comp.float().mean()
-
-        if parallel_state.get_context_parallel_world_size() > 1:
-            torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
-            torch.distributed.all_reduce(acc_chosen, group=parallel_state.get_context_parallel_group())
 
         return loss, acc_chosen
 

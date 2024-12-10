@@ -617,15 +617,38 @@ class DPOPackedDataset(DPOModelDataset):
 
         position_ids: List[List[int]] = []
         cu_seqlens: List[List[int]] = []
+        cu_seqlens_unpadded: List[List[int]] = []
         for item in batch:
             position_ids.append([])
             cu_seqlens.append([0])
+            cu_seqlens_unpadded.append([0])
             seqlens = np.array(item["seq_boundaries"][1:]) - np.array(item["seq_boundaries"][:-1])
             for l in seqlens:
                 position_ids[-1].extend(list(range(l - 1)))  ## l - 1 to exclude labels
                 cu_seqlens[-1].append(cu_seqlens[-1][-1] + l - 1)
-            # set last seq to the max seq len because rope and attn kernels expect no padding
-            cu_seqlens[-1][-1] = max_length
+            
+            # the last seq needs to be the max seq len because rope and attn kernels expect no padding
+            assert cu_seqlens[-1][-1] <= max_length
+            # since data is prepadded when cp_size > 1, there may be some extra padding at the end
+            # of the packed sequence. In this case, we need to add the max seq len to the end.
+            if cu_seqlens[-1][-1] != max_length:
+                cu_seqlens[-1].append(max_length)
+
+            for i in range(len(item['seq_boundaries']) - 1):
+                current_seq = item['input_ids'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
+
+                # since the data could be prepadded with tokenizer's eos_id, we can find out the index of all the eos_id
+                eos_idx = np.where(np.array(current_seq) == self.tokenizer.eos_id)
+
+                # The second eos_id index marks the length of the original unpadded sequence if the sequence is
+                # prepadded for cp_size > 1. Otherwise, there is no extra padding.
+                seqlen_unpadded = eos_idx[0][0] + 1 if eos_idx[0].any() else len(current_seq)
+                cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1] + seqlen_unpadded)
+
+            # if extra paddings are added in the packed sequence, they can't be counted as
+            # actual tokens for training
+            if len(cu_seqlens[-1]) > len(cu_seqlens_unpadded[-1]):
+                cu_seqlens_unpadded[-1].append(cu_seqlens_unpadded[-1][-1])
 
         assert len(input_ids[0]) == len(
             position_ids[0]
@@ -648,10 +671,15 @@ class DPOPackedDataset(DPOModelDataset):
         }
 
         cu_seqlens = self._collate_item(cu_seqlens, max_length=max(len(l) for l in cu_seqlens) + 1, pad_id=-1)
+        cu_seqlens_unpadded = self._collate_item(
+            cu_seqlens_unpadded, max_length=max(len(l) for l in cu_seqlens_unpadded) + 1, pad_id=-1
+        )
 
         # Pre-generate `cu_seqlens_argmin` and `max_seqlen` as CPU tensor to avoid device-to-host copies.
         cu_seqlens = torch.IntTensor(cu_seqlens)
         cu_seqlens_argmin = torch.argmin(cu_seqlens, dim=1, keepdim=True)
+        cu_seqlens_unpadded = torch.IntTensor(cu_seqlens_unpadded)
+        cu_seqlens_unpadded_argmin = torch.argmin(cu_seqlens_unpadded, dim=1, keepdim=True)
         seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
         max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
 
@@ -663,6 +691,8 @@ class DPOPackedDataset(DPOModelDataset):
                 "cu_seqlens": torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
                 "cu_seqlens_argmin": cu_seqlens_argmin,  # only required for perf
                 "max_seqlen": max_seqlen,  # only required for perf
+                "cu_seqlens_unpadded": torch.IntTensor(cu_seqlens_unpadded),
+                "cu_seqlens_unpadded_argmin": cu_seqlens_unpadded_argmin,
             }
         )
 
