@@ -119,6 +119,7 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
         pad_chosen_rejected_to_max=False,
     )
 
+    max_seq_length = dataset.seq_length
     combined_dataset = []
     for item in dataset:
         if item["ignore_example"]:
@@ -142,7 +143,7 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
                     # because input_ids are truncated by 1 for inputs and labels,
                     # we add 1 extra padding here to make sure padded inputs and labels
                     # are a multiple of (cp_size * 2)
-                    val = val + [pad_id] * (max_length_to_pad - len(val) + 1)
+                    val = torch.cat((val, torch.tensor([pad_id] * (max_length_to_pad - len(val) + 1))))
                     data[key] = val
                 elif len(val) > max_seq_length:
                     logging.info(
@@ -157,15 +158,12 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
             ceil_to_nearest = lambda n, m: (n + m - 1) // m * m
             max_length_to_pad_chosen = min(max_seq_length, ceil_to_nearest(len(item["chosen"]), pad_seq_length_to_mult))
             max_length_to_pad_rejected = min(max_seq_length, ceil_to_nearest(len(item["rejected"]), pad_seq_length_to_mult))
-            pre_pad_dataset(data, max_seq_length, max_length_to_pad, "chosen", tokenizer.eos_id)
-            pre_pad_dataset(data, max_seq_length, max_length_to_pad, "rejected", tokenizer.eos_id)
+            pre_pad_dataset(item, max_seq_length, max_length_to_pad_chosen, "chosen", tokenizer.eos_id)
+            pre_pad_dataset(item, max_seq_length, max_length_to_pad_rejected, "rejected", tokenizer.eos_id)
             
-            ## TODO: is this necessary?
-            max_length_to_pad_chosen_labels = min(max_seq_length, ceil_to_nearest(len(item["chosen_labels"]), pad_seq_length_to_mult))
-            max_length_to_pad_rejected_labels = min(max_seq_length, ceil_to_nearest(len(item["rejected_labels"]), pad_seq_length_to_mult))
-            pre_pad_dataset(data, max_seq_length, max_length_to_pad, "chosen_labels", -100)
-            pre_pad_dataset(data, max_seq_length, max_length_to_pad, "rejected_labels", -100)
-        
+            pre_pad_dataset(item, max_seq_length, max_length_to_pad_chosen, "chosen_labels", -100)
+            pre_pad_dataset(item, max_seq_length, max_length_to_pad_rejected, "rejected_labels", -100)
+
         input_ids = torch.cat((item["chosen"], item["rejected"])).numpy()
         labels = torch.cat((item["chosen_labels"], item["rejected_labels"])).numpy()
         reward = torch.tensor([item["chosen_reward"], item["rejected_reward"]]).numpy()
