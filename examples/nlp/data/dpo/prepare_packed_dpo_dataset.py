@@ -105,14 +105,6 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
     else:
         raise ValueError(f"{cfg.tokenizer_type=} not supported")
 
-    pad_seq_length_to_mult = 16
-    cp_size = cfg.model.get("context_parallel_size", 1)
-
-    # if context parallel is used, each individual data length in one packed dataset sample
-    # needs to be a multiple of (cp_size * 2): https://github.com/NVIDIA/TransformerEngine/pull/641
-    if cp_size > 1:
-        pad_seq_length_to_mult = max(pad_seq_length_to_mult, cp_size * 2)
-
     with open(cfg.model.data.data_prefix, "r", encoding="utf_8") as fr:
         data_payload = [json.loads(line.strip()) for line in fr]
 
@@ -128,13 +120,55 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
         seed=cfg.model.get('seed', 1234),
         drop_last=True,  ## False not currently supported
         pad_chosen_rejected_to_max=False,
-        pad_seq_length_to_mult=pad_seq_length_to_mult, ### TODO: SUPPORT IN DPOModelDataset!!!
     )
 
     combined_dataset = []
     for item in dataset:
         if item["ignore_example"]:
             continue
+
+        ## TODO: check
+        cp_size = cfg.model.get("context_parallel_size", 1)
+
+        # if context parallel is used, each individual data length in one packed dataset sample
+        # needs to be a multiple of (cp_size * 2): https://github.com/NVIDIA/TransformerEngine/pull/641
+        if cp_size > 1:
+            pad_seq_length_to_mult = max(16, cp_size * 2)
+
+            def pre_pad_dataset(data, max_seq_length, max_length_to_pad, key, pad_id):
+                '''
+                pad each individual data point to the length of max_length
+                '''
+                assert max_seq_length >= max_length_to_pad
+                val = data[key]
+                if len(val) <= max_length_to_pad:
+                    # because input_ids are truncated by 1 for inputs and labels,
+                    # we add 1 extra padding here to make sure padded inputs and labels
+                    # are a multiple of (cp_size * 2)
+                    val = val + [pad_id] * (max_length_to_pad - len(val) + 1)
+                    data[key] = val
+                elif len(val) > max_seq_length:
+                    logging.info(
+                        f"""The current sequence length {len(val)} for packing is
+                            larger than the max_seq_length specified ({max_seq_length}).
+                            The current sequence length is truncated to the size of max_seq_length.
+                            Please consider increase the sequence packing size"""
+                    )
+                    data[key] = val[:max_seq_length]
+                return
+
+            ceil_to_nearest = lambda n, m: (n + m - 1) // m * m
+            max_length_to_pad_chosen = min(max_seq_length, ceil_to_nearest(len(item["chosen"]), pad_seq_length_to_mult))
+            max_length_to_pad_rejected = min(max_seq_length, ceil_to_nearest(len(item["rejected"]), pad_seq_length_to_mult))
+            pre_pad_dataset(data, max_seq_length, max_length_to_pad, "chosen", tokenizer.eos_id)
+            pre_pad_dataset(data, max_seq_length, max_length_to_pad, "rejected", tokenizer.eos_id)
+            
+            ## TODO: is this necessary?
+            max_length_to_pad_chosen_labels = min(max_seq_length, ceil_to_nearest(len(item["chosen_labels"]), pad_seq_length_to_mult))
+            max_length_to_pad_rejected_labels = min(max_seq_length, ceil_to_nearest(len(item["rejected_labels"]), pad_seq_length_to_mult))
+            pre_pad_dataset(data, max_seq_length, max_length_to_pad, "chosen_labels", -100)
+            pre_pad_dataset(data, max_seq_length, max_length_to_pad, "rejected_labels", -100)
+        
         input_ids = torch.cat((item["chosen"], item["rejected"])).numpy()
         labels = torch.cat((item["chosen_labels"], item["rejected_labels"])).numpy()
         reward = torch.tensor([item["chosen_reward"], item["rejected_reward"]]).numpy()
@@ -150,42 +184,7 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
 
         combined_dataset.append(new_item)
 
-    dataset = np.array(combined_dataset)
-    max_seq_length = dataset.max_seq_length
-    pad_id = dataset.tokenizer.eos_id
-    pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
-    dataset = np.array([dataset[i] for i in range(len(dataset))])
-    ## TODO: check for DPO
-    if cp_size > 1:
-
-        def pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id):
-            '''
-            pad each individual data point to the length of max_length
-            '''
-            assert max_seq_length >= max_length_to_pad
-            for key, val in data.items():
-                if key in {'input_ids', 'labels'}:
-                    if len(val) <= max_length_to_pad:
-                        # because input_ids are truncated by 1 for inputs and labels,
-                        # we add 1 extra padding here to make sure padded inputs and labels
-                        # are a multiple of (cp_size * 2)
-                        val = val + [pad_id] * (max_length_to_pad - len(val) + 1)
-                        data[key] = val
-                    elif len(val) > max_seq_length:
-                        logging.info(
-                            f"""The current sequence length {len(val)} for packing is
-                                larger than the max_seq_length specified ({max_seq_length}).
-                                The current sequence length is truncated to the size of max_seq_length.
-                                Please consider increase the sequence packing size"""
-                        )
-                        data[key] = val[:max_seq_length]
-            return
-
-        ceil_to_nearest = lambda n, m: (n + m - 1) // m * m
-        for data in dataset:
-            max_length_to_pad = min(max_seq_length, ceil_to_nearest(len(data['input_ids']), pad_seq_length_to_mult))
-            pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id)
-    return dataset
+    return np.array(combined_dataset)
 
 
 ## modified version of https://github.com/NVIDIA/NeMo/blob/main/nemo/utils/sequence_packing_utils.py#L178 for DPO
