@@ -613,7 +613,7 @@ class DPOPackedDataset(DPOModelDataset):
             # target length (2048, 4096, 8192), so there is very minimal padding
             max_length = max(len(l) for l in input_ids)
             max_length = min(self.seq_length, self._ceil_to_nearest(max_length, 16))
-        assert max_length <= self.max_seq_length
+        assert max_length <= self.seq_length
 
         position_ids: List[List[int]] = []
         cu_seqlens: List[List[int]] = []
@@ -688,10 +688,10 @@ class DPOPackedDataset(DPOModelDataset):
                 "attention_mask": torch.LongTensor(
                     [1] * len(input_ids)
                 ),  # no attention mask is needed for packed seq, this serves as a placeholder
-                "cu_seqlens": torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
+                "cu_seqlens": cu_seqlens,  # cu_seqlens_q must be in dtype torch.int32
                 "cu_seqlens_argmin": cu_seqlens_argmin,  # only required for perf
                 "max_seqlen": max_seqlen,  # only required for perf
-                "cu_seqlens_unpadded": torch.IntTensor(cu_seqlens_unpadded),
+                "cu_seqlens_unpadded": cu_seqlens_unpadded,
                 "cu_seqlens_unpadded_argmin": cu_seqlens_unpadded_argmin,
             }
         )

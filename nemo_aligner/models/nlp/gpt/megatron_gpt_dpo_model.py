@@ -114,6 +114,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     required_keys.add("max_seqlen")
                     required_keys.add("cu_seqlens_argmin")
                     required_keys.add("cu_seqlens_unpadded")
+                    required_keys.add("cu_seqlens_unpadded_argmin")
 
                 if parallel_state.is_pipeline_first_stage():
                     if packed:
@@ -197,13 +198,14 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     max_seqlen = batch["max_seqlen"].squeeze()
                     cu_seqlens_argmin = batch["cu_seqlens_argmin"]
                     cu_seqlens_unpadded = batch['cu_seqlens_unpadded'].squeeze()
+                    cu_seqlens_unpadded_argmin = batch['cu_seqlens_unpadded_argmin']
 
                     # remove -1 "paddings" added in collate_fn
 
                     ## TODO: make sure this works with old preprocessing script + no CP as well
                     ## i.e. if a user already has a packed DPO (CP=1) dataset, training will be unchanged
                     cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
-                    cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
+                    cu_seqlens_unpadded = cu_seqlens_unpadded[: cu_seqlens_unpadded_argmin.item()]
 
                     from megatron.core.packed_seq_params import PackedSeqParams
 
@@ -227,17 +229,16 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                                 "input_ids",
                                 "labels",
                                 "position_ids",
-                                "attention_mask",
+                                #"attention_mask",
                             }:
                                 index = tex.thd_get_partitioned_indices(cu_seqlens, val.size(1), cp_size, cp_rank)
                                 val = val.index_select(1, index)
                                 batch[key] = val
-                        forward_args = {
-                            'input_ids': batch['tokens'],
-                            'position_ids': batch['position_ids'],
-                            'attention_mask': None if self.get_attention_mask_from_fusion else batch['attention_mask'],
-                            'labels': batch['labels'] if 'labels' in batch else None,
-                        }
+
+                    # Model forward pass
+                    forward_args["input_ids"] = batch["input_ids"]
+                    forward_args["position_ids"] = batch["position_ids"]
+                    labels = batch["labels"]
 
                     forward_args['packed_seq_params'] = PackedSeqParams(
                         cu_seqlens_q=cu_seqlens_unpadded,
