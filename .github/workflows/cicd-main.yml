@@ -67,7 +67,7 @@ jobs:
     name: ${{ matrix.test_case }}
     needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
-    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+    #if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
     strategy:
       matrix:
         test_case:
@@ -85,7 +85,7 @@ jobs:
     name: ${{ matrix.test_case }}
     needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
-    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
+    #if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
     strategy:
       matrix:
         test_case:
