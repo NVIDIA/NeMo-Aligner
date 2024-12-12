@@ -36,21 +36,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pre-flight:
-    runs-on: ubuntu-latest
-    outputs:
-      test_to_run: ${{ steps.test_to_run.outputs.main }}
-      all: ${{ steps.all.outputs.main }}
-    steps:
-      - name: Parse test_to_run
-        id: test_to_run
-        run: |
-          parsed_string=$(echo ${{ inputs.test_to_run || 'all' }} | jq -c --raw-input 'split(",")')
-          echo "main=${parsed_string}" | tee -a "$GITHUB_OUTPUT"
-      - name: Parse all
-        id: all
-        run: |
-          echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT"
+  # pre-flight:
+  #   runs-on: ubuntu-latest
+  #   outputs:
+  #     test_to_run: ${{ steps.test_to_run.outputs.main }}
+  #     all: ${{ steps.all.outputs.main }}
+  #   steps:
+  #     - name: Parse test_to_run
+  #       id: test_to_run
+  #       run: |
+  #         parsed_string=$(echo ${{ inputs.test_to_run || 'all' }} | jq -c --raw-input 'split(",")')
+  #         echo "main=${parsed_string}" | tee -a "$GITHUB_OUTPUT"
+  #     - name: Parse all
+  #       id: all
+  #       run: |
+  #         echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT"
   
   build-container:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
