@@ -125,7 +125,104 @@ model:
     data_prefix: null
     default_chosen_reward: 1. # the default reward for the chosen response in RPO
     default_rejected_reward: 0. # the default reward for the rejected response in RPO
-    
+    ## TODO: make sure chat works with DPO sequence packing
+    chat: true
+    chat_prompt_tokens:
+      system_turn_start: <SPECIAL_10>
+      turn_start: <SPECIAL_11>
+      label_start: <SPECIAL_12>
+      end_of_turn: '
+
+        '
+      end_of_name: '
+
+        '
+    train_ds:
+      file_path: /dataset/olive-condor/olive-condor_commercial.shuf.removelong.3ep.jsonl
+      global_batch_size: 128
+      micro_batch_size: 1
+      shuffle: true
+      memmap_workers: null
+      max_seq_length: 8192
+      min_seq_length: 1
+      drop_last: true
+      label_key: output
+      add_eos: false
+      add_sep: false
+      add_bos: false
+      truncation_field: input
+      index_mapping_dir: /indexmap_dir
+      prompt_template: '<SPECIAL_10>System
+
+        {system message}
+
+        <SPECIAL_11>User
+
+        {turn 1 user message}
+
+        <SPECIAL_11>Assistant
+
+        <SPECIAL_12>{turn 1 assistant label}
+
+        {turn 1 assistant message}
+
+        <SPECIAL_11>User
+
+        {turn 2 user message}
+
+        <SPECIAL_11>Assistant
+
+        <SPECIAL_12>{turn 2 assistant label}
+
+        {turn 2 assistant message}
+
+        <SPECIAL_11>'
+      hf_dataset: true
+      truncation_method: right
+    validation_ds:
+      file_path: /dataset/olive-condor/olive-condor_commercial.shuf.removelong.3ep.jsonl
+      global_batch_size: 128
+      micro_batch_size: 1
+      shuffle: false
+      memmap_workers: null
+      max_seq_length: 8192
+      min_seq_length: 1
+      drop_last: true
+      label_key: output
+      add_eos: false
+      add_sep: false
+      add_bos: false
+      truncation_field: input
+      index_mapping_dir: /indexmap_dir
+      prompt_template: '<SPECIAL_10>System
+
+        {system message}
+
+        <SPECIAL_11>User
+
+        {turn 1 user message}
+
+        <SPECIAL_11>Assistant
+
+        <SPECIAL_12>{turn 1 assistant label}
+
+        {turn 1 assistant message}
+
+        <SPECIAL_11>User
+
+        {turn 2 user message}
+
+        <SPECIAL_11>Assistant
+
+        <SPECIAL_12>{turn 2 assistant label}
+
+        {turn 2 assistant message}
+
+        <SPECIAL_11>'
+      hf_dataset: true
+      truncation_method: right
+      output_original_text: true
+
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
     data:
