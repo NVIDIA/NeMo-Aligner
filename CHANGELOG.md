@@ -30,7 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
       model.context_parallel_size=2
    ```
   CP can then be enabled in your training run by setting `model.context_parallel_size` in your config. Refer to the [SFT documentation](https://github.com/NVIDIA/NeMo-Aligner/blob/main/docs/user-guide/sft.rst#step-1-format-the-data)
-for more details on running this script and on running SFT with a packed dataset.
+for more details on running `prepare_packed_ft_dataset.py` and on running SFT with a packed dataset.
 - Sequence packing is now supported when running DPO.
 - Added support for Knowledge Distillation with SFT. See the [tutorial](docs/user-guide/knowledge-distillation.rst) for details.
 - Added support for Megatron Core’s distributed optimizer, which can be configured using `++model.optim.name=mcore_distributed_optim`.
