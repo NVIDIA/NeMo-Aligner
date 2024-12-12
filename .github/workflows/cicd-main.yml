@@ -47,7 +47,7 @@ jobs:
         run: |
           parsed_string=$(echo ${{ inputs.test_to_run || 'all' }} | jq -c --raw-input 'split(",")')
           echo "main=${parsed_string}" | tee -a "$GITHUB_OUTPUT"
-          echo "EVENT NAME: ${{ github.event_name }}"
+          echo "EVENT NAME: ${{ github.event_name == 'workflow_dispatch' }}"
       - name: Parse all
         id: all
         run: |
