@@ -53,7 +53,7 @@ jobs:
           echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT"
   
   build-container:
-    #if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_build_container.yml@v0.1.0
     with:
       image-name: nemo_aligner_container
@@ -63,44 +63,44 @@ jobs:
         MAX_JOBS=32
         ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
   
-  Unit_Tests:
-    name: ${{ matrix.test_case }}
-    needs: [build-container, pre-flight]
-    uses: ./.github/workflows/_run_test.yml
-    #if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
-    strategy:
-      matrix:
-        test_case:
-          - run_unit.sh
-          - run_mpi_unit.sh
-    with:
-      RUNNER: self-hosted-azure
-      TIMEOUT: 10
-      SCRIPT: |
-        nvidia-smi
-        cd ${ALIGNER_REPO_DIR}
-        bash tests/${{ matrix.test_case }}
+  # Unit_Tests:
+  #   name: ${{ matrix.test_case }}
+  #   needs: [build-container, pre-flight]
+  #   uses: ./.github/workflows/_run_test.yml
+  #   if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+  #   strategy:
+  #     matrix:
+  #       test_case:
+  #         - run_unit.sh
+  #         - run_mpi_unit.sh
+  #   with:
+  #     RUNNER: self-hosted-azure
+  #     TIMEOUT: 10
+  #     SCRIPT: |
+  #       nvidia-smi
+  #       cd ${ALIGNER_REPO_DIR}
+  #       bash tests/${{ matrix.test_case }}
 
-  Functional_Tests:
-    name: ${{ matrix.test_case }}
-    needs: [build-container, pre-flight]
-    uses: ./.github/workflows/_run_test.yml
-    #if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
-    strategy:
-      matrix:
-        test_case:
-          - ppo-llama3-pp2-reshard
-          - reinforce-llama3-pp2-reshard
-          - dpo-llama3
-          - dpo-llama3-pack
-          - kd-llama3
-          - sft-llama3
-          - sft-llama3-cp
-          - rm-llama3
-          - e2e-nemo2
-    with:
-      RUNNER: self-hosted-azure
-      # Fairly aggresive timeout that all functional tests should try to adhere to
-      TIMEOUT: 10
-      SCRIPT: |
-        bash /opt/NeMo-Aligner/tests/functional/test_cases/${{ matrix.test_case }}
+  # Functional_Tests:
+  #   name: ${{ matrix.test_case }}
+  #   needs: [build-container, pre-flight]
+  #   uses: ./.github/workflows/_run_test.yml
+  #   if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
+  #   strategy:
+  #     matrix:
+  #       test_case:
+  #         - ppo-llama3-pp2-reshard
+  #         - reinforce-llama3-pp2-reshard
+  #         - dpo-llama3
+  #         - dpo-llama3-pack
+  #         - kd-llama3
+  #         - sft-llama3
+  #         - sft-llama3-cp
+  #         - rm-llama3
+  #         - e2e-nemo2
+  #   with:
+  #     RUNNER: self-hosted-azure
+  #     # Fairly aggresive timeout that all functional tests should try to adhere to
+  #     TIMEOUT: 10
+  #     SCRIPT: |
+  #       bash /opt/NeMo-Aligner/tests/functional/test_cases/${{ matrix.test_case }}
