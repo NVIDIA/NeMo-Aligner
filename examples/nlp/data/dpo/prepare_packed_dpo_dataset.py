@@ -99,6 +99,9 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
         tokenizer = get_nmt_tokenizer(library="huggingface", model_name=cfg.tokenizer_path, use_fast=True)
     elif tokenizer_type == "sentencepiece":
         tokenizer = get_nmt_tokenizer(library="sentencepiece", tokenizer_model=cfg.tokenizer_path)
+    elif cfg.tokenizer_type=="tiktoken":
+        ## TODO: tokenizer_model unused?
+        tokenizer = get_nmt_tokenizer(library="tiktoken", vocab_file=cfg.tokenizer_path, tokenizer_model=cfg.tokenizer_path)
     else:
         raise ValueError(f"unsupported tokenizer type {tokenizer_type}")
 
