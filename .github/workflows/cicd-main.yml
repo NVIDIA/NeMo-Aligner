@@ -63,11 +63,6 @@ jobs:
     #     MAX_JOBS=32
     #     ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
     runs-on: ubuntu-latest
-    steps:
-      - name: Test
-        id: this_is_a_test
-        run: |
-          echo "this is a test"
   
   # Unit_Tests:
   #   name: ${{ matrix.test_case }}
