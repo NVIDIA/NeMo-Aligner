@@ -164,9 +164,13 @@ def main(cfg) -> None:
 
     ## use "custom_trainer_transformations" to add anything custom you'd
     ## like to add to your trainer, including custom callbacks
-    def apply_custom_transformations_to_trainer(trainer, cfg):
-        transformations = instantiate(cfg.custom_trainer_transformations)
+    def apply_custom_transformations_to_trainer(trainer, custom_transformations):
+        transformations = instantiate(custom_transformations)
         transformations(trainer)
+    
+    if cfg.get("custom_trainer_transformations", None):
+        apply_custom_transformations_to_trainer(trainer, cfg.custom_trainer_transformations)
+
 
     fit_context_mgr = nullcontext
     if cfg.get("fit_context_mgr", None):
