@@ -27,6 +27,10 @@ from nemo_aligner.data.nlp.builders import (
     identity_collate,
 )
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
+from nemo_aligner.utils.customization import (
+    CALLBACKS_MAPPING,
+    add_custom_meta_to_loggers
+)
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -160,6 +164,14 @@ def main(cfg) -> None:
 
     if custom_trainer_state_dict is not None:
         dpo_trainer.load_state_dict(custom_trainer_state_dict)
+
+    if cfg.trainer.get("callbacks", None) is not None:
+        for callback in cfg.trainer.callbacks:
+            dpo_trainer.callbacks.append(CALLBACKS_MAPPING[callback])
+
+    if cfg.trainer.get("custom_logger_meta", None) is not None:
+        meta_dict = cgt.trainer.get("custom_logger_meta")
+        add_custom_meta_to_loggers(trainre, meta_dict)
 
     dpo_trainer.fit()
 
