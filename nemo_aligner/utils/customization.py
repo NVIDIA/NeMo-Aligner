@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+from lightning.pytorch.loggers import MLFlowLogger, WandbLogger
+
 ## tracks mapping of strings to callbacks. 
 ## if a user would like to use custom callbacks, they should be sure
 ## to add the callbacks to this dict
