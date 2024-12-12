@@ -55,13 +55,13 @@ jobs:
   build-container:
     if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     #uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_build_container.yml@v0.1.0
-    with:
-      image-name: nemo_aligner_container
-      dockerfile: Dockerfile
-      image-label: nemo-aligner
-      build-args: |
-        MAX_JOBS=32
-        ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
+    # with:
+    #   image-name: nemo_aligner_container
+    #   dockerfile: Dockerfile
+    #   image-label: nemo-aligner
+    #   build-args: |
+    #     MAX_JOBS=32
+    #     ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - name: Test
         id: this_is_a_test
