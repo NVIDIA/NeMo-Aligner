@@ -175,11 +175,16 @@ def dummy_gpt_model(init_model_parallel):
 def dummy_actor_gpt_model_with_pp():
 
     model_cfg = {
+        # Args needed to make mcore inference go brrr
+        # "flash_decode": True,
+        "enable_cuda_graph": True,
+        "use_te_rng_tracker": True,  # Needed if enable_cuda_graph=True
+        #########
         "precision": "bf16-mixed",
         "micro_batch_size": 1,
         "global_batch_size": 8,
         "tensor_model_parallel_size": 1,
-        "pipeline_model_parallel_size": 2,
+        "pipeline_model_parallel_size": int(os.environ.get("PP", 2)),
         "resume_from_checkpoint": None,
         "encoder_seq_length": 8192,
         "max_position_embeddings": 8192,
@@ -324,7 +329,7 @@ def dummy_actor_gpt_model_with_pp():
     }
 
     trainer_cfg = {
-        "devices": 2,
+        "devices": int(os.environ.get("PP", 2)),
         "num_nodes": 1,
         "accelerator": "gpu",
         "precision": 32,
@@ -370,6 +375,7 @@ def dummy_actor_gpt_model_with_pp():
 
     trainer = resolve_and_create_trainer(cfg, "ppo")
     model = MegatronGPTActorModel(cfg=cfg.model, trainer=trainer)
+    # breakpoint()
     init_distributed(trainer, model, cfg.model.get("transformer_engine", False))
     yield model
     Utils.destroy_model_parallel()

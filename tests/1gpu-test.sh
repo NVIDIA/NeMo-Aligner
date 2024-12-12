@@ -26,7 +26,7 @@ fi
 export PYTHONPATH=$(realpath ..):${PYTHONPATH:-}
 export PYTHONPATH=/home/terryk/aligner-mcore-inf/megatron-lm:$PYTHONPATH
 #export PYTHONPATH=/home/terryk/aligner-mcore-inf/NeMo:$PYTHONPATH
-CUDA_VISIBLE_DEVICES=0,1 mpirun -np 2 --allow-run-as-root pytest .. -rA -s -x -vv --mpi -k test_trtllm_matches_mcore_inf $@ 2>&1 | tee log || true
+PP=1 CUDA_VISIBLE_DEVICES=0 mpirun -np 1 --allow-run-as-root pytest .. -rA -s -x -vv --mpi -k test_trtllm_matches_mcore_inf $@ 2>&1 | tee log || true
 
 if [[ -f PYTEST_SUCCESS ]]; then
     echo SUCCESS
