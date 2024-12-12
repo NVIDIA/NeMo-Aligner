@@ -27,7 +27,7 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.supervised import SupervisedTrainer
 from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset
-from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel
+from nemo_aligner.models.nlp.gpt.gpt_sft_model import GPTSFTModel, MambaSFTModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -65,7 +65,12 @@ def main(cfg) -> None:
         cfg.model.precision = cfg.trainer.precision
 
     ptl_model = load_from_nemo(
-        GPTSFTModel, cfg, trainer, strict=True, restore_path=cfg.model.restore_from_path, return_updated_cfg=False,
+        MambaSFTModel if cfg.model.get("mamba_hybrid", False) else GPTSFTModel,
+        cfg,
+        trainer,
+        strict=True,
+        restore_path=cfg.model.restore_from_path,
+        return_updated_cfg=False,
     )
 
     init_peft(ptl_model, cfg.model)
@@ -102,6 +107,7 @@ def main(cfg) -> None:
         train_data_cfg,
         ptl_model.tokenizer,
         num_samples,
+        is_mamba=cfg.model.get("mamba_hybrid", False),
         answer_only_loss=True,
         is_chat=cfg.model.data.chat,
         special_tokens=cfg.model.data.chat_prompt_tokens,
@@ -114,6 +120,7 @@ def main(cfg) -> None:
         val_data_cfg,
         ptl_model.tokenizer,
         num_samples,
+        is_mamba=cfg.model.get("mamba_hybrid", False),
         answer_only_loss=True,
         is_chat=cfg.model.data.chat,
         special_tokens=cfg.model.data.chat_prompt_tokens,
