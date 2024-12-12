@@ -14,6 +14,7 @@
 from functools import partial
 
 import torch.multiprocessing as mp
+from hydra.utils import instantiate
 from omegaconf.omegaconf import OmegaConf
 
 from nemo.core.config import hydra_runner
@@ -27,10 +28,6 @@ from nemo_aligner.data.nlp.builders import (
     identity_collate,
 )
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
-from nemo_aligner.utils.customization import (
-    CALLBACKS_MAPPING,
-    add_custom_meta_to_loggers
-)
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -165,15 +162,18 @@ def main(cfg) -> None:
     if custom_trainer_state_dict is not None:
         dpo_trainer.load_state_dict(custom_trainer_state_dict)
 
-    if cfg.trainer.get("callbacks", None) is not None:
-        for callback in cfg.trainer.callbacks:
-            dpo_trainer.callbacks.append(CALLBACKS_MAPPING[callback])
+    ## use "custom_trainer_transformations" to add anything custom you'd
+    ## like to add to your trainer, including custom callbacks
+    def apply_custom_transformations_to_trainer(trainer, cfg):
+        transformations = instantiate(cfg.custom_trainer_transformations)
+        transformations(trainer)
 
-    if cfg.trainer.get("custom_logger_meta", None) is not None:
-        meta_dict = cgt.trainer.get("custom_logger_meta")
-        add_custom_meta_to_loggers(trainre, meta_dict)
+    fit_context_mgr = nullcontext
+    if cfg.get("fit_context_mgr", None):
+        it_context_mgr = instantiate(cfg.fit_context_mgr)
 
-    dpo_trainer.fit()
+    with fit_context_mgr:
+        dpo_trainer.fit()
 
 
 if __name__ == "__main__":
