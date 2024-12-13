@@ -72,7 +72,7 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
                     required_keys.update(("tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("labels", "loss_mask"))
+                    required_keys.update(("labels", "loss_mask", "topk_logits", "topk_token_ids"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
@@ -83,7 +83,9 @@ class GPTKnowledgeDistillationModel(NLPAdapterModelMixin, MegatronGPTModel, Supe
 
             tokens = batch["tokens"]
             labels = batch["labels"]
-            loss_mask = batch["loss_mask"].clamp(min=0, max=1)
+            loss_mask = batch["loss_mask"]
+            if loss_mask is not None:
+                loss_mask = loss_mask.clamp(min=0, max=1)
             target_topk_logits = batch["topk_logits"]
             target_topk_token_ids = batch["topk_token_ids"]
             # Model forward pass
