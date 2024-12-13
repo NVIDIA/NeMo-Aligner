@@ -58,7 +58,7 @@ The REINFORCE Actor training job contains the master controller that makes the H
    TRAIN_DATA_PATH="/path/to/train_prompts.jsonl"
    VALID_DATA_PATH="/path/to/test_prompts.jsonl"
 
-   PRETRAINED_ACTOR_NEMO_FILE="/path/to/sft_checkpoint.nemo"
+   ACTOR_NEMO_FILE="/path/to/sft_checkpoint.nemo"
    RESULTS_DIR="/path/to/actor_results_dir"
 
    USE_FLASK=False
