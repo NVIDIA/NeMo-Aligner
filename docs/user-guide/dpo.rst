@@ -46,7 +46,7 @@ To start, we must first get a pretrained model to align. There are two models we
                   --in-folder ./model_checkpoint \
                   --out-file ./mcore_gpt.nemo
 
-    .. tab-item:: LLaMa3 7B
+    .. tab-item:: LLaMa3 8B
         :sync: key2
 
         #. Download the `Llama 3 8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the models folder.
