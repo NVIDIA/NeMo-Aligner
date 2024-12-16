@@ -90,6 +90,8 @@ def extract_dialogue_llama(text):
             .split("Here is my response:")[1]
             .strip()
         )
+    elif "<think>" in assistant_text[-1] and "<ethink>" in assistant_text[-1]:
+        assistant_text[-1] = assistant_text[-1].split("<ethink>")[1].strip()
     else:
         assistant_text[-1] = "None"
     return user_text, assistant_text
