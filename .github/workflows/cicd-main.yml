@@ -41,6 +41,7 @@ jobs:
     outputs:
       test_to_run: ${{ steps.test_to_run.outputs.main }}
       all: ${{ steps.all.outputs.main }}
+      docs_only: ${{ steps.changed-files.outputs.doc_any_changed == 'true' && steps.changed-files.outputs.src_any_changed == 'false' }}
     steps:
       - name: Parse test_to_run
         id: test_to_run
@@ -51,9 +52,23 @@ jobs:
         id: all
         run: |
           echo "main=${{ contains(fromJSON(steps.test_to_run.outputs.main), 'all') }}" | tee -a "$GITHUB_OUTPUT"
-  
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v44
+        with:
+          files_yaml: |
+            doc:
+              - '**.md'
+              - docs/**
+            src:
+              - tests/**
+              - '!tests/**.md'
+              - nemo_aligner/**
+
   build-container:
-    if: ${{ github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
+    if: ${{ pre-flight.outputs.docs_only == 'false' || github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main' }}
+    needs: [pre-flight]
     uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_build_container.yml@v0.1.0
     with:
       image-name: nemo_aligner_container
@@ -67,7 +82,7 @@ jobs:
     name: ${{ matrix.test_case }}
     needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
-    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
+    if: pre-flight.outputs.docs_only == 'false' || contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'unit') || needs.pre-flight.outputs.all == 'true'
     strategy:
       matrix:
         test_case:
@@ -85,7 +100,7 @@ jobs:
     name: ${{ matrix.test_case }}
     needs: [build-container, pre-flight]
     uses: ./.github/workflows/_run_test.yml
-    if: contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
+    if: pre-flight.outputs.docs_only == 'false' || contains(fromJSON(needs.pre-flight.outputs.test_to_run), 'functional') || needs.pre-flight.outputs.all == 'true'
     strategy:
       matrix:
         test_case:
