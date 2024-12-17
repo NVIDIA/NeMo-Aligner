@@ -25,14 +25,12 @@ from nemo.export.tensorrt_llm import TensorRTLLM
 from nemo.export.trt_llm import tensorrt_llm_run
 from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
 from nemo.utils import logging
-from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     broadcast_2d_tensor_within_mp,
     broadcast_2d_tensor_within_pp,
     broadcast_tensor_within_pp,
 )
 from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
-from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import clear_memory, log_memory
 
 try:

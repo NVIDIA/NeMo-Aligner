@@ -18,7 +18,6 @@ import torch
 import torch.distributed
 from megatron.inference.text_generation import beam_search_and_post_process, generate_and_post_process
 
-from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp
 from nemo_aligner.utils.generation import MegatronGenerator, NemoGenerator, TRTLLMGenerator
 from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
