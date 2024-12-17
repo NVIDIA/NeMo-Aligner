@@ -14,7 +14,7 @@
 
 import math
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, List
 
 import numpy as np
 import torch
@@ -139,3 +139,10 @@ class FutureResult(ABC):
     def result(self):
         """called by the trainer to get the result must be broadcasted to all ranks
         """
+
+
+def triton_textencode(text_batch: List[str]):
+    enc = np.array([[np.char.encode(i, 'utf-8')] for i in text_batch])
+    enc = np.reshape(enc, (enc.shape[0], 1))
+
+    return enc

@@ -140,3 +140,33 @@ def calculate_rloo_baseline(prompts, reward, mask):
             baseline[prompt_idx] = rloo
 
     return baseline
+
+def weight_by_correect(batch, weighting_mode='uniform'):
+    """
+    Function that returns positive scalars for correct answers and 0 for incorrect ones.
+    With a weighting mode of 'balanced', we return a positive weight of 1 / (#correct answers 
+    per identical prompt) for correct answers and 0 otherwise.
+    With a weighting mode of 'uniform', we return 1.0 for correct and 0.0 for incorrect. 
+    
+    Returns (a torch tensor of weights, True if all responses are incorrect else False)
+    """
+    if weighting_mode == 'uniform':
+        return batch["rewards"], torch.sum(batch["rewards"]).item() == 0
+
+    elif weighting_mode == 'balanced':
+        # unique_prompts = torch.unique(batch["prompt_tokens"], dim=0)
+        # selected_idx = []
+
+        # for i in range(len(unique_prompts)):
+            # is_matching_prompt = (batch["prompt_tokens"] == unique_prompts[i]).all(1)
+            # prompt_idx = torch.arange(len(batch["prompt_tokens"]))[is_matching_prompt]
+            # sorted_idx = zip(prompt_idx, batch["rewards"][is_matching_prompt])
+            # sorted_idx = sorted(sorted_idx, key=operator.itemgetter(1))
+            # selected_idx += [x[0].item() for x in sorted_idx[-1 * num_select :]]
+
+        # selected_batch = {k: batch[k][selected_idx] for k in batch.keys()}
+        # return selected_batch
+        return None, None
+
+    else:
+        raise NotImplementedError(f"weighting mode must be balanced or uniform. passed {weighting_mode}")
