@@ -30,7 +30,10 @@ from nemo_aligner.utils.distributed import (
     broadcast_2d_tensor_within_pp,
     broadcast_tensor_within_pp,
 )
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy
+from nemo_aligner.utils.text_generation_utils import (
+    TrackLengthGPTModelTextGenerationStrategy,
+    verify_is_valid_and_clamp_range_,
+)
 from nemo_aligner.utils.utils import clear_memory, log_memory
 
 try:
@@ -63,6 +66,8 @@ DEFAULT_PAD_ID = -42
 class GenerationOutput:
     response_tokens: torch.Tensor
     response_lengths: torch.Tensor
+    prompt_lengths: torch.Tensor
+    is_valid: torch.Tensor
 
 
 @dataclass
@@ -230,16 +235,29 @@ class TRTLLMGenerator(InferenceGeneratorBase):
         return output_ids, response_lengths
 
     def generate(self, inputs: tuple[torch.Tensor, torch.Tensor]) -> GenerationOutput:
-
-        output_ids, response_lengths = self._generate(inputs)
+        _, prompt_lengths = inputs
+        strategy = TrackLengthGPTModelTextGenerationStrategy(
+            model=self.model, context_lengths=prompt_lengths, max_length=self.max_generation_length
+        )
+        response_tokens, response_lengths = self._generate(inputs)
         max_length = response_lengths.max().item()
 
         # Map pad_id to eos_id in case tokenizer does not have a pad_id
-        output_ids[output_ids == self.pad_id] = self.eos_id
-        output_ids = output_ids[..., :max_length].contiguous()
-        output_ids = broadcast_2d_tensor_within_mp(output_ids, dtype=output_ids.dtype)
+        response_tokens[response_tokens == self.pad_id] = self.eos_id
+        response_tokens = response_tokens[..., :max_length].contiguous()
+        response_tokens = broadcast_2d_tensor_within_mp(response_tokens, dtype=response_tokens.dtype)
 
-        return GenerationOutput(response_tokens=output_ids, response_lengths=response_lengths)
+        # sometimes backends like TRT-LLM will generate invalid tokens
+        # so we need to also inplace mutate the response_tokens to be within the tokenizer range
+        is_valid = verify_is_valid_and_clamp_range_(
+            response_tokens, response_lengths, strategy, self.model.tokenizer, self.end_strings
+        )
+        return GenerationOutput(
+            response_tokens=response_tokens,
+            response_lengths=response_lengths,
+            prompt_lengths=prompt_lengths,
+            is_valid=is_valid,
+        )
 
     def free(self):
         if not self.unload_engine_train:
@@ -278,6 +296,9 @@ class MegatronGenerator(InferenceGeneratorBase):
 
     def generate(self, inputs: tuple[torch.Tensor, torch.Tensor]) -> GenerationOutput:
         prompt_tokens, prompt_lengths = inputs
+        strategy = TrackLengthGPTModelTextGenerationStrategy(
+            model=self.model, context_lengths=prompt_lengths, max_length=self.max_generation_length,
+        )
         mcore_result = generate_and_post_process(
             model=self.model.model,
             prompts=(prompt_tokens, prompt_lengths),
@@ -292,15 +313,26 @@ class MegatronGenerator(InferenceGeneratorBase):
         )
         # Mcore inference returns None if not on the first PP rank
         if mcore_result is not None:
-            mcore_output_ids, mcore_lengths = mcore_result.tokens, mcore_result.lengths
-            mcore_output_ids = torch.tensor(mcore_output_ids, dtype=torch.long, device="cuda")
-            mcore_lengths = torch.tensor(mcore_lengths, dtype=torch.long, device="cuda")
+            response_tokens, response_lengths = mcore_result.tokens, mcore_result.lengths
+            response_tokens = torch.tensor(response_tokens, dtype=torch.long, device="cuda")
+            response_lengths = torch.tensor(response_lengths, dtype=torch.long, device="cuda")
         else:
-            mcore_output_ids = None
-        mcore_output_ids = broadcast_2d_tensor_within_pp(mcore_output_ids, dtype=torch.long, from_last=False)
-        mcore_lengths = broadcast_2d_tensor_within_pp(mcore_lengths, dtype=torch.long, from_last=False)
+            response_tokens = None
+        response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long, from_last=False)
+        response_lengths = broadcast_2d_tensor_within_pp(response_lengths, dtype=torch.long, from_last=False)
 
-        return GenerationOutput(response_tokens=mcore_output_ids, response_lengths=mcore_lengths)
+        # sometimes backends like TRT-LLM will generate invalid tokens
+        # so we need to also inplace mutate the response_tokens to be within the tokenizer range
+        is_valid = verify_is_valid_and_clamp_range_(
+            response_tokens, response_lengths, strategy, self.model.tokenizer, self.end_strings
+        )
+
+        return GenerationOutput(
+            response_tokens=response_tokens,
+            response_lengths=response_lengths,
+            prompt_lengths=prompt_lengths,
+            is_valid=is_valid,
+        )
 
 
 @dataclass
@@ -340,7 +372,7 @@ class NemoGenerator(InferenceGeneratorBase):
     def generate(self, inputs: tuple[torch.Tensor, torch.Tensor]) -> GenerationOutput:
         prompt_tokens, prompt_lengths = inputs
         strategy = TrackLengthGPTModelTextGenerationStrategy(
-            model=self.model, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
+            model=self.model, context_lengths=prompt_lengths, max_length=self.max_generation_length
         )
         actor_output = self.model.generate(
             inputs=(prompt_tokens, prompt_lengths),
@@ -348,7 +380,36 @@ class NemoGenerator(InferenceGeneratorBase):
             sampling_params=self._sampling_params,
             strategy=strategy,
         )
-        nemo_output_ids = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
-        nemo_output_ids = broadcast_2d_tensor_within_pp(nemo_output_ids, dtype=torch.long)
-        nemo_lengths = strategy.get_lengths()
-        return GenerationOutput(response_tokens=nemo_output_ids, response_lengths=nemo_lengths,)
+        response_tokens = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
+        response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
+        response_lengths = strategy.get_lengths()
+
+        max_response_length = response_lengths.max().item()
+
+        # Sanity check to validate response length.
+        if max_response_length != response_tokens.size(1):
+            # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
+            # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
+            # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
+            # and remove the `if` below.
+            if (
+                max_response_length >= response_tokens.size(1)
+                or response_tokens.size(1) != prompt_lengths.max().item() + self.max_generation_length
+            ):
+                raise AssertionError(
+                    f"max response length ({max_response_length}) does not match the size of "
+                    f"`response_tokens` ({response_tokens.size(1)})"
+                )
+
+        # sometimes backends like TRT-LLM will generate invalid tokens
+        # so we need to also inplace mutate the response_tokens to be within the tokenizer range
+        is_valid = verify_is_valid_and_clamp_range_(
+            response_tokens, response_lengths, strategy, self.model.tokenizer, self.end_strings
+        )
+
+        return GenerationOutput(
+            response_tokens=response_tokens,
+            response_lengths=response_lengths,
+            prompt_lengths=prompt_lengths,
+            is_valid=is_valid,
+        )

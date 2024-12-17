@@ -295,5 +295,16 @@ def test_all_inf_frameworks_greedy_generations_match(dummy_actor_gpt_model_with_
             nemo_output_ids[b_i][:prompt_and_resp_len], trtllm_output_ids[b_i][:prompt_and_resp_len], proportion=0.9
         )
 
+    torch.testing.assert_close(nemo_result.prompt_lengths, prompt_lengths)
+    torch.testing.assert_close(mcore_result.prompt_lengths, prompt_lengths)
+    torch.testing.assert_close(trtllm_result.prompt_lengths, prompt_lengths)
+
+    expected_is_valid = torch.tensor(
+        [False, False, False, False], dtype=torch.bool, device=nemo_result.is_valid.device
+    )
+    torch.testing.assert_close(nemo_result.is_valid, expected_is_valid)
+    torch.testing.assert_close(mcore_result.is_valid, expected_is_valid)
+    torch.testing.assert_close(trtllm_result.is_valid, expected_is_valid)
+
     # Cuda graphs should make the second call faster
     assert first_mcore_generate_sec > second_mcore_generate_sec
