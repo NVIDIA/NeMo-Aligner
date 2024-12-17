@@ -117,6 +117,6 @@ jobs:
 
           CI_SKIP=${{ github.event.label.name == 'Skip CICD' }}
 
-          echo ${{ fromJSON(needs.*.result }}
+          echo ${{ fromJSON(needs.*.result) }}
           
           test "$ALL_SUCCESS" = "true" || test "$CI_SKIP" = "true"
