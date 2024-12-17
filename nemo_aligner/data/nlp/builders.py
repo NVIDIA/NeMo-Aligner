@@ -417,6 +417,7 @@ def build_sft_dataset(
         index_mapping_dir=data_cfg.get("index_mapping_dir", None),
         prompt_template=data_cfg.get("prompt_template", None),
         virtual_tokens=0,
+        meta_tokens=data_cfg.get("meta_tokens", 0),
         memmap_workers=data_cfg.get(
             "memmap_workers", None
         ),  # used to set num. of workers to create the memmap index files
