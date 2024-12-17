@@ -24,6 +24,12 @@ if [[ $NUM_GPUS_AVAILABLE -lt 2 ]]; then
 fi
 
 export PYTHONPATH=$(realpath ..):${PYTHONPATH:-}
+if [[ -n "${MCORE_PATH:-}" ]]; then
+  export PYTHONPATH=$MCORE_PATH:$PYTHONPATH
+fi
+if [[ -n "${NEMO_PATH:-}" ]]; then
+  export PYTHONPATH=$NEMO_PATH:$PYTHONPATH
+fi
 CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node 2 -m pytest .. -rA -s -x -vv $@ || true
 
 if [[ -f PYTEST_SUCCESS ]]; then

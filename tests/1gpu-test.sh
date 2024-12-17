@@ -24,9 +24,13 @@ if [[ $NUM_GPUS_AVAILABLE -lt 2 ]]; then
 fi
 
 export PYTHONPATH=$(realpath ..):${PYTHONPATH:-}
-export PYTHONPATH=/home/terryk/aligner-mcore-inf/megatron-lm:$PYTHONPATH
-#export PYTHONPATH=/home/terryk/aligner-mcore-inf/NeMo:$PYTHONPATH
-PP=1 CUDA_VISIBLE_DEVICES=0 mpirun -np 1 --allow-run-as-root pytest .. -rA -s -x -vv --mpi -k test_trtllm_matches_mcore_inf $@ 2>&1 | tee log || true
+if [[ -n "${MCORE_PATH:-}" ]]; then
+  export PYTHONPATH=$MCORE_PATH:$PYTHONPATH
+fi
+if [[ -n "${NEMO_PATH:-}" ]]; then
+  export PYTHONPATH=$NEMO_PATH:$PYTHONPATH
+fi
+PP=1 CUDA_VISIBLE_DEVICES=0 mpirun -np 1 --allow-run-as-root pytest .. -rA -s -x -vv --mpi -k test_all_inf_frameworks_greedy_generations_match $@ 2>&1 | tee log || true
 
 if [[ -f PYTEST_SUCCESS ]]; then
     echo SUCCESS

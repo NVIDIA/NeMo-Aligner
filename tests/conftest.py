@@ -176,7 +176,7 @@ def dummy_actor_gpt_model_with_pp():
 
     model_cfg = {
         # Args needed to make mcore inference go brrr
-        # "flash_decode": True,
+        "flash_decode": True,
         "enable_cuda_graph": True,
         "use_te_rng_tracker": True,  # Needed if enable_cuda_graph=True
         #########
