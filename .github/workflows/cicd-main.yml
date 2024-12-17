@@ -118,6 +118,8 @@ jobs:
           CI_SKIP: ${{ github.event.label.name == 'Skip CICD' }}
         run: |
          
-          echo $JOB_RESULTS | jq
+          SUMMARY=$(echo $JOB_RESULTS | jq 'to_entries[] | .key + ": " + .value.result' | tr -d '"')
+          echo '🤖: CICD Result' >> $GITHUB_STEP_SUMMARY
+          echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
           
           test "$ALL_SUCCESS" = "true" || test "$CI_SKIP" = "true"
