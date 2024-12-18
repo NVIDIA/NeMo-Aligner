@@ -383,6 +383,30 @@ NeMo-Aligner has support for accelerating RLHF with `TensorRT-LLM <https://githu
 
 For more information please see the NeMo-Aligner `paper <https://arxiv.org/abs/2405.01481>`__.
 
+.. note::
+    If you are running ``train_gpt_ppo_actor.py`` interactively (outside of SLURM) with TensorRT-LLM acceleration,
+    you must prepend ``mpirun -n 8 --allow-run-as-root`` to the python run command:
+
+    .. code-block:: bash
+
+        mpirun -n 8 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_ppo_actor.py ...
+
+    If you are using SLURM, you do not need to prepend ``mpirun`` since this will be handled automatically
+    if you run ``srun`` with ``--mpi=pmix``:
+
+    .. code-block:: bash
+
+        read -r -d '' cmd_ppo <<EOF
+        cd ${GPFS} \
+        && export PYTHONPATH="${GPFS}:${PYTHONPATH}" \
+        && export HYDRA_FULL_ERROR=1 \
+        && python -u ${GPFS}/examples/nlp/gpt/train_gpt_ppo_actor.py \
+            ...
+        EOF
+
+        srun --mpi=pmix ... bash -c "${cmd_ppo}"
+
+
 PPO Results with TensorRT-LLM
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
