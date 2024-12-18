@@ -14,6 +14,7 @@
 
 """Custom datasets for RLHF training"""
 
+import math
 import os
 from typing import Dict, List
 
@@ -30,6 +31,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset i
 )
 from nemo.core import Dataset
 from nemo.utils import logging
+from nemo_aligner.utils import parallel_state
 
 
 class KnowledgeDistillationDataset(Dataset):
@@ -311,7 +313,17 @@ class DPOModelDataset(Dataset):
     """
 
     def __init__(
-        self, cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last=True,
+        self,
+        cfg,
+        tokenizer,
+        name,
+        data_prefix,
+        documents,
+        data,
+        seq_length,
+        seed,
+        drop_last=True,
+        pad_chosen_rejected_to_max=True,
     ):
         super().__init__()
         self.cfg = cfg
@@ -320,6 +332,10 @@ class DPOModelDataset(Dataset):
         self.drop_last = drop_last
         self.seq_length = seq_length
         self.tokenizer = tokenizer
+
+        ## pad_chosen_rejected_to_max should be true unless iterating through the
+        ## dataset as a data preparation step for packing
+        self.pad_chosen_rejected_to_max = pad_chosen_rejected_to_max
 
         self.reset_position_ids = cfg.data.get("reset_position_ids", False)
         self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
@@ -455,19 +471,32 @@ class DPOModelDataset(Dataset):
 
         max_curr_seq_len = max(chosen_len, reject_len)
 
-        chosen_tokens = torch.nn.functional.pad(
-            torch.LongTensor(chosen), (0, max_curr_seq_len - chosen_len), mode="constant", value=self.eos_id
-        )
-        rejected_tokens = torch.nn.functional.pad(
-            torch.LongTensor(reject), (0, max_curr_seq_len - reject_len), mode="constant", value=self.eos_id
-        )
-        labels_chosen_tokens = torch.nn.functional.pad(
-            torch.LongTensor(chosen_labels), (0, max_curr_seq_len - len(chosen_labels)), mode="constant", value=-100
-        )
-        labels_reject_tokens = torch.nn.functional.pad(
-            torch.LongTensor(reject_labels), (0, max_curr_seq_len - len(reject_labels)), mode="constant", value=-100
-        )
+        if self.pad_chosen_rejected_to_max:
+            chosen_tokens = torch.nn.functional.pad(
+                torch.LongTensor(chosen), (0, max_curr_seq_len - chosen_len), mode="constant", value=self.eos_id
+            )
+            rejected_tokens = torch.nn.functional.pad(
+                torch.LongTensor(reject), (0, max_curr_seq_len - reject_len), mode="constant", value=self.eos_id
+            )
+            labels_chosen_tokens = torch.nn.functional.pad(
+                torch.LongTensor(chosen_labels),
+                (0, max_curr_seq_len - len(chosen_labels)),
+                mode="constant",
+                value=-100,
+            )
+            labels_reject_tokens = torch.nn.functional.pad(
+                torch.LongTensor(reject_labels),
+                (0, max_curr_seq_len - len(reject_labels)),
+                mode="constant",
+                value=-100,
+            )
+        else:
+            chosen_tokens = torch.LongTensor(chosen)
+            rejected_tokens = torch.LongTensor(reject)
+            labels_chosen_tokens = torch.LongTensor(chosen_labels)
+            labels_reject_tokens = torch.LongTensor(reject_labels)
 
+        ignore_example = False
         # ignore the example whose tokenized text exceeds max seq length.
         if max_curr_seq_len > self.seq_length:
             logging.warning(
@@ -480,6 +509,7 @@ class DPOModelDataset(Dataset):
             labels_reject_tokens = torch.ones_like(rejected_tokens) * (-100)
             chosen_len = self.nograd_length
             reject_len = self.nograd_length
+            ignore_example = True
 
         output = {
             "chosen": chosen_tokens,
@@ -490,7 +520,149 @@ class DPOModelDataset(Dataset):
             "rejected_labels": labels_reject_tokens,
             "chosen_reward": payload.get("chosen_reward", self.default_chosen_reward),
             "rejected_reward": payload.get("rejected_reward", self.default_rejected_reward),
+            "ignore_example": ignore_example,
         }
+        return output
+
+
+class DPOPackedDataset(DPOModelDataset):
+    """A dataset class for DPO with sequence packing. Data is expected to be 
+    pre-tokenized and pre-packed using examples/nlp/data/dpo/prepare_packed_dpo_dataset.py.
+    """
+
+    REWARDS_PAD_ID = -1000
+    LABELS_PAD_ID = -100
+
+    def __init__(
+        self,
+        cfg,
+        tokenizer,
+        name,
+        data_prefix,
+        documents,
+        data,
+        seq_length,
+        seed,
+        drop_last=True,  # return_cu_seqlen: bool = True ## should always be true
+    ):
+
+        super().__init__(cfg, tokenizer, name, data_prefix, documents, data, seq_length, seed, drop_last)
+        self.data_prefix = data_prefix
+
+    def __getitem__(self, idx):
+        return self.data[idx]
+
+    def _ceil_to_nearest(self, n, m):
+        return (n + m - 1) // m * m
+
+    def _maybe_cast_to_list(self, x):
+        return [item.tolist() if isinstance(item, np.ndarray) else item for item in x]
+
+    def _collate_item(self, item, max_length, pad_id):
+        item = self._maybe_cast_to_list(item)
+        item = [x + [pad_id] * (max_length - len(x)) for x in item]
+        return item
+
+    ## reset_position_ids, reset_attention_mask and eod_mask_loss are unused but are needed to match the API of dpo_custom_collate
+    def global_collate_fn(
+        self,
+        batch,
+        eos_id,
+        reset_position_ids=False,
+        reset_attention_mask=False,
+        eod_mask_loss=False,
+        pad_length_to_multiple_of: int | None = None,
+    ):
+        def combine_keys(key):
+            return [item[key] for item in batch]
+
+        lengths = combine_keys("lengths")
+        rewards = combine_keys("reward")
+        seq_boundaries = combine_keys("seq_boundaries")
+
+        input_ids = [
+            np.concatenate(
+                [
+                    item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
+                    for i in range(len(item["seq_boundaries"]) - 1)
+                ]
+            )
+            for item in batch
+        ]
+        labels = [
+            np.concatenate(
+                [
+                    item["labels"][item["seq_boundaries"][i] + 1 : item["seq_boundaries"][i + 1]]
+                    for i in range(len(item["seq_boundaries"]) - 1)
+                ]
+            )
+            for item in batch
+        ]
+
+        if pad_length_to_multiple_of:
+            max_seq_len = torch.tensor(max(ex.shape[0] for ex in input_ids), device=torch.cuda.current_device())
+            torch.distributed.all_reduce(
+                max_seq_len, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
+            )
+            max_length = math.ceil(max_seq_len / pad_length_to_multiple_of) * pad_length_to_multiple_of
+        else:
+            # pad to the nearest multiple of 16 for FP8 training
+            # for many datasets in practice, all packed sequence lengths are very close to the
+            # target length (2048, 4096, 8192), so there is very minimal padding
+            max_length = max(len(l) for l in input_ids)
+            max_length = min(self.seq_length, self._ceil_to_nearest(max_length, 16))
+
+        position_ids: List[List[int]] = []
+        cu_seqlens: List[List[int]] = []
+        for item in batch:
+            position_ids.append([])
+            cu_seqlens.append([0])
+            seqlens = np.array(item["seq_boundaries"][1:]) - np.array(item["seq_boundaries"][:-1])
+            for l in seqlens:
+                position_ids[-1].extend(list(range(l - 1)))  ## l - 1 to exclude labels
+                cu_seqlens[-1].append(cu_seqlens[-1][-1] + l - 1)
+            # set last seq to the max seq len because rope and attn kernels expect no padding
+            cu_seqlens[-1][-1] = max_length
+
+        assert len(input_ids[0]) == len(
+            position_ids[0]
+        ), "Dataset problem: input_ids and position_ids lengths don't match"
+
+        input_ids = self._collate_item(input_ids, max_length=max_length, pad_id=self.tokenizer.eos_id)
+        labels = self._collate_item(labels, max_length=max_length, pad_id=self.LABELS_PAD_ID)
+        position_ids = self._collate_item(position_ids, max_length=max_length, pad_id=0)
+
+        max_num_sequences = max(len(l) for l in lengths)
+        lengths = self._collate_item(lengths, max_length=max_num_sequences, pad_id=0)
+        rewards = self._collate_item(rewards, max_length=max_num_sequences, pad_id=self.REWARDS_PAD_ID)
+
+        output = {
+            "input_ids": torch.LongTensor(input_ids),
+            "labels": torch.LongTensor(labels),
+            "lengths": torch.LongTensor(lengths),
+            "rewards": torch.FloatTensor(rewards),
+            "position_ids": torch.LongTensor(position_ids),
+        }
+
+        cu_seqlens = self._collate_item(cu_seqlens, max_length=max(len(l) for l in cu_seqlens) + 1, pad_id=-1)
+
+        # Pre-generate `cu_seqlens_argmin` and `max_seqlen` as CPU tensor to avoid device-to-host copies.
+        cu_seqlens = torch.IntTensor(cu_seqlens)
+        cu_seqlens_argmin = torch.argmin(cu_seqlens, dim=1, keepdim=True)
+        seqlens = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
+        max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
+
+        output.update(
+            {
+                "attention_mask": torch.LongTensor(
+                    [1] * len(input_ids)
+                ),  # no attention mask is needed for packed seq, this serves as a placeholder
+                "cu_seqlens": torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
+                "cu_seqlens_argmin": cu_seqlens_argmin,  # only required for perf
+                "max_seqlen": max_seqlen,  # only required for perf
+            }
+        )
+
         return output
 
 
