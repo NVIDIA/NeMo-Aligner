@@ -72,8 +72,9 @@ jobs:
           LABEL: ${{ github.event.label.name == 'Run CICD' }}
           MAIN_BRANCH: ${{ github.ref == 'refs/heads/main' }}          
         run: |
-          echo ${{ steps.changed-files.outputs.doc_all_changed_files }}
-          echo ${{ steps.changed-files.outputs.src_all_changed_files }}
+          echo "Docs changed: ${{ steps.changed-files.outputs.doc_all_changed_files }}"
+          echo "Src changed: ${{ steps.changed-files.outputs.src_all_changed_files }}"
+          
           echo "docs_only: $DOCS_ONLY"
           echo "label: $LABEL"
           echo "main_branch: $MAIN_BRANCH"
