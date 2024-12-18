@@ -122,7 +122,7 @@ class GenerationTrainer:
         self.sampling_params = OmegaConf.to_container(self.model.cfg.generation.sampling_params, resolve=True)
         self.max_gen_seq_len = self.length_params["max_length"]
         dp_batch_size = self.model.cfg.global_batch_size // parallel_state.get_data_parallel_world_size()
-
+        # model_parallel.source_rank ?
         # storage for generated responses which we want to save
         if torch.distributed.get_rank() == 0:
             os.makedirs(os.path.join(exp_manager.explicit_log_dir, "generations"), exist_ok=True)

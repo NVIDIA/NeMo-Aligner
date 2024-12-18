@@ -815,6 +815,7 @@ class SelfRewardingTrainer:
         meta_buffer_pending, meta_buffer_done = [], []
         done = False
         cnt_tracker = np.array([1 for _ in range(self.judge_score_high + 1)])
+        samples_replaced = samples_seen = 0
         while not done:
             try:
                 batches = next(iter_dataloader)
@@ -1081,6 +1082,8 @@ class SelfRewardingTrainer:
                             if meta_batch and len(meta_buffer_done) < self.model.cfg.global_batch_size * 3:
                                 meta_buffer_pending.append((reward_tokens_raw, meta_batch))
 
+                        samples_seen += 1                        
+
                         # due to DP sync issues, we cannot dynamically increase/decrease samples in the local DP batch
                         # so the only thing we can do is replace/modify existing samples. Hence, at the moment, we only
                         # replace the bad samples in each DP batch with meta-judge samples. This means that the true amount
@@ -1088,13 +1091,14 @@ class SelfRewardingTrainer:
                         # is really an upper bound, not the exact replacement %. This can be easily altered though.
                         if (
                             self.use_meta_judge
-                            and ((bad_ends > 0 or bad_sample) and (torch.rand((1,)) <= self.meta_judge_pcnt))
+                            and ((bad_ends > 0 or bad_sample) or (torch.rand((1,)) <= self.meta_judge_pcnt - (samples_replaced / samples_seen)))
                             and len(meta_buffer_done) > 0
                         ):
                             # if self.use_meta_judge and (bad_ends > 0 or bad_sample) and len(meta_buffer_done) > 0:
                             final_buffer.append(meta_buffer_done.pop(0))
                             # if you want to pop a random element instead, uncomment the below
                             # final_buffer.append(meta_buffer_done.pop(torch.randint(0, len(meta_buffer_done), (1,)).item()))
+                            samples_replaced += 1
                         else:
                             final_buffer.append(
                                 {
@@ -1285,11 +1289,12 @@ class SelfRewardingTrainer:
                                     < self.meta_max_relative_pcnt
                                 )
                                 and (
+                                    # we dedicate 20% of the available training steps to the meta-judge, and then dole
+                                    # that out per score class
                                     cnt_tracker[int(chosen_score)]
                                     < int(
-                                        self.num_steps_per_epoch
-                                        * original_gbs_size
-                                        / ((self.judge_score_high - self.judge_score_low) ** 2)
+                                        (self.num_steps_per_epoch * original_gbs_size * 0.2)
+                                        / (self.judge_score_high - self.judge_score_low)
                                     )
                                 )
                             ):
