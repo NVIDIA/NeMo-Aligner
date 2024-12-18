@@ -69,16 +69,20 @@ jobs:
         id: evaluate
         env:
           DOCS_ONLY: ${{ steps.changed-files.outputs.doc_any_changed == 'true' && steps.changed-files.outputs.src_any_changed == 'false' }}
+          CHANGED_DOCS: ${{ steps.changed-files.outputs.doc_all_changed_files }}
+          CHANGED_SRC: ${{ steps.changed-files.outputs.src_all_changed_files }}
           LABEL: ${{ github.event.label.name == 'Run CICD' }}
           MAIN_BRANCH: ${{ github.ref == 'refs/heads/main' }}          
         run: |
-          echo "Docs changed: ${{ steps.changed-files.outputs.doc_all_changed_files }}"
-          echo "Src changed: ${{ steps.changed-files.outputs.src_all_changed_files }}"
+          # Some output that's helpful for debugging
+          echo "Docs changed: $CHANGED_DOCS"
+          echo "Src changed: $CHANGED_SRC"
           
           echo "docs_only: $DOCS_ONLY"
           echo "label: $LABEL"
           echo "main_branch: $MAIN_BRANCH"
-
+          
+          # Run CI only (on main or if label is attached) and if it's not only docs
           echo run_ci=$([[ ("$LABEL" = "true" || "$MAIN_BRANCH" = "true") && "$DOCS_ONLY" = "false" ]] && echo "true" || echo "false") | tee -a "$GITHUB_OUTPUT"
 
   build-container:
