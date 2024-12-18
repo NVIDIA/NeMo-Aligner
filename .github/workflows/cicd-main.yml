@@ -61,11 +61,11 @@ jobs:
             doc:
               - '**.md'
               - docs/**
-              - '.github/'
+              - '.github/**'
             src:
               - '!**.md'
               - '!docs/**'
-              - '!.github/'
+              - '!.github/**'
 
       - name: Evaluate conditions
         env:
