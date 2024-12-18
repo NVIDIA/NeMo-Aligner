@@ -285,7 +285,10 @@ class MegatronGenerator(InferenceGeneratorBase):
             max_position_embeddings = self.model.cfg.max_position_embeddings
             # TODO: appears to be a soft check for total num of input tokens, for now don't check
             max_tokens_to_oom = float("inf")
-            inference_max_seq_length = self.model.cfg.encoder_seq_length
+            inference_max_seq_length = (
+                self.max_input_len + self.max_generation_length
+            )  # max prefill length i'll ever see
+            # inference_max_seq_length = self.model.cfg.encoder_seq_length
             enable_cuda_graph = self.model.model.config.enable_cuda_graph
             eos_id = self.model.tokenizer.eos_id
             inference_batch_times_seqlen_threshold = -1
@@ -302,7 +305,7 @@ class MegatronGenerator(InferenceGeneratorBase):
         mcore_result = generate_and_post_process(
             model=self.model.model,
             prompts=(prompt_tokens, prompt_lengths),
-            tokens_to_generate=self.max_generation_length,  # Must be 0 if passing prompt_tokens + prompt_lengths
+            tokens_to_generate=self.max_generation_length,  # TODO: look into whether we should validate this
             prevent_newline_after_colon=False,  # Turning this on requires a global tokenizer, so we leave it off
             top_k_sampling=self.sample_top_k,  # 1 == greedy
             top_p_sampling=self.sample_top_p,
@@ -318,8 +321,9 @@ class MegatronGenerator(InferenceGeneratorBase):
             response_lengths = torch.tensor(response_lengths, dtype=torch.long, device="cuda")
         else:
             response_tokens = None
-        response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long, from_last=False)
-        response_lengths = broadcast_2d_tensor_within_pp(response_lengths, dtype=torch.long, from_last=False)
+            response_lengths = None
+        response_tokens = broadcast_tensor_within_pp(response_tokens, dtype=torch.long, from_last=False)
+        response_lengths = broadcast_tensor_within_pp(response_lengths, dtype=torch.long, from_last=False)
 
         # sometimes backends like TRT-LLM will generate invalid tokens
         # so we need to also inplace mutate the response_tokens to be within the tokenizer range
@@ -342,11 +346,6 @@ class NemoGenerator(InferenceGeneratorBase):
         assert not self.reshard_model, "reshard_model is not supported"
         assert not self.refit_model, "refit_model is not supported"
         assert not self.unload_engine_train, "unload_engine_train is not supported"
-
-        if not self.model.model.config.flash_decode:
-            logging.warning("Flash decode is not enabled, consider adding ++model.flash_decode=True")
-        if not self.model.model.config.enable_cuda_graph:
-            logging.warning("CudaGraphs is not enabled, consider adding ++model.enable_cuda_graph=True")
 
         # length argument for autoregressive sampling
         self._length_params = {

@@ -195,7 +195,8 @@ def test_scratch_all_inf_frameworks_greedy_generations_match(dummy_actor_gpt_mod
 
 
 @pytest.mark.mpi
-def test_all_inf_frameworks_greedy_generations_match(dummy_actor_gpt_model_with_pp):
+def test_all_inf_frameworks_greedy_generations_match(dummy_actor_gpt_model_with_pp_cg):
+    dummy_actor_gpt_model_with_pp = dummy_actor_gpt_model_with_pp_cg  # TODO rename
     batch_size = 4
     max_seq_len = 100
     prompt_tokens = torch.ones((batch_size, max_seq_len), dtype=torch.int64, device="cuda")
@@ -308,3 +309,147 @@ def test_all_inf_frameworks_greedy_generations_match(dummy_actor_gpt_model_with_
 
     # Cuda graphs should make the second call faster
     assert first_mcore_generate_sec > second_mcore_generate_sec
+
+
+@pytest.mark.mpi
+def test_megatron_generation_perf(dummy_actor_gpt_model_with_pp_cg):
+    dummy_actor_gpt_model_with_pp = dummy_actor_gpt_model_with_pp_cg  # TODO rename
+    batch_size = 4
+    max_seq_len = 100
+    prompt_tokens = torch.ones((batch_size, max_seq_len), dtype=torch.int64, device="cuda")
+    prompt_lengths = torch.tensor([10, 20, 30, 40], dtype=torch.int64, device="cuda")
+
+    cfg_max_input_len = (
+        max_seq_len // 2
+    )  # in PPO this is set to: dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length // 2
+    cfg_max_output_len = (
+        max_seq_len // 2
+    )  # in PPO this is set to: dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length // 2
+
+    # Sanity check that checkpoint doesn't have an unusually small seq len
+    assert max_seq_len <= dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length
+
+    generator_kwargs = {
+        "model": dummy_actor_gpt_model_with_pp,
+        "end_strings": ["<|endoftext|>", "<extra_id_1>"],
+        "sample_temperature": 1.0,
+        "sample_top_k": 1,
+        "sample_top_p": 0.0,
+        "repetition_penalty": 1.0,
+        "max_input_len": cfg_max_input_len,
+        "max_generation_length": cfg_max_output_len,
+        "generation_batch_size": 4,
+        "use_greedy": True,
+        "seed": 1,
+        "unload_engine_train": False,
+        "reshard_model": False,
+        "refit_model": False,
+    }
+    mcore_generator = MegatronGenerator(**generator_kwargs)
+
+    ###########################
+    # Megatron-Core Inference #
+    ###########################
+    elapsed = []
+    for _ in range(5):
+        start = time.time()
+        _ = mcore_generator.generate((prompt_tokens, prompt_lengths))
+        elapsed.append(time.time() - start)
+
+    print(f"[MCORE PERF]: {elapsed}")
+
+
+@pytest.mark.mpi
+def test_trtllm_generation_perf(dummy_actor_gpt_model_with_pp):
+    batch_size = 4
+    max_seq_len = 100
+    prompt_tokens = torch.ones((batch_size, max_seq_len), dtype=torch.int64, device="cuda")
+    prompt_lengths = torch.tensor([10, 20, 30, 40], dtype=torch.int64, device="cuda")
+
+    cfg_max_input_len = (
+        max_seq_len // 2
+    )  # in PPO this is set to: dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length // 2
+    cfg_max_output_len = (
+        max_seq_len // 2
+    )  # in PPO this is set to: dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length // 2
+
+    # Sanity check that checkpoint doesn't have an unusually small seq len
+    assert max_seq_len <= dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length
+
+    generator_kwargs = {
+        "model": dummy_actor_gpt_model_with_pp,
+        "end_strings": ["<|endoftext|>", "<extra_id_1>"],
+        "sample_temperature": 1.0,
+        "sample_top_k": 1,
+        "sample_top_p": 0.0,
+        "repetition_penalty": 1.0,
+        "max_input_len": cfg_max_input_len,
+        "max_generation_length": cfg_max_output_len,
+        "generation_batch_size": 4,
+        "use_greedy": True,
+        "seed": 1,
+        "unload_engine_train": False,
+        "reshard_model": False,
+        "refit_model": False,
+    }
+    trtllm_generator = TRTLLMGenerator(**generator_kwargs)
+
+    ##########
+    # TRTLLM #
+    ##########
+    trtllm_generator.refit()
+
+    elapsed = []
+    for _ in range(5):
+        start = time.time()
+        _ = trtllm_generator.generate((prompt_tokens, prompt_lengths))
+        elapsed.append(time.time() - start)
+
+    print(f"[TRTLLM PERF]: {elapsed}")
+
+
+@pytest.mark.mpi
+def test_nemo_generation_perf(dummy_actor_gpt_model_with_pp):
+    batch_size = 4
+    max_seq_len = 100
+    prompt_tokens = torch.ones((batch_size, max_seq_len), dtype=torch.int64, device="cuda")
+    prompt_lengths = torch.tensor([10, 20, 30, 40], dtype=torch.int64, device="cuda")
+
+    cfg_max_input_len = (
+        max_seq_len // 2
+    )  # in PPO this is set to: dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length // 2
+    cfg_max_output_len = (
+        max_seq_len // 2
+    )  # in PPO this is set to: dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length // 2
+
+    # Sanity check that checkpoint doesn't have an unusually small seq len
+    assert max_seq_len <= dummy_actor_gpt_model_with_pp.cfg.encoder_seq_length
+
+    generator_kwargs = {
+        "model": dummy_actor_gpt_model_with_pp,
+        "end_strings": ["<|endoftext|>", "<extra_id_1>"],
+        "sample_temperature": 1.0,
+        "sample_top_k": 1,
+        "sample_top_p": 0.0,
+        "repetition_penalty": 1.0,
+        "max_input_len": cfg_max_input_len,
+        "max_generation_length": cfg_max_output_len,
+        "generation_batch_size": 4,
+        "use_greedy": True,
+        "seed": 1,
+        "unload_engine_train": False,
+        "reshard_model": False,
+        "refit_model": False,
+    }
+    nemo_generator = NemoGenerator(**generator_kwargs)
+
+    #################
+    # Nemo generate #
+    #################
+    elapsed = []
+    for _ in range(5):
+        start = time.time()
+        _ = nemo_generator.generate((prompt_tokens, prompt_lengths))
+        elapsed.append(time.time() - start)
+
+    print(f"[NEMO PERF]: {elapsed}")
