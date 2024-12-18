@@ -67,6 +67,16 @@ jobs:
               - '!docs/**'
               - '!.github/'
 
+      - name: Evaluate conditions
+        env:
+          DOCS_ONLY: ${{ steps.changed-files.outputs.doc_any_changed == 'true' && steps.changed-files.outputs.src_any_changed == 'false' }}
+          LABEL: ${{ github.event.label.name == 'Run CICD' }}
+          MAIN_BRANCH: ${{ github.ref == 'refs/heads/main' }}          
+        run: |
+          echo "docs_only: $DOCS_ONLY"
+          echo "label: $LABEL"
+          echo "main_branch: $MAIN_BRANCH"
+
   build-container:
     if: ${{ needs.pre-flight.outputs.docs_only == 'false' && (github.event.label.name == 'Run CICD' || github.ref == 'refs/heads/main') }}
     needs: [pre-flight]
