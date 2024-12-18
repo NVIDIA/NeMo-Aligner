@@ -61,11 +61,9 @@ jobs:
             doc:
               - '**.md'
               - docs/**
-              - '.github/**'
             src:
               - '!**.md'
               - '!docs/**'
-              - '!.github/**'
 
       - name: Evaluate conditions
         id: evaluate
