@@ -52,7 +52,7 @@ To start, we must first get a pretrained model to align. There are two models we
         #. Download the `Llama 3 8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the models folder. You can use the Hugging Face CLI for this:
             .. code-block:: bash
 
-               huggingface-cli download meta-llama/Meta-Llama-3-8B --local-dir path/to/llama
+               huggingface-cli download meta-llama/Meta-Llama-3-8B --local-dir /path/to/llama
 
         #. Convert the LLaMa3 LLM into ``.nemo`` format.
             .. code-block:: bash 
