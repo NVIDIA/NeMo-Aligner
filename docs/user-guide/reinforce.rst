@@ -3,14 +3,14 @@
 .. _model-aligner-reinforce:
 
 Model Alignment by REINFORCE
-@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
 In this tutorial, we will guide you through the process of aligning a NeMo Framework model using REINFORCE. This method can be applied to various models, including LLaMa2 and Mistral, with our scripts functioning consistently across different models.
 
 REINFORCE is usually preceded by a Supervised Fine-Tuning (SFT). We should first follow the :ref:`Prerequisite guide <prerequisite>` and the :ref:`SFT guide <sft>`. After obtaining the SFT model, we will also need to train a reward model as in :ref:`PPO guide <ppo>`. We will use the REINFORCE algorithm on the `Anthropic-HH-RLHF <https://huggingface.co/datasets/Anthropic/hh-rlhf>`__ dataset.
 
 REINFORCE Training
-############
+##################
 
 After you have fine-tuned a GPT model using Supervised Fine-Tuning (SFT), and trained a reward model as explained in the preceding section, you can start aligning the policy using REINFORCE.
 
@@ -48,7 +48,7 @@ To launch the server:
 The above example launches the reward model server on eight GPUs and one node. Make sure to change trainer.devices, trainer.num_nodes depending on your model size and scale. Aligner will work on any scale. Also, make sure to tune the trainer.reinforce.inference_micro_batch_size argument. This argument sets the size of the batch the REINFORCE actor is allowed to send to the reward per DP rank.
 
 Launch the Initial Policy and REINFORCE Actor Training
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 The REINFORCE Actor training job contains the master controller that makes the HTTP calls to all servers when needed. To launch the REINFORCE Actor and Initial Policy server:
 
@@ -73,7 +73,7 @@ The REINFORCE Actor training job contains the master controller that makes the H
    cd ${GPFS}
    export PYTHONPATH="${GPFS}:${PYTHONPATH}" \
    && export HYDRA_FULL_ERROR=1 \
-   && python -u examples/nlp/gpt/train_gpt_reinforce_actor.py \
+   && mpirun -n 8 --allow-run-as-root python -u examples/nlp/gpt/train_gpt_reinforce_actor.py \
       "model.data.data_prefix={train: [${TRAIN_DATA_PATH}], validation: [${VALID_DATA_PATH}], test: [${VALID_DATA_PATH}]}" \
       pretrained_checkpoint.restore_from_path=\"${ACTOR_NEMO_FILE}\" \
       exp_manager.checkpoint_callback_params.save_top_k=1 \
@@ -114,7 +114,7 @@ The REINFORCE Actor training job contains the master controller that makes the H
 The above command launches the initial and actor server on one node with eight GPUs.
 
 Launching Both Servers for REINFORCE training
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 You can use slurm to launch the two jobs and get them to coordinate together in a full REINFORCE job through the following:
 
@@ -239,7 +239,7 @@ You can use slurm to launch the two jobs and get them to coordinate together in 
       trainer.reinforce.rollout_batch_seq_length=4096
    EOF
 
-   srun --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_reinforce}" &
+   srun --mpi=pmix --het-group=1 -o $PPO_OUTFILE -e $PPO_ERRFILE --container-image=${CONTAINER} $MOUNTS bash -c "${cmd_reinforce}" &
 
    wait
 
@@ -251,6 +251,6 @@ It is important to launch all jobs with ``&`` after the srun command to ensure t
    Make sure to change the reward model arg ``trainer.reinforce.inference_micro_batch_size`` such that ``trainer.reinforce.inference_micro_batch_size * DP size <= model.reinforce.rollout_micro_batch_size``.
 
 REINFORCE Results
-%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%
 
 After you've completed reinforce training, you can serve your model using the `megatron_gpt_eval.py <https://github.com/NVIDIA/NeMo/blob/8cd5f1c8e7d4fed9f4f946028cd02047c5d2296f/examples/nlp/language_modeling/megatron_gpt_eval.py#L4>`__ script from the NeMo codebase to run more rigorous evaluation of your trained model.
