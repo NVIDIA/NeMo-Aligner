@@ -20,6 +20,7 @@ on:
       - 'r**'
       - 'dev'
     types: [labeled]
+  merge_group:
   workflow_dispatch:
     inputs:
       test_to_run:
