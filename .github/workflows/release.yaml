@@ -25,6 +25,10 @@ on:
         required: true
         default: true
         type: boolean
+      version-bump-branch:
+        description: Branch for version bump
+        required: true
+        type: string
           
 jobs:
   release:
@@ -42,6 +46,7 @@ jobs:
       container-workdir: /opt/NeMo-Aligner
       library-name: NeMo-Aligner
       dry-run: ${{ inputs.dry-run }}
+      version-bump-branch: ${{ inputs.version-bump-branch }}
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
