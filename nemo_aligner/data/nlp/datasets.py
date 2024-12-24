@@ -96,6 +96,7 @@ class RLHFDataset(Dataset):
         orig_idx = idx = idx % len(self)
         while True:
             sample = self.data[idx]
+            args = sample.get("args", None)
             if self.use_json:
                 sample, _ = self.encode(sample["text"])
             if len(sample) <= self.max_sample_length:
@@ -128,6 +129,7 @@ class RLHFDataset(Dataset):
             "text": sample_tensor,
             "length": sample_tensor.shape[0],
             "loss_multiplier": loss_multiplier,
+            "args": args,
         }
         return output
 

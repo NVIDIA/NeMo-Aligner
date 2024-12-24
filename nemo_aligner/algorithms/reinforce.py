@@ -274,12 +274,12 @@ class ReinforceTrainer:
                         rollout_batch = self.model.infer(batch)
                         rollout_batch["prompt_tokens"] = batch["text"]  # Save prompt tokens for rloo
                         rollout_batches.append(rollout_batch)
-                        futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model))
+                        futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model, batch["args"]))
                 else:
                     rollout_batch = self.model.infer(batch)
                     rollout_batch["prompt_tokens"] = batch["text"]  # Save prompt tokens for rloo
                     rollout_batches.append(rollout_batch)
-                    futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model))
+                    futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model, batch["args"]))
 
             timer_metrics["generate"] = self.timer.stop_and_get_time("generate")
 

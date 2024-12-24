@@ -323,9 +323,12 @@ def collate_with_batch_max_sequence_length(
 
     texts = batch_pad_to_fixed_len(texts, batch_max_length + response_token_length, eos_id)
 
+    args = [item["args"] for item in data_batch]
+
     output = {
         "text": texts,
         "length": lengths,
+        "args": args,
     }
 
     other = {}

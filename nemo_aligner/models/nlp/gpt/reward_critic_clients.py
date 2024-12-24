@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import re
+import subprocess
 from dataclasses import dataclass
 from functools import partial
 
@@ -132,6 +133,21 @@ def get_future_result(future, *keys):
     return results
 
 
+def MATH_rewards(response, args):
+
+    ans = args["answer"]
+    correctness = 0
+    try:
+        prediction = extract_answer(response)
+        correctness = int(math_equal(prediction, ans))
+        correctness = -10 if correctness == 0 else 3
+        print(f"prediction: {prediction}, answer: {answer}, correctness: {correctness}")
+    except:
+        pass
+
+    return correctness
+
+
 class RMCriticFutureResult(FutureResult):
     def __init__(self, critic_future, rm_future, combine_rm_and_critic_server, og_seq_length):
         self.critic_future = critic_future
@@ -187,6 +203,8 @@ class RemoteGPTRMCriticClient:
         self.communicator.print_server_dict()
         self.combine_rm_and_critic_server = self.cfg.combine_rm_and_critic_server
         self.pad_to_length = self.cfg.pad_to_length
+
+        subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.11.0"])
 
     def infer_rm_critic(self, rollout_batch):
         response_tokens = rollout_batch["response_tokens"].cpu()
@@ -251,15 +269,34 @@ class RemoteGPTRMCriticClient:
         return SaveFuture(save_future)
 
 
+# class RMFutureResult(FutureResult):
+#     def __init__(self, rm_future):
+#         self.rm_future = rm_future
+
+#     def result(self):
+#         rewards = get_future_result(self.rm_future, "rewards")
+
+#         self.rm_future = None
+#         return rewards.flatten()
+
+
 class RMFutureResult(FutureResult):
-    def __init__(self, rm_future):
+    def __init__(self, rm_future, math_rm_future=None):
         self.rm_future = rm_future
+        self.math_rm_future = math_rm_future
 
     def result(self):
         rewards = get_future_result(self.rm_future, "rewards")
 
         self.rm_future = None
-        return rewards.flatten()
+        out = rewards.flatten()
+
+        # If math_rm_future exists, combine values based on conditions
+        if self.math_rm_future is not None:
+            math_rewards = self.math_rm_future.flatten()
+            out = out + math_rewards
+
+        return out
 
 
 @dataclass
@@ -275,10 +312,11 @@ class RemoteGPTRMClient:
         self.communicator.print_server_dict()
         self.pad_to_length = self.cfg.pad_to_length
 
-    def infer_rm_critic(self, rollout_batch, model):
+    def infer_rm_critic(self, rollout_batch, model, args=None):
         response_tokens = rollout_batch["response_tokens"].cpu()
         og_seq_length = response_tokens.size(-1)
 
+        math_rewards = []
         texts = []
         for i in range(rollout_batch["response_tokens"].size(0)):
             text = model.tokenizer.ids_to_text(
@@ -290,6 +328,13 @@ class RemoteGPTRMClient:
             texts.append(text)
             print(text)
 
+            if args[i] is not None:
+                math_rewards.append(MATH_rewards(assistant_text[-1], args[i]))
+            else:
+                math_rewards.append(0)
+
+        math_rewards = torch.tensor(math_rewards, device=rollout_batch["response_tokens"].device).float()
+
         send_data = {
             "sentences": _str_list2numpy(texts),
         }
@@ -298,4 +343,4 @@ class RemoteGPTRMClient:
             self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data,
         )
 
-        return RMFutureResult(rm_future)
+        return RMFutureResult(rm_future, math_rewards)
