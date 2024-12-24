@@ -136,14 +136,14 @@ def get_future_result(future, *keys):
 def MATH_rewards(response, args):
 
     ans = args["answer"]
-    correctness = 0
+    correctness = -10
     try:
         prediction = extract_answer(response)
         correctness = int(math_equal(prediction, ans))
         correctness = -10 if correctness == 0 else 3
         print(f"prediction: {prediction}, answer: {answer}, correctness: {correctness}")
     except:
-        pass
+        correctness = -10
 
     return correctness
 
@@ -290,7 +290,7 @@ class RMFutureResult(FutureResult):
 
         self.rm_future = None
         out = rewards.flatten()
-
+        print(rewards, self.math_rm_future)
         # If math_rm_future exists, combine values based on conditions
         if self.math_rm_future is not None:
             math_rewards = self.math_rm_future.flatten()
@@ -305,7 +305,7 @@ class RemoteGPTRMClient:
 
     def __post_init__(self):
         cfg = self.cfg
-
+        subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.11.0"])
         server_dict = {cfg.reward_model.name: (cfg.reward_model.ip, cfg.reward_model.port)}
 
         self.communicator = HTTPCommunicator.create_http_communicator_from_dict(server_dict)
