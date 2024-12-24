@@ -191,8 +191,8 @@ class ReinforceTrainer:
         self.rollout_batch_seq_length = self.cfg.rollout_batch_seq_length
 
         # for wandb table
-        self.train_df = pd.DataFrame(columns=["step", "prompt", "response", "reward"])
-        self.val_df = pd.DataFrame(columns=["step", "prompt", "response", "reward"])
+        self.train_df = pd.DataFrame(columns=["step", "prompt", "response", "reward", "think_len"])
+        self.val_df = pd.DataFrame(columns=["step", "prompt", "response", "reward", "think_len"])
 
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
@@ -400,6 +400,11 @@ class ReinforceTrainer:
         table["response"] = self.model.tokenizer.tokenizer.decode(
             response_token[prompt_length:response_length].tolist()
         )
+        try:
+            think_len = len(table["response"].split("<think>")[1].split("<ethink>")[0].split())
+        except:
+            think_len = 0
+        table["think_len"] = think_len
 
         if save_val_responses:
             save_data = []
@@ -552,6 +557,7 @@ class ReinforceTrainer:
                     table_metrics["prompt"],
                     table_metrics["response"],
                     table_metrics["reward"],
+                    table_metrics["think_len"],
                 ]
                 metrics["epoch"] = self.epoch + 1
                 self.logger.log_metrics(
@@ -603,6 +609,7 @@ class ReinforceTrainer:
                         val_table_metrics["prompt"],
                         val_table_metrics["response"],
                         val_table_metrics["reward"],
+                        val_table_metrics["think_len"],
                     ]
                     self.logger.log_metrics(val_metrics, step=self.step, prefix="val_rollouts/")
                     self.logger.log_table("table/val_rollouts", dataframe=self.val_df, step=self.step)
