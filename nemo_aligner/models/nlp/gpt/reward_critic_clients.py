@@ -150,7 +150,7 @@ def MATH_rewards(response, args):
     try:
         prediction = extract_answer(response)
         correctness = int(math_equal(prediction, ans))
-        correctness = -10 if correctness == 0 else 3
+        correctness = -10 if correctness == 0 else 5
         print(f"prediction: {prediction}, answer: {ans}, correctness: {correctness}")
     except:
         correctness = -10
