@@ -14,6 +14,13 @@
 
 import re
 import subprocess
+
+# List of packages to install
+packages = ["absl-py", "langdetect", "nltk", "immutabledict", "antlr4-python3-runtime==4.11.0"]
+# Run pip install for each package
+for package in packages:
+    subprocess.run(["python", "-m", "pip", "install", package])
+
 from dataclasses import dataclass
 from functools import partial
 
@@ -331,12 +338,6 @@ class RemoteGPTRMClient:
 
     def __post_init__(self):
         cfg = self.cfg
-
-        # List of packages to install
-        packages = ["absl-py", "langdetect", "nltk", "immutabledict", "antlr4-python3-runtime==4.11.0"]
-        # Run pip install for each package
-        for package in packages:
-            subprocess.run(["python", "-m", "pip", "install", package])
 
         server_dict = {cfg.reward_model.name: (cfg.reward_model.ip, cfg.reward_model.port)}
 
