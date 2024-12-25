@@ -400,11 +400,18 @@ class ReinforceTrainer:
         table["response"] = self.model.tokenizer.tokenizer.decode(
             response_token[prompt_length:response_length].tolist()
         )
-        try:
-            think_len = len(table["response"].split("<think>")[1].split("<ethink>")[0].split())
-        except:
-            think_len = 0
-        table["think_len"] = think_len
+
+        think_lens = []
+        for response_token, prompt_length, response_length in zip(response_tokens, prompt_lengths, response_lengths):
+            response_text = self.model.tokenizer.tokenizer.decode(
+                response_token[prompt_length:response_length].tolist()
+            )
+            try:
+                think_lens.append(len(response_text.split("<think>")[1].split("<ethink>")[0].split()))
+            except:
+                think_lens.append(0)
+
+        table["think_len"] = think_lens[0]
 
         if save_val_responses:
             save_data = []
@@ -434,6 +441,7 @@ class ReinforceTrainer:
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
             "rewards": rewards.mean().item(),
             "fraction_of_samples_properly_ended": is_end.float().mean().item(),
+            "think_len": sum(think_lens) / len(think_lens),
         }
 
         return metrics
