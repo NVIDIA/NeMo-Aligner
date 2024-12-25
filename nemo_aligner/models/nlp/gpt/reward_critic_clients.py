@@ -24,8 +24,9 @@ from omegaconf import DictConfig
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
-from nemo_aligner.utils.math_grader import extract_answer, math_equal
 from nemo_aligner.utils.server_utils import FutureResult
+from nemo_aligner.utils.verifiers.instruction_following.instructions_registry import INSTRUCTION_DICT
+from nemo_aligner.utils.verifiers.math_grader import extract_answer, math_equal
 
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
     over to the remote PyTrition server
@@ -138,15 +139,39 @@ def MATH_rewards(response, args):
 
     ans = args["answer"]
     correctness = -10
+    prediction = None
     try:
         prediction = extract_answer(response)
         correctness = int(math_equal(prediction, ans))
         correctness = -10 if correctness == 0 else 3
-        print(f"prediction: {prediction}, answer: {answer}, correctness: {correctness}")
+        print(f"prediction: {prediction}, answer: {ans}, correctness: {correctness}")
     except:
         correctness = -10
 
-    return correctness
+    return correctness, prediction, ans
+
+
+def instruction_following_rewards(prompt, response, args):
+    """Tests response to see if instrutions are followed."""
+    task_args = args["task_args"]
+    instruction_list = task_args["instruction_id_list"]
+    is_following_list = []
+
+    for index, instruction_id in enumerate(instruction_list):
+        instruction_cls = INSTRUCTION_DICT[instruction_id]
+        instruction = instruction_cls(instruction_id)
+
+        instruction.build_description(**task_args["instruction_kwargs"][index])
+        instruction_args = instruction.get_instruction_args()
+        if instruction_args and "prompt" in instruction_args:
+            instruction.build_description(prompt=prompt)
+
+        if response.strip() and instruction.check_following(response):
+            is_following_list.append(True)
+        else:
+            is_following_list.append(False)
+
+    return int(all(is_following_list))
 
 
 class RMCriticFutureResult(FutureResult):
@@ -282,20 +307,20 @@ class RemoteGPTRMCriticClient:
 
 
 class RMFutureResult(FutureResult):
-    def __init__(self, rm_future, math_rm_future=None):
+    def __init__(self, rm_future, verifier_rm_future=None):
         self.rm_future = rm_future
-        self.math_rm_future = math_rm_future
+        self.verifier_rm_future = verifier_rm_future
 
     def result(self):
         rewards = get_future_result(self.rm_future, "rewards")
 
         self.rm_future = None
         out = rewards.flatten()
-        print(rewards, self.math_rm_future)
-        # If math_rm_future exists, combine values based on conditions
-        if self.math_rm_future is not None:
-            math_rewards = self.math_rm_future.flatten()
-            out = out + math_rewards
+        print(rewards, self.verifier_rm_future)
+        # If verifier_rm_future exists, combine values based on conditions
+        if self.verifier_rm_future is not None:
+            verifier_rewards = self.verifier_rm_future.flatten()
+            out = out + verifier_rewards
 
         return out
 
@@ -306,7 +331,13 @@ class RemoteGPTRMClient:
 
     def __post_init__(self):
         cfg = self.cfg
-        subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.11.0"])
+
+        # List of packages to install
+        packages = ["absl-py", "langdetect", "nltk", "immutabledict", "antlr4-python3-runtime==4.11.0"]
+        # Run pip install for each package
+        for package in packages:
+            subprocess.run(["python", "-m", "pip", "install", package])
+
         server_dict = {cfg.reward_model.name: (cfg.reward_model.ip, cfg.reward_model.port)}
 
         self.communicator = HTTPCommunicator.create_http_communicator_from_dict(server_dict)
@@ -317,7 +348,7 @@ class RemoteGPTRMClient:
         response_tokens = rollout_batch["response_tokens"].cpu()
         og_seq_length = response_tokens.size(-1)
 
-        math_rewards = []
+        verifier_rewards = []
         texts = []
         for i in range(rollout_batch["response_tokens"].size(0)):
             text = model.tokenizer.ids_to_text(
@@ -330,11 +361,16 @@ class RemoteGPTRMClient:
             print(text)
 
             if args[i] is not None:
-                math_rewards.append(MATH_rewards(assistant_text[-1], args[i]))
+                if args[i]["task"] == "instruction_following":
+                    verifier_rewards.append(instruction_following_rewards(user_text[-1], assistant_text[-1], args[i]))
+                else:
+                    score, prediction, answer = MATH_rewards(assistant_text[-1], args[i])
+                    print(f"prediction: {prediction}, answer: {answer}, score: {score}")
+                    verifier_rewards.append(score)
             else:
-                math_rewards.append(0)
+                verifier_rewards.append(0)
 
-        math_rewards = torch.tensor(math_rewards, device=rollout_batch["response_tokens"].device).float()
+        verifier_rewards = torch.tensor(verifier_rewards, device=rollout_batch["response_tokens"].device).float()
 
         send_data = {
             "sentences": _str_list2numpy(texts),
@@ -344,4 +380,4 @@ class RemoteGPTRMClient:
             self.communicator.send_data_to_server, server_name=self.cfg.reward_model.name, data=send_data,
         )
 
-        return RMFutureResult(rm_future, math_rewards)
+        return RMFutureResult(rm_future, verifier_rewards)
