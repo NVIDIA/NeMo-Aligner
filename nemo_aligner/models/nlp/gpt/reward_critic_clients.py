@@ -168,7 +168,8 @@ def instruction_following_rewards(prompt, response, args):
         instruction_cls = INSTRUCTION_DICT[instruction_id]
         instruction = instruction_cls(instruction_id)
 
-        instruction.build_description(**task_args["instruction_kwargs"][index])
+        kwargs = task_args["instruction_kwargs"][index] if task_args["instruction_kwargs"][index] is not None else {}
+        instruction.build_description(**kwargs)
         instruction_args = instruction.get_instruction_args()
         if instruction_args and "prompt" in instruction_args:
             instruction.build_description(prompt=prompt)
