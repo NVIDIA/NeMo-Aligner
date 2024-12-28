@@ -366,7 +366,7 @@ class RemoteGPTRMClient:
 
             if args[i] is not None:
                 if args[i]["task"] == "instruction_following":
-                    score = instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
+                    score = 0  # instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
                 else:
                     score, prediction, answer = MATH_rewards(assistant_text[-1], args[i])
                     print(f"prediction: {prediction}, answer: {answer}, score: {score}")
