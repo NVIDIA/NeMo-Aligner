@@ -147,9 +147,7 @@ class MegatronGPTReinforceModel(NLPAdapterModelMixin, MegatronGPTModel, Alignabl
                 reduced_actor_loss = average_losses_across_data_parallel_group([loss])
                 return (
                     loss,
-                    {
-                        "loss": reduced_actor_loss,
-                    },
+                    {"loss": reduced_actor_loss,},
                 )
 
             return parallel_logits, loss_func
@@ -288,55 +286,64 @@ class MegatronGPTReinforceModel(NLPAdapterModelMixin, MegatronGPTModel, Alignabl
         strategy = TrackLengthGPTModelTextGenerationStrategy(
             model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
         )
-
-        if self.use_trtllm_generation:
-            actor_output = self.trtllm_generate.generate(inputs)
-            response_tokens = actor_output["response_tokens"]
-            response_lengths = actor_output["response_lengths"]
-        else:
-            actor_output = self.generate(
-                inputs=inputs,
-                length_params=self._length_params,
-                sampling_params=self._sampling_params,
-                strategy=strategy,
-            )
-            response_tokens = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
-            response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
-            response_lengths = strategy.get_lengths()
-
-            max_response_length = response_lengths.max().item()
-
-            # Sanity check to validate response length.
-            if max_response_length != response_tokens.size(1):
-                # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
-                # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
-                # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
-                # and remove the `if` below.
-                if (
-                    max_response_length >= response_tokens.size(1)
-                    or response_tokens.size(1) != prompt_lengths.max().item() + self._length_params["max_length"]
-                ):
-                    raise AssertionError(
-                        f"max response length ({max_response_length}) does not match the size of "
-                        f"`response_tokens` ({response_tokens.size(1)})"
+        for i in range(100):
+            try:
+                if self.use_trtllm_generation:
+                    actor_output = self.trtllm_generate.generate(inputs)
+                    response_tokens = actor_output["response_tokens"]
+                    response_lengths = actor_output["response_lengths"]
+                else:
+                    actor_output = self.generate(
+                        inputs=inputs,
+                        length_params=self._length_params,
+                        sampling_params=self._sampling_params,
+                        strategy=strategy,
                     )
+                    response_tokens = torch.cuda.LongTensor(actor_output["token_ids"]) if actor_output else None
+                    response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
+                    response_lengths = strategy.get_lengths()
 
-        # sometimes backends like TRT-LLM will generate invalid tokens
-        # so we need to also inplace mutate the response_tokens to be within the tokenizer range
-        is_valid = verify_is_valid_and_clamp_range_(
-            response_tokens, response_lengths, strategy, self.tokenizer, self.cfg.reinforce.sampling_params["end_strings"]
-        )
+                    max_response_length = response_lengths.max().item()
 
-        rollout_batch = {
-            "response_tokens": response_tokens,
-            "response_lengths": response_lengths,
-            "prompt_lengths": prompt_lengths,
-            "is_end": is_valid,
-        }
+                    # Sanity check to validate response length.
+                    if max_response_length != response_tokens.size(1):
+                        # This may actually happen because NeMo does not always stop generation after `max_length` in batch mode
+                        # => `response_tokens` may contain up to `max_length + max_context_length` tokens.
+                        # TODO once NeMo fixes this issue we should be able to always raise an exception when the check above fails,
+                        # and remove the `if` below.
+                        if (
+                            max_response_length >= response_tokens.size(1)
+                            or response_tokens.size(1)
+                            != prompt_lengths.max().item() + self._length_params["max_length"]
+                        ):
+                            raise AssertionError(
+                                f"max response length ({max_response_length}) does not match the size of "
+                                f"`response_tokens` ({response_tokens.size(1)})"
+                            )
 
-        # return in GPU, trainer needs to move to cpu
+                # sometimes backends like TRT-LLM will generate invalid tokens
+                # so we need to also inplace mutate the response_tokens to be within the tokenizer range
+                is_valid = verify_is_valid_and_clamp_range_(
+                    response_tokens,
+                    response_lengths,
+                    strategy,
+                    self.tokenizer,
+                    self.cfg.reinforce.sampling_params["end_strings"],
+                )
 
-        return rollout_batch
+                rollout_batch = {
+                    "response_tokens": response_tokens,
+                    "response_lengths": response_lengths,
+                    "prompt_lengths": prompt_lengths,
+                    "is_end": is_valid,
+                }
+
+                # return in GPU, trainer needs to move to cpu
+
+                return rollout_batch
+
+            except Exception as e:
+                logging.error(f"Query failed: {e}, {i}-th retry")
 
     def get_init_policy_logprobs(self, response_tokens):
         use_peft_init_policy = self.use_peft and self.init_policy_state_dict is None
