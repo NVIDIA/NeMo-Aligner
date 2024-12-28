@@ -160,7 +160,7 @@ def MATH_rewards(response, args):
 
 def instruction_following_rewards(prompt, response, args):
     """Tests response to see if instrutions are followed."""
-    task_args = args["task_args"]
+    task_args = args["args"]
     instruction_list = task_args["instruction_id_list"]
     is_following_list = []
 
