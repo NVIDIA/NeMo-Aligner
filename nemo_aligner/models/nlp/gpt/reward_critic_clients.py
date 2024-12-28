@@ -160,28 +160,33 @@ def MATH_rewards(response, args):
 
 def instruction_following_rewards(prompt, response, args):
     """Tests response to see if instrutions are followed."""
-    task_args = args
-    instruction_list = task_args["instruction_id_list"]
-    is_following_list = []
+    try:
+        task_args = args
+        instruction_list = task_args["instruction_id_list"]
+        is_following_list = []
 
-    for index, instruction_id in enumerate(instruction_list):
-        instruction_cls = INSTRUCTION_DICT[instruction_id]
-        instruction = instruction_cls(instruction_id)
+        for index, instruction_id in enumerate(instruction_list):
+            instruction_cls = INSTRUCTION_DICT[instruction_id]
+            instruction = instruction_cls(instruction_id)
 
-        kwargs = task_args["instruction_kwargs"][index] if task_args["instruction_kwargs"][index] is not None else {}
-        instruction.build_description(**kwargs)
-        instruction_args = instruction.get_instruction_args()
-        if instruction_args and "prompt" in instruction_args:
-            instruction.build_description(prompt=prompt)
+            kwargs = (
+                task_args["instruction_kwargs"][index] if task_args["instruction_kwargs"][index] is not None else {}
+            )
+            instruction.build_description(**kwargs)
+            instruction_args = instruction.get_instruction_args()
+            if instruction_args and "prompt" in instruction_args:
+                instruction.build_description(prompt=prompt)
 
-        if response.strip() and instruction.check_following(response):
-            is_following_list.append(True)
-        else:
-            is_following_list.append(False)
+            if response.strip() and instruction.check_following(response):
+                is_following_list.append(True)
+            else:
+                is_following_list.append(False)
 
-    correctness = int(all(is_following_list))
-    score = 0 if correctness == 1 else -10
-    return score
+        correctness = int(all(is_following_list))
+        score = 0 if correctness == 1 else -10
+        return score, True
+    except:
+        return 0, False
 
 
 class RMCriticFutureResult(FutureResult):
@@ -366,7 +371,8 @@ class RemoteGPTRMClient:
 
             if args[i] is not None:
                 if args[i]["task"] == "instruction_following":
-                    score = 0  # instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
+                    score, success = instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
+                    print(f"check done: {success}, score: {score}, args: {args[i]}")
                 else:
                     score, prediction, answer = MATH_rewards(assistant_text[-1], args[i])
                     print(f"prediction: {prediction}, answer: {answer}, score: {score}")
