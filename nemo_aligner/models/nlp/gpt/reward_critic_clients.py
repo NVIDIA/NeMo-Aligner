@@ -178,7 +178,9 @@ def instruction_following_rewards(prompt, response, args):
         else:
             is_following_list.append(False)
 
-    return int(all(is_following_list))
+    correctness = int(all(is_following_list))
+    score = 0 if correctness == 1 else -10
+    return score
 
 
 class RMCriticFutureResult(FutureResult):
@@ -363,11 +365,13 @@ class RemoteGPTRMClient:
 
             if args[i] is not None:
                 if args[i]["task"] == "instruction_following":
-                    verifier_rewards.append(instruction_following_rewards(user_text[-1], assistant_text[-1], args[i]))
+                    score = instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
                 else:
                     score, prediction, answer = MATH_rewards(assistant_text[-1], args[i])
                     print(f"prediction: {prediction}, answer: {answer}, score: {score}")
-                    verifier_rewards.append(score)
+
+                verifier_rewards.append(score)
+                print("task: ", args[i]["task"], "score: ", score)
             else:
                 verifier_rewards.append(0)
 
