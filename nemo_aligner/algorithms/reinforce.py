@@ -39,7 +39,7 @@ from nemo_aligner.utils.distributed import (
     rebalance_nd_tensor,
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
-from nemo_aligner.utils.ppo_utils import calculate_kl_penalty, calculate_rloo_baseline, create_mask, calculate_kl_penalty_joschu2020
+from nemo_aligner.utils.ppo_utils import calculate_kl_penalty, calculate_rloo_baseline, create_mask, calculate_kl_penalty_joschu2020, calculate_math_problem_wise_length_penalty
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
@@ -221,6 +221,7 @@ class ReinforceTrainer:
 
         #init_policy_kl = masked_mean(init_policy_kl, mask, dim=-1)
         rewards_with_kl = rewards #- self.cfg.initial_policy_kl_penalty * init_policy_kl
+        #rewards = calculate_math_problem_wise_length_penalty(prompt_tokens, response_lengths, rewards, mask, self.cfg.max_length_penalty)
 
         baseline = calculate_rloo_baseline(prompts=prompt_tokens, reward=rewards_with_kl, mask=is_end.float())
 
@@ -443,6 +444,7 @@ class ReinforceTrainer:
                 metrics, step=self.step, prefix="train_optim/",
             )
 
+            print("updating optimization step", self.reinforce_optimization_step)
             self.reinforce_optimization_step += 1
 
         self.model.finish_training()
@@ -509,6 +511,7 @@ class ReinforceTrainer:
                 )
 
                 rollout_size = reinforce_rollout_data["response_tokens"].size(0)
+                print('batch_calc info', rollout_size, num_to_load_on_each_dp, self.cfg.model_gbs, dp_size)
                 rollout_dataloader_iter = get_iterator_k_split(
                     reinforce_rollout_data, divide(rollout_size, num_to_load_on_each_dp)
                 )

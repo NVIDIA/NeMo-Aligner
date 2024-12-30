@@ -119,6 +119,104 @@ def select_topk(batch, num_select=1):
     selected_batch = {k: batch[k][selected_idx] for k in batch.keys()}
     return selected_batch
 
+def calculate_math_problem_wise_length_penalty(prompts, response_lengths, rewards, mask, penalty_amount):
+    """
+    Penalize responses that are longer than they need to be.
+    Short responses that yield the correct answer for a problem set the baseline. The longest (correct) response
+    recieves a penalty of penalty_amount. All other response length penalties are linearly interpolated from this.
+    """
+    unique_prompts = torch.unique(prompts, dim=0)
+
+    baseline = torch.zeros_like(rewards)
+    reward_device = rewards.get_device()
+    if reward_device == -1:
+        reward_device = "cpu"
+
+    for i in range(len(unique_prompts)):
+        is_matching_prompt = (prompts == unique_prompts[i]).all(1)
+        prompt_idx = torch.arange(len(prompts), device=reward_device)[is_matching_prompt]
+        rloo_mat = (1 - torch.eye(len(prompt_idx))).to(reward_device)
+
+        if mask[prompt_idx].sum() <= 1:
+            # Ignore sample: set baseline equal to reward
+            baseline[prompt_idx] = reward[prompt_idx]
+        else:
+            rloo = torch.matmul(rloo_mat, reward[prompt_idx] * mask[prompt_idx]) / (mask[prompt_idx].sum() - 1)
+            baseline[prompt_idx] = rloo
+
+    return baseline
+
+def calculate_math_problem_wise_length_penalty(prompts, response_lengths, rewards, mask, penalty_amount):
+    """
+    Penalize responses that are longer than they need to be.
+    Short responses that yield the correct answer for a problem set the baseline. The longest (correct) response
+    receives a penalty of penalty_amount. All other response length penalties are linearly interpolated between 0 and penalty_amount.
+    
+    Args:
+        prompts (torch.Tensor): Tensor of shape (batch_size, seq_len_prompt) 
+                               indicating the tokenized prompts.
+        response_lengths (torch.Tensor): Tensor of shape (batch_size, ) 
+                                  indicating the tokenized response lengths
+        rewards (torch.Tensor): Tensor of shape (batch_size,) 
+                                indicating reward for each response. Typically 0/1 correctness or similar.
+        mask (torch.Tensor): Tensor of shape (batch_size, ) 
+                             that is 1/True for valid sequences 0/False otherwise. 
+                             Summing across dim=1 gives the response length.
+        penalty_amount (float): How large the penalty should be for the longest correct response. 
+                                Other correct responses get a fraction of this penalty based on how their 
+                                length compares to the shortest/longest correct responses.
+    Returns:
+        torch.Tensor: A new rewards tensor after applying the length-based penalty to correct responses.
+    """
+
+    # We will build a new rewards tensor rather than modify in-place.
+    new_rewards = rewards.clone()
+    reward_device = new_rewards.device
+
+    # Identify each unique prompt
+    unique_prompts = torch.unique(prompts, dim=0)
+
+    for i in range(len(unique_prompts)):
+        # Find all rows belonging to this prompt
+        is_matching_prompt = (prompts == unique_prompts[i]).all(dim=1)
+        prompt_idx = torch.arange(len(prompts), device=reward_device)[is_matching_prompt]
+
+        if mask[prompt_idx].sum() <= 1:
+            continue
+
+        # Compute response lengths for each example under this prompt
+        # mask is assumed to be boolean or {0,1}, so sum(dim=1) gives the total length
+        lengths = response_lengths[prompt_idx]
+
+        # Identify which ones are correct
+        # (Here, we assume reward > 0 => correct)
+        correct_mask = new_rewards[prompt_idx] > 0.0
+        correct_indices = torch.where(correct_mask)[0]
+
+        # If there aren't at least two correct answers for this prompt, skip
+        if len(correct_indices) < 2:
+            continue
+
+        # Among the correct ones, find min and max length
+        correct_lengths = lengths[correct_indices]
+        min_len = correct_lengths.min()
+        max_len = correct_lengths.max()
+
+        # If all correct responses have the same length, no penalty
+        if min_len == max_len:
+            continue
+
+        # Penalize correct responses by how close their length is to max_len
+        # - The shortest correct has penalty 0.
+        # - The longest correct has penalty = penalty_amount.
+        # - Everything in between is linearly scaled.
+        length_range = max_len - min_len
+        for ci in correct_indices:
+            l = lengths[ci]
+            penalty = penalty_amount * (l - min_len).float() / length_range.float()
+            new_rewards[prompt_idx[ci]] -= penalty
+
+    return new_rewards
 
 def calculate_rloo_baseline(prompts, reward, mask):
     """

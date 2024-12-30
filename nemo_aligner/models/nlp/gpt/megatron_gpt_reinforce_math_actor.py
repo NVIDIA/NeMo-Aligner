@@ -242,6 +242,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
         set_sync_funcs(self, forward_only=True)
 
         mbs, seq_length = response_tokens.size()
+        print("inference logprobs mbs", mbs, forward_micro_batch_size)
         num_microbatches = divide(mbs, forward_micro_batch_size)
         attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(response_tokens)
 
