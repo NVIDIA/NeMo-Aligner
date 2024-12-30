@@ -346,6 +346,26 @@ def collate_with_batch_max_sequence_length(
 
     return output | other
 
+def math_batch_repeat(batch, num_repetitions=1):
+    texts = torch.cat([batch["problem"] for _ in range(num_repetitions)])
+    lengths = torch.cat([batch["length"] for _ in range(num_repetitions)])
+    ground_truth = [item for _ in range(num_repetitions) for item in batch["ground_truth"]]
+    
+    output = {
+        "problem": texts,
+        "length": lengths,
+        "ground_truth": ground_truth,
+    }
+
+    other = {}
+    if "attention_mask" in batch.keys():
+        other = {
+            "attention_mask": batch["attention_mask"],
+            "loss_mask": torch.cat([batch["loss_mask"] for _ in range(num_repetitions)]),
+            "position_ids": torch.cat([batch["position_ids"] for _ in range(num_repetitions)]),
+        }
+    return output | other
+
 def math_collate_with_batch_max_sequence_length(
     data_batch,
     response_token_length,

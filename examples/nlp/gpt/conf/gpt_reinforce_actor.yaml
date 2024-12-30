@@ -12,14 +12,15 @@ trainer:
 
     max_epochs: 1
     max_steps: -1  # max REINFORCE steps (-1 to go through the whole train set)
-    val_check_interval: 10
+    val_check_interval: 8
     save_interval: ${.val_check_interval}
     gradient_clip_val: 1.0
 
     # REINFORCE args to generate the data for training
-    initial_policy_kl_penalty: 0.01
+    initial_policy_kl_penalty: 0.03
     use_absolute_kl: True
     num_rollouts_per_prompt: 4
+    prompt_rollouts_per_microbatch: 4
 
 
     # the sequence length to pad the rollout batch for training to
@@ -78,7 +79,7 @@ remote_rm:
 
   # reward model server
   reward_model:
-    name: reward_model
+    name: math_grader
     ip: localhost
     port: 5555
 
@@ -97,7 +98,7 @@ exp_manager:
   create_checkpoint_callback: True
   checkpoint_callback_params:
     monitor: val_rewards
-    save_top_k: 1
+    save_top_k: -1
     mode: max
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
@@ -113,6 +114,9 @@ model:
     # training generation mbs
     rollout_micro_batch_size: 8
     num_rollout_samples: 512
+    prompt_rollouts_per_microbatch: ${trainer.reinforce.prompt_rollouts_per_microbatch}
+
+    initial_policy_kl_penalty: ${trainer.reinforce.initial_policy_kl_penalty}
 
     # mbs to do log prob inference, can be set to
     # lower than rollout_micro_batch_size to reduce
@@ -143,7 +147,7 @@ model:
     # length argument for autoregressive sampling
     # max length means max amount of tokens to generate
     length_params:
-      max_length: ${int_div:${model.encoder_seq_length}, 2}
+      max_length: 3072 #${int_div:${model.encoder_seq_length}, 2}
       min_length: 1
 
     trt_llm: ${trainer.reinforce.trt_llm}
@@ -171,7 +175,7 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
 
-  encoder_seq_length: 4096
+  encoder_seq_length: 5120
   max_position_embeddings: ${model.encoder_seq_length}
 
   ## Sequence Parallelism
@@ -186,7 +190,7 @@ model:
     overlap_grad_sync: False
     contiguous_grad_buffer: True
     lr: 9e-7
-    weight_decay: 0.1
+    weight_decay: 0.01
     betas:
     - 0.9
     - 0.98
@@ -201,7 +205,7 @@ model:
   data:
     data_impl: jsonl
     splits_string: null
-    seq_length: ${model.encoder_seq_length}
+    seq_length: ${subtract:${model.encoder_seq_length}, ${model.reinforce.length_params.max_length}}
     skip_warmup: True
     num_workers: 0
     reset_position_ids: False # Reset position ids after end-of-document token
@@ -209,6 +213,7 @@ model:
     eod_mask_loss: False # Mask loss for the end of document tokens
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: null
+    prompt_file: null
 
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:

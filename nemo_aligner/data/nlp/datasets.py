@@ -878,6 +878,11 @@ class MathDataset(RewardModelDataset):
 
         self.use_json = cfg.data.data_impl.startswith("json")
         self.apply_chat = apply_chat
+        if cfg.data.get("prompt_file", None) is not None:
+            with open(cfg.data.prompt_file, 'r', encoding="utf-8") as f:
+                self.prompt = f.read()
+        else:
+            self.prompt = "Think step-by-step to solve the math problem. Output your answer inside of \\boxed{} tags.\n\nProblem:\n"
 
         super().__init__(
             cfg=cfg,
@@ -904,8 +909,12 @@ class MathDataset(RewardModelDataset):
             sample = self.data[idx]
             problem = sample["problem"]
             if self.apply_chat:
+                prompt = self.prompt + problem
+                if self.cfg.data.get("prompt_file", None) is not None:
+                    prompt = prompt + "\nLet's think step by step\n"
+
                 chat = [
-                    {"role": "user", "content": "The following is a math problem. Please take a deep breath, think step-by-step, and finally output your answer within a \\boxed{} tag." + f"\nProblem:\n{problem}"}
+                    {"role": "user", "content": prompt}
                 ]
                 problem = self.tokenizer.apply_chat_template(chat, tokenize=False)
                 print(problem)

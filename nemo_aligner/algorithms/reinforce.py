@@ -17,6 +17,7 @@ from collections import UserDict
 from contextlib import nullcontext
 from typing import Dict, List, Optional, Union
 
+import logging as logging_
 import pandas as pd
 import torch
 from megatron.core import parallel_state as mcore_parallel_state
@@ -38,11 +39,11 @@ from nemo_aligner.utils.distributed import (
     rebalance_nd_tensor,
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
-from nemo_aligner.utils.ppo_utils import calculate_kl_penalty, calculate_rloo_baseline, create_mask
+from nemo_aligner.utils.ppo_utils import calculate_kl_penalty, calculate_rloo_baseline, create_mask, calculate_kl_penalty_joschu2020
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
-from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
+from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean, math_batch_repeat
 
 
 class ReinforceRolloutBatch(UserDict):
@@ -57,8 +58,10 @@ class ReinforceRolloutBatch(UserDict):
         for k in sorted(rollout_batches[0]):
 
             list_of_tensors = [item[k] for item in rollout_batches]
-
-            if all(x.ndim == 1 for x in list_of_tensors):
+            
+            if isinstance(list_of_tensors[0], list):
+                tensor = [item for sublist in list_of_tensors for item in sublist]
+            elif all(x.ndim == 1 for x in list_of_tensors):
                 tensor = torch.cat(list_of_tensors)
             else:
                 pad_value = eos_id if k == "response_tokens" else 0
@@ -206,31 +209,34 @@ class ReinforceTrainer:
         is_end = rollout_batch["is_end"]
 
         if self.compute_init_policy_kl:
-            init_policy_kl = calculate_kl_penalty(
-                log_probs_a=rollout_batch["logprobs"],
-                log_probs_b=rollout_batch["init_logprobs"],
-                use_absolute_kl=self.cfg.use_absolute_kl,
+            init_policy_kl = calculate_kl_penalty_joschu2020(
+                log_probs_policy=rollout_batch["logprobs"],
+                log_probs_reference=rollout_batch["init_logprobs"],
+                # use_absolute_kl=self.cfg.use_absolute_kl,
             )
         else:
             init_policy_kl = torch.tensor(0, dtype=logprobs.dtype, device=logprobs.device)
 
         mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
-        init_policy_kl = masked_mean(init_policy_kl, mask, dim=-1)
-        rewards_with_kl = rewards - self.cfg.initial_policy_kl_penalty * init_policy_kl
+        #init_policy_kl = masked_mean(init_policy_kl, mask, dim=-1)
+        rewards_with_kl = rewards #- self.cfg.initial_policy_kl_penalty * init_policy_kl
 
         baseline = calculate_rloo_baseline(prompts=prompt_tokens, reward=rewards_with_kl, mask=is_end.float())
 
         # collect everything we need to train REINFORCE
         reinforce_rollout_data["mask"] = mask
+        reinforce_rollout_data["init_policy_kl"] = init_policy_kl * self.cfg.initial_policy_kl_penalty
+        reinforce_rollout_data["init_log_probs"] = rollout_batch["init_logprobs"]
         reinforce_rollout_data["rewards_with_kl"] = rewards_with_kl
+        reinforce_rollout_data["rewards"] = rewards
         reinforce_rollout_data["baseline"] = baseline
         reinforce_rollout_data["response_tokens"] = response_tokens
         reinforce_rollout_data["is_end"] = is_end
 
         # compute metrics
         # these are not global yet
-        reinforce_rollout_metrics["init_policy_kl"] = init_policy_kl.sum().item() if self.compute_init_policy_kl else 0
+        reinforce_rollout_metrics["init_policy_kl"] = masked_mean(init_policy_kl, mask, dim=-1).sum().item() if self.compute_init_policy_kl else 0
         reinforce_rollout_metrics["rewards_with_kl"] = rewards_with_kl.sum().item()
         reinforce_rollout_metrics["num_samples"] = prompt_lengths.size(0)
 
@@ -270,15 +276,22 @@ class ReinforceTrainer:
             with self.timer("generate"):
                 for batch in batch_iterator:
                     if not is_validation:
-                        for _ in range(self.cfg.num_rollouts_per_prompt):
+                        print(batch['problem'].shape)
+                        batch = math_batch_repeat(batch, num_repetitions=self.cfg.prompt_rollouts_per_microbatch)
+                        for _ in range(self.cfg.num_rollouts_per_prompt // self.cfg.prompt_rollouts_per_microbatch):
                             rollout_batch = self.model.infer(batch)
-                            rollout_batch["prompt_tokens"] = batch["text"]
-                            rollout_batches.append(rollout_batch)
+                            rollout_batch["prompt_tokens"] = batch["problem"]
                             futures.append(self.rm.infer_rm(rollout_batch))
+                            del rollout_batch["ground_truths"]
+                            del rollout_batch["response_sentences"]
+                            rollout_batches.append(rollout_batch)
                     else:
+                        batch = math_batch_repeat(batch, num_repetitions=self.cfg.prompt_rollouts_per_microbatch)
                         rollout_batch = self.model.infer(batch)
-                        rollout_batches.append(rollout_batch)
                         futures.append(self.rm.infer_rm(rollout_batch))
+                        del rollout_batch["ground_truths"]
+                        del rollout_batch["response_sentences"]
+                        rollout_batches.append(rollout_batch)
 
             unbalanced_local_batch = ReinforceRolloutBatch.from_rollout_batches(
                 rollout_batches,
@@ -439,7 +452,11 @@ class ReinforceTrainer:
         return loss_mean, metrics
 
     def fit(self):
+        print('FIT')
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
+
+        #step_metrics = {'val_rewards': 0.0}
+        #self.save(step_metrics, is_train_end=False)
         if len(epoch_iter) <= 0:
             # epoch done
             return
@@ -573,10 +590,15 @@ class ReinforceTrainer:
         self.set_max_steps()
 
     def save(self, extra_candidates=None, is_train_end=False):
+        logging.warning("SAVE CALLED")
+        print("Called save", torch.distributed.get_world_size())
         self.model.prepare_for_training()
+        print("prepared for training")
         # load back in the adam states if needed
         torch.cuda.synchronize()
-        torch.distributed.barrier()
+        torch.distributed.barrier(group=torch.distributed.group.WORLD)
+        print("Arrived at checkpoint barrier", torch.distributed.get_world_size())
+        logging.warning("CHECKPOINTING")
 
         if extra_candidates is None:
             extra_candidates = {}
