@@ -335,7 +335,8 @@ class RMFutureResult(FutureResult):
         # If verifier_rm_future exists, combine values based on conditions
         if self.verifier_rm_future is not None:
             verifier_rewards = self.verifier_rm_future.flatten()
-            out = out + verifier_rewards
+            # out = out + verifier_rewards
+            out = verifier_rewards
 
         return out
 
@@ -374,8 +375,9 @@ class RemoteGPTRMClient:
                     score, success = instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
                     print(f"check done: {success}, score: {score}, args: {args[i]}")
                 else:
-                    score, prediction, answer = MATH_rewards(assistant_text[-1], args[i])
-                    print(f"prediction: {prediction}, answer: {answer}, score: {score}")
+                    # score, prediction, answer = MATH_rewards(assistant_text[-1], args[i])
+                    # print(f"prediction: {prediction}, answer: {answer}, score: {score}")
+                    score = 0
 
                 verifier_rewards.append(score)
                 print("task: ", args[i]["task"], "score: ", score)
