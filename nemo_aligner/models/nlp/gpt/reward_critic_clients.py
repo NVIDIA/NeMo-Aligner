@@ -103,10 +103,10 @@ def extract_dialogue_llama(text):
     elif "<think>" in assistant_text[-1] and "<ethink>" in assistant_text[-1]:
         # a naive constraint to force thinking
         thoughts = assistant_text[-1].split("<ethink>")[0]
-        if len(thoughts.split()) < 300:
+        if len(thoughts.split()) < 0:
             assistant_text[-1] = "None"
         else:
-            assistant_text[-1] = assistant_text[-1].split("<ethink>")[1].strip()
+            assistant_text[-1] = assistant_text[-1].split("<ethink>")[-1].strip()
 
     else:
         assistant_text[-1] = "None"
