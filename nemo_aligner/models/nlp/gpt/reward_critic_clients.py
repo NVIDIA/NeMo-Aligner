@@ -182,8 +182,9 @@ def instruction_following_rewards(prompt, response, args):
             else:
                 is_following_list.append(False)
 
-        correctness = int(all(is_following_list))
-        score = 3 if correctness == 1 else -10
+        low, high = -10, 3
+        correctness = sum(is_following_list) / len(is_following_list)
+        score = low + (high - low) * correctness
         return score, True
     except:
         return 0, False
