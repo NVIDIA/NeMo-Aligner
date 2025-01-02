@@ -917,7 +917,7 @@ class MathDataset(RewardModelDataset):
                     {"role": "user", "content": prompt}
                 ]
                 problem = self.tokenizer.apply_chat_template(chat, tokenize=False)
-                print(problem)
+                #print(problem)
             sample_text, sample_length = self.encode(problem)
             sample_label = str(sample["expected_answer"])
             if idx == orig_idx:

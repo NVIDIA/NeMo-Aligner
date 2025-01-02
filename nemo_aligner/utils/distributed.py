@@ -60,6 +60,82 @@ def rebalance_nd_tensor(tensor, group):
     torch.distributed.all_reduce(output_tensor, group=group)
     return output_tensor
 
+def gather_string_list_nccl(local_string_list, group=None):
+    """
+    Gather lists of strings across all ranks in `group` using NCCL collectives,
+    using a length-based encoding so that strings can contain arbitrary characters.
+
+    Args:
+        local_string_list (List[str]): The local rank's strings.
+        group (optional): A torch.distributed group. If None, uses the default
+                          global group (dist.group.WORLD).
+
+    Returns:
+        List[str]: The concatenation of all string lists from all ranks in `group`,
+                   in rank order.
+    """
+
+    # 1) Choose a device (GPU if available)
+    device = torch.cuda.current_device()
+
+    # 2) Build a flattened bytearray for the local rank
+    #    Format: for each string s -> [4-byte length][raw bytes of s]
+    local_data = bytearray()
+    for s in local_string_list:
+        encoded = s.encode("utf-8")
+        length_bytes = len(encoded).to_bytes(4, byteorder="little")  # 4-byte length
+        local_data += length_bytes
+        local_data += encoded
+
+    local_len = len(local_data)
+
+    # 3) Create a GPU tensor of the local data length
+    local_len_tensor = torch.tensor([local_len], dtype=torch.long, device=device)
+
+    # 4) Gather lengths across all ranks in the given group
+    if group is None:
+        group = torch.distributed.group.WORLD
+
+    world_size = torch.distributed.get_world_size(group=group)
+    len_gathered = [torch.zeros(1, dtype=torch.long, device=device) for _ in range(world_size)]
+    torch.distributed.all_gather(len_gathered, local_len_tensor, group=group)
+
+    # 5) Find the maximum length among all ranks
+    max_len = max(t.item() for t in len_gathered)
+
+    # 6) Create a GPU ByteTensor of size max_len and copy local_data (pad if needed)
+    byte_tensor = torch.zeros(max_len, dtype=torch.uint8, device=device)
+    if local_len > 0:
+        byte_tensor[:local_len] = torch.as_tensor(
+            list(local_data), dtype=torch.uint8, device=device
+        )
+
+    # 7) All-gather the padded ByteTensors
+    gather_list = [torch.zeros(max_len, dtype=torch.uint8, device=device) for _ in range(world_size)]
+    torch.distributed.all_gather(gather_list, byte_tensor, group=group)
+
+    # 8) Decode each rank’s byte data into strings
+    global_strings = []
+    for rank_idx, bt in enumerate(gather_list):
+        rank_len = len_gathered[rank_idx].item()
+        if rank_len == 0:
+            continue  # This rank had no strings
+
+        # Extract the valid bytes for this rank
+        rank_data = bt[:rank_len].cpu().numpy().tobytes()
+
+        # Parse rank_data, which is [4-byte length][string bytes] repeated
+        offset = 0
+        while offset < rank_len:
+            str_len = int.from_bytes(rank_data[offset : offset + 4], byteorder="little")
+            offset += 4
+            str_bytes = rank_data[offset : offset + str_len]
+            offset += str_len
+
+            s_decoded = str_bytes.decode("utf-8")
+            global_strings.append(s_decoded)
+
+    return global_strings
 
 @deprecated_in_version("0.7.0", "Please use broadcast_tensor(tensor, src, group, dtype)")
 def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):

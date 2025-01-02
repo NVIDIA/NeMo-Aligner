@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import itertools
 from collections import UserDict
 from contextlib import nullcontext
 from typing import Dict, List, Optional, Union
+import hashlib
+import json
 
 import logging as logging_
 import pandas as pd
@@ -37,6 +40,7 @@ from nemo_aligner.utils.distributed import (
     masked_global_mean_var,
     normalize_tensor,
     rebalance_nd_tensor,
+    gather_string_list_nccl
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.utils.ppo_utils import calculate_kl_penalty, calculate_rloo_baseline, create_mask, calculate_kl_penalty_joschu2020, calculate_math_problem_wise_length_penalty
@@ -87,38 +91,59 @@ class ReinforceRolloutBatch(UserDict):
         return stacked_dict
 
     def gather_and_balance_globally(self):
+        """
+        Gathers batches with jagged leading dimensions across the DP ranks. If using reshard, it will treat PP as DP ranks.
+        Works with data that is either tensors or string lists.
+        """
         global_rollout_batch = type(self)()
 
-        for k, tensor in self.data.items():
-            # with reshard enabled, PP groups turn into DP groups. So need to balance them first and then
-            # balance by all the original DP groups
-            # NOTE: this logic needs to use the pure parallel state, that is one without sharding but needs
-            # to ping the is_trt_llm_reshard variable
-            if is_trt_llm_reshard():
-                tensor = rebalance_nd_tensor(tensor, group=mcore_parallel_state.get_pipeline_model_parallel_group())
+        for k, val in self.data.items():
+            if isinstance(val, torch.Tensor):
+                # with reshard enabled, PP groups turn into DP groups. So need to balance them first and then
+                # balance by all the original DP groups
+                # NOTE: this logic needs to use the pure parallel state, that is one without sharding but needs
+                # to ping the is_trt_llm_reshard variable
+                if is_trt_llm_reshard():
+                    val = rebalance_nd_tensor(val, group=mcore_parallel_state.get_pipeline_model_parallel_group())
 
-            tensor = rebalance_nd_tensor(tensor, group=mcore_parallel_state.get_data_parallel_group())
-            global_rollout_batch[k] = tensor
+                val = rebalance_nd_tensor(val, group=mcore_parallel_state.get_data_parallel_group())
+                global_rollout_batch[k] = val
+            elif isinstance(val, list) and all(isinstance(x, str) for x in val):
+                # same reshard logic described above
+                if is_trt_llm_reshard():
+                    val = gather_string_list_nccl(val, group=mcore_parallel_state.get_pipeline_model_parallel_group())
+                val = gather_string_list_nccl(val, mcore_parallel_state.get_data_parallel_group())
+                global_rollout_batch[k] = val
+            else:
+                raise NotImplementedError((f"Attempted to gather_and_balance_globally for unsupported type {type(val)} with key {k}."
+                                           "Please provide either a tensor or a string list."))
 
         return global_rollout_batch
 
     def chunk(self, rank, split_size, seed):
         chunked_rollout_batch = type(self)()
 
-        batch_set = set(tensor.size(0) for tensor in self.data.values())
+        batch_set = set() # set of batch sizes of values in rollout batch
+        for val in self.data.values():
+            if isinstance(val, torch.Tensor):
+                batch_set.add(val.size(0))
+            else:
+                batch_set.add(len(val))
         assert len(batch_set) == 1, "batch sizes are not the same across the rollout batch"
         B = batch_set.pop()
 
         g_cpu = torch.Generator()
         g_cpu.manual_seed(seed)
-        indices = torch.arange(B)
+        indices = torch.arange(B).tensor_split(split_size)[rank]
 
         for k in self.data:
-            chunked_rollout_batch[k] = self.data[k][indices].clone()
+            if torch.is_tensor(self.data[k]):
+                chunked_rollout_batch[k] = self.data[k][indices].clone()
+            else:
+                chunked_rollout_batch[k] = [self.data[k][i] for i in indices]
 
         return chunked_rollout_batch
-
-
+   
 def compute_num_rollout_microbatches(dataloader):
     return divide(
         divide(dataloader.batch_sampler.global_batch_size, dataloader.batch_sampler.micro_batch_size),
@@ -219,11 +244,15 @@ class ReinforceTrainer:
 
         mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
-        #init_policy_kl = masked_mean(init_policy_kl, mask, dim=-1)
-        rewards_with_kl = rewards #- self.cfg.initial_policy_kl_penalty * init_policy_kl
-        #rewards = calculate_math_problem_wise_length_penalty(prompt_tokens, response_lengths, rewards, mask, self.cfg.max_length_penalty)
+        # NOTE: I'm keeping the 'rewards_with_kl' convention here to avoid breaking code elsewhere, but note that KL is actually added during loss calculation now 
+        #       to reduce variance.
 
-        baseline = calculate_rloo_baseline(prompts=prompt_tokens, reward=rewards_with_kl, mask=is_end.float())
+        #init_policy_kl = masked_mean(init_policy_kl, mask, dim=-1)
+        #rewards = calculate_math_problem_wise_length_penalty(prompt_tokens, response_lengths, rewards, is_end.float(), self.cfg.max_length_penalty)
+        rewards_with_kl = rewards #- self.cfg.initial_policy_kl_penalty * init_policy_kl
+
+        #baseline = calculate_rloo_baseline(prompts=prompt_tokens, reward=rewards_with_kl, mask=is_end.float())
+        baseline = rollout_batch["baseline"]
 
         # collect everything we need to train REINFORCE
         reinforce_rollout_data["mask"] = mask
@@ -240,6 +269,7 @@ class ReinforceTrainer:
         reinforce_rollout_metrics["init_policy_kl"] = masked_mean(init_policy_kl, mask, dim=-1).sum().item() if self.compute_init_policy_kl else 0
         reinforce_rollout_metrics["rewards_with_kl"] = rewards_with_kl.sum().item()
         reinforce_rollout_metrics["num_samples"] = prompt_lengths.size(0)
+        reinforce_rollout_metrics["accuracy"] = rollout_batch["accuracy"].sum().item()
 
         # now the metrics are global
         reinforce_rollout_metrics = all_reduce_dict(
@@ -252,6 +282,55 @@ class ReinforceTrainer:
 
         return reinforce_rollout_data, cpu_dict(reinforce_rollout_metrics)
 
+    def generation_log(self, rollout_batch, savefile):
+        """
+        Logs all generations and related metadata to savefile
+        Runs only on rank 0. We assume that the input "rollout_batch" is global here.
+        """
+        if torch.distributed.get_rank() == 0:
+            def dict_get(batch, idx):
+                inst = {}
+                for k in batch.keys():
+                    inst[k] = batch[k][idx]
+                return inst
+
+            batch_size = rollout_batch["prompt_tokens"].shape[0]
+            records = []
+            for idx in range(batch_size):
+                # get individual element of batch
+                instance = dict_get(rollout_batch, idx)
+                response_tokens = instance["response_tokens"]
+                response_length = instance["response_lengths"].item()
+                prompt_length = instance["prompt_lengths"].item()
+                ground_truth = instance["ground_truths"]
+                is_end = instance["is_end"].item()
+                reward = instance["rewards"].item()
+                problem_str = self.model.tokenizer.ids_to_text(response_tokens[:prompt_length].tolist())
+                response_str = self.model.tokenizer.ids_to_text(response_tokens[prompt_length:].tolist())
+                problem_hash = hashlib.sha256(problem_str.encode('utf-8')).hexdigest()
+                generator_rank = instance["generator_rank"].item()
+
+                record = {
+                    "problem_hash": problem_hash,
+                    "idx_in_batch": idx,
+                    "problem": problem_str,
+                    "response": response_str,
+                    "response_length": response_length,
+                    "ground_truth": ground_truth,
+                    "rank": generator_rank,
+                    "ended_correctly": is_end,
+                    "step": self.reinforce_optimization_step,
+                    "reward": reward,
+                    "accuracy": instance["accuracy"].item(),
+                    "baseline": instance["baseline"].item(),
+                }
+                records.append(record)
+
+            with open(savefile, "a", encoding="utf-8") as f:
+                for record in records:
+                    json.dump(record, f)
+                    f.write("\n")
+        
     def _run_inference(self, dataloader_builder, consumed_samples, is_validation):
         """this function is run per DP so the metrics need to be computed globally
         assumes that the dataloader is built with the proper consumed samples value
@@ -282,15 +361,18 @@ class ReinforceTrainer:
                         for _ in range(self.cfg.num_rollouts_per_prompt // self.cfg.prompt_rollouts_per_microbatch):
                             rollout_batch = self.model.infer(batch)
                             rollout_batch["prompt_tokens"] = batch["problem"]
+                            rollout_batch["generator_rank"] = torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
                             futures.append(self.rm.infer_rm(rollout_batch))
-                            del rollout_batch["ground_truths"]
+                            #del rollout_batch["ground_truths"]
                             del rollout_batch["response_sentences"]
                             rollout_batches.append(rollout_batch)
                     else:
                         batch = math_batch_repeat(batch, num_repetitions=self.cfg.prompt_rollouts_per_microbatch)
                         rollout_batch = self.model.infer(batch)
+                        rollout_batch["prompt_tokens"] = batch["problem"]
+                        rollout_batch["generator_rank"] = torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
                         futures.append(self.rm.infer_rm(rollout_batch))
-                        del rollout_batch["ground_truths"]
+                        #del rollout_batch["ground_truths"]
                         del rollout_batch["response_sentences"]
                         rollout_batches.append(rollout_batch)
 
@@ -337,6 +419,17 @@ class ReinforceTrainer:
             )
             global_rm_batch = unbalanced_rm_batch.gather_and_balance_globally()
 
+            # calculating the solution-aware length penalty and RLOO baseline requires global context
+            # NOTE: I do all reward calculations here since I've removed the KL penalty from the reward. 
+            #       I instead calculate it with direct gradients in the loss.
+            g_prompt_tokens = global_rollout_batch["prompt_tokens"]
+            g_response_lengths = global_rollout_batch["response_lengths"]
+            g_rewards = global_rm_batch["rewards"]
+            g_is_end = global_rollout_batch["is_end"]
+            global_rm_batch["accuracy"] = g_rewards
+            global_rm_batch["rewards"] = calculate_math_problem_wise_length_penalty(g_prompt_tokens, g_response_lengths, g_rewards, g_is_end.float(), self.cfg.max_length_penalty)
+            global_rm_batch["baseline"] = calculate_rloo_baseline(prompts=g_prompt_tokens, reward=global_rm_batch["rewards"], mask=g_is_end.float())
+
         # chunking needs to be outside of reshard region
         # NOTE: the seed here must be the same as the chunk before since we need to shuffle
         # these values the same way as the other values
@@ -348,6 +441,8 @@ class ReinforceTrainer:
         balanced_local_batch.update(balanced_rm_batch)
 
         global_rollout_batch.update(global_rm_batch)
+        savefile = "train.jsonl" if not is_validation else "validation.jsonl"
+        self.generation_log(global_rollout_batch, self.cfg.generation_save_dir + savefile)
 
         return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch))
 
@@ -377,6 +472,7 @@ class ReinforceTrainer:
             "prompt_lengths": prompt_lengths.float().mean().item(),
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
             "rewards": rewards.mean().item(),
+            "accuracy": rollout_batch["accuracy"].mean().item(),
             "fraction_of_samples_properly_ended": is_end.float().mean().item(),
         }
 

@@ -130,6 +130,7 @@ def main(cfg) -> None:
         gbs=cfg.model.reinforce.num_rollout_samples,
         collate_fn=collate_fn,
         load_gbs=False,
+        use_random_sampler=cfg.model.data.shuffle_train_data,
     )
 
     val_dataloader_builder = partial(

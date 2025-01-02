@@ -337,7 +337,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                         response_tokens[i][prompt_lengths[i]:response_lengths[i]].tolist())
                         for i in range(response_lengths.shape[0])]
 
-        print(response_sentences)
+        #print(response_sentences)
         rollout_batch = {
             "response_tokens": response_tokens,
             "response_lengths": response_lengths,
