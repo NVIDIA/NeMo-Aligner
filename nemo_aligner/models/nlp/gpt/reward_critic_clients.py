@@ -166,21 +166,26 @@ def instruction_following_rewards(prompt, response, args):
         is_following_list = []
 
         for index, instruction_id in enumerate(instruction_list):
-            instruction_cls = INSTRUCTION_DICT[instruction_id]
-            instruction = instruction_cls(instruction_id)
+            try:
+                instruction_cls = INSTRUCTION_DICT[instruction_id]
+                instruction = instruction_cls(instruction_id)
 
-            kwargs = (
-                task_args["instruction_kwargs"][index] if task_args["instruction_kwargs"][index] is not None else {}
-            )
-            instruction.build_description(**kwargs)
-            instruction_args = instruction.get_instruction_args()
-            if instruction_args and "prompt" in instruction_args:
-                instruction.build_description(prompt=prompt)
+                kwargs = (
+                    task_args["instruction_kwargs"][index]
+                    if task_args["instruction_kwargs"][index] is not None
+                    else {}
+                )
+                instruction.build_description(**kwargs)
+                instruction_args = instruction.get_instruction_args()
+                if instruction_args and "prompt" in instruction_args:
+                    instruction.build_description(prompt=prompt)
 
-            if response.strip() and instruction.check_following(response):
-                is_following_list.append(True)
-            else:
-                is_following_list.append(False)
+                if response.strip() and instruction.check_following(response):
+                    is_following_list.append(True)
+                else:
+                    is_following_list.append(False)
+            except Exception as e:
+                print(f"Error in instruction_following_rewards: {e}, task: {args}")
 
         low, high = -10, 3
         correctness = sum(is_following_list) / len(is_following_list)
