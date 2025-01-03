@@ -218,6 +218,10 @@ def parentheses_rewards(response, args):
     answer = args["answer"]
     try:
         prediction = extract_answer(response)
+        if "\\times" in prediction:
+            answer = answer.replace("*", "\\times").replace("x", "\\times")
+        if "\\div" in prediction:
+            answer = answer.replace("/", "\\div")
         if str(prediction).count("(") != 1 or str(prediction).count(")") != 1:
             return -10, True
         if str(prediction).replace("(", "").replace(")", "").replace(" ", "") != input_left.replace(" ", ""):
