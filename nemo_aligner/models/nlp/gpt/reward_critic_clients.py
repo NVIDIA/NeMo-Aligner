@@ -103,7 +103,7 @@ def extract_dialogue_llama(text):
     elif "<think>" in assistant_text[-1] and "<ethink>" in assistant_text[-1]:
         # a naive constraint to force thinking
         thoughts = assistant_text[-1].split("<ethink>")[0]
-        if len(thoughts.split()) < 300:
+        if len(thoughts.split()) < 100:
             assistant_text[-1] = "None"
         else:
             assistant_text[-1] = assistant_text[-1].split("<ethink>")[1].strip()
@@ -185,6 +185,37 @@ def instruction_following_rewards(prompt, response, args):
         low, high = -10, 3
         correctness = sum(is_following_list) / len(is_following_list)
         score = low + (high - low) * correctness
+        return score, True
+    except:
+        return 0, False
+
+
+def game24_rewards(response, args):
+    inputs = args["input"]
+    try:
+        prediction = extract_answer(response)
+        numbers1 = re.findall(r"\d+", str(prediction))
+        numbers2 = re.findall(r"\d+", inputs)
+        if numbers1 != numbers2:
+            return -10, True
+        correctness = int(math_equal(prediction, 24))
+        score = -10 if correctness == 0 else 5
+        return score, True
+    except:
+        return 0, False
+
+
+def parentheses_rewards(response, args):
+    input_left = args["input_left"]
+    answer = args["answer"]
+    try:
+        prediction = extract_answer(response)
+        if str(prediction).count("(") != 1 or str(prediction).count(")") != 1:
+            return -10, True
+        if str(prediction).replace("(", "").replace(")", "").replace(" ", "") != input_left.replace(" ", ""):
+            return -10, True
+        correctness = int(math_equal(prediction, answer))
+        score = -10 if correctness == 0 else 5
         return score, True
     except:
         return 0, False
@@ -336,7 +367,7 @@ class RMFutureResult(FutureResult):
         # If verifier_rm_future exists, combine values based on conditions
         if self.verifier_rm_future is not None:
             verifier_rewards = self.verifier_rm_future.flatten()
-            out = out + verifier_rewards
+            out = 0.5 * out + verifier_rewards
 
         return out
 
@@ -373,6 +404,12 @@ class RemoteGPTRMClient:
             if args[i] is not None:
                 if args[i]["task"] == "instruction_following":
                     score, success = instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
+                    print(f"check done: {success}, score: {score}, args: {args[i]}")
+                elif args[i]["task"] == "reasoning_game24":
+                    score, success = game24_rewards(assistant_text[-1], args[i])
+                    print(f"check done: {success}, score: {score}, args: {args[i]}")
+                elif args[i]["task"] == "reasoning_parentheses":
+                    score, success = parentheses_rewards(assistant_text[-1], args[i])
                     print(f"check done: {success}, score: {score}, args: {args[i]}")
                 else:
                     score, prediction, answer = MATH_rewards(assistant_text[-1], args[i])
