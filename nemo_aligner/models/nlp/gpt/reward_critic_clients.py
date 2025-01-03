@@ -152,7 +152,8 @@ def MATH_rewards(response, args):
         correctness = int(math_equal(prediction, ans))
         correctness = -10 if correctness == 0 else 5
         print(f"prediction: {prediction}, answer: {ans}, correctness: {correctness}")
-    except:
+    except Exception as e:
+        print(f"Error in instruction_following_rewards: {e}")
         correctness = -10
 
     return correctness, prediction, ans
@@ -191,7 +192,8 @@ def instruction_following_rewards(prompt, response, args):
         correctness = sum(is_following_list) / len(is_following_list)
         score = low + (high - low) * correctness
         return score, True
-    except:
+    except Exception as e:
+        print(f"Error in instruction_following_rewards: {e}")
         return 0, False
 
 
@@ -199,14 +201,15 @@ def game24_rewards(response, args):
     inputs = args["input"]
     try:
         prediction = extract_answer(response)
-        numbers1 = re.findall(r"\d+", str(prediction))
-        numbers2 = re.findall(r"\d+", inputs)
-        if sorted(numbers1) != sorted(numbers2):
+        numbers1 = set(re.findall(r"\d+", str(prediction)))
+        numbers2 = set(re.findall(r"\d+", inputs))
+        if numbers1 != numbers2:
             return -10, True
         correctness = int(math_equal(prediction, 24))
         score = -10 if correctness == 0 else 5
         return score, True
-    except:
+    except Exception as e:
+        print(f"Error in instruction_following_rewards: {e}")
         return 0, False
 
 
@@ -222,7 +225,8 @@ def parentheses_rewards(response, args):
         correctness = int(math_equal(prediction, answer))
         score = -10 if correctness == 0 else 5
         return score, True
-    except:
+    except Exception as e:
+        print(f"Error in instruction_following_rewards: {e}")
         return 0, False
 
 
