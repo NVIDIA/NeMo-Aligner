@@ -29,7 +29,7 @@ if VERSION[3] != "":
     __version__ = __version__ + VERSION[3]
 
 if VERSION[4] != "":
-    __version__ = __version__ + "." + ".".join(VERSION[4:])
+    __version__ = __version__ + "." + ".".join(VERSION[4])
 
 __package_name__ = "nemo_aligner"
 __contact_names__ = "NVIDIA"
