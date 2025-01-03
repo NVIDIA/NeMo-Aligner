@@ -16,7 +16,7 @@ import re
 import subprocess
 
 # List of packages to install
-packages = ["absl-py", "langdetect", "nltk", "immutabledict", "antlr4-python3-runtime==4.11.0"]
+packages = ["absl-py", "langdetect", "nltk==3.8.1", "immutabledict", "antlr4-python3-runtime==4.11.0"]
 # Run pip install for each package
 for package in packages:
     subprocess.run(["python", "-m", "pip", "install", package])
@@ -149,11 +149,11 @@ def MATH_rewards(response, args):
     prediction = None
     try:
         prediction = extract_answer(response)
-        correctness = int(math_equal(prediction, ans))
+        correctness = int(math_equal(str(prediction), str(ans)))
         correctness = -10 if correctness == 0 else 5
         print(f"prediction: {prediction}, answer: {ans}, correctness: {correctness}")
     except Exception as e:
-        print(f"Error in instruction_following_rewards: {e}")
+        print(f"Error in math_rewards: {e}, task: {args}")
         correctness = -10
 
     return correctness, prediction, ans
@@ -209,7 +209,7 @@ def game24_rewards(response, args):
         score = -10 if correctness == 0 else 5
         return score, True
     except Exception as e:
-        print(f"Error in instruction_following_rewards: {e}")
+        print(f"Error in game24_rewards: {e}, task: {args}")
         return 0, False
 
 
@@ -226,7 +226,7 @@ def parentheses_rewards(response, args):
         score = -10 if correctness == 0 else 5
         return score, True
     except Exception as e:
-        print(f"Error in instruction_following_rewards: {e}")
+        print(f"Error in parentheses_rewards: {e}, task: {args}")
         return 0, False
 
 
