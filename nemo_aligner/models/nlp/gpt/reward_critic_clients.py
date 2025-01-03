@@ -201,7 +201,7 @@ def game24_rewards(response, args):
         prediction = extract_answer(response)
         numbers1 = re.findall(r"\d+", str(prediction))
         numbers2 = re.findall(r"\d+", inputs)
-        if numbers1 != numbers2:
+        if sorted(numbers1) != sorted(numbers2):
             return -10, True
         correctness = int(math_equal(prediction, 24))
         score = -10 if correctness == 0 else 5
