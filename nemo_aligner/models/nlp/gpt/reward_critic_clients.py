@@ -205,7 +205,7 @@ def game24_rewards(response, args):
         numbers2 = set(re.findall(r"\d+", inputs))
         if numbers1 != numbers2:
             return -10, True
-        correctness = int(math_equal(prediction, 24))
+        correctness = int(math_equal(str(prediction), "24"))
         score = -10 if correctness == 0 else 5
         return score, True
     except Exception as e:
