@@ -150,7 +150,7 @@ def MATH_rewards(response, args):
     prediction = None
     try:
         prediction = extract_answer(response)
-        correctness = int(math_equal(str(prediction), str(ans)))
+        correctness = int(math_equal(str(prediction), str(ans))) or int(math_equal(prediction, ans))
         correctness = -10 if correctness == 0 else 5
         print(f"prediction: {prediction}, answer: {ans}, correctness: {correctness}")
     except Exception as e:
@@ -202,11 +202,12 @@ def game24_rewards(response, args):
     inputs = args["input"]
     try:
         prediction = extract_answer(response)
+        prediction = prediction.replace("\\times", "*").replace("\\div", "/")
         numbers1 = Counter(re.findall(r"\d+", str(prediction)))
         numbers2 = Counter(re.findall(r"\d+", inputs))
         if numbers1 != numbers2:
             return -10, True
-        correctness = int(math_equal(str(prediction), "24"))
+        correctness = int(eval(prediction) == 24) or int(math_equal(str(prediction), "24"))
         score = -10 if correctness == 0 else 5
         return score, True
     except Exception as e:
@@ -219,15 +220,12 @@ def parentheses_rewards(response, args):
     answer = args["answer"]
     try:
         prediction = extract_answer(response)
-        if "\\times" in prediction:
-            input_left = input_left.replace("*", "\\times").replace("x", "\\times")
-        if "\\div" in prediction:
-            input_left = input_left.replace("/", "\\div")
+        prediction = prediction.replace("\\times", "*").replace("\\div", "/")
         if str(prediction).count("(") != 1 or str(prediction).count(")") != 1:
             return -10, True
         if str(prediction).replace("(", "").replace(")", "").replace(" ", "") != input_left.replace(" ", ""):
             return -10, True
-        correctness = int(math_equal(str(prediction), str(answer)))
+        correctness = int(eval(prediction) == eval(answer)) or int(math_equal(str(prediction), str(answer)))
         score = -10 if correctness == 0 else 5
         return score, True
     except Exception as e:
