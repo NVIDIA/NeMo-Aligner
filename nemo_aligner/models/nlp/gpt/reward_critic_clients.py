@@ -212,7 +212,7 @@ def game24_rewards(response, args):
         return score, True
     except Exception as e:
         print(f"Error in game24_rewards: {e}, task: {args}")
-        return 0, False
+        return -10, False
 
 
 def parentheses_rewards(response, args):
@@ -230,7 +230,7 @@ def parentheses_rewards(response, args):
         return score, True
     except Exception as e:
         print(f"Error in parentheses_rewards: {e}, task: {args}")
-        return 0, False
+        return -10, False
 
 
 class RMCriticFutureResult(FutureResult):
