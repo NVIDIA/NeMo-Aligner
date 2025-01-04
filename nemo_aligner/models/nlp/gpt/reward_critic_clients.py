@@ -226,7 +226,7 @@ def parentheses_rewards(response, args):
             return -10, True
         if str(prediction).replace("(", "").replace(")", "").replace(" ", "") != input_left.replace(" ", ""):
             return -10, True
-        correctness = int(math_equal(prediction, answer))
+        correctness = int(math_equal(str(prediction), str(answer)))
         score = -10 if correctness == 0 else 5
         return score, True
     except Exception as e:
