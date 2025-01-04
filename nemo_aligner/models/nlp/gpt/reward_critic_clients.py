@@ -14,6 +14,7 @@
 
 import re
 import subprocess
+from collections import Counter
 
 # List of packages to install
 packages = ["absl-py", "langdetect", "nltk==3.8.1", "immutabledict", "antlr4-python3-runtime==4.11.0"]
@@ -201,8 +202,8 @@ def game24_rewards(response, args):
     inputs = args["input"]
     try:
         prediction = extract_answer(response)
-        numbers1 = set(re.findall(r"\d+", str(prediction)))
-        numbers2 = set(re.findall(r"\d+", inputs))
+        numbers1 = Counter(re.findall(r"\d+", str(prediction)))
+        numbers2 = Counter(re.findall(r"\d+", inputs))
         if numbers1 != numbers2:
             return -10, True
         correctness = int(math_equal(str(prediction), "24"))
