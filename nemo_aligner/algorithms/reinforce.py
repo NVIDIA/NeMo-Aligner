@@ -187,6 +187,9 @@ class ReinforceTrainer:
 
         self.trtllm_reshard = "trt_llm" in cfg and cfg.trt_llm.enable and cfg.trt_llm.reshard
 
+        # number of problems consumed
+        self.consumed_problems = 0
+        # number of total samples consumed (i.e. 128 if there have been 2 problems, but 64 generations each)
         self.consumed_samples = 0
         # the step here is REINFORCE step
         self.step = 0
@@ -209,7 +212,7 @@ class ReinforceTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(train_dataloader.batch_sampler)
         self.set_max_steps()
 
-        self.compute_init_policy_kl = self.cfg.initial_policy_kl_penalty > 0
+        self.compute_init_policy_kl = True #self.cfg.initial_policy_kl_penalty > 0
         # size to pad our rollout batch to
         self.rollout_batch_seq_length = self.cfg.rollout_batch_seq_length
 
@@ -367,7 +370,7 @@ class ReinforceTrainer:
                             del rollout_batch["response_sentences"]
                             rollout_batches.append(rollout_batch)
                     else:
-                        batch = math_batch_repeat(batch, num_repetitions=self.cfg.prompt_rollouts_per_microbatch)
+                        batch = math_batch_repeat(batch, num_repetitions=self.cfg.val_prompt_rollouts_per_microbatch)
                         rollout_batch = self.model.infer(batch)
                         rollout_batch["prompt_tokens"] = batch["problem"]
                         rollout_batch["generator_rank"] = torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
@@ -442,7 +445,7 @@ class ReinforceTrainer:
 
         global_rollout_batch.update(global_rm_batch)
         savefile = "train.jsonl" if not is_validation else "validation.jsonl"
-        self.generation_log(global_rollout_batch, self.cfg.generation_save_dir + savefile)
+        self.generation_log(global_rollout_batch, os.path.join(self.cfg.generation_save_dir, savefile))
 
         return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch))
 
@@ -494,9 +497,10 @@ class ReinforceTrainer:
             self.model.prepare_for_inference()
 
         rollout_batch, rollout_metrics = self._run_inference(
-            self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False
+            self.train_dataloader_builder, consumed_samples=self.consumed_samples // self.cfg.num_rollouts_per_prompt, is_validation=False
         )
 
+        self.consumed_problems += rollout_metrics["rollout_size"] // self.cfg.num_rollouts_per_prompt
         self.consumed_samples += rollout_metrics["rollout_size"]
 
         reinforce_rollout_data, reinforce_rollout_metrics = self.generate_reinforce_data(rollout_batch)
@@ -507,7 +511,7 @@ class ReinforceTrainer:
 
         return (
             reinforce_rollout_data,
-            rollout_metrics | reinforce_rollout_metrics | {"consumed_samples": self.consumed_samples},
+            rollout_metrics | reinforce_rollout_metrics | {"consumed_samples": self.consumed_samples, "consumed_problems": self.consumed_problems},
             self.timer.consume_durations(),
         )
 

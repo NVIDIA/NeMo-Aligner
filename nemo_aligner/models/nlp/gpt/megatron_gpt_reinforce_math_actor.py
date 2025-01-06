@@ -136,6 +136,10 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
                 )
 
+                #scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
+                #if self.entropy_bonus > 0:
+                #    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask) * self.entropy_bonus
+
                 print(curr_log_probs.shape, rewards.shape, baseline.shape)
                 #reinforce_loss = -1 * curr_log_probs * (rewards_with_kl.unsqueeze(-1) - baseline.unsqueeze(-1))
                 reinforce_loss = -1 * curr_log_probs * (rewards.unsqueeze(-1) - baseline.unsqueeze(-1)) + self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs )#init_policy_kl

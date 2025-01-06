@@ -22,6 +22,7 @@ trainer:
     use_absolute_kl: True
     num_rollouts_per_prompt: 4
     prompt_rollouts_per_microbatch: 4
+    val_prompt_rollouts_per_microbatch: 1
 
 
     # the sequence length to pad the rollout batch for training to
@@ -177,7 +178,7 @@ model:
   global_batch_size: 64
   megatron_amp_O2: True
 
-  encoder_seq_length: 5120
+  encoder_seq_length: 4096
   max_position_embeddings: ${model.encoder_seq_length}
 
   ## Sequence Parallelism
@@ -192,7 +193,7 @@ model:
     overlap_grad_sync: False
     contiguous_grad_buffer: True
     lr: 9e-7
-    weight_decay: 0.01
+    weight_decay: 0.1
     betas:
     - 0.9
     - 0.98
