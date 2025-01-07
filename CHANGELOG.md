@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ## [Next Version]
 
+## NVIDIA NeMo-Aligner 0.6.0
+
 ### New Features and Optimizations
 - Added context parallel (CP) support for SFT. CP requires you to prepare your dataset using NeMo's [prepare_packed_ft_dataset.py](https://github.com/NVIDIA/NeMo/blob/main/scripts/nlp_language_modeling/prepare_packed_ft_dataset.py) script prior to training. Be sure to pass the context parallel size to this script, for example:
 
