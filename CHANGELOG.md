@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### Deprecation Notices
 -->
 
-## [Next Version]
+## NVIDIA NeMo-Aligner 0.6.0
 
 ## NVIDIA NeMo-Aligner 0.6.0
 
