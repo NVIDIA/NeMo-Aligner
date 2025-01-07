@@ -23,7 +23,7 @@ from typing import List
 import immutabledict
 import nltk
 
-nltk.download("punkt")
+nltk.download("punkt_tab")
 
 WORD_LIST = [
     "western",
