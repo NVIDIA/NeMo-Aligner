@@ -17,7 +17,7 @@ import subprocess
 from collections import Counter
 
 # List of packages to install
-packages = ["absl-py", "langdetect", "nltk==3.8.1", "immutabledict", "antlr4-python3-runtime==4.11.0"]
+packages = ["absl-py", "langdetect", "nltk==3.8.1", "immutabledict"]
 # Run pip install for each package
 for package in packages:
     subprocess.run(["python", "-m", "pip", "install", package])
@@ -108,6 +108,13 @@ def extract_dialogue_llama(text):
             assistant_text[-1] = "None"
         else:
             assistant_text[-1] = assistant_text[-1].split("<ethink>")[1].strip()
+    elif "<think>" in assistant_text[-1] and "</think>" in assistant_text[-1]:
+        # a naive constraint to force thinking
+        thoughts = assistant_text[-1].split("</think>")[0]
+        if len(thoughts.split()) < 100:
+            assistant_text[-1] = "None"
+        else:
+            assistant_text[-1] = assistant_text[-1].split("</think>")[1].strip()
 
     else:
         assistant_text[-1] = "None"
@@ -379,7 +386,7 @@ class RMFutureResult(FutureResult):
         # If verifier_rm_future exists, combine values based on conditions
         if self.verifier_rm_future is not None:
             verifier_rewards = self.verifier_rm_future.flatten()
-            out = 0.5 * out + verifier_rewards
+            out = out + verifier_rewards
 
         return out
 
@@ -396,6 +403,7 @@ class RemoteGPTRMClient:
         self.communicator = HTTPCommunicator.create_http_communicator_from_dict(server_dict)
         self.communicator.print_server_dict()
         self.pad_to_length = self.cfg.pad_to_length
+        subprocess.run(["python", "-m", "pip", "install", "antlr4-python3-runtime==4.11.0"])
 
     def infer_rm_critic(self, rollout_batch, model, args):
         response_tokens = rollout_batch["response_tokens"].cpu()
