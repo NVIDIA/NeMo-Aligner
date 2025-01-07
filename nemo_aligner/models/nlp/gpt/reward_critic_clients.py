@@ -196,7 +196,7 @@ def instruction_following_rewards(prompt, response, args):
             except Exception as e:
                 print(f"Error in instruction_following_rewards: {e}, task: {args}")
 
-        low, high = -10, 3
+        low, high = -10, 5
         correctness = sum(is_following_list) / len(is_following_list)
         score = low + (high - low) * correctness
         return score, True
