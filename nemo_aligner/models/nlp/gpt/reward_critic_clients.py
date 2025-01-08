@@ -33,7 +33,7 @@ from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
-from nemo_aligner.utils.verifiers.code_verfier import CodeVerifier
+from nemo_aligner.utils.verifiers.code_verifier_unsafe import CodeVerifier
 from nemo_aligner.utils.verifiers.instruction_following.instructions_registry import INSTRUCTION_DICT
 from nemo_aligner.utils.verifiers.math_grader import extract_answer, math_equal
 
