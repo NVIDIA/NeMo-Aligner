@@ -33,6 +33,7 @@ from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
+from nemo_aligner.utils.verifiers.code_verfier import CodeVerifier
 from nemo_aligner.utils.verifiers.instruction_following.instructions_registry import INSTRUCTION_DICT
 from nemo_aligner.utils.verifiers.math_grader import extract_answer, math_equal
 
@@ -240,6 +241,38 @@ def parentheses_rewards(response, args):
         return -10, False
 
 
+def code_rewards(response, args):
+    try:
+        code_str = response.replace("```python", "```").split("```")[1].strip()
+        tests = args["unittests"]
+        verifier = CodeVerifier()
+        results = verifier.verify(code_str, tests)
+        num_pass = 0
+        for result in results:
+            test_num = result["test_number"]
+            if result.get("passed"):
+                print(f"Test #{test_num}: PASS")
+                num_pass += 1
+            else:
+                print(f"Test #{test_num}: FAIL")
+                if "error" in result:
+                    print(f"Error: {result['error']}")
+                else:
+                    print("Expected:")
+                    print(result["expected_output"])
+                    print("Got:")
+                    print(result["actual_output"])
+
+        pass_rate = num_pass / len(results)
+        print(f"pass rate: {pass_rate}")
+        low, high = -10, 5
+        score = low + (high - low) * pass_rate
+        return score, True
+    except Exception as e:
+        print(f"Error in code_rewards: {e}, task: {args}")
+        return -10, True
+
+
 class RMCriticFutureResult(FutureResult):
     def __init__(self, critic_future, rm_future, combine_rm_and_critic_server, og_seq_length):
         self.critic_future = critic_future
@@ -422,7 +455,10 @@ class RemoteGPTRMClient:
             print(text)
 
             if args[i] is not None:
-                if args[i]["task"] == "instruction_following":
+                if "code" in args[i]["task"]:
+                    score, success = code_rewards(assistant_text[-1], args[i])
+                    print(f"check done: {success}, score: {score}, args: {args[i]}")
+                elif args[i]["task"] == "instruction_following":
                     score, success = instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
                     print(f"check done: {success}, score: {score}, args: {args[i]}")
                 elif args[i]["task"] == "reasoning_game24":
