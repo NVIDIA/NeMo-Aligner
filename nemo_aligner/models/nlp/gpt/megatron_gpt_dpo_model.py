@@ -19,17 +19,16 @@ import torch
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
-from omegaconf.dictconfig import DictConfig
-from pytorch_lightning.trainer.trainer import Trainer
+#from omegaconf.dictconfig import DictConfig ## TODO: no more configuration with yaml
+#from pytorch_lightning.trainer.trainer import Trainer ## TODO: is this dep on PTL still needed?
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo.collections.llm.gpt.model.base import GPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
-    average_losses_across_data_parallel_group,
-    get_iterator_k_split,
-    get_ltor_masks_and_position_ids,
+    average_losses_across_data_parallel_group, ## TODO: move to llm collection. This is used in nemo/lightning as well
+    get_iterator_k_split, ## TODO: move to llm collection. This is used in nemo/lightning as well
 )
-from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
-from nemo.collections.nlp.parts.utils_funcs import get_last_rank
+#from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin ## peft callback in nemo 2
+from nemo.collections.nlp.parts.utils_funcs import get_last_rank ## TODO: copy this fn to aligner (just == torch.distributed.get_world_size() - 1)
 from nemo_aligner.data.nlp.datasets import DPOPackedDataset
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils import parallel_state
@@ -43,20 +42,33 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
 
-
-class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
+## TODO: add peft support
+class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
     """
     Megatron GPT DPO Model Training.
     """
 
-    def __init__(self, cfg: DictConfig, trainer: Trainer):
-        super().__init__(cfg, trainer=trainer)
+    def __init__(
+        self,
+        cfg: GPTConfig,
+        optim: Optional[OptimizerModule] = None,
+        tokenizer: Optional["TokenizerSpec"] = None,
+        model_transform: Optional[Callable[[nn.Module], nn.Module]] = None,
+    ):
+        super().__init__(
+            cfg,
+            optim=optim,
+            tokenizer=tokenizer,
+            model_transform=model_transform,
+        )
 
-        if self.cfg.pipeline_model_parallel_size > 1 and not self.cfg.megatron_amp_O2:
+        ## TODO: put this check elsewhere. model no longer contains parallelism stuff
+        '''if self.cfg.pipeline_model_parallel_size > 1 and not self.cfg.megatron_amp_O2:
             warnings.warn(
                 "when using pipeline parallelism, it is recommended to set megatron_amp_O2 to be True to "
                 "avoid explicit casting for pipeline communication"
-            )
+            )'''
+
         self.automatic_optimization = False
         self.ref_policy_state_dict = None
 
@@ -97,6 +109,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         return out_chosen.flatten(), out_rejected.flatten()
 
+    ## TODO: make this more modular!
     def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
             batch = next(dataloader_iter)
