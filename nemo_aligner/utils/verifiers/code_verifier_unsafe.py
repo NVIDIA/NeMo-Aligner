@@ -5,100 +5,138 @@ import os
 import resource
 import subprocess
 import tempfile
-import time
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 
+import numpy as np
 from tqdm import tqdm
 
 
 class CodeVerifier:
     def __init__(self, memory_limit_mb=256, cpu_time=10, timeout=10):
-        self.memory_limit = memory_limit_mb * 1024 * 1024  # Convert to bytes
+        self.memory_limit = memory_limit_mb * 1024 * 1024
         self.cpu_time = cpu_time
         self.timeout = timeout
-
-        # Setup logging
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
-
-    def _prepare_test_files(self, code_str, test_input):
-        tmp_dir = tempfile.mkdtemp()
-        code_path = os.path.join(tmp_dir, "solution.py")
-        input_path = os.path.join(tmp_dir, "input.txt")
-
-        with open(code_path, "w") as f:
-            f.write(code_str)
-        with open(input_path, "w") as f:
-            f.write(test_input)
-
-        return tmp_dir, code_path, input_path
 
     def _set_resource_limits(self):
         resource.setrlimit(resource.RLIMIT_AS, (self.memory_limit, -1))
         resource.setrlimit(resource.RLIMIT_CPU, (self.cpu_time, -1))
 
-    def _run_code(self, code_path, input_path):
-        try:
-            with open(input_path, "r") as input_file:
-                process = subprocess.Popen(
-                    ["python3", code_path],
-                    stdin=input_file,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    preexec_fn=self._set_resource_limits,
-                )
+    def _create_temp_files(self, code_str, test_input=None, wrapper_code=None):
+        tmp_dir = tempfile.mkdtemp()
+        code_path = os.path.join(tmp_dir, "solution.py")
 
-                try:
-                    output, error = process.communicate(timeout=self.timeout)
-                    if process.returncode != 0:
-                        return f"Error: {error.decode('utf-8')}"
-                    return output.decode("utf-8")
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    return f"Error: Timeout exceeded {self.timeout} seconds"
+        with open(code_path, "w") as f:
+            if wrapper_code:
+                f.write(wrapper_code)
+            else:
+                f.write(code_str)
+
+        input_path = None
+        if test_input is not None:
+            input_path = os.path.join(tmp_dir, "input.txt")
+            with open(input_path, "w") as f:
+                f.write(test_input)
+
+        return tmp_dir, code_path, input_path
+
+    def _run_process(self, code_path, input_path=None):
+        try:
+            process_args = {
+                "args": ["python3", code_path],
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "preexec_fn": self._set_resource_limits,
+            }
+
+            if input_path:
+                process_args["stdin"] = open(input_path, "r")  # Don't close this file immediately
+
+            process = subprocess.Popen(**process_args)
+
+            try:
+                output, error = process.communicate(timeout=self.timeout)
+                if process.returncode != 0:
+                    return f"Error: {error.decode('utf-8')}"
+                return output.decode("utf-8")
+            finally:
+                if input_path:
+                    process_args["stdin"].close()  # Close the file after communication is done
+
+        except subprocess.TimeoutExpired:
+            process.kill()
+            return f"Error: Timeout exceeded {self.timeout} seconds"
         except Exception as e:
             self.logger.error(f"Execution error: {str(e)}")
             return f"Error: {str(e)}"
 
-    def verify(self, code_str, tests):
-        def run_single_test(test_data):
-            test_idx, test = test_data
-            try:
-                input_str = test["inputs"]
-                expected_output = test["outputs"]
+    def _compare_outputs(self, actual, expected, atol=1e-5):
+        try:
+            # Try parsing as numbers for approximate comparison
+            actual_val = float(actual.strip())
+            expected_val = float(expected.strip())
+            return np.isclose(actual_val, expected_val, atol=atol)
+        except (ValueError, TypeError):
+            # Fall back to string comparison
+            return actual.strip() == expected.strip()
 
-                tmp_dir, code_path, input_path = self._prepare_test_files(code_str, input_str)
+    def _create_function_wrapper(self, code_str, fn_name, input_args):
+        arg_list_str = ", ".join(repr(arg) for arg in input_args)
+        return f"""
+import json
+{code_str}
+result = {fn_name}({arg_list_str})
+print(json.dumps(result))
+"""
+
+    def _run_single_test(self, test_data, code_str, fn_name=None):
+        test_idx, test = test_data
+        try:
+            if fn_name:
+                wrapper_code = self._create_function_wrapper(code_str, fn_name, test["inputs"])
+                tmp_dir, code_path, _ = self._create_temp_files(code_str, wrapper_code=wrapper_code)
+                actual_output = self._run_process(code_path)
                 try:
-                    actual_output = self._run_code(code_path, input_path)
-                    actual_output = actual_output + "\n"
-
-                    passed = (actual_output == expected_output) or (actual_output.strip() == expected_output.strip())
+                    actual_output = json.loads(actual_output)
+                except json.JSONDecodeError:
                     return {
                         "test_number": test_idx,
-                        "passed": passed,
+                        "passed": False,
                         "actual_output": actual_output,
-                        "expected_output": expected_output,
+                        "expected_output": test["outputs"],
                     }
-                finally:
-                    import shutil
+            else:
+                tmp_dir, code_path, input_path = self._create_temp_files(code_str, test["inputs"])
+                actual_output = self._run_process(code_path, input_path)
+                actual_output = actual_output + "\n"
 
-                    shutil.rmtree(tmp_dir)
+            passed = self._compare_outputs(str(actual_output), str(test["outputs"]))
+            return {
+                "test_number": test_idx,
+                "passed": passed,
+                "actual_output": actual_output,
+                "expected_output": test["outputs"],
+            }
+        except Exception as e:
+            self.logger.error(f"Test {test_idx} failed with error: {str(e)}")
+            return {"test_number": test_idx, "passed": False, "error": str(e)}
+        finally:
+            import shutil
 
-            except Exception as e:
-                self.logger.error(f"Test {test_idx} failed with error: {str(e)}")
-                return {"test_number": test_idx, "passed": False, "error": str(e)}
+            shutil.rmtree(tmp_dir)
 
+    def verify(self, code_str, tests, fn_name=None):
         max_workers = min(len(tests), (os.cpu_count() or 1) * 2)
         test_data = list(enumerate(tests, 1))
         results = []
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_test = {executor.submit(run_single_test, td): td for td in test_data}
+            future_to_test = {executor.submit(self._run_single_test, td, code_str, fn_name): td for td in test_data}
+
             with tqdm(total=len(tests), desc="Running tests") as pbar:
                 for future in concurrent.futures.as_completed(future_to_test):
-                    result = future.result()
-                    results.append(result)
+                    results.append(future.result())
                     pbar.update(1)
 
         results.sort(key=lambda x: x["test_number"])
@@ -164,8 +202,35 @@ print(min_moves(x0, y0, x1, y1, segments))
     for i, o in zip(json.loads(tests["ground_truth"])["inputs"], json.loads(tests["ground_truth"])["outputs"]):
         test_list.append({"inputs": i, "outputs": o})
 
+    code = """
+def calculate_time(battery, charger):
+    # Fast charge phase (0% to 85%)
+    fast_charge_time = (battery * 0.85) / charger
+    
+    # Decreasing charge phase (85% to 95%)
+    decreasing_charge_time = (battery * 0.10) / (charger * 0.5)
+    
+    # Trickle charge phase (95% to 100%)
+    trickle_charge_time = (battery * 0.05) / (charger * 0.2)
+    
+    # Total charging time
+    total_time = fast_charge_time + decreasing_charge_time + trickle_charge_time
+    
+    # Round to 2 decimal places
+    total_time = round(total_time, 2)
+    
+    return total_time
+
+"""
+    test_list = []
+    a = {
+        "inputs": [[1000, 500], [1500, 500], [2000, 1000], [5000, 1000], [1000, 5000], [3050, 2600]],
+        "outputs": [[2.6], [3.9], [2.6], [6.5], [0.26], [1.53]],
+    }
+    for i, o in zip(a["inputs"], a["outputs"]):
+        test_list.append({"inputs": i, "outputs": ", ".join(repr(arg) for arg in o)})
     # Run verification
-    results = verifier.verify(code, test_list)
+    results = verifier.verify(code, test_list, fn_name="calculate_time")
 
     # Print results
     num_pass = 0
