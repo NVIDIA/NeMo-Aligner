@@ -456,6 +456,7 @@ class ReinforceTrainer:
         response_lengths = rollout_batch["response_lengths"]
         response_tokens = rollout_batch["response_tokens"]
         rewards = rollout_batch["rewards"]
+        baseline = rollout_batch["baseline"]
         is_end = rollout_batch["is_end"]
 
         # take the first sample for logging
@@ -463,6 +464,7 @@ class ReinforceTrainer:
         prompt_length = prompt_lengths[0]
         response_length = response_lengths[0]
         response_token = response_tokens[0]
+        unsolved_ratio = (baseline == 0).float().mean().item()
 
         table["reward"] = reward.item()
         table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
@@ -475,6 +477,7 @@ class ReinforceTrainer:
             "prompt_lengths": prompt_lengths.float().mean().item(),
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
             "rewards": rewards.mean().item(),
+            "unsolved_ratio": unsolved_ratio,
             "accuracy": rollout_batch["accuracy"].mean().item(),
             "fraction_of_samples_properly_ended": is_end.float().mean().item(),
         }
