@@ -92,6 +92,7 @@ print(json.dumps(result))
 
     def _run_single_test(self, test_data, code_str, fn_name=None):
         test_idx, test = test_data
+        tmp_dir = None
         try:
             if fn_name:
                 wrapper_code = self._create_function_wrapper(code_str, fn_name, test["inputs"])
@@ -122,9 +123,10 @@ print(json.dumps(result))
             self.logger.error(f"Test {test_idx} failed with error: {str(e)}")
             return {"test_number": test_idx, "passed": False, "error": str(e)}
         finally:
-            import shutil
+            if tmp_dir:
+                import shutil
 
-            shutil.rmtree(tmp_dir)
+                shutil.rmtree(tmp_dir)
 
     def verify(self, code_str, tests, fn_name=None):
         max_workers = min(len(tests), (os.cpu_count() or 1) * 2)

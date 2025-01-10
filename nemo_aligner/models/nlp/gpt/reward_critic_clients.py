@@ -269,7 +269,7 @@ def code_rewards(response, args):
         score = low + (high - low) * pass_rate
         return score, True
     except Exception as e:
-        print(f"Error in code_rewards: {e}, task: {args}, response: {response}")
+        print(f"Error in code_rewards: {e}, task: {args}")
         return -10, True
 
 
