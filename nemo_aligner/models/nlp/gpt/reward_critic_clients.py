@@ -448,7 +448,7 @@ class RemoteGPTRMClient:
             text = model.tokenizer.ids_to_text(
                 rollout_batch["response_tokens"][i, : rollout_batch["response_lengths"][i]].tolist()
             )
-            print(assistant_text[-1])
+            print(text)
             user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
 
             text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
