@@ -23,11 +23,11 @@ import scipy
 import torch
 from omegaconf import OmegaConf
 
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
+from megatron.core.datasets.gpt_dataset import _get_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import (
-    GPTSFTChatDataset,
-    _get_header_conversation_type_mask_role,
-    get_prompt_template_example,
+    GPTSFTChatDataset, ## TODO: move over to nemo 2
+    _get_header_conversation_type_mask_role, ## TODO: move over to nemo 2
+    get_prompt_template_example, ## TODO: move over to nemo 2
 )
 from nemo.core import Dataset
 from nemo.utils import logging
@@ -276,8 +276,8 @@ class RewardModelDataset(Dataset):
         chosen_tokens = torch.tensor(chosen_np_pad)
         rejected_tokens = torch.tensor(rejected_np_pad)
 
-        attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
-            chosen_tokens, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
+        attention_mask, loss_mask, position_ids = _get_ltor_masks_and_position_ids(
+            chosen_tokens, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss, create_attention_mask=True,
         )
 
         # Negative index comes when we pad the last batch in MegatronPretrainingBatchSampler
@@ -827,8 +827,8 @@ class RegressionRewardModelDataset(RewardModelDataset):
         )
 
         text_tensor = torch.tensor(text_np_pad)
-        attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
-            text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
+        attention_mask, loss_mask, position_ids = _get_ltor_masks_and_position_ids(
+            text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss, create_attention_mask=True,
         )
 
         # Negative index comes when we pad the last batch in MegatronPretrainingBatchSampler
