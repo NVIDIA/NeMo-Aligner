@@ -324,6 +324,7 @@ class DPOModelDataset(Dataset):
         seed,
         drop_last=True,
         pad_chosen_rejected_to_max=True,
+        pad_seq_length_to_mult=16, ## TODO: make default 0 and make configurable
     ):
         super().__init__()
         self.cfg = cfg
@@ -336,6 +337,8 @@ class DPOModelDataset(Dataset):
         ## pad_chosen_rejected_to_max should be true unless iterating through the
         ## dataset as a data preparation step for packing
         self.pad_chosen_rejected_to_max = pad_chosen_rejected_to_max
+
+        self.pad_seq_length_to_mult = pad_seq_length_to_mult
 
         self.reset_position_ids = cfg.data.get("reset_position_ids", False)
         self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
@@ -435,6 +438,9 @@ class DPOModelDataset(Dataset):
         )
         return conversation
 
+    def _ceil_to_nearest(self, n, m):
+        return (n + m - 1) // m * m
+
     def __getitem__(self, idx):
         """Returns a pair of chosen/rejected pairs, their respective lengths, and labels."""
         payload = self.data[idx]
@@ -468,6 +474,17 @@ class DPOModelDataset(Dataset):
         assert (
             reject[0:prompt_len] == prompt
         ), f"The tokenizer for DPO has merged tokens between prompt and response for {idx=}:\n[[prompt]]={repr(payload['prompt'])}\n[[rejected_response]]={repr(payload['rejected_response'])}"
+
+        if self.pad_seq_length_to_mult > 0:
+            chosen_padding_len = self._ceil_to_nearest(chosen_len, self.pad_seq_length_to_mult)
+            rejected_padding_len = self._ceil_to_nearest(reject_len, self.pad_seq_length_to_mult)
+
+            chosen_labels = chosen_labels + [0] * (chosen_padding_len - chosen_len)
+            reject_labels = reject_labels + [0] * (rejected_padding_len - reject_len)
+
+            chosen_labels = chosen_padding_len
+            reject_labels = rejected_padding_len
+
 
         max_curr_seq_len = max(chosen_len, reject_len)
 
