@@ -61,7 +61,9 @@ def main() -> None:
     ## TODO: make this work for 2.0
     ## "parallelism_config" is everything that doesn't fit into the model config
     ## (everything needed to instantiate the strategy)
-    model_config, parallelism_config = load_and_override_model_config(loaded.model.config, gpt_dpo_conf)
+    ## somehow we need to grab the old values from the restored model
+    ## need parallelism config, trainer config too
+    model_config, parallelism_config, trainer_config = load_and_override_model_config(loaded.model.config, gpt_dpo_conf)
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{model_config}")
@@ -76,6 +78,7 @@ def main() -> None:
         MegatronGPTDPOModel,
         model_config,
         parallelism_config,
+        trainer_config,
         strict=True,
         load_base_model_only=False, ## TODO: support using selective_restore
         restore_path=pretrained_checkpoint_restore_from_path,

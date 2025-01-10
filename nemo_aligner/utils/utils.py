@@ -79,8 +79,8 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
 def load_from_nemo(
     cls,
     model_cfg,
-    parallelism_config,
-    trainer,
+    strategy_cfg,
+    trainer_cfg,
     strict=True,
     modify_config_fn=None,
     restore_path=None,
@@ -110,14 +110,20 @@ def load_from_nemo(
         cfg=model_cfg,
     )
     strategy = nl.MegatronStrategy(
-        **parallelism_config,
+        **strategy_cfg,
     )
     strategy.connect(model)
+
+    ## TODO: are there other trainer args we need to
+    ## grab from the restored model?
     trainer = nl.Trainer(
+        num_nodes=trainer_cfg.num_nodes,
+        devices=trainer_cfg.devices,
+        accelerator=trainer_cfg.accelerator,
+        precision=trainer_cfg.accelerator,
         strategy=MegatronStrategy,
     )
 
-    trainer.model = model ## does updating the model after work?
     checkpoint = trainer.load_checkpoint(restore_path)
     return trainer, model
     

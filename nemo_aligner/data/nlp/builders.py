@@ -26,19 +26,23 @@ import torch.utils.data
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
-    get_datasets_weights_and_num_samples,
-    get_train_valid_test_split_,
+    get_datasets_weights_and_num_samples, ## TODO: move to nemo 2
+    get_train_valid_test_split_, ## TODO: Move to nemo 2
 )
-from nemo.collections.nlp.data.language_modeling.megatron.blendable_dataset import BlendableDataset
-from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
+from nemo.collections.nlp.data.language_modeling.megatron.blendable_dataset import BlendableDataset ## what do we do about this? aligner needs this right now
+#from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
+from nemo.lightning.data import (
     MegatronPretrainingRandomSampler,
     MegatronPretrainingSampler,
 )
+## TODO: this is the legacy way of building datasets, which will be dropped in nemo2
+## need to figure out how to build the dataset without using BlendedMegatronDatasetBuilder
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset, GPTSFTPackedDataset
+
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
-    MegatronPretrainingBatchSampler,
+    MegatronPretrainingBatchSampler, ## TODO: port these from nemo1
     MegatronPretrainingRandomBatchSampler,
 )
 from nemo.utils import logging
@@ -170,7 +174,7 @@ def build_train_valid_test_datasets(
     n_chunks=None,
     n_examples_per_chunk=None,
 ):
-    if isinstance(data_prefix, DictConfig):
+    if isinstance(data_prefix, DictConfig): ## TODO: change this! no longer using DictConfigs
         assert (
             data_prefix.get("train") is not None
             and data_prefix.get("test") is not None

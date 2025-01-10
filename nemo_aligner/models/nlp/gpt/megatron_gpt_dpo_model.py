@@ -41,6 +41,20 @@ from nemo_aligner.utils.train_utils import (
 )
 from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
 
+@dataclass
+class DPOConfig:
+    # Defaults to model's micro_batch_size
+    # This default value ensures there are no numeric differences beween trained and reference policies when computing log probs.
+    # A higher value can be used to speed-up log probs computations, but may cause numeric differences.
+    log_prob_forward_micro_batch_size: Optional[int] = None
+    ref_policy_kl_penalty: float = 0.2
+    preference_average_log_probs: bool = False # whether normalizing log probs according to the sequence length in preference_loss
+    sft_average_log_probs: Optional[bool] = None # whether normalizing log probs according to the sequence length in sft_loss. If not specified, defaults to preference_average_log_probs
+    gt_reward_scale: float = 1. # the scale of the rewards in RPO
+    preference_loss: str = "dpo" # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
+    preference_loss_weight: float = 1 # the coefficient of the preference loss
+    sft_loss_weight: float = 0 # the coefficient of the SFT loss
+
 ## TODO: add peft support
 class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
     """
@@ -49,17 +63,23 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
 
     def __init__(
         self,
-        cfg: GPTConfig,
+        gpt_cfg: GPTConfig,
+        dpo_config: DPOConfig,
         #optim: Optional[OptimizerModule] = None,
         #tokenizer: Optional["TokenizerSpec"] = None,
         #model_transform: Optional[Callable[[nn.Module], nn.Module]] = None,
     ):
         super().__init__(
-            cfg,
+            gpt_cfg,
             #optim=optim,
             #tokenizer=tokenizer,
             #model_transform=model_transform,
         )
+        self.cfg = dpo_config
+        if not self.cfg.log_prob_forward_micro_batch_size:
+            self.cfg.log_prob_forward_micro_batch_size = self.micro_batch_size
+        if self.cfg.sft_average_log_probs is None:
+            self.cfg.sft_average_log_probs = self.cfg.preference_average_log_probs 
 
         ## TODO: put this check elsewhere. model no longer contains parallelism stuff
         '''if self.cfg.pipeline_model_parallel_size > 1 and not self.cfg.megatron_amp_O2:
