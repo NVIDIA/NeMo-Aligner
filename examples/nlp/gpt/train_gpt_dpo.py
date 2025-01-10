@@ -14,9 +14,9 @@
 from functools import partial
 
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf
+#from omegaconf.omegaconf import OmegaConf
 
-from nemo.core.config import hydra_runner
+#from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.dpo import DPOTrainer, dpo_custom_collate
@@ -40,39 +40,55 @@ from nemo_aligner.utils.train_script_utils import (
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
+#### put this elsewhere?
+from examples.nlp.gpt.conf import gpt_dpo as gpt_dpo_conf
+
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
 
-@hydra_runner(config_path="conf", config_name="gpt_dpo")
-def main(cfg) -> None:
-    cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
+#@hydra_runner(config_path="conf", config_name="gpt_dpo")
+## TODO: pythonic configuration
+def main() -> None:
+
+    ## TODO: need to pass restore_from_path in as a cl arg
+    loaded = io.load_context(pretrained_checkpoint_restore_from_path)
+    model = loaded.model
+    old_trainer = loaded.trainer
+
+    ## TODO: make this work for 2.0
+    ## "parallelism_config" is everything that doesn't fit into the model config
+    ## (everything needed to instantiate the strategy)
+    model_config, parallelism_config = load_and_override_model_config(loaded.model.config, gpt_dpo_conf)
 
     logging.info("\n\n************** Experiment configuration ***********")
-    logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
+    logging.info(f"\n{model_config}")
+    logging.info(f"\n{parallelism_config}")
 
-    trainer = resolve_and_create_trainer(cfg, "dpo")
-    exp_manager(trainer, cfg.exp_manager)
-    logger = CustomLoggerWrapper(trainer.loggers)
+    ## no exp_manager in 2.0. Managed by AutoResume and NeMoLogger
+    ## TODO: migrate!
+    #exp_manager(trainer, cfg.exp_manager)
+    logger = CustomLoggerWrapper(old_trainer.loggers)
 
-    ptl_model = load_from_nemo(
+    trainer, ptl_model = load_from_nemo(
         MegatronGPTDPOModel,
-        cfg.model,
-        trainer,
+        model_config,
+        parallelism_config,
         strict=True,
-        load_base_model_only=False,
-        restore_path=cfg.pretrained_checkpoint.restore_from_path,
+        load_base_model_only=False, ## TODO: support using selective_restore
+        restore_path=pretrained_checkpoint_restore_from_path,
     )
 
-    init_peft(ptl_model, cfg.model)
+    ## TODO: support
+    """init_peft(ptl_model, cfg.model)
 
     if cfg.model.peft.peft_scheme == "none":
         ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
             ptl_model, megatron_amp_O2=cfg.model.get("megatron_amp_O2", False)
         )
-        ptl_model.ref_policy_state_dict = ref_policy_state_dict
+        ptl_model.ref_policy_state_dict = ref_policy_state_dict"""
 
     # pull values from checkpoint
     trainer_restore_path = trainer.ckpt_path
@@ -90,6 +106,7 @@ def main(cfg) -> None:
     # use the entire dataset
     train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
 
+    ## TODO: update with 2.0 versions
     if cfg.model.data.data_impl == "packed_jsonl":
         build_fn = build_train_valid_test_dpo_packed_datasets
     else:
@@ -138,7 +155,7 @@ def main(cfg) -> None:
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
     dpo_trainer = DPOTrainer(
-        cfg=cfg.trainer.dpo,
+        cfg=cfg.trainer.dpo, ## TODO: update
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,

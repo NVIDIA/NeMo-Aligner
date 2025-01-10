@@ -40,6 +40,7 @@ from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
+import nemo.lightning as nl
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     """A save connector that will ask the Reward model to not try to load
@@ -74,10 +75,11 @@ def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train
         with patch.object(trainer, "val_check_interval", 0):
             self.on_train_end(trainer, pl_module)
 
-
+## TODO: verify this
 def load_from_nemo(
     cls,
     model_cfg,
+    parallelism_config,
     trainer,
     strict=True,
     modify_config_fn=None,
@@ -87,27 +89,39 @@ def load_from_nemo(
 ):
     """load a model using nemo checkpoint
     """
-    connector = CustomSaveRestoreConnector(load_base_model_only=load_base_model_only)
     assert os.path.exists(restore_path), f"tried to load from {restore_path=} but it does not exist"
 
-    # if we gave it a directory, then load as if it was extracted already
-    if os.path.isdir(restore_path):
-        connector.model_extracted_dir = restore_path
 
-    if modify_config_fn is not None:
+    ## TODO: support
+    """if modify_config_fn is not None:
         origin_cfg = cls.restore_from(
             restore_path=restore_path, trainer=trainer, return_config=True, save_restore_connector=connector,
         )
-        model_cfg = modify_config_fn(origin_cfg, model_cfg, add_cfg_to_tree=False)
+        model_cfg = modify_config_fn(origin_cfg, model_cfg, add_cfg_to_tree=False)"""
 
-    model = cls.restore_from(
+    '''model = cls.restore_from(
         restore_path=restore_path,
         trainer=trainer,
         override_config_path=model_cfg,
         save_restore_connector=connector,
         strict=strict,
+    )'''
+    model = cls(
+        cfg=model_cfg,
     )
-    return (model, model_cfg) if return_updated_cfg else model
+    strategy = nl.MegatronStrategy(
+        **parallelism_config,
+    )
+    strategy.connect(model)
+    trainer = nl.Trainer(
+        strategy=MegatronStrategy,
+    )
+
+    trainer.model = model ## does updating the model after work?
+    checkpoint = trainer.load_checkpoint(restore_path)
+    return trainer, model
+    
+    #return (model, model_cfg) if return_updated_cfg else model
 
 
 def load_checkpoint_model_config(restore_path):

@@ -72,7 +72,6 @@ def init_distributed(ptl_trainer, ptl_model, use_te=False):
     """
     # set up the trainer and initialize things
     ptl_trainer.state.fn = TrainerFn.FITTING
-    ptl_trainer.strategy.connect(ptl_model)
 
     # Init DDP
     def dummy():
@@ -105,7 +104,8 @@ def disable_data_callbacks(ptl_model, train_dataloader, train_ds):
 def init_using_ptl(ptl_trainer, ptl_model, train_dataloader, train_ds):
     """initializes the model using PTL
     """
-    disable_data_callbacks(ptl_model, train_dataloader, train_ds)
+    ## not needed for 2.0
+    #disable_data_callbacks(ptl_model, train_dataloader, train_ds)
 
     call._call_setup_hook(ptl_trainer)
     call._call_configure_model(ptl_trainer)

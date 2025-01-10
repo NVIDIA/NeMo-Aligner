@@ -20,7 +20,6 @@ from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 #from omegaconf.dictconfig import DictConfig ## TODO: no more configuration with yaml
-#from pytorch_lightning.trainer.trainer import Trainer ## TODO: is this dep on PTL still needed?
 
 from nemo.collections.llm.gpt.model.base import GPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
@@ -51,15 +50,15 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
     def __init__(
         self,
         cfg: GPTConfig,
-        optim: Optional[OptimizerModule] = None,
-        tokenizer: Optional["TokenizerSpec"] = None,
-        model_transform: Optional[Callable[[nn.Module], nn.Module]] = None,
+        #optim: Optional[OptimizerModule] = None,
+        #tokenizer: Optional["TokenizerSpec"] = None,
+        #model_transform: Optional[Callable[[nn.Module], nn.Module]] = None,
     ):
         super().__init__(
             cfg,
-            optim=optim,
-            tokenizer=tokenizer,
-            model_transform=model_transform,
+            #optim=optim,
+            #tokenizer=tokenizer,
+            #model_transform=model_transform,
         )
 
         ## TODO: put this check elsewhere. model no longer contains parallelism stuff

@@ -14,6 +14,7 @@
 
 import math
 from collections import defaultdict
+from dataclasses import dataclass
 from statistics import mean
 from typing import Any, Protocol
 
@@ -22,10 +23,14 @@ import torch.distributed
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
-    MegatronPretrainingRandomBatchSampler,
-)
-from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
+## TODO: verify that this is equivalent to nemo's get_ltor_masks_and_position_ids
+from megatron.core.datasets.gpt_dataset import _get_ltor_masks_and_position_ids
+
+from nemo.lightning.data import MegatronPretrainingRandomBatchSampler
+from nemo.lightning.fabric.strategies import FabricMegatronStrategy
+from nemo.lightning.fabric.fabric import Fabric
+from nemo.lightning.pytorch.optim import LRSchedulerModule, OptimizerModule
+
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import SyncTimer
@@ -33,6 +38,9 @@ from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory
 
+####
+import nemo_trainer as nt
+####
 
 class DistributedCollateFunction(Protocol):
     def __call__(self, batch: list[dict], **kwargs: Any) -> dict[str, torch.Tensor]:
@@ -92,7 +100,7 @@ def dpo_custom_collate(
             rejected_labels, (0, padded_max_len - rejected_labels.shape[1]), mode="constant", value=-100
         )
 
-    attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+    attention_mask, _, position_ids = _get_ltor_masks_and_position_ids(
         chosen_tokens.cuda(), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
     )
     assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
@@ -115,13 +123,22 @@ def dpo_custom_collate(
     }
     return output
 
+## note: we could consider sharing this state across algos
+@dataclass
+class DPOState(nt.Stateful):
+    fabric: Fabric
+    model: torch.nn.Module ## includes optimizer and scheduler
+    optimizer: OptimizerModule
+    scheduler: LRSchedulerModule
+    consumed_samples: int
+    ## TODO: include dataloaders in state? 
 
 class DPOTrainer:
     """Trainer to coordinate DPO training"""
 
     def __init__(
         self,
-        cfg: DictConfig,
+        cfg: "ParallelConfig", ## TODO: what's rquired in this config?
         model,
         optimizer,
         scheduler,
@@ -133,6 +150,7 @@ class DPOTrainer:
         ckpt_callback,
         run_timer,
     ):
+
         self.model = model
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
@@ -167,6 +185,58 @@ class DPOTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
+
+        """self.fabric = self.setup_fabric()
+        ## this is not strictly required right now
+        ## how do we restore this state without using checkpointer?
+        self.state = DPOState(
+            fabric=self.fabric,
+            model=self.model,
+            optimizer=self.optimizer,
+            scheduler=self.scheduler,
+            consumed_samples=0,
+        )
+
+    ## WIP -- not strictly needed right now
+    def setup_fabric(self):
+
+        ## NOTE: fabric's checkpoint_io property has to be updated to match MegatronStrategy's impl
+        ## how does checkpointer interface with MegatronCheckpointIO?
+        #checkpointer = nt.Checkpointer(
+        #    nt.AutoResume(),
+        #    MegatronCheckpointIO(...), ## TODO
+        #)
+
+        strategy = FabricMegatronStrategy(
+            tensor_model_parallel_size=self.cfg.tensor_model_parallel_size,
+            pipeline_model_parallel_size=self.cfg.pipeline_model_parallel_size,
+            virtual_pipeline_model_parallel_size=self.cfg.virtual_pipeline_model_parallel_size,
+            microbatch_group_size_per_vp_stage=self.cfg.microbatch_group_size_per_vp_stage,
+            context_parallel_size=self.cfg.context_parallel_size,
+            sequence_parallel=self.cfg.sequence_parallel,
+            expert_model_parallel_size=self.cfg.expert_model_parallel_size,
+            moe_extended_tp=self.cfg.moe_extended_tp,
+            data_sampler=MegatronPretrainingRandomBatchSampler(...), ## TODO -- instantiate this correctly
+            #accelerator='cuda', ## should get set automatically
+            #parallel_devices: Optional[List[torch.device]] = None,
+            #cluster_environment: Optional[ClusterEnvironment] = None,
+            #checkpoint_io: Optional[CheckpointIO] = None, ## defaults to MegatronCheckpointIO
+            #precision: Optional[Precision] = None, ## TODO: add
+            #megatron_callbacks: Optional[CallbackConnector] = None,
+            #ddp: Union[DDPLiteral, DistributedDataParallelConfig] = "megatron",
+            #process_group_backend: Optional[str] = None,
+            #timeout: Optional[timedelta] = default_pg_timeout,
+            #start_method: Literal["popen", "spawn", "fork", "forkserver"] = "popen",
+            #no_ddp_communication_hook: bool = True,
+            #output_data_idx: bool = False,
+            #pipeline_dtype: Optional[torch.dtype] = None, ## TODO: add to enable PP
+            #init_model_parallel: bool = True,
+        )
+
+        return Fabric(
+            strategy=strategy,
+            ## can optionally add callbacks or loggers here?
+        )"""
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -231,6 +301,7 @@ class DPOTrainer:
         return loss_mean, {**metrics, **trainer_metrics}
 
     def fit(self):
+
         if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
             self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
         ):
