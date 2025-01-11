@@ -407,7 +407,14 @@ class ReinforceTrainer:
                 response_token[prompt_length:response_length].tolist()
             )
             try:
-                think_lens.append(len(response_text.split("<think>")[1].split("<ethink>")[0].split()))
+                thought = response_text.split("<think>")[1]
+                if "<ethink>" in thought:
+                    thought = thought.split("<ethink>")[0].split()
+                elif "</think>" in thought:
+                    thought = thought.split("</think>")[0].split()
+                else:
+                    thought = []
+                think_lens.append(len(thought))
             except:
                 think_lens.append(0)
 
