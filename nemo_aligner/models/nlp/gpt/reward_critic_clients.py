@@ -246,7 +246,7 @@ def code_rewards(response, args):
         code_str = response.replace("```python", "```").split("```")[1].strip()
         tests = args["unittests"]
         verifier = CodeVerifier()
-        results = verifier.verify(code_str, tests)
+        results = verifier.verify(code_str, tests, args.get("fn_name", None))
         num_pass = 0
         for result in results:
             test_num = result["test_number"]
