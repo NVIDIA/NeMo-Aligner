@@ -482,8 +482,8 @@ class DPOModelDataset(Dataset):
             chosen_labels = chosen_labels + [0] * (chosen_padding_len - chosen_len)
             reject_labels = reject_labels + [0] * (rejected_padding_len - reject_len)
 
-            chosen_labels = chosen_padding_len
-            reject_labels = rejected_padding_len
+            chosen_len = chosen_padding_len
+            reject_len = rejected_padding_len
 
 
         max_curr_seq_len = max(chosen_len, reject_len)
