@@ -124,6 +124,7 @@ def main(cfg) -> None:
         gbs=cfg.model.reinforce.num_rollout_samples,
         collate_fn=collate_fn,
         load_gbs=False,
+        use_random_sampler=False,
     )
 
     val_dataloader_builder = partial(
