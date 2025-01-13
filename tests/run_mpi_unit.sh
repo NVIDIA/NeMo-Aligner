@@ -24,7 +24,7 @@ if [[ $NUM_GPUS_AVAILABLE -lt 2 ]]; then
 fi
 
 export PYTHONPATH=$(realpath ..):${PYTHONPATH:-}
-CUDA_VISIBLE_DEVICES=0,1 mpirun -np 2 --allow-run-as-root pytest .. -rA -s -x -vv --mpi $@ || true
+CUDA_VISIBLE_DEVICES=0,1 mpirun -np 2 --allow-run-as-root pytest ../nemo_aligner -rA -s -x -vv --mpi $@ || true
 
 if [[ -f PYTEST_SUCCESS ]]; then
     echo SUCCESS
