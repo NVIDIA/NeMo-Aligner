@@ -419,8 +419,9 @@ class RMFutureResult(FutureResult):
         # If verifier_rm_future exists, combine values based on conditions
         if self.verifier_rm_future is not None:
             verifier_rewards = self.verifier_rm_future.flatten()
-            out = out + verifier_rewards
-
+            # If a verifier reward is nonzero at a position, use that;
+            # otherwise, use the original out value.
+            out = torch.where(verifier_rewards != -500, verifier_rewards, out)
         return out
 
 
@@ -478,7 +479,7 @@ class RemoteGPTRMClient:
                 verifier_rewards.append(score)
                 print("task: ", args[i]["task"], "score: ", score)
             else:
-                score = 0 if format_correct else -100
+                score = -500
                 verifier_rewards.append(score)
 
         verifier_rewards = torch.tensor(verifier_rewards, device=rollout_batch["response_tokens"].device).float()
