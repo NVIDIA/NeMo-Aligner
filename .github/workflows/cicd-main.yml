@@ -107,7 +107,7 @@ jobs:
       matrix:
         test_case:
           - run_unit.sh
-          #- run_mpi_unit.sh
+          - run_mpi_unit.sh
     with:
       RUNNER: self-hosted-azure
       TIMEOUT: 10
