@@ -479,14 +479,10 @@ class DPOModelDataset(Dataset):
             chosen_padding_len = self._ceil_to_nearest(chosen_len, self.pad_seq_length_to_mult)
             rejected_padding_len = self._ceil_to_nearest(reject_len, self.pad_seq_length_to_mult)
 
-            chosen = chosen + [0] * (chosen_padding_len - chosen_len)
-            reject = reject + [0] * (rejected_padding_len - reject_len)
+            max_curr_seq_len = max(chosen_padding_len, rejected_padding_len)
 
-            chosen_len = chosen_padding_len
-            reject_len = rejected_padding_len
-
-
-        max_curr_seq_len = max(chosen_len, reject_len)
+        else:
+            max_curr_seq_len = max(chosen_len, reject_len)
 
         if self.pad_chosen_rejected_to_max:
             chosen_tokens = torch.nn.functional.pad(
