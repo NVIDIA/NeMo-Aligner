@@ -20,20 +20,10 @@ from megatron.core.optimizer import OptimizerConfig
 from nemo.core.optim.lr_scheduler import CosineAnnealing
 from nemo.lightning._strategy_lib import setup_megatron_optimizer
 
-## copied from nemo, just removed dep on PTL
 class LRScheduler:
     
-   def connect(self, model, optimizer) -> None:
-        """Sets up the learning rate scheduler.
-
-        Args:
-            model: The model for which the scheduler is being set up.
-            optimizer: The optimizer for which the scheduler is being set up.
-        """
-        ...
-
     @abstractmethod
-    def scheduler(self, model, optimizers) -> OptimizerLRScheduler:
+    def init_scheduler(self, model, optimizers) -> OptimizerLRScheduler:
         """Abstract method to define the learning rate scheduler.
 
         Args:
@@ -48,16 +38,16 @@ class LRScheduler:
 
     def __call__(self, model, optimizer): ## maybe rename this to setup? 
 
-        ## TODO: understand, refactor
-        self.connect(model, optimizers)
+        """self.connect(model, optimizers)
 
-        self._scheduler = self.scheduler(model, optimizers)
+        self._scheduler = self.init_scheduler(model, optimizers)
 
         if not isinstance(self._scheduler, (dict, tuple)):
             return optimizers, self._scheduler
 
-        ## returns a dict
-        return self._scheduler
+        return self._scheduler"""
+
+        return self.init_scheduler(model, optimizers)
 
 ## copied from nemo
 class CosineAnnealingScheduler(LRScheduler):
@@ -80,7 +70,7 @@ class CosineAnnealingScheduler(LRScheduler):
         self.frequency = frequency
         self.monitor = monitor
 
-    def scheduler(self, model, optimizer):
+    def init_scheduler(self, model, optimizer):
         from nemo.core.optim.lr_scheduler import CosineAnnealing
 
         lr_scheduler = CosineAnnealing(
@@ -91,8 +81,8 @@ class CosineAnnealingScheduler(LRScheduler):
             min_lr=self.min_lr,
         )
 
-        ## TODO: this is PTL's way of doing things. convert this to pure PT so we can call scheduler directly
-        return {
+        ## TODO: verify that this is all we need
+        """return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 # REQUIRED: The scheduler instance
@@ -100,15 +90,16 @@ class CosineAnnealingScheduler(LRScheduler):
                 # The unit of the scheduler's step size, could also be 'step'.
                 # 'epoch' updates the scheduler on epoch end whereas 'step'
                 # updates it after a optimizer update.
-                "interval": self.interval,
+                "interval": self.interval, ## TODO: verify that this is only used in the case of automatic optimization
                 # How many epochs/steps should pass between calls to
                 # `scheduler.step()`. 1 corresponds to updating the learning
                 # rate after every epoch/step.
-                "frequency": self.frequency,
+                "frequency": self.frequency, ## How often to increment the LR scheduler. Is this needed?
             },
             # Metric to to monitor for schedulers like `ReduceLROnPlateau`
-            "monitor": self.monitor,
-        }
+            "monitor": self.monitor, ## do we need this?
+        }"""
+        return lr_scheduler
 
 class MegatronOptimizer:
     def __init__(
@@ -131,7 +122,7 @@ class MegatronOptimizer:
 
     def setup_optimizer_and_lr_schedule(self, model):
         ## TODO: make sure this supports models that are not instances of megatron_parallel
-        optimizer = setup_megatron_optimizer(
+        self.optimizer = setup_megatron_optimizer(
             model,
             self.config,
             no_weight_decay_cond=self.no_weight_decay_cond,
@@ -139,13 +130,13 @@ class MegatronOptimizer:
             lr_mult=self.lr_mult,
         )
 
+        self.scheduler = None
         if self.lr_scheduler is not None:
-            optimizer = self.lr_scheduler(model, optimizer)
+            self.scheduler = self.lr_scheduler(model, optimizer)
         
-        self.optimizer = optimizer
     
     def step(self):
         assert hasattr(self.optimizer), "make sure to call setup_optimizer_and_lr_schedule first"
 
-        ## TODO: how does this work if we return a dict with the LR scheduler?
         self.optimizer.step()
+        self.scheduler.step()
