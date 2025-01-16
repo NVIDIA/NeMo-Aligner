@@ -26,7 +26,7 @@ fi
 export PYTHONPATH=$(realpath ..):${PYTHONPATH:-}
 CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node 2 -m pytest ../nemo_aligner -rA -s -x -vv $@ || true
 
-if [[ -f PYTEST_SUCCESS ]]; then
+if [[ -f ../PYTEST_SUCCESS ]]; then
     echo SUCCESS
 else
     echo FAILURE
