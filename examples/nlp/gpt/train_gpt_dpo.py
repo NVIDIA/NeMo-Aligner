@@ -41,7 +41,7 @@ from nemo_aligner.utils.train_script_utils import (
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
 #### put this elsewhere?
-from examples.nlp.gpt.conf import default_dpo_config, default_dpo_trainer
+from examples.nlp.gpt.conf import default_dpo_config, default_dpo_trainer, default_dpo_optimizer
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
@@ -64,7 +64,7 @@ def main() -> None:
 
     optimizer = setup_megatron_optimizer(
         dpo_model,
-        optim_config,
+        default_dpo_optimizer(),
     )
     dpo_model.optim = optimizer
 
