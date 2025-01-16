@@ -402,6 +402,20 @@ def dummy_actor_gpt_model_with_pp_cg(make_actor_gpt_model):
     )
 
 
+@pytest.fixture
+def dummy_actor_gpt_model_with_tp_cg(make_actor_gpt_model):
+    yield make_actor_gpt_model(
+        model_args={
+            "tensor_model_parallel_size": int(os.environ.get("PP", 2)),
+            # Args needed to make mcore inference go brrr
+            "flash_decode": True,
+            "enable_cuda_graph": True,
+            "use_te_rng_tracker": True,  # Needed if enable_cuda_graph=True
+        },
+        trainer_args={"devices": int(os.environ.get("PP", 2))},
+    )
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "run_only_on(device): runs the test only on a given device [CPU | GPU]",
