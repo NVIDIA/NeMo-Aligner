@@ -84,6 +84,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             pi_logprobs - ref_logprobs, labels, cu_seqlens, average_log_probs=average_log_probs
         )
 
+        if parallel_state.get_context_parallel_world_size() > 1:
+            torch.distributed.all_reduce(batch_logs, group=parallel_state.get_context_parallel_group())
+
         num_examples_on_this_rank = torch.tensor(batch_logs.size(), device=torch.cuda.current_device())
         num_examples = [torch.zeros_like(num_examples_on_this_rank) for _ in range(dp_group.size())]
         torch.distributed.all_gather(num_examples, num_examples_on_this_rank, group=dp_group)
@@ -96,6 +99,37 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         out_chosen, out_rejected = map(torch.cat, zip(*split_iter))
 
         return out_chosen.flatten(), out_rejected.flatten()
+
+    def get_batch_on_this_context_parallel_rank(self, batch: dict):
+        cp_size = parallel_state.get_context_parallel_world_size()
+        if cp_size > 1:
+            ref_logs = {}
+            if "ref_policy_log_probs_chosen" in batch:
+                ref_logs["ref_policy_log_probs_chosen"] = batch.pop("ref_policy_log_probs_chosen")
+
+            if "ref_policy_log_probs_rejected" in batch:
+                ref_logs["ref_policy_log_probs_rejected"] = batch.pop("ref_policy_log_probs_rejected")
+
+            cp_rank = parallel_state.get_context_parallel_rank()
+            for key, val in batch.items():
+                if val is not None:
+                    seq_dim = 1 if key != 'attention_mask' else 2
+                    val = val.view(
+                        *val.shape[0:seq_dim],
+                        2 * cp_size,
+                        val.shape[seq_dim] // (2 * cp_size),
+                        *val.shape[(seq_dim + 1) :],
+                    )
+                    index = torch.tensor([cp_rank, (2 * cp_size - cp_rank - 1)], device="cpu", pin_memory=True).cuda(
+                        non_blocking=True
+                    )
+                    val = val.index_select(seq_dim, index)
+                    val = val.view(*val.shape[0:seq_dim], -1, *val.shape[(seq_dim + 2) :])
+                    batch[key] = val
+            batch.update(ref_logs)
+
+
+        return batch
 
     def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
@@ -137,6 +171,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                         )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
+
+            batch = self.get_batch_on_this_context_parallel_rank(batch)
 
             tokens, labels, ref_logprobs, gt_rewards, cu_seqlens = None, None, None, None, None
             if packed:  ## packed sequence
@@ -275,8 +311,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     average_log_probs=self.preference_avg_log_probs,
                 )
 
+                cp_size = parallel_state.get_context_parallel_world_size()
+
                 return (
-                    loss,
+                    loss * cp_size,
                     {
                         "avg": reduced_loss,
                         "avg_sft_loss": reduced_sft_loss,
@@ -348,6 +386,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, cu_seqlens=cu_seqlens, average_log_probs=average_log_probs,
         )
+
+        if parallel_state.get_context_parallel_world_size() > 1:
+            torch.distributed.all_reduce(rewards, group=parallel_state.get_context_parallel_group())
+
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
         rewards_delta = chosen_rewards - reject_rewards
 
