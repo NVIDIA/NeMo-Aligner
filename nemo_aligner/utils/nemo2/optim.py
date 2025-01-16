@@ -91,7 +91,7 @@ class CosineAnnealingScheduler(LRScheduler):
             min_lr=self.min_lr,
         )
 
-        ## TODO: this is PTL's way of doing things. convert this to pure PTL so we can call scheduler directly
+        ## TODO: this is PTL's way of doing things. convert this to pure PT so we can call scheduler directly
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
