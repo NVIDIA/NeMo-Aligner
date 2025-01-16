@@ -21,7 +21,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 #from omegaconf.dictconfig import DictConfig ## TODO: no more configuration with yaml
 
-from nemo.collections.llm.gpt.model.base import GPTModel
+from nemo.collections.llm.gpt.model.base import GPTConfig, GPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group, ## TODO: move to llm collection. This is used in nemo/lightning as well
     get_iterator_k_split, ## TODO: move to llm collection. This is used in nemo/lightning as well
@@ -63,19 +63,21 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
     Megatron GPT DPO Model Training.
     """
 
+    ## optimizer needs to be connected to the model at some point
+    ## if not provided during init, needs to be done later via model.optim = optim
     def __init__(
         self,
-        gpt_cfg: GPTConfig,
+        gpt_config: GPTConfig,
         dpo_config: DPOConfig,
-        #optim: Optional[OptimizerModule] = None,
-        #tokenizer: Optional["TokenizerSpec"] = None,
-        #model_transform: Optional[Callable[[nn.Module], nn.Module]] = None,
+        optim: Optional[OptimizerModule] = None,
+        tokenizer: Optional["TokenizerSpec"] = None, ## TODO: is this needed for us?
+        model_transform: Optional[Callable[[nn.Module], nn.Module]] = None,
     ):
         super().__init__(
-            gpt_cfg,
-            #optim=optim,
-            #tokenizer=tokenizer,
-            #model_transform=model_transform,
+            gpt_config,
+            optim=optim,
+            tokenizer=tokenizer,
+            model_transform=model_transform,
         )
 
         ## TODO: put this check elsewhere. model no longer contains parallelism stuff
@@ -87,7 +89,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
 
         ## setting default values. Update this following nemo run integration
         if not dpo_config.log_prob_forward_micro_batch_size:
-            dpo_config.log_prob_forward_micro_batch_size = dpo_config.micro_batch_size
+            dpo_config.log_prob_forward_micro_batch_size = dpo_config.micro_batch_size ## TODO: get this from data config
         if dpo_config.sft_average_log_probs is None:
             dpo_config.sft_average_log_probs = dpo_config.preference_average_log_probs
 

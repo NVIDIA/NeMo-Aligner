@@ -27,9 +27,6 @@ from tqdm import tqdm
 from megatron.core.datasets.gpt_dataset import _get_ltor_masks_and_position_ids
 
 from nemo.lightning.data import MegatronPretrainingRandomBatchSampler
-from nemo.lightning.fabric.strategies import FabricMegatronStrategy
-from nemo.lightning.fabric.fabric import Fabric
-from nemo.lightning.pytorch.optim import LRSchedulerModule, OptimizerModule
 
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
@@ -123,22 +120,11 @@ def dpo_custom_collate(
     }
     return output
 
-## note: we could consider sharing this state across algos
-@dataclass
-class DPOState(nt.Stateful):
-    fabric: Fabric
-    model: torch.nn.Module ## includes optimizer and scheduler
-    optimizer: OptimizerModule
-    scheduler: LRSchedulerModule
-    consumed_samples: int
-    ## TODO: include dataloaders in state? 
-
 class DPOTrainer:
     """Trainer to coordinate DPO training"""
 
     def __init__(
         self,
-        cfg: "ParallelConfig", ## TODO: what's rquired in this config?
         model,
         optimizer,
         scheduler,
@@ -149,6 +135,13 @@ class DPOTrainer:
         logger,
         ckpt_callback,
         run_timer,
+        limit_val_batches,
+        val_check_interval,
+        gradient_clip_val,
+        max_epochs,
+        save_interval,
+        limit_train_batches=1.0,
+        max_steps=-1,
     ):
 
         self.model = model
@@ -157,9 +150,16 @@ class DPOTrainer:
         self.test_dataloader = test_dataloader
         self.collate_fn = collate_fn
         self.logger = logger
-        self.cfg = cfg
+        #self.cfg = cfg
         self.optimizer = optimizer
         self.scheduler = scheduler
+
+        self.limit_train_batches = limit_train_batches
+        self.limit_val_batches = limit_val_batches
+        self.val_check_interval = val_check_interval
+        self.gradient_clip_val = gradient_clip_val
+        self.max_epochs = max_epochs
+        self.save_interval = save_interval
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -171,72 +171,20 @@ class DPOTrainer:
 
         # compute `max_steps`
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
-            self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
+            self.train_dataloader.batch_sampler, self.limit_train_batches)
         )
 
-        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
+        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self..limit_val_batches)
         self.val_check_interval = (
-            int(self.cfg.val_check_interval * self.num_steps_per_epoch)
-            if isinstance(self.cfg.val_check_interval, float)
-            else self.cfg.val_check_interval
+            self.val_check_interval * self.num_steps_per_epoch
+            if isinstance(self.val_check_interval, float)
+            else self.val_check_interval
         )
         self.set_max_steps()
 
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
-
-        """self.fabric = self.setup_fabric()
-        ## this is not strictly required right now
-        ## how do we restore this state without using checkpointer?
-        self.state = DPOState(
-            fabric=self.fabric,
-            model=self.model,
-            optimizer=self.optimizer,
-            scheduler=self.scheduler,
-            consumed_samples=0,
-        )
-
-    ## WIP -- not strictly needed right now
-    def setup_fabric(self):
-
-        ## NOTE: fabric's checkpoint_io property has to be updated to match MegatronStrategy's impl
-        ## how does checkpointer interface with MegatronCheckpointIO?
-        #checkpointer = nt.Checkpointer(
-        #    nt.AutoResume(),
-        #    MegatronCheckpointIO(...), ## TODO
-        #)
-
-        strategy = FabricMegatronStrategy(
-            tensor_model_parallel_size=self.cfg.tensor_model_parallel_size,
-            pipeline_model_parallel_size=self.cfg.pipeline_model_parallel_size,
-            virtual_pipeline_model_parallel_size=self.cfg.virtual_pipeline_model_parallel_size,
-            microbatch_group_size_per_vp_stage=self.cfg.microbatch_group_size_per_vp_stage,
-            context_parallel_size=self.cfg.context_parallel_size,
-            sequence_parallel=self.cfg.sequence_parallel,
-            expert_model_parallel_size=self.cfg.expert_model_parallel_size,
-            moe_extended_tp=self.cfg.moe_extended_tp,
-            data_sampler=MegatronPretrainingRandomBatchSampler(...), ## TODO -- instantiate this correctly
-            #accelerator='cuda', ## should get set automatically
-            #parallel_devices: Optional[List[torch.device]] = None,
-            #cluster_environment: Optional[ClusterEnvironment] = None,
-            #checkpoint_io: Optional[CheckpointIO] = None, ## defaults to MegatronCheckpointIO
-            #precision: Optional[Precision] = None, ## TODO: add
-            #megatron_callbacks: Optional[CallbackConnector] = None,
-            #ddp: Union[DDPLiteral, DistributedDataParallelConfig] = "megatron",
-            #process_group_backend: Optional[str] = None,
-            #timeout: Optional[timedelta] = default_pg_timeout,
-            #start_method: Literal["popen", "spawn", "fork", "forkserver"] = "popen",
-            #no_ddp_communication_hook: bool = True,
-            #output_data_idx: bool = False,
-            #pipeline_dtype: Optional[torch.dtype] = None, ## TODO: add to enable PP
-            #init_model_parallel: bool = True,
-        )
-
-        return Fabric(
-            strategy=strategy,
-            ## can optionally add callbacks or loggers here?
-        )"""
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
@@ -286,7 +234,7 @@ class DPOTrainer:
 
         self.model.finish_training_step()
 
-        grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
+        grad_norm = clip_gradients(self.model, self.gradient_clip_val)
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
         lr = self.optimizer.param_groups[0]["lr"]
 
@@ -303,7 +251,7 @@ class DPOTrainer:
     def fit(self):
 
         if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
-            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
+            self.max_epochs is not None and self.max_epochs > 1
         ):
             # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
             # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
@@ -313,7 +261,7 @@ class DPOTrainer:
                 "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
             )
 
-        epoch_iter = range(self.epoch, self.cfg.max_epochs)
+        epoch_iter = range(self.epoch, self.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
             return
@@ -363,7 +311,7 @@ class DPOTrainer:
                     self.step,
                     self.max_steps,
                     self.val_check_interval,
-                    self.cfg.save_interval,
+                    self.save_interval,
                     self.limit_val_batches,
                     run_time_exceeded=run_time_exceeded,
                 )
@@ -404,9 +352,9 @@ class DPOTrainer:
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
     def set_max_steps(self):
-        self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
+        self.max_steps = self.num_steps_per_epoch * self.max_epochs
 
-        if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
+        if (max_steps := self.max_steps) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
 
     def state_dict(self):

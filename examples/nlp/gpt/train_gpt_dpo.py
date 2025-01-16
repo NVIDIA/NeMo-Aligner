@@ -41,7 +41,7 @@ from nemo_aligner.utils.train_script_utils import (
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
 #### put this elsewhere?
-from examples.nlp.gpt.conf import gpt_dpo as gpt_dpo_conf
+from examples.nlp.gpt.conf import default_dpo_config, default_dpo_trainer
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
 OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
@@ -53,16 +53,26 @@ mp.set_start_method("spawn", force=True)
 ## TODO: pythonic configuration
 def main() -> None:
 
-    ## TODO: need to pass restore_from_path in as a cl arg
+    ## TODO: flesh out
     loaded = io.load_context(pretrained_checkpoint_restore_from_path)
+    gpt_model_cfg = loaded.model.config
+    
+    dpo_model = MegatronGPTDPOModel(
+        gpt_config = gpt_model_cfg,
+        dpo_config = default_dpo_config(),
+    )
+
+    optimizer = setup_megatron_optimizer(
+        dpo_model,
+        optim_config,
+    )
+    dpo_model.optim = optimizer
+
+    """loaded = io.load_context(pretrained_checkpoint_restore_from_path)
     model = loaded.model
     old_trainer = loaded.trainer
 
-    ## TODO: make this work for 2.0
-    ## "parallelism_config" is everything that doesn't fit into the model config
-    ## (everything needed to instantiate the strategy)
-    ## somehow we need to grab the old values from the restored model
-    ## need parallelism config, trainer config too
+    
     model_config, parallelism_config, trainer_config = load_and_override_model_config(loaded.model.config, gpt_dpo_conf)
 
     logging.info("\n\n************** Experiment configuration ***********")
@@ -82,7 +92,7 @@ def main() -> None:
         strict=True,
         load_base_model_only=False, ## TODO: support using selective_restore
         restore_path=pretrained_checkpoint_restore_from_path,
-    )
+    )"""
 
     ## TODO: support
     """init_peft(ptl_model, cfg.model)
@@ -149,16 +159,16 @@ def main() -> None:
         use_random_sampler=False,
     )
 
-    init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
-    optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
+    ## TODO: flesh this out
+    """init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
+    optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)"""
 
     ckpt_callback = add_custom_checkpoint_callback(trainer, ptl_model)
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
-    dpo_trainer = DPOTrainer(
-        cfg=cfg.trainer.dpo, ## TODO: update
+    dpo_trainer = default_dpo_trainer(
         model=ptl_model,
         optimizer=optimizer,
         scheduler=scheduler,
