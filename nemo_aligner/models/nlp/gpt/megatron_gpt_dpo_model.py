@@ -113,7 +113,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             cp_rank = parallel_state.get_context_parallel_rank()
             for key, val in batch.items():
                 if val is not None:
-                    seq_dim = 1 if key != 'attention_mask' else 2
+                    seq_dim = 1 if key != "attention_mask" else 2
                     val = val.view(
                         *val.shape[0:seq_dim],
                         2 * cp_size,
@@ -127,7 +127,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     val = val.view(*val.shape[0:seq_dim], -1, *val.shape[(seq_dim + 2) :])
                     batch[key] = val
             batch.update(ref_logs)
-
 
         return batch
 
