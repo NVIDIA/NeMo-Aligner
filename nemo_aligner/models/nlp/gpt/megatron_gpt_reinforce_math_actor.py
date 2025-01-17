@@ -131,7 +131,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                 is_end = batch["is_end"]
                 prompt_mask = batch["prompt_mask"]
                 
-                is_end_mask = mask * is_end.view(-1, 1) * prompt_mask.view(-1, 1)
+                is_end_mask = mask * is_end.view(-1, 1)
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
@@ -146,7 +146,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                 reinforce_loss = -1 * curr_log_probs * (rewards.unsqueeze(-1) - baseline.unsqueeze(-1)) + self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs )#init_policy_kl
 
                 if is_end_mask.sum() > 0:
-                    loss = masked_mean(reinforce_loss, mask)
+                    loss = masked_mean(reinforce_loss, mask * prompt_mask.view(-1, 1))
                 else:
                     # hack to disable this update since there are no valid tokens
                     loss = reinforce_loss.view(-1)[0] * 0
