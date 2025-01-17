@@ -155,6 +155,7 @@ model:
       max_length: 3072 #${int_div:${model.encoder_seq_length}, 2}
       min_length: 1
 
+    disable_baseline: False
     trt_llm: ${trainer.reinforce.trt_llm}
 
   peft:

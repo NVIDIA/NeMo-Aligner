@@ -141,9 +141,11 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                 #if self.entropy_bonus > 0:
                 #    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask) * self.entropy_bonus
 
-                print(curr_log_probs.shape, rewards.shape, baseline.shape)
                 #reinforce_loss = -1 * curr_log_probs * (rewards_with_kl.unsqueeze(-1) - baseline.unsqueeze(-1))
-                reinforce_loss = -1 * curr_log_probs * (rewards.unsqueeze(-1) - baseline.unsqueeze(-1)) + self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs )#init_policy_kl
+                if self.cfg.reinforce.disable_baseline:
+                    reinforce_loss = -1 * curr_log_probs * (rewards.unsqueeze(-1)) + self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs )#init_policy_kl
+                else:
+                    reinforce_loss = -1 * curr_log_probs * (rewards.unsqueeze(-1) - baseline.unsqueeze(-1)) + self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs )#init_policy_kl
 
                 if is_end_mask.sum() > 0:
                     loss = masked_mean(reinforce_loss, mask * prompt_mask.view(-1, 1))
@@ -247,7 +249,6 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
         set_sync_funcs(self, forward_only=True)
 
         mbs, seq_length = response_tokens.size()
-        print("inference logprobs mbs", mbs, forward_micro_batch_size)
         num_microbatches = divide(mbs, forward_micro_batch_size)
         attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(response_tokens)
 
@@ -342,6 +343,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                         response_tokens[i][prompt_lengths[i]:response_lengths[i]].tolist())
                         for i in range(response_lengths.shape[0])]
 
+        print([response_tokens[i][response_lengths[i] - 2: response_lengths[i]].tolist() for i in range(response_lengths.shape[0])]) #print last 2 tokens from each seq
         #print(response_sentences)
         rollout_batch = {
             "response_tokens": response_tokens,
