@@ -38,7 +38,7 @@ git pull --rebase || true
 pip install --no-cache-dir --no-deps -e .
 EOF
 
-FROM ${BASE_IMAGE} as final
+FROM ${BASE_IMAGE} AS final
 LABEL "nemo.library"="nemo-aligner"
 WORKDIR /opt
 # needed in case git complains that it can't detect a valid email, this email is fake but works
@@ -69,6 +69,10 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt  --python_bindings --benchmarks && \
     pip install -e .
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
+
+# TODO: This pinning of pynvml is only needed while on TRTLLM v13 since pynvml>=11.5.0 but pynvml==12.0.0 contains a
+#   breaking change. The last known working verison is 11.5.3
+RUN pip install pynvml==11.5.3
 
 # install TransformerEngine
 ARG MAX_JOBS
