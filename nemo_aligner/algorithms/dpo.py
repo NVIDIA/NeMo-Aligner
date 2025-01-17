@@ -22,12 +22,11 @@ import torch.distributed
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
-    MegatronPretrainingRandomBatchSampler,
-)
-from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
+## TODO: verify that this is functionally equivalent to nemo's get_ltor_masks_and_position_ids
+from megatron.core.datasets.gpt_dataset import _get_ltor_masks_and_position_ids
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.data import MegatronPretrainingRandomBatchSampler
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
@@ -92,9 +91,11 @@ def dpo_custom_collate(
             rejected_labels, (0, padded_max_len - rejected_labels.shape[1]), mode="constant", value=-100
         )
 
-    attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-        chosen_tokens.cuda(), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+    attention_mask, _, position_ids = _get_ltor_masks_and_position_ids(
+        chosen_tokens.cuda(), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss, create_attention_mask=True
     )
+    attention_mask = attention_mask.unsqueeze(0)
+
     assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
     if attention_mask.shape[0] == 1:
         # using .expand() here causes errors from pin_memory=True, so need to use .repeat()

@@ -25,21 +25,20 @@ import torch
 import torch.utils.data
 from omegaconf.dictconfig import DictConfig
 
-from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
-    get_datasets_weights_and_num_samples,
+## TODO: should nemo own this?
+from nemo_aligner.utils.data import (
     get_train_valid_test_split_,
+    get_indexed_dataset_,
+    MegatronPretrainingRandomBatchSampler,
 )
-from nemo.collections.nlp.data.language_modeling.megatron.blendable_dataset import BlendableDataset
-from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
+from nemo.lightning.data import (
     MegatronPretrainingRandomSampler,
     MegatronPretrainingSampler,
 )
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import get_indexed_dataset_
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset, GPTSFTPackedDataset
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import GPTSFTChatDataset ## TODO: port this to nemo2. nemo2 relies on this as well
+from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_dataset import GPTSFTDataset, GPTSFTPackedDataset ## TODO: port these to nemo2. nemo2 relies on these as well
 from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
-    MegatronPretrainingBatchSampler,
-    MegatronPretrainingRandomBatchSampler,
+    MegatronPretrainingBatchSampler, ## TODO: port this to nemo2. nemo2 relies on this as well
 )
 from nemo.utils import logging
 from nemo_aligner.data.nlp.datasets import (
@@ -145,16 +144,10 @@ def build_dataset_generic(
         )
         return dataset
 
-    if len(data_prefix) == 1:
-        return _build_dataset(data_prefix[0], num_samples)
-    else:
-        output = get_datasets_weights_and_num_samples(data_prefix, num_samples)
-        data_prefixes, weights, datasets_num_samples = output
-        datasets = []
-        for i in range(len(data_prefixes)):
-            dataset = _build_dataset(data_prefixes[i], datasets_num_samples[i])
-            datasets.append(dataset)
-        return BlendableDataset(datasets, weights, num_samples)
+    assert len(data_prefix) == 1, (
+        "building a dataset with more than one prefix is currently not supported in NeMo-Aligner"
+    )
+    return _build_dataset(data_prefix[0], num_samples)
 
 
 def build_train_valid_test_datasets(
@@ -240,66 +233,22 @@ def build_train_valid_test_datasets(
 
     else:
         # Single dataset.
-        if len(data_prefix) == 1:
-            return _build_train_valid_test_datasets(
-                cls=cls,
-                cfg=cfg,
-                data_prefix=data_prefix[0],
-                data_impl=data_impl,
-                splits_string=splits_string,
-                train_valid_test_num_samples=train_valid_test_num_samples,
-                seq_length=seq_length,
-                seed=seed,
-                tokenizer=tokenizer,
-                n_chunks=n_chunks,
-                n_examples_per_chunk=n_examples_per_chunk,
-            )
-
-        # Blending dataset.
-        # Parse the values.
-        output = get_datasets_weights_and_num_samples(data_prefix, train_valid_test_num_samples)
-        data_prefixes, weights, datasets_train_valid_test_num_samples = output
-
-        # Build individual datasets.
-        train_datasets = []
-        valid_datasets = []
-        test_datasets = []
-        for i in range(len(data_prefixes)):
-            train_ds, valid_ds, test_ds = _build_train_valid_test_datasets(
-                cls=cls,
-                cfg=cfg,
-                data_prefix=data_prefixes[i],
-                data_impl=data_impl,
-                splits_string=splits_string,
-                train_valid_test_num_samples=datasets_train_valid_test_num_samples[i],
-                seq_length=seq_length,
-                seed=seed,
-                tokenizer=tokenizer,
-                n_chunks=n_chunks,
-                n_examples_per_chunk=n_examples_per_chunk,
-            )
-            if train_ds:
-                train_datasets.append(train_ds)
-            if valid_ds:
-                valid_datasets.append(valid_ds)
-            if test_ds:
-                test_datasets.append(test_ds)
-
-        train_n, valid_n, test_n = map(sum, zip(*datasets_train_valid_test_num_samples))
-
-        # Blend.
-        blending_train_dataset = None
-        if train_datasets:
-            blending_train_dataset = BlendableDataset(train_datasets, weights, train_n)
-        blending_valid_dataset = None
-        if valid_datasets:
-            blending_valid_dataset = BlendableDataset(valid_datasets, weights, valid_n)
-        blending_test_dataset = None
-        if test_datasets:
-            blending_test_dataset = BlendableDataset(test_datasets, weights, test_n)
-
-        return (blending_train_dataset, blending_valid_dataset, blending_test_dataset)
-
+        assert len(data_prefix) == 1, (
+            "building a dataset with more than one prefix is currently not supported in NeMo-Aligner"
+        )
+        return _build_train_valid_test_datasets(
+            cls=cls,
+            cfg=cfg,
+            data_prefix=data_prefix[0],
+            data_impl=data_impl,
+            splits_string=splits_string,
+            train_valid_test_num_samples=train_valid_test_num_samples,
+            seq_length=seq_length,
+            seed=seed,
+            tokenizer=tokenizer,
+            n_chunks=n_chunks,
+            n_examples_per_chunk=n_examples_per_chunk,
+        )
 
 def _build_train_valid_test_datasets(
     cls,
