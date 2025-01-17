@@ -33,6 +33,8 @@ from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory
 
+from nemo_aligner.utils.nemo2.optim import MegatronOptimizer, CosineAnnealingScheduler
+from megatron.core.optimizer import OptimizerConfig
 
 class DistributedCollateFunction(Protocol):
     def __call__(self, batch: list[dict], **kwargs: Any) -> dict[str, torch.Tensor]:
@@ -123,7 +125,7 @@ class DPOTrainer:
         self,
         cfg: DictConfig,
         model,
-        optimizer,
+        optimizer, ## unused
         scheduler,
         train_dataloader,
         val_dataloader,
@@ -140,8 +142,26 @@ class DPOTrainer:
         self.collate_fn = collate_fn
         self.logger = logger
         self.cfg = cfg
-        self.optimizer = optimizer
-        self.scheduler = scheduler
+
+        opt_cfg = OptimizerConfig(
+            optimizer='adam',
+            lr=0.0004,
+            min_lr=0.00004,
+            fp16=True,
+            use_distributed_optimizer=True,
+            clip_grad=1.0,
+        )
+
+        scheduler = CosineAnnealingScheduler(
+            max_steps=5,
+        )
+
+        self.optimizer = MegatronOptimizer(
+            opt_cfg,
+            lr_scheduler=scheduler,
+        )
+
+        self.optimizer.setup_optimizer_and_lr_schedule(self.model)
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -216,16 +236,17 @@ class DPOTrainer:
 
         self.model.finish_training_step()
 
-        grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
-        grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
+        ## gradient clipping should be handled from mcore
+        #grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
+        #grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
         lr = self.optimizer.param_groups[0]["lr"]
 
-        self.optimizer.step(closure=None)
-        self.scheduler.step()
+        self.optimizer.step(closure=None) ## does a scheduler and an optimizer step
+        #self.scheduler.step()
 
         trainer_metrics = {}
-        if grad_norm is not None:
-            trainer_metrics["grad_norm"] = grad_norm
+        #if grad_norm is not None:
+        #    trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
 
         return loss_mean, {**metrics, **trainer_metrics}
