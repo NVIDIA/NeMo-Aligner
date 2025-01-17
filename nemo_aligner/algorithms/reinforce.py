@@ -14,7 +14,7 @@
 
 import os
 import itertools
-from collections import UserDict
+from collections import UserDict, defaultdict
 from contextlib import nullcontext
 from typing import Dict, List, Optional, Union
 import hashlib
@@ -43,12 +43,11 @@ from nemo_aligner.utils.distributed import (
     gather_string_list_nccl
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
-from nemo_aligner.utils.ppo_utils import calculate_kl_penalty, calculate_rloo_baseline, create_mask, calculate_kl_penalty_joschu2020, calculate_math_problem_wise_length_penalty
+from nemo_aligner.utils.ppo_utils import calculate_kl_penalty, calculate_rloo_baseline, create_mask, calculate_kl_penalty_joschu2020, calculate_math_problem_wise_length_penalty, online_prompt_filtering
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean, math_batch_repeat
-
 
 class ReinforceRolloutBatch(UserDict):
     @classmethod
@@ -169,6 +168,7 @@ class ReinforceTrainer:
         logger,
         ckpt_callback,
         run_timer,
+        
     ):
         self.cfg = cfg
         self.model = model
@@ -266,6 +266,7 @@ class ReinforceTrainer:
         reinforce_rollout_data["baseline"] = baseline
         reinforce_rollout_data["response_tokens"] = response_tokens
         reinforce_rollout_data["is_end"] = is_end
+        reinforce_rollout_data["prompt_mask"] = rollout_batch["prompt_mask"]
 
         # compute metrics
         # these are not global yet
@@ -445,8 +446,8 @@ class ReinforceTrainer:
 
         global_rollout_batch.update(global_rm_batch)
         savefile = "train.jsonl" if not is_validation else "validation.jsonl"
-        self.generation_log(global_rollout_batch, os.path.join(self.cfg.generation_save_dir, savefile))
-
+        #self.generation_log(global_rollout_batch, os.path.join(self.cfg.generation_save_dir, savefile))
+        
         return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch))
 
     def compute_rollout_metrics(self, rollout_batch):
@@ -465,6 +466,7 @@ class ReinforceTrainer:
         response_length = response_lengths[0]
         response_token = response_tokens[0]
         unsolved_ratio = (baseline == 0).float().mean().item()
+        correct_solution_generation_length = (response_lengths - prompt_lengths)[rollout_batch["accuracy"] == 1].float().mean().item()
 
         table["reward"] = reward.item()
         table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
@@ -476,6 +478,7 @@ class ReinforceTrainer:
             "response_lengths": response_lengths.float().mean().item(),
             "prompt_lengths": prompt_lengths.float().mean().item(),
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
+            "correct_soln_gen_length": correct_solution_generation_length,
             "rewards": rewards.mean().item(),
             "unsolved_ratio": unsolved_ratio,
             "accuracy": rollout_batch["accuracy"].mean().item(),
@@ -503,6 +506,31 @@ class ReinforceTrainer:
             self.train_dataloader_builder, consumed_samples=self.consumed_samples // self.cfg.num_rollouts_per_prompt, is_validation=False
         )
 
+        # Filter the prompts based on the accuracy with the current policy.
+        sequence_mask, accuracy_metrics = online_prompt_filtering(
+            rollout_batch, 
+            self.cfg.online_filtering_min_accuracy_threshold, 
+            self.cfg.online_filtering_max_accuracy_threshold
+        )
+        rollout_batch["prompt_mask"] = sequence_mask
+        
+        # Perform distributed all-reduce on the metrics with specified operations
+        ops = {
+            'prompts_total': torch.distributed.ReduceOp.SUM,
+            'prompts_kept': torch.distributed.ReduceOp.SUM,
+            'prompts_dropped': torch.distributed.ReduceOp.SUM,
+            'accuracy_min': torch.distributed.ReduceOp.MIN,
+            'accuracy_max': torch.distributed.ReduceOp.MAX
+        }
+        
+        accuracy_metrics_reduced = all_reduce_dict(
+            accuracy_metrics,
+            op=ops,
+            group=parallel_state.get_data_parallel_group()
+        )
+        rollout_metrics.update(accuracy_metrics_reduced)
+
+        
         self.consumed_problems += rollout_metrics["rollout_size"] // self.cfg.num_rollouts_per_prompt
         self.consumed_samples += rollout_metrics["rollout_size"]
 
@@ -589,8 +617,11 @@ class ReinforceTrainer:
                 timing_metrics = {}
 
                 clear_memory()
+                print('rollouts start')
                 with self.timer("rollout_time"):
                     reinforce_rollout_data, metrics, rollout_timer_metrics = self.generate_rollouts()
+                print('rollouts done')
+                print('metrics start')
                 # Consume rollout_time
                 timing_metrics.update(self.timer.consume_durations())
 
@@ -618,16 +649,22 @@ class ReinforceTrainer:
                 rollout_dataloader_iter = get_iterator_k_split(
                     reinforce_rollout_data, divide(rollout_size, num_to_load_on_each_dp)
                 )
+                print('metrics done')
+                print('train start')
                 # start training
                 clear_memory()
                 with self.timer("train_time"):
                     self.run_training(rollout_dataloader_iter)
+                print('train done')
+                print('logger start')
 
                 self.logger.log_metrics(
                     timing_metrics | self.timer.consume_durations(), step=self.step, prefix="timers/"
                 )
 
                 self.step += 1
+                print('logger done')
+                print('val/ckpt check/start')
 
                 run_time_exceeded = self.run_timer.is_finished()
                 run_val, save_model, is_train_end = check_progress(
@@ -669,6 +706,7 @@ class ReinforceTrainer:
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
+                print('val/ckpt check/start done')
 
         self.logger.finalize()
 

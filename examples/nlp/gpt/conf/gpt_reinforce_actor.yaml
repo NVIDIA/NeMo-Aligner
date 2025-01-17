@@ -23,7 +23,9 @@ trainer:
     num_rollouts_per_prompt: 4
     prompt_rollouts_per_microbatch: 4
     val_prompt_rollouts_per_microbatch: 1
-
+    # Prompts are filtered from training whose accuracy is less than min or more than max threshold set below.
+    online_filtering_min_accuracy_threshold: 0.0
+    online_filtering_max_accuracy_threshold: 1.0
 
     # the sequence length to pad the rollout batch for training to
     # reduce fragmentation at the cost of using more
