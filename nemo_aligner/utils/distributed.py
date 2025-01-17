@@ -21,7 +21,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 import torch.distributed
@@ -447,11 +447,30 @@ def from_parallel_logits_to_logprobs(
 
 
 def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distributed.ReduceOp.SUM):
-    keys = sorted(dictionary)
-    tensor = torch.as_tensor([dictionary[k] for k in keys], dtype=dtype, device=torch.cuda.current_device())
-    torch.distributed.all_reduce(tensor, op=op, group=group)
-    return dict(zip(keys, tensor.tolist()))
+    """Performs distributed all-reduce on a dictionary of values.
 
+    Args:
+        dictionary (dict): Values to reduce
+        dtype (torch.dtype): Tensor dtype for reduction. Defaults to float32
+        group (ProcessGroup): Process group. Uses default if None
+        op (ReduceOp|dict): Reduction op(s). Single op or dict of ops per key
+
+    Returns:
+        dict: Reduced values
+    """
+    keys = sorted(dictionary)
+
+    # Handle single op vs dict of ops
+    if not isinstance(op, dict):
+        tensor = torch.as_tensor([dictionary[k] for k in keys], dtype=dtype, device=torch.cuda.current_device())
+        torch.distributed.all_reduce(tensor, op=op, group=group)
+        return dict(zip(keys, tensor.tolist()))
+
+    # Per-key reduction
+    tensor_dict = {key: torch.tensor(dictionary[key], dtype=dtype, device=torch.cuda.current_device()) for key in keys}
+    for key in keys:
+        torch.distributed.all_reduce(tensor_dict[key], op=op.get(key, torch.distributed.ReduceOp.SUM), group=group)
+    return {key: tensor_dict[key].item() for key in keys}
 
 @torch.no_grad()
 def compute_topk_logits_in_batched_sequence(

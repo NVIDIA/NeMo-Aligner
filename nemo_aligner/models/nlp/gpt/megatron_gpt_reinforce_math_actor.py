@@ -129,8 +129,9 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                 baseline = batch["baseline"]
                 tokens = batch["response_tokens"]
                 is_end = batch["is_end"]
-
-                is_end_mask = mask * is_end.view(-1, 1)
+                prompt_mask = batch["prompt_mask"]
+                
+                is_end_mask = mask * is_end.view(-1, 1) * prompt_mask.view(-1, 1)
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True

@@ -274,3 +274,94 @@ def weight_by_correect(batch, weighting_mode='uniform'):
 
     else:
         raise NotImplementedError(f"weighting mode must be balanced or uniform. passed {weighting_mode}")
+
+
+def online_prompt_filtering(rollout_batch, min_threshold=0.2, max_threshold=0.8):
+    """
+    Filters prompts based on accuracy thresholds, retaining only those within
+    specified bounds. Calculates and returns a mask for valid sequences and
+    corresponding accuracy metrics.
+
+    Args:
+        rollout_batch (dict): Contains 'prompt_tokens' and 'rewards' as torch.Tensors.
+        min_threshold (float): Minimum accuracy required to retain a prompt.
+        max_threshold (float): Maximum accuracy allowed to retain a prompt.
+
+    Returns:
+        tuple:
+            - sequence_mask (torch.Tensor): Boolean mask for retained sequences.
+            - accuracy_metrics (dict): Contains:
+                - 'accuracy_min': Minimum accuracy.
+                - 'accuracy_max': Maximum accuracy.
+                - 'accuracy_avg': Average accuracy.
+                - 'prompts_total': Total unique prompts.
+                - 'prompts_dropped': Number dropped.
+                - 'prompt_drop_rate': Drop rate.
+    """
+
+    prompt_tokens = rollout_batch["prompt_tokens"]
+    rewards = rollout_batch["rewards"]
+
+    # Find unique prompts
+    unique_prompts = torch.unique(prompt_tokens, dim=0)
+
+    # Initialize for storing statistics
+    accuracy_stats = {
+        'min': float('inf'),
+        'max': float('-inf'),
+        'avg': 0.0
+    }
+
+    total_dropped = 0
+    # Create a mask for sequences to keep (initially all True)
+
+    sequence_mask = torch.ones_like(rewards, dtype=torch.bool, device=rewards.device)
+
+    # Calculate accuracy for each unique prompt
+    for i in range(len(unique_prompts)):
+        # Find all instances of this prompt
+        is_matching_prompt = (prompt_tokens == unique_prompts[i]).all(dim=1)
+        prompt_rewards = rewards[is_matching_prompt]
+
+        # Calculate statistics
+        total = prompt_rewards.size(0)
+        correct = prompt_rewards.sum().item()
+        accuracy = correct / total
+
+        # Update accuracy stats
+        accuracy_stats['min'] = min(accuracy_stats['min'], accuracy)
+        accuracy_stats['max'] = max(accuracy_stats['max'], accuracy)
+        accuracy_stats['avg'] += accuracy
+
+        # Log prompt performance
+        print(f"Prompt {unique_prompts[i]}: Accuracy={accuracy:.3f}, "
+                f"Correct={correct}, Total={total}")
+
+        # Keep track of prompts meeting threshold
+        if not (min_threshold <= accuracy <= max_threshold):
+            sequence_mask[is_matching_prompt] = False
+            total_dropped += 1
+
+    # Calculate final statistics
+    num_unique_prompts = len(unique_prompts)
+    accuracy_stats['avg'] /= num_unique_prompts
+    prompts_kept = num_unique_prompts - total_dropped
+    drop_rate = total_dropped / num_unique_prompts
+
+    # Log summary statistics
+    print(f"Accuracy Stats - Min: {accuracy_stats['min']:.3f}, "
+                f"Max: {accuracy_stats['max']:.3f}, "
+                f"Avg: {accuracy_stats['avg']:.3f}")
+    print(f"Prompt Stats - Total: {num_unique_prompts}, "
+                f"Kept: {prompts_kept}, Dropped: {total_dropped}, "
+                f"Drop Rate: {drop_rate:.3f}")
+
+    # Update metrics with accuracy and prompt statistics
+    accuracy_metrics = {
+        "accuracy_min": accuracy_stats['min'],
+        "accuracy_max": accuracy_stats['max'],
+        "prompts_total": num_unique_prompts,
+        "prompts_kept": prompts_kept,
+    }
+
+    return sequence_mask, accuracy_metrics
