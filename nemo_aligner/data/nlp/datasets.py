@@ -23,16 +23,17 @@ import scipy
 import torch
 from omegaconf import OmegaConf
 
-from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
+from megatron.core.datasets.gpt_dataset import _get_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import (
-    GPTSFTChatDataset,
-    _get_header_conversation_type_mask_role,
-    get_prompt_template_example,
+    GPTSFTChatDataset, ## TODO: port to nemo2. nemo2 depends on this as well
 )
 from nemo.core import Dataset
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
-
+from nemo_aligner.utils.data import (
+    _get_header_conversation_type_mask_role,
+    get_prompt_template_example,
+)
 
 class KnowledgeDistillationDataset(Dataset):
     """The knowledge distillation dataset takes in raw tokens, labels, loss masks, and the teacher models' predictive top tokens & logits.
@@ -276,7 +277,7 @@ class RewardModelDataset(Dataset):
         chosen_tokens = torch.tensor(chosen_np_pad)
         rejected_tokens = torch.tensor(rejected_np_pad)
 
-        attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
+        attention_mask, loss_mask, position_ids = con_get_ltor_masks_and_position_idsfig(
             chosen_tokens, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
         )
 
@@ -827,7 +828,7 @@ class RegressionRewardModelDataset(RewardModelDataset):
         )
 
         text_tensor = torch.tensor(text_np_pad)
-        attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
+        attention_mask, loss_mask, position_ids = con_get_ltor_masks_and_position_idsfig(
             text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
         )
 
