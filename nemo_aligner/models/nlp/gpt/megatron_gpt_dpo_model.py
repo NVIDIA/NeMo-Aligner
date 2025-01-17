@@ -521,8 +521,10 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         # custom trainers will always zero grad for us
         prepare_for_training_step(self, zero_grad=False)
 
+    ## I think this is no longer needed since mcore finalize_model_grads handles it
     def finish_training_step(self):
-        grad_reductions(self)
+        pass
+        #grad_reductions(self)
 
     def prepare_for_validation_step(self):
         prepare_for_validation_step(self)
