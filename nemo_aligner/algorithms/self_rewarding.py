@@ -39,7 +39,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
-from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor_within_pp
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_tensor_within_pp
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.text_generation_utils import (
     TrackLengthGPTModelTextGenerationStrategy,
@@ -304,6 +304,9 @@ class SelfRewardingTrainer:
         self.meta_judge_template_fn = jinja2_env.from_string(self.meta_judge_template).render
         self.parse_reward_fn = create_parse_reward_fn(self.reward_regex_template)
         self.meta_parse_reward_fn = create_meta_parse_reward_fn(self.meta_judge_reward_regex_template)
+        
+        seed = 1234 if self.model.cfg.get("seed", None) is None else self.model.cfg.get("seed")
+        self.rng_generator = np.random.default_rng(seed + parallel_state.get_data_parallel_rank())
 
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
@@ -457,12 +460,13 @@ class SelfRewardingTrainer:
         return loss_mean, {**metrics, **trainer_metrics}
 
     @torch.no_grad()
-    def get_generations(self, list_of_batches):
-        self.model.prepare_for_inference()
-        if self.use_trtllm_generation:
-            # at this point self.model is the reference policy from cpu_weight_swap
-            self.trtllm_generate.refit(self.model)
-            clear_memory()
+    def get_generations(self, list_of_batches, prepare_for_inference=False):
+        if prepare_for_inference:
+            self.model.prepare_for_inference()
+            if self.use_trtllm_generation:
+                # at this point self.model is the reference policy from cpu_weight_swap
+                self.trtllm_generate.refit(self.model)
+                clear_memory()
 
         prompt_lengths = torch.cat([b["prompt_lengths"] for b in list_of_batches], dim=0)
         batch_max_length = prompt_lengths.max().item()
@@ -500,8 +504,14 @@ class SelfRewardingTrainer:
             )
 
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
-            response_tokens = torch.cuda.LongTensor(generations["token_ids"]) if generations else None
-            response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
+            if generations is None:
+                response_tokens = None
+            else:
+                max_len_list = max([len(x) for x in generations["token_ids"]])
+                padded_list = [x + [self.model.tokenizer.eos_id] * (max_len_list - len(x)) for x in generations["token_ids"]]
+                response_tokens = torch.tensor(padded_list, dtype=torch.long, device='cuda')
+            #response_tokens = torch.tensor(generations["token_ids"], dtype=torch.long, device='cuda') if generations else None
+            response_tokens = broadcast_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
 
             max_response_length = response_lengths.max().item()
@@ -525,9 +535,10 @@ class SelfRewardingTrainer:
             response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
         )
 
-        self.model.finish_inference()
-        if self.use_trtllm_generation:
-            self.trtllm_generate.free()
+        if prepare_for_inference:
+            self.model.finish_inference()
+            if self.use_trtllm_generation:
+                self.trtllm_generate.free()
 
         return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu(), is_valid.cpu()
 
@@ -839,6 +850,12 @@ class SelfRewardingTrainer:
                 with cpu_weight_swap(
                     self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
                 ):
+                    self.model.prepare_for_inference()
+                    if self.use_trtllm_generation:
+                        # at this point self.model is the reference policy from cpu_weight_swap
+                        self.trtllm_generate.refit(self.model)
+                        clear_memory()
+                    
                     candidate_responses_with_rewards = [
                         [] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))
                     ]
@@ -979,7 +996,7 @@ class SelfRewardingTrainer:
 
                         # if all scores are identical (even all None) we just randomly choose
                         if len(filtered_scores) <= 1 or all([filtered_scores[0][0] == s[0] for s in filtered_scores]):
-                            idx_chosen, idx_reject = np.random.choice(len(scores), size=2, replace=False)
+                            idx_chosen, idx_reject = self.rng_generator.choice(len(scores), size=2, replace=False)
                             bad_sample = True
                             # if len(filtered_scores) <= 1:
                             #    print("BAD_SAMPLE_1")
@@ -1091,7 +1108,7 @@ class SelfRewardingTrainer:
                         # is really an upper bound, not the exact replacement %. This can be easily altered though.
                         if (
                             self.use_meta_judge
-                            and ((bad_ends > 0 or bad_sample) or (torch.rand((1,)) <= self.meta_judge_pcnt - (samples_replaced / samples_seen)))
+                            and ((bad_ends > 0 or bad_sample) or (self.rng_generator.random() <= self.meta_judge_pcnt - (samples_replaced / samples_seen)))
                             and len(meta_buffer_done) > 0
                         ):
                             # if self.use_meta_judge and (bad_ends > 0 or bad_sample) and len(meta_buffer_done) > 0:
@@ -1209,6 +1226,10 @@ class SelfRewardingTrainer:
 
                     new_batch["ref_policy_log_probs_chosen"] = chosen_logps
                     new_batch["ref_policy_log_probs_rejected"] = reject_logps
+                    
+                    self.model.finish_inference()
+                    if self.use_trtllm_generation:
+                        self.trtllm_generate.free()
 
                     yield new_batch
                     del logprobs, chosen_logps, reject_logps, new_batch
