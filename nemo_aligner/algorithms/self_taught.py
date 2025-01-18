@@ -36,7 +36,7 @@ from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_sampler
 )
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo.utils import logging
-from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor_within_pp
+from nemo_aligner.utils.distributed import SyncTimer, broadcast_tensor_within_pp
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.text_generation_utils import (
     TrackLengthGPTModelTextGenerationStrategy,
@@ -341,8 +341,8 @@ class SelfTaughtTrainer:
         else:
             self.tokenizer = self.model.tokenizer
 
-        self.bad_response_template = self.model.cfg.self_taught.get("bad_response_template", DEFAULT_BAD_RESPONSE_PROMPT).strip()
-        self.llm_judge_template = self.model.cfg.self_taught.get("llm_judge_template", DEFAULT_JUDGEMENT_ANNOTATION).strip()
+        self.bad_response_template = DEFAULT_BAD_RESPONSE_PROMPT_LLAMA3 #self.model.cfg.self_taught.get("bad_response_template", DEFAULT_BAD_RESPONSE_PROMPT).strip()
+        self.llm_judge_template = DEFAULT_JUDGEMENT_ANNOTATION_LLAMA3 #self.model.cfg.self_taught.get("llm_judge_template", DEFAULT_JUDGEMENT_ANNOTATION).strip()
         #self.bad_response_regex_prompt = self.model.cfg.self_taught.get("bad_response_regex_prompt", DEFAULT_BAD_REGEX_TEMPLATE_PROMPT)
         self.bad_response_regex_resp = DEFAULT_BAD_REGEX_TEMPLATE_RESP #self.model.cfg.self_taught.get("bad_response_regex_response", DEFAULT_BAD_REGEX_TEMPLATE_RESP)
         self.judgement_regex = DEFAULT_JUDGEMENT_REGEX_TEMPLATE #self.model.cfg.self_taught.get("judgement_regex", DEFAULT_JUDGEMENT_REGEX_TEMPLATE)
@@ -362,6 +362,11 @@ class SelfTaughtTrainer:
         #self.bad_response_regex_prompt_fn = create_parse_regex_fn(self.bad_response_regex_prompt)
         self.bad_response_regex_resp_fn = create_parse_regex_fn(self.bad_response_regex_resp)
         self.judgement_regex_fn = create_parse_regex_fn(self.judgement_regex)
+        
+        rng_generator = torch.Generator(device="cpu")
+        seed = 1234 if self.model.cfg.get("seed", None) is None else self.model.cfg.get("seed")
+        rng_generator.manual_seed(seed + parallel_state.get_data_parallel_rank())
+        self.rng_generator = rng_generator
 
         self.use_trtllm_generation = self.cfg.trt_llm.get("enable", False) if "trt_llm" in self.cfg else False
         if self.use_trtllm_generation:
@@ -450,14 +455,10 @@ class SelfTaughtTrainer:
             trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
         
-        num_samples = 0
-        gen_lengths_chosen = 0
-        num_bad_samples = 0
-        num_bad_ends = 0
-        num_samples += global_batch["tokens"].shape[0]
-        num_bad_samples += global_batch["bad_samples"].sum()
-        num_bad_ends += global_batch["bad_ends"].sum()
-        gen_lengths_chosen += (global_batch["gen_lens"] - global_batch["prompt_lens"]).sum()
+        num_samples = global_batch["tokens"].shape[0]
+        num_bad_samples = global_batch["bad_samples"].sum()
+        num_bad_ends = global_batch["bad_ends"].sum()
+        gen_lengths_chosen = (global_batch["gen_lens"] - global_batch["prompt_lens"]).sum()
         tensor_to_accumulate = torch.tensor(
             [
                 gen_lengths_chosen,
@@ -483,12 +484,13 @@ class SelfTaughtTrainer:
         return loss_mean, {**metrics, **trainer_metrics}
 
     @torch.no_grad()
-    def get_generations(self, list_of_batches):
-        self.model.prepare_for_inference()
-        if self.use_trtllm_generation:
-            # at this point self.model is the reference policy from cpu_weight_swap
-            self.trtllm_generate.refit(self.model)
-            clear_memory()
+    def get_generations(self, list_of_batches, prepare_for_inference=False):
+        if prepare_for_inference:
+            self.model.prepare_for_inference()
+            if self.use_trtllm_generation:
+                # at this point self.model is the reference policy from cpu_weight_swap
+                self.trtllm_generate.refit(self.model)
+                clear_memory()
 
         prompt_lengths = torch.cat([b["prompt_lengths"] for b in list_of_batches], dim=0)
         batch_max_length = prompt_lengths.max().item()
@@ -526,8 +528,14 @@ class SelfTaughtTrainer:
             )
 
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
-            response_tokens = torch.cuda.LongTensor(generations["token_ids"]) if generations else None
-            response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
+            if generations is None:
+                response_tokens = None
+            else:
+                max_len_list = max([len(x) for x in generations["token_ids"]])
+                padded_list = [x + [self.model.tokenizer.eos_id] * (max_len_list - len(x)) for x in generations["token_ids"]]
+                response_tokens = torch.tensor(padded_list, dtype=torch.long, device='cuda')
+            #response_tokens = torch.tensor(generations["token_ids"], dtype=torch.long, device='cuda') if generations else None
+            response_tokens = broadcast_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
 
             max_response_length = response_lengths.max().item()
@@ -551,9 +559,10 @@ class SelfTaughtTrainer:
             response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
         )
 
-        self.model.finish_inference()
-        if self.use_trtllm_generation:
-            self.trtllm_generate.free()
+        if prepare_for_inference:
+            self.model.finish_inference()
+            if self.use_trtllm_generation:
+                self.trtllm_generate.free()
 
         return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu(), is_valid.cpu()
     
@@ -777,6 +786,12 @@ class SelfTaughtTrainer:
                 with cpu_weight_swap(
                     self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
                 ):
+                    self.model.prepare_for_inference()
+                    if self.use_trtllm_generation:
+                        # at this point self.model is the reference policy from cpu_weight_swap
+                        self.trtllm_generate.refit(self.model)
+                        clear_memory()
+
                     #candidate_responses_with_perturbs = [
                     #    [] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))
                     #]
@@ -893,7 +908,7 @@ class SelfTaughtTrainer:
                         for (orig_prompt, resp_good), resp_bad in zip(orig_prompts_and_responses, perturbed_responses_as_str):
                             if resp_bad is None:
                                 resp_bad = "I cannot come up with a response"
-                            if torch.rand([1]) < 0.5:
+                            if torch.rand([1], generator=self.rng_generator) < 0.5:
                                 resp_A = resp_good
                                 resp_B = resp_bad
                                 correct_ans = 'A'
@@ -977,7 +992,7 @@ class SelfTaughtTrainer:
                             idx_chosen = 0
                             bad_sample = True
                         elif len(filtered_scores) > 0:
-                            idx_chosen = filtered_scores[torch.randint(0, len(filtered_scores), [1]).item()][-1]
+                            idx_chosen = filtered_scores[torch.randint(0, len(filtered_scores), [1], generator=self.rng_generator).item()][-1]
                         else:
                             print(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
                             raise RuntimeError("hit strange score selection state, please investigate")
@@ -1009,6 +1024,7 @@ class SelfTaughtTrainer:
                     bad_samples = torch.BoolTensor([b["bad_sample"] for b in batch])
 
                     max_batch_len = max([len(b["chosen_prompt_and_resp_tokens"]) - 1 for b in batch])
+                    #max_batch_len = self.model.cfg.encoder_seq_length
 
                     """
                     chosen_tokens_pad = torch.cat(
@@ -1067,8 +1083,14 @@ class SelfTaughtTrainer:
                     assert (
                         chosen_resp_lens - chosen_prompt_lens >= 0
                     ).all(), "negative generated length encountered in chosen"
+                    
+                    self.model.finish_inference()
+                    if self.use_trtllm_generation:
+                        self.trtllm_generate.free()
 
                     yield new_batch
+                    
+                    # the del runs after all code connected to receiving the yielded new_batch
                     del new_batch
 
                 buffer.clear()

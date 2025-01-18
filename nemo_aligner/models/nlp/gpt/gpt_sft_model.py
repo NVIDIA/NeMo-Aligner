@@ -100,22 +100,25 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
             model=self.model,
             num_microbatches=get_num_microbatches(),
             forward_only=forward_only,
-            micro_batch_size=get_micro_batch_size(),
+            micro_batch_size=self.cfg.micro_batch_size,
             seq_length=seq_length,
         )
 
         torch.cuda.synchronize()
-
+        
         # only the last stages of the pipeline return losses
         if parallel_state.is_pipeline_last_stage():
             # average loss across micro batches
             loss_mean = torch.concat([loss_reduced["avg"] for loss_reduced in losses_reduced]).mean()
         else:
             loss_mean = torch.tensor(0.0).cuda()
+
         # Logging
         torch.distributed.broadcast(loss_mean, get_last_rank())
+
         loss_value = loss_mean.detach().item()
         metrics = {"loss": loss_value}
+        
         return loss_value, metrics
     
     def loss_func(self, loss_mask, num_valid_tokens_in_ub, output_tensor):
