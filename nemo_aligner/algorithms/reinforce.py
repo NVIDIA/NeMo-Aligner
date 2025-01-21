@@ -274,6 +274,8 @@ class ReinforceTrainer:
         reinforce_rollout_metrics["rewards_with_kl"] = rewards_with_kl.sum().item()
         reinforce_rollout_metrics["num_samples"] = prompt_lengths.size(0)
         reinforce_rollout_metrics["accuracy"] = rollout_batch["accuracy"].sum().item()
+        reinforce_rollout_metrics["logprobs_mean"] = masked_mean(rollout_batch["logprobs"], mask, dim=-1).sum().item()
+        reinforce_rollout_metrics["init_logprobs_mean"] = masked_mean(rollout_batch["init_logprobs"], mask, dim=-1).sum().item() if self.compute_init_policy_kl else 0
 
         # now the metrics are global
         reinforce_rollout_metrics = all_reduce_dict(
@@ -288,52 +290,54 @@ class ReinforceTrainer:
 
     def generation_log(self, rollout_batch, savefile):
         """
-        Logs all generations and related metadata to savefile
-        Runs only on rank 0. We assume that the input "rollout_batch" is global here.
+        Logs all generations and related metadata to savefile. The savefile should be unique per rank.
+        Runs on all ranks. We assume that the input "rollout_batch" is global here.
         """
-        if torch.distributed.get_rank() == 0:
-            def dict_get(batch, idx):
-                inst = {}
-                for k in batch.keys():
-                    inst[k] = batch[k][idx]
-                return inst
+        def dict_get(batch, idx):
+            inst = {}
+            for k in batch.keys():
+                inst[k] = batch[k][idx]
+            return inst
 
-            batch_size = rollout_batch["prompt_tokens"].shape[0]
-            records = []
-            for idx in range(batch_size):
-                # get individual element of batch
-                instance = dict_get(rollout_batch, idx)
-                response_tokens = instance["response_tokens"]
-                response_length = instance["response_lengths"].item()
-                prompt_length = instance["prompt_lengths"].item()
-                ground_truth = instance["ground_truths"]
-                is_end = instance["is_end"].item()
-                reward = instance["rewards"].item()
-                problem_str = self.model.tokenizer.ids_to_text(response_tokens[:prompt_length].tolist())
-                response_str = self.model.tokenizer.ids_to_text(response_tokens[prompt_length:].tolist())
-                problem_hash = hashlib.sha256(problem_str.encode('utf-8')).hexdigest()
-                generator_rank = instance["generator_rank"].item()
+        batch_size = rollout_batch["prompt_tokens"].shape[0]
+        per_rank_batch = batch_size // torch.distributed.get_world_size()
+        rank = torch.distributed.get_rank()
+        end_idx = (rank+1) * per_rank_batch if rank < torch.distributed.get_world_size() - 1 else batch_size
+        records = []
+        for idx in range(rank * per_rank_batch, end_idx):
+            # get individual element of batch
+            instance = dict_get(rollout_batch, idx)
+            response_tokens = instance["response_tokens"]
+            response_length = instance["response_lengths"].item()
+            prompt_length = instance["prompt_lengths"].item()
+            ground_truth = instance["ground_truths"]
+            is_end = instance["is_end"].item()
+            reward = instance["rewards"].item()
+            problem_str = self.model.tokenizer.ids_to_text(response_tokens[:prompt_length].tolist())
+            response_str = self.model.tokenizer.ids_to_text(response_tokens[prompt_length:].tolist())
+            problem_hash = hashlib.sha256(problem_str.encode('utf-8')).hexdigest()
+            generator_rank = instance["generator_rank"].item()
 
-                record = {
-                    "problem_hash": problem_hash,
-                    "idx_in_batch": idx,
-                    "problem": problem_str,
-                    "response": response_str,
-                    "response_length": response_length,
-                    "ground_truth": ground_truth,
-                    "rank": generator_rank,
-                    "ended_correctly": is_end,
-                    "step": self.reinforce_optimization_step,
-                    "reward": reward,
-                    "accuracy": instance["accuracy"].item(),
-                    "baseline": instance["baseline"].item(),
-                }
-                records.append(record)
+            record = {
+                "problem_hash": problem_hash,
+                "idx_in_batch": idx,
+                "problem": problem_str,
+                "response": response_str,
+                "response_length": response_length,
+                "ground_truth": ground_truth,
+                "rank": generator_rank,
+                "ended_correctly": is_end,
+                "step": self.reinforce_optimization_step,
+                "reward": reward,
+                "accuracy": instance["accuracy"].item(),
+                "baseline": instance["baseline"].item(),
+            }
+            records.append(record)
 
-            with open(savefile, "a", encoding="utf-8") as f:
-                for record in records:
-                    json.dump(record, f)
-                    f.write("\n")
+        with open(savefile, "a", encoding="utf-8") as f:
+            for record in records:
+                json.dump(record, f)
+                f.write("\n")
         
     def _run_inference(self, dataloader_builder, consumed_samples, is_validation):
         """this function is run per DP so the metrics need to be computed globally
@@ -407,6 +411,7 @@ class ReinforceTrainer:
             with self.timer("init_logprobs"):
                 rollout_init_logprobs = self.model.get_init_policy_logprobs(batched_response_tokens)
                 balanced_local_batch["init_logprobs"] = rollout_init_logprobs
+        global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
 
         # we send the request in sharded context, so we need to keep this sharding and then undo it
         with reshard_context():
@@ -445,9 +450,10 @@ class ReinforceTrainer:
         balanced_local_batch.update(balanced_rm_batch)
 
         global_rollout_batch.update(global_rm_batch)
-        savefile = "train.jsonl" if not is_validation else "validation.jsonl"
-        #self.generation_log(global_rollout_batch, os.path.join(self.cfg.generation_save_dir, savefile))
-        
+        rank = torch.distributed.get_rank()
+        savefile = f"train_{rank}.jsonl" if not is_validation else f"validation_{rank}.jsonl"
+        self.generation_log(global_rollout_batch, os.path.join(self.cfg.generation_save_dir, savefile))
+
         return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch))
 
     def compute_rollout_metrics(self, rollout_batch):
