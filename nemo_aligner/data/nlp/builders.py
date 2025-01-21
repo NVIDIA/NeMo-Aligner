@@ -47,13 +47,16 @@ from nemo_aligner.data.nlp.datasets import (
     DPOPackedDataset,
     KnowledgeDistillationDataset,
     KTOModelDataset,
+    MathDataset,
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
-    MathDataset,
 )
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length, math_collate_with_batch_max_sequence_length
+from nemo_aligner.utils.utils import (
+    collate_with_batch_max_sequence_length,
+    math_collate_with_batch_max_sequence_length,
+)
 
 
 class ChunkedJsonl:
@@ -452,6 +455,7 @@ def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_ma
         generate_masks_and_position_ids=generate_masks_and_position_ids,
     )
 
+
 def math_collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_masks_and_position_ids=True):
     """collate function that pads each sequence to the max in the batch"""
     return partial(
@@ -463,7 +467,6 @@ def math_collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, genera
         eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
         generate_masks_and_position_ids=generate_masks_and_position_ids,
     )
-
 
 
 def identity_collate(batch):

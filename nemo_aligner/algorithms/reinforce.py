@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+import hashlib
 import itertools
+import json
+import logging as logging_
+import os
 from collections import UserDict, defaultdict
 from contextlib import nullcontext
 from typing import Dict, List, Optional, Union
-import hashlib
-import json
 
-import logging as logging_
 import pandas as pd
 import torch
 from megatron.core import parallel_state as mcore_parallel_state
@@ -37,17 +37,25 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     ScopedTimer,
     all_reduce_dict,
+    gather_string_list_nccl,
     masked_global_mean_var,
     normalize_tensor,
     rebalance_nd_tensor,
-    gather_string_list_nccl
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
-from nemo_aligner.utils.ppo_utils import calculate_kl_penalty, calculate_rloo_baseline, create_mask, calculate_kl_penalty_joschu2020, calculate_math_problem_wise_length_penalty, online_prompt_filtering
+from nemo_aligner.utils.ppo_utils import (
+    calculate_kl_penalty,
+    calculate_kl_penalty_joschu2020,
+    calculate_math_problem_wise_length_penalty,
+    calculate_rloo_baseline,
+    create_mask,
+    online_prompt_filtering,
+)
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean, math_batch_repeat
+
 
 class ReinforceRolloutBatch(UserDict):
     @classmethod
@@ -61,7 +69,7 @@ class ReinforceRolloutBatch(UserDict):
         for k in sorted(rollout_batches[0]):
 
             list_of_tensors = [item[k] for item in rollout_batches]
-            
+
             if isinstance(list_of_tensors[0], list):
                 tensor = [item for sublist in list_of_tensors for item in sublist]
             elif all(x.ndim == 1 for x in list_of_tensors):
@@ -114,15 +122,19 @@ class ReinforceRolloutBatch(UserDict):
                 val = gather_string_list_nccl(val, mcore_parallel_state.get_data_parallel_group())
                 global_rollout_batch[k] = val
             else:
-                raise NotImplementedError((f"Attempted to gather_and_balance_globally for unsupported type {type(val)} with key {k}."
-                                           "Please provide either a tensor or a string list."))
+                raise NotImplementedError(
+                    (
+                        f"Attempted to gather_and_balance_globally for unsupported type {type(val)} with key {k}."
+                        "Please provide either a tensor or a string list."
+                    )
+                )
 
         return global_rollout_batch
 
     def chunk(self, rank, split_size, seed):
         chunked_rollout_batch = type(self)()
 
-        batch_set = set() # set of batch sizes of values in rollout batch
+        batch_set = set()  # set of batch sizes of values in rollout batch
         for val in self.data.values():
             if isinstance(val, torch.Tensor):
                 batch_set.add(val.size(0))
@@ -142,7 +154,8 @@ class ReinforceRolloutBatch(UserDict):
                 chunked_rollout_batch[k] = [self.data[k][i] for i in indices]
 
         return chunked_rollout_batch
-   
+
+
 def compute_num_rollout_microbatches(dataloader):
     return divide(
         divide(dataloader.batch_sampler.global_batch_size, dataloader.batch_sampler.micro_batch_size),
@@ -168,7 +181,6 @@ class ReinforceTrainer:
         logger,
         ckpt_callback,
         run_timer,
-        
     ):
         self.cfg = cfg
         self.model = model
@@ -212,7 +224,7 @@ class ReinforceTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(train_dataloader.batch_sampler)
         self.set_max_steps()
 
-        self.compute_init_policy_kl = True #self.cfg.initial_policy_kl_penalty > 0
+        self.compute_init_policy_kl = True  # self.cfg.initial_policy_kl_penalty > 0
         # size to pad our rollout batch to
         self.rollout_batch_seq_length = self.cfg.rollout_batch_seq_length
 
@@ -247,14 +259,14 @@ class ReinforceTrainer:
 
         mask = create_mask(values=logprobs, prompt_lengths=prompt_lengths, response_lengths=response_lengths)
 
-        # NOTE: I'm keeping the 'rewards_with_kl' convention here to avoid breaking code elsewhere, but note that KL is actually added during loss calculation now 
+        # NOTE: I'm keeping the 'rewards_with_kl' convention here to avoid breaking code elsewhere, but note that KL is actually added during loss calculation now
         #       to reduce variance.
 
-        #init_policy_kl = masked_mean(init_policy_kl, mask, dim=-1)
-        #rewards = calculate_math_problem_wise_length_penalty(prompt_tokens, response_lengths, rewards, is_end.float(), self.cfg.max_length_penalty)
-        rewards_with_kl = rewards #- self.cfg.initial_policy_kl_penalty * init_policy_kl
+        # init_policy_kl = masked_mean(init_policy_kl, mask, dim=-1)
+        # rewards = calculate_math_problem_wise_length_penalty(prompt_tokens, response_lengths, rewards, is_end.float(), self.cfg.max_length_penalty)
+        rewards_with_kl = rewards  # - self.cfg.initial_policy_kl_penalty * init_policy_kl
 
-        #baseline = calculate_rloo_baseline(prompts=prompt_tokens, reward=rewards_with_kl, mask=is_end.float())
+        # baseline = calculate_rloo_baseline(prompts=prompt_tokens, reward=rewards_with_kl, mask=is_end.float())
         baseline = rollout_batch["baseline"]
 
         # collect everything we need to train REINFORCE
@@ -271,12 +283,18 @@ class ReinforceTrainer:
 
         # compute metrics
         # these are not global yet
-        reinforce_rollout_metrics["init_policy_kl"] = masked_mean(init_policy_kl, mask, dim=-1).sum().item() if self.compute_init_policy_kl else 0
+        reinforce_rollout_metrics["init_policy_kl"] = (
+            masked_mean(init_policy_kl, mask, dim=-1).sum().item() if self.compute_init_policy_kl else 0
+        )
         reinforce_rollout_metrics["rewards_with_kl"] = rewards_with_kl.sum().item()
         reinforce_rollout_metrics["num_samples"] = prompt_lengths.size(0)
         reinforce_rollout_metrics["accuracy"] = rollout_batch["accuracy"].sum().item()
         reinforce_rollout_metrics["logprobs_mean"] = masked_mean(rollout_batch["logprobs"], mask, dim=-1).sum().item()
-        reinforce_rollout_metrics["init_logprobs_mean"] = masked_mean(rollout_batch["init_logprobs"], mask, dim=-1).sum().item() if self.compute_init_policy_kl else 0
+        reinforce_rollout_metrics["init_logprobs_mean"] = (
+            masked_mean(rollout_batch["init_logprobs"], mask, dim=-1).sum().item()
+            if self.compute_init_policy_kl
+            else 0
+        )
 
         # now the metrics are global
         reinforce_rollout_metrics = all_reduce_dict(
@@ -294,6 +312,7 @@ class ReinforceTrainer:
         Logs all generations and related metadata to savefile. The savefile should be unique per rank.
         Runs on all ranks. We assume that the input "rollout_batch" is global here.
         """
+
         def dict_get(batch, idx):
             inst = {}
             for k in batch.keys():
@@ -303,7 +322,7 @@ class ReinforceTrainer:
         batch_size = rollout_batch["prompt_tokens"].shape[0]
         per_rank_batch = batch_size // torch.distributed.get_world_size()
         rank = torch.distributed.get_rank()
-        end_idx = (rank+1) * per_rank_batch if rank < torch.distributed.get_world_size() - 1 else batch_size
+        end_idx = (rank + 1) * per_rank_batch if rank < torch.distributed.get_world_size() - 1 else batch_size
         records = []
         for idx in range(rank * per_rank_batch, end_idx):
             # get individual element of batch
@@ -316,7 +335,7 @@ class ReinforceTrainer:
             reward = instance["rewards"].item()
             problem_str = self.model.tokenizer.ids_to_text(response_tokens[:prompt_length].tolist())
             response_str = self.model.tokenizer.ids_to_text(response_tokens[prompt_length:].tolist())
-            problem_hash = hashlib.sha256(problem_str.encode('utf-8')).hexdigest()
+            problem_hash = hashlib.sha256(problem_str.encode("utf-8")).hexdigest()
             generator_rank = instance["generator_rank"].item()
 
             record = {
@@ -339,7 +358,7 @@ class ReinforceTrainer:
             for record in records:
                 json.dump(record, f)
                 f.write("\n")
-        
+
     def _run_inference(self, dataloader_builder, consumed_samples, is_validation):
         """this function is run per DP so the metrics need to be computed globally
         assumes that the dataloader is built with the proper consumed samples value
@@ -365,23 +384,27 @@ class ReinforceTrainer:
             with self.timer("generate"):
                 for batch in batch_iterator:
                     if not is_validation:
-                        print(batch['problem'].shape)
+                        print(batch["problem"].shape)
                         batch = math_batch_repeat(batch, num_repetitions=self.cfg.prompt_rollouts_per_microbatch)
                         for _ in range(self.cfg.num_rollouts_per_prompt // self.cfg.prompt_rollouts_per_microbatch):
                             rollout_batch = self.model.infer(batch)
                             rollout_batch["prompt_tokens"] = batch["problem"]
-                            rollout_batch["generator_rank"] = torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
+                            rollout_batch["generator_rank"] = (
+                                torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
+                            )
                             futures.append(self.rm.infer_rm(rollout_batch))
-                            #del rollout_batch["ground_truths"]
+                            # del rollout_batch["ground_truths"]
                             del rollout_batch["response_sentences"]
                             rollout_batches.append(rollout_batch)
                     else:
                         batch = math_batch_repeat(batch, num_repetitions=self.cfg.val_prompt_rollouts_per_microbatch)
                         rollout_batch = self.model.infer(batch)
                         rollout_batch["prompt_tokens"] = batch["problem"]
-                        rollout_batch["generator_rank"] = torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
+                        rollout_batch["generator_rank"] = (
+                            torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
+                        )
                         futures.append(self.rm.infer_rm(rollout_batch))
-                        #del rollout_batch["ground_truths"]
+                        # del rollout_batch["ground_truths"]
                         del rollout_batch["response_sentences"]
                         rollout_batches.append(rollout_batch)
 
@@ -430,15 +453,19 @@ class ReinforceTrainer:
             global_rm_batch = unbalanced_rm_batch.gather_and_balance_globally()
 
             # calculating the solution-aware length penalty and RLOO baseline requires global context
-            # NOTE: I do all reward calculations here since I've removed the KL penalty from the reward. 
+            # NOTE: I do all reward calculations here since I've removed the KL penalty from the reward.
             #       I instead calculate it with direct gradients in the loss.
             g_prompt_tokens = global_rollout_batch["prompt_tokens"]
             g_response_lengths = global_rollout_batch["response_lengths"]
             g_rewards = global_rm_batch["rewards"]
             g_is_end = global_rollout_batch["is_end"]
             global_rm_batch["accuracy"] = g_rewards
-            global_rm_batch["rewards"] = calculate_math_problem_wise_length_penalty(g_prompt_tokens, g_response_lengths, g_rewards, g_is_end.float(), self.cfg.max_length_penalty)
-            global_rm_batch["baseline"] = calculate_rloo_baseline(prompts=g_prompt_tokens, reward=global_rm_batch["rewards"], mask=g_is_end.float())
+            global_rm_batch["rewards"] = calculate_math_problem_wise_length_penalty(
+                g_prompt_tokens, g_response_lengths, g_rewards, g_is_end.float(), self.cfg.max_length_penalty
+            )
+            global_rm_batch["baseline"] = calculate_rloo_baseline(
+                prompts=g_prompt_tokens, reward=global_rm_batch["rewards"], mask=g_is_end.float()
+            )
 
         # chunking needs to be outside of reshard region
         # NOTE: the seed here must be the same as the chunk before since we need to shuffle
@@ -473,7 +500,9 @@ class ReinforceTrainer:
         response_length = response_lengths[0]
         response_token = response_tokens[0]
         unsolved_ratio = (baseline == 0).float().mean().item()
-        correct_solution_generation_length = (response_lengths - prompt_lengths)[rollout_batch["accuracy"] == 1].float().mean().item()
+        correct_solution_generation_length = (
+            (response_lengths - prompt_lengths)[rollout_batch["accuracy"] == 1].float().mean().item()
+        )
 
         table["reward"] = reward.item()
         table["prompt"] = self.model.tokenizer.ids_to_text(response_token[:prompt_length].tolist())
@@ -510,34 +539,33 @@ class ReinforceTrainer:
             self.model.prepare_for_inference()
 
         rollout_batch, rollout_metrics = self._run_inference(
-            self.train_dataloader_builder, consumed_samples=self.consumed_samples // self.cfg.num_rollouts_per_prompt, is_validation=False
+            self.train_dataloader_builder,
+            consumed_samples=self.consumed_samples // self.cfg.num_rollouts_per_prompt,
+            is_validation=False,
         )
 
         # Filter the prompts based on the accuracy with the current policy.
         sequence_mask, accuracy_metrics = online_prompt_filtering(
-            rollout_batch, 
-            self.cfg.online_filtering_min_accuracy_threshold, 
-            self.cfg.online_filtering_max_accuracy_threshold
+            rollout_batch,
+            self.cfg.online_filtering_min_accuracy_threshold,
+            self.cfg.online_filtering_max_accuracy_threshold,
         )
         rollout_batch["prompt_mask"] = sequence_mask
-        
+
         # Perform distributed all-reduce on the metrics with specified operations
         ops = {
-            'prompts_total': torch.distributed.ReduceOp.SUM,
-            'prompts_kept': torch.distributed.ReduceOp.SUM,
-            'prompts_dropped': torch.distributed.ReduceOp.SUM,
-            'accuracy_min': torch.distributed.ReduceOp.MIN,
-            'accuracy_max': torch.distributed.ReduceOp.MAX
+            "prompts_total": torch.distributed.ReduceOp.SUM,
+            "prompts_kept": torch.distributed.ReduceOp.SUM,
+            "prompts_dropped": torch.distributed.ReduceOp.SUM,
+            "accuracy_min": torch.distributed.ReduceOp.MIN,
+            "accuracy_max": torch.distributed.ReduceOp.MAX,
         }
-        
+
         accuracy_metrics_reduced = all_reduce_dict(
-            accuracy_metrics,
-            op=ops,
-            group=parallel_state.get_data_parallel_group()
+            accuracy_metrics, op=ops, group=parallel_state.get_data_parallel_group()
         )
         rollout_metrics.update(accuracy_metrics_reduced)
 
-        
         self.consumed_problems += rollout_metrics["rollout_size"] // self.cfg.num_rollouts_per_prompt
         self.consumed_samples += rollout_metrics["rollout_size"]
 
@@ -549,7 +577,9 @@ class ReinforceTrainer:
 
         return (
             reinforce_rollout_data,
-            rollout_metrics | reinforce_rollout_metrics | {"consumed_samples": self.consumed_samples, "consumed_problems": self.consumed_problems},
+            rollout_metrics
+            | reinforce_rollout_metrics
+            | {"consumed_samples": self.consumed_samples, "consumed_problems": self.consumed_problems},
             self.timer.consume_durations(),
         )
 
@@ -592,11 +622,11 @@ class ReinforceTrainer:
         return loss_mean, metrics
 
     def fit(self):
-        print('FIT')
+        print("FIT")
         epoch_iter = range(self.epoch, self.cfg.max_epochs)
 
-        #step_metrics = {'val_rewards': 0.0}
-        #self.save(step_metrics, is_train_end=False)
+        # step_metrics = {'val_rewards': 0.0}
+        # self.save(step_metrics, is_train_end=False)
         if len(epoch_iter) <= 0:
             # epoch done
             return
@@ -624,11 +654,11 @@ class ReinforceTrainer:
                 timing_metrics = {}
 
                 clear_memory()
-                print('rollouts start')
+                print("rollouts start")
                 with self.timer("rollout_time"):
                     reinforce_rollout_data, metrics, rollout_timer_metrics = self.generate_rollouts()
-                print('rollouts done')
-                print('metrics start')
+                print("rollouts done")
+                print("metrics start")
                 # Consume rollout_time
                 timing_metrics.update(self.timer.consume_durations())
 
@@ -652,26 +682,26 @@ class ReinforceTrainer:
                 )
 
                 rollout_size = reinforce_rollout_data["response_tokens"].size(0)
-                print('batch_calc info', rollout_size, num_to_load_on_each_dp, self.cfg.model_gbs, dp_size)
+                print("batch_calc info", rollout_size, num_to_load_on_each_dp, self.cfg.model_gbs, dp_size)
                 rollout_dataloader_iter = get_iterator_k_split(
                     reinforce_rollout_data, divide(rollout_size, num_to_load_on_each_dp)
                 )
-                print('metrics done')
-                print('train start')
+                print("metrics done")
+                print("train start")
                 # start training
                 clear_memory()
                 with self.timer("train_time"):
                     self.run_training(rollout_dataloader_iter)
-                print('train done')
-                print('logger start')
+                print("train done")
+                print("logger start")
 
                 self.logger.log_metrics(
                     timing_metrics | self.timer.consume_durations(), step=self.step, prefix="timers/"
                 )
 
                 self.step += 1
-                print('logger done')
-                print('val/ckpt check/start')
+                print("logger done")
+                print("val/ckpt check/start")
 
                 run_time_exceeded = self.run_timer.is_finished()
                 run_val, save_model, is_train_end = check_progress(
@@ -713,7 +743,7 @@ class ReinforceTrainer:
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
-                print('val/ckpt check/start done')
+                print("val/ckpt check/start done")
 
         self.logger.finalize()
 

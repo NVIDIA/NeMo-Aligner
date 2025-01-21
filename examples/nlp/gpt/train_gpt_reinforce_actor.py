@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import time
 from functools import partial
 
 import torch
@@ -27,8 +28,8 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_math_datasets,
     math_collate_with_pad_to_max_batch,
 )
-from nemo_aligner.models.nlp.gpt.megatron_gpt_reinforce_math_actor import MegatronGPTReinforceActorModel
 from nemo_aligner.models.nlp.gpt.grader_client import RemoteGraderClient
+from nemo_aligner.models.nlp.gpt.megatron_gpt_reinforce_math_actor import MegatronGPTReinforceActorModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
 from nemo_aligner.utils.distributed import Timer
@@ -43,7 +44,6 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
-import time
 
 """Script to start REINFORCE training"""
 
@@ -56,7 +56,7 @@ mp.set_start_method("spawn", force=True)
 
 @hydra_runner(config_path="conf", config_name="gpt_reinforce_actor")
 def main(cfg) -> None:
-    print('START')
+    print("START")
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
     logging.info("\n\n************** Experiment configuration ***********")
@@ -64,7 +64,7 @@ def main(cfg) -> None:
 
     trainer = resolve_and_create_trainer(cfg, "reinforce")
 
-    print('PTL TRAINER BUILT')
+    print("PTL TRAINER BUILT")
     exp_manager(trainer, cfg.exp_manager)
 
     logger = CustomLoggerWrapper(trainer.loggers)
@@ -76,7 +76,7 @@ def main(cfg) -> None:
         strict=True,
         restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
-    print(time.time(), 'MODEL BUILT')
+    print(time.time(), "MODEL BUILT")
 
     init_peft(ptl_model, cfg.model)
 
@@ -99,9 +99,9 @@ def main(cfg) -> None:
     else:
         custom_trainer_state_dict = None
 
-    print(time.time(), 'PRE DISTR INIT')
+    print(time.time(), "PRE DISTR INIT")
     init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
-    print('DISTR INITd')
+    print("DISTR INITd")
 
     # use the entire dataset
     train_valid_test_num_samples = [-1, -1, -1]
@@ -143,7 +143,7 @@ def main(cfg) -> None:
         load_gbs=False,
         use_random_sampler=False,
     )
-    print(time.time(), 'DATA DONE')
+    print(time.time(), "DATA DONE")
 
     # nemo uses the train dataloader to figure out
     # max steps to take when max_steps = -1
@@ -156,11 +156,11 @@ def main(cfg) -> None:
         dataset=train_ds, batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size())
     )
 
-    print(time.time(), 'PRE INIT USING PTL')
+    print(time.time(), "PRE INIT USING PTL")
     logging.warning("PRE")
     init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_ds)
     logging.warning("POST")
-    print(time.time(), 'POST INIT USING PTL')
+    print(time.time(), "POST INIT USING PTL")
     # make sure the dummy train dataloader is never used
     del ptl_model._train_dl
     del dummy_train_dataloader
@@ -170,7 +170,7 @@ def main(cfg) -> None:
 
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
-    print('OPTIM EXTRACTED')
+    print("OPTIM EXTRACTED")
     rm = RemoteGraderClient(cfg.remote_rm)
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
 
@@ -191,13 +191,13 @@ def main(cfg) -> None:
         ckpt_callback=ckpt_callback,
         run_timer=timer,
     )
-    print(time.time(), 'TRAINER BUILT')
+    print(time.time(), "TRAINER BUILT")
 
     if custom_trainer_state_dict is not None:
         reinforce_trainer.load_state_dict(custom_trainer_state_dict)
-    print('LOAD STATE DICT DONE')
+    print("LOAD STATE DICT DONE")
 
-    print(time.time(), 'CALLING FIT')
+    print(time.time(), "CALLING FIT")
     reinforce_trainer.fit()
 
     # Note: The main loop creates multiple HTTPCommunicators which own a

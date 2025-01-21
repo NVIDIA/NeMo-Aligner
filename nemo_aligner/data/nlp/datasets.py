@@ -879,7 +879,7 @@ class MathDataset(RewardModelDataset):
         self.use_json = cfg.data.data_impl.startswith("json")
         self.apply_chat = apply_chat
         if cfg.data.get("prompt_file", None) is not None:
-            with open(cfg.data.prompt_file, 'r', encoding="utf-8") as f:
+            with open(cfg.data.prompt_file, "r", encoding="utf-8") as f:
                 self.prompt = f.read()
         else:
             self.prompt = "Think step-by-step to solve the math problem. Output your answer inside of \\boxed{} tags.\n\nProblem:\n"
@@ -913,11 +913,9 @@ class MathDataset(RewardModelDataset):
                 if self.cfg.data.get("prompt_file", None) is not None:
                     prompt = prompt + "\nLet's think step by step\n"
 
-                chat = [
-                    {"role": "user", "content": prompt}
-                ]
+                chat = [{"role": "user", "content": prompt}]
                 problem = self.tokenizer.apply_chat_template(chat, tokenize=False)
-                #print(problem)
+                # print(problem)
             sample_text, sample_length = self.encode(problem)
             sample_label = str(sample["expected_answer"])
             if idx == orig_idx:
@@ -929,13 +927,13 @@ class MathDataset(RewardModelDataset):
             if idx == orig_idx:
                 raise RuntimeError(f"All samples have length > {self.seq_length}")
 
-        #assert isinstance(sample_label, list) and all(
+        # assert isinstance(sample_label, list) and all(
         #    isinstance(value, (float, int)) for value in sample_label
-        #), "label should be a list of float or int values"
+        # ), "label should be a list of float or int values"
 
-        #sample_label = [float(value) for value in sample_label]
+        # sample_label = [float(value) for value in sample_label]
 
-        #label_tensor = torch.tensor(sample_label, dtype=torch.float)
+        # label_tensor = torch.tensor(sample_label, dtype=torch.float)
 
         text_np = np.array(sample_text, dtype=np.int64)
         text_np_pad = np.pad(
@@ -949,8 +947,6 @@ class MathDataset(RewardModelDataset):
         else:
             # `sample` is a NumPy array.
             sample_tensor = torch.from_numpy(sample_text.astype(np.int64))
-
-
 
         attention_mask, loss_mask, position_ids = _create_ltor_masks_and_position_ids(
             text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
@@ -980,7 +976,6 @@ class MathDataset(RewardModelDataset):
             "ground_truth": sample_label,
         }
         return output
-
 
 
 class SteerLM2Dataset(GPTSFTChatDataset):

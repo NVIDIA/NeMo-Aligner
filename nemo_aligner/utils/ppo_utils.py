@@ -81,12 +81,14 @@ def calculate_kl_penalty(log_probs_a, log_probs_b, use_absolute_kl=True):
 
     return init_policy_kl
 
+
 def calculate_kl_penalty_joschu2020(log_probs_policy, log_probs_reference):
     """Calculates a per-token estimate of the KL Divergence between two log_probs.
     From Schulman 2020, always positive.
     """
     r = log_probs_reference - log_probs_policy
     return torch.exp(r) - r - 1
+
 
 def create_mask(values, prompt_lengths, response_lengths):
     """Creates a mask to only keep the values in the sequence that are between prompt_lengths and sentence_lengths.
@@ -119,6 +121,7 @@ def select_topk(batch, num_select=1):
     selected_batch = {k: batch[k][selected_idx] for k in batch.keys()}
     return selected_batch
 
+
 def calculate_math_problem_wise_length_penalty(prompts, response_lengths, rewards, mask, penalty_amount):
     """
     Penalize responses that are longer than they need to be.
@@ -145,6 +148,7 @@ def calculate_math_problem_wise_length_penalty(prompts, response_lengths, reward
             baseline[prompt_idx] = rloo
 
     return baseline
+
 
 def calculate_math_problem_wise_length_penalty(prompts, response_lengths, rewards, mask, penalty_amount):
     """
@@ -218,6 +222,7 @@ def calculate_math_problem_wise_length_penalty(prompts, response_lengths, reward
 
     return new_rewards
 
+
 def calculate_rloo_baseline(prompts, reward, mask):
     """
     Function to select the RLOO baseline for each (prompt, response) pair in the batch. 
@@ -245,7 +250,8 @@ def calculate_rloo_baseline(prompts, reward, mask):
 
     return baseline
 
-def weight_by_correect(batch, weighting_mode='uniform'):
+
+def weight_by_correect(batch, weighting_mode="uniform"):
     """
     Function that returns positive scalars for correct answers and 0 for incorrect ones.
     With a weighting mode of 'balanced', we return a positive weight of 1 / (#correct answers 
@@ -254,19 +260,19 @@ def weight_by_correect(batch, weighting_mode='uniform'):
     
     Returns (a torch tensor of weights, True if all responses are incorrect else False)
     """
-    if weighting_mode == 'uniform':
+    if weighting_mode == "uniform":
         return batch["rewards"], torch.sum(batch["rewards"]).item() == 0
 
-    elif weighting_mode == 'balanced':
+    elif weighting_mode == "balanced":
         # unique_prompts = torch.unique(batch["prompt_tokens"], dim=0)
         # selected_idx = []
 
         # for i in range(len(unique_prompts)):
-            # is_matching_prompt = (batch["prompt_tokens"] == unique_prompts[i]).all(1)
-            # prompt_idx = torch.arange(len(batch["prompt_tokens"]))[is_matching_prompt]
-            # sorted_idx = zip(prompt_idx, batch["rewards"][is_matching_prompt])
-            # sorted_idx = sorted(sorted_idx, key=operator.itemgetter(1))
-            # selected_idx += [x[0].item() for x in sorted_idx[-1 * num_select :]]
+        # is_matching_prompt = (batch["prompt_tokens"] == unique_prompts[i]).all(1)
+        # prompt_idx = torch.arange(len(batch["prompt_tokens"]))[is_matching_prompt]
+        # sorted_idx = zip(prompt_idx, batch["rewards"][is_matching_prompt])
+        # sorted_idx = sorted(sorted_idx, key=operator.itemgetter(1))
+        # selected_idx += [x[0].item() for x in sorted_idx[-1 * num_select :]]
 
         # selected_batch = {k: batch[k][selected_idx] for k in batch.keys()}
         # return selected_batch
@@ -306,11 +312,7 @@ def online_prompt_filtering(rollout_batch, min_threshold=0.2, max_threshold=0.8)
     unique_prompts = torch.unique(prompt_tokens, dim=0)
 
     # Initialize for storing statistics
-    accuracy_stats = {
-        'min': float('inf'),
-        'max': float('-inf'),
-        'avg': 0.0
-    }
+    accuracy_stats = {"min": float("inf"), "max": float("-inf"), "avg": 0.0}
 
     total_dropped = 0
     # Create a mask for sequences to keep (initially all True)
@@ -329,13 +331,12 @@ def online_prompt_filtering(rollout_batch, min_threshold=0.2, max_threshold=0.8)
         accuracy = correct / total
 
         # Update accuracy stats
-        accuracy_stats['min'] = min(accuracy_stats['min'], accuracy)
-        accuracy_stats['max'] = max(accuracy_stats['max'], accuracy)
-        accuracy_stats['avg'] += accuracy
+        accuracy_stats["min"] = min(accuracy_stats["min"], accuracy)
+        accuracy_stats["max"] = max(accuracy_stats["max"], accuracy)
+        accuracy_stats["avg"] += accuracy
 
         # Log prompt performance
-        print(f"Prompt {unique_prompts[i]}: Accuracy={accuracy:.3f}, "
-                f"Correct={correct}, Total={total}")
+        print(f"Prompt {unique_prompts[i]}: Accuracy={accuracy:.3f}, " f"Correct={correct}, Total={total}")
 
         # Keep track of prompts meeting threshold
         if not (min_threshold <= accuracy <= max_threshold):
@@ -344,22 +345,26 @@ def online_prompt_filtering(rollout_batch, min_threshold=0.2, max_threshold=0.8)
 
     # Calculate final statistics
     num_unique_prompts = len(unique_prompts)
-    accuracy_stats['avg'] /= num_unique_prompts
+    accuracy_stats["avg"] /= num_unique_prompts
     prompts_kept = num_unique_prompts - total_dropped
     drop_rate = total_dropped / num_unique_prompts
 
     # Log summary statistics
-    print(f"Accuracy Stats - Min: {accuracy_stats['min']:.3f}, "
-                f"Max: {accuracy_stats['max']:.3f}, "
-                f"Avg: {accuracy_stats['avg']:.3f}")
-    print(f"Prompt Stats - Total: {num_unique_prompts}, "
-                f"Kept: {prompts_kept}, Dropped: {total_dropped}, "
-                f"Drop Rate: {drop_rate:.3f}")
+    print(
+        f"Accuracy Stats - Min: {accuracy_stats['min']:.3f}, "
+        f"Max: {accuracy_stats['max']:.3f}, "
+        f"Avg: {accuracy_stats['avg']:.3f}"
+    )
+    print(
+        f"Prompt Stats - Total: {num_unique_prompts}, "
+        f"Kept: {prompts_kept}, Dropped: {total_dropped}, "
+        f"Drop Rate: {drop_rate:.3f}"
+    )
 
     # Update metrics with accuracy and prompt statistics
     accuracy_metrics = {
-        "accuracy_min": accuracy_stats['min'],
-        "accuracy_max": accuracy_stats['max'],
+        "accuracy_min": accuracy_stats["min"],
+        "accuracy_max": accuracy_stats["max"],
         "prompts_total": num_unique_prompts,
         "prompts_kept": prompts_kept,
     }

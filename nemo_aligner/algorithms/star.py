@@ -155,7 +155,15 @@ class StarTrainer:
             for _, inference_batch in zip(range(num_microbatches), dataloader_iter):
 
                 current_batch = None
-                prompt_tokens, response_tokens, response_lengths, prompt_lengths, rewards, ground_truths, response_sentences = (
+                (
+                    prompt_tokens,
+                    response_tokens,
+                    response_lengths,
+                    prompt_lengths,
+                    rewards,
+                    ground_truths,
+                    response_sentences,
+                ) = (
                     [],
                     [],
                     [],
@@ -188,7 +196,7 @@ class StarTrainer:
                 all_rollouts["response_sentences"] = [item for sublist in response_sentences for item in sublist]
 
                 # TODO @sahilj replace this with correct/incorrect and return weighting dependent on how many are correct
-                weights, all_zero = weight_by_correect(all_rollouts, 'uniform')
+                weights, all_zero = weight_by_correect(all_rollouts, "uniform")
                 all_rollouts["weights"] = weights
                 print(weights)
                 rollout_batch = all_rollouts
@@ -300,7 +308,7 @@ class StarTrainer:
             self.model.prepare_for_training_step()
             loss_mean, metrics = self.model.get_loss_and_metrics(batch=batch, forward_only=False)
             self.model.finish_training_step()
-            
+
             # check for all 0 weights
             weight_tensor = batch["weights"].sum().cuda()
             torch.distributed.all_reduce(weight_tensor, group=parallel_state.get_data_parallel_group())

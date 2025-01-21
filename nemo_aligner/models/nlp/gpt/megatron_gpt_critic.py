@@ -15,11 +15,11 @@ from contextlib import nullcontext
 from enum import Enum
 
 import torch
+from lightning.pytorch.trainer.trainer import Trainer
 from megatron.core.num_microbatches_calculator import get_num_microbatches, reconfigure_num_microbatches_calculator
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.transformer.module import Float16Module
 from omegaconf.dictconfig import DictConfig
-from lightning.pytorch.trainer.trainer import Trainer
 
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,

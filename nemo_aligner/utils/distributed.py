@@ -60,6 +60,7 @@ def rebalance_nd_tensor(tensor, group):
     torch.distributed.all_reduce(output_tensor, group=group)
     return output_tensor
 
+
 def gather_string_list_nccl(local_string_list, group=None):
     """
     Gather lists of strings across all ranks in `group` using NCCL collectives,
@@ -106,9 +107,7 @@ def gather_string_list_nccl(local_string_list, group=None):
     # 6) Create a GPU ByteTensor of size max_len and copy local_data (pad if needed)
     byte_tensor = torch.zeros(max_len, dtype=torch.uint8, device=device)
     if local_len > 0:
-        byte_tensor[:local_len] = torch.as_tensor(
-            list(local_data), dtype=torch.uint8, device=device
-        )
+        byte_tensor[:local_len] = torch.as_tensor(list(local_data), dtype=torch.uint8, device=device)
 
     # 7) All-gather the padded ByteTensors
     gather_list = [torch.zeros(max_len, dtype=torch.uint8, device=device) for _ in range(world_size)]
@@ -136,6 +135,7 @@ def gather_string_list_nccl(local_string_list, group=None):
             global_strings.append(s_decoded)
 
     return global_strings
+
 
 @deprecated_in_version("0.7.0", "Please use broadcast_tensor(tensor, src, group, dtype)")
 def broadcast_2d_tensor(tensor, src, group, dtype=torch.float32):
@@ -471,6 +471,7 @@ def all_reduce_dict(dictionary, dtype=torch.float32, group=None, op=torch.distri
     for key in keys:
         torch.distributed.all_reduce(tensor_dict[key], op=op.get(key, torch.distributed.ReduceOp.SUM), group=group)
     return {key: tensor_dict[key].item() for key in keys}
+
 
 @torch.no_grad()
 def compute_topk_logits_in_batched_sequence(
