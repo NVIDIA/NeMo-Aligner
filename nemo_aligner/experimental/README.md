@@ -4,10 +4,40 @@ The `experimental` sub-package contains projects that are under active developme
 
 ## Experimental Project Directory Structure:
 
-The directory structure above shows the key experimental components:
+```
+NeMo-Aligner/
+├── docs/
+│   ├── user-guide/
+│   │   └── ppo.html
+│   └── user-guide-experimental/    <----- experimental docs
+│       └── new-thing.html
+├── nemo_aligner/
+│   ├── algorithms/
+│   ├── data/
+│   │   ├── datasets.py
+│   │   └── datasets_test.py
+│   └── experimental/               <----- experimental sub-package
+│       ├── <proj-name>/
+│           ├── dataset.py          <----- experimental dataset
+│           ├── new_algo.py         <----- experimental algo
+│           ├── model.py            <----- experimental model
+│           └── model_test.py       <----- experimental model test
+└── tests/
+    └── functional/
+        └── dpo.sh
+        └── test_cases/
+            └── dpo-llama3
+    └── functional_experimental/    <----- experimental functional tests (mirrors functional/ structure)
+        ├── new_algo.sh
+        └── test_cases/
+            └── new_algo-llama3
+```
 
-- [docs/user-guide-experimental/](../../docs/user-guide-experimental/): Documentation directory for experimental features and algorithms
+The directories below exist to organize experimental projects (source code), tests, and documentation.
+
 - [nemo_aligner/experimental/](../../nemo_aligner/experimental/): Main experimental sub-package containing projects under development
+- [tests/functional_experimental/](../../tests/functional_experimental/): Functional tests for experimental projects
+- [docs/user-guide-experimental/](../../docs/user-guide-experimental/): Documentation directory for experimental features and algorithms
 
 The `experimental` sub-package follows a modular structure where each project has its own directory (sub-package) containing implementation and tests.
 
