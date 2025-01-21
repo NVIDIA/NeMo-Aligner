@@ -126,6 +126,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                 rewards = batch["rewards"]
                 init_policy_kl = batch["init_policy_kl"]
                 init_log_probs = batch["init_log_probs"]
+                generation_log_probs = batch["log_probs"]
                 baseline = batch["baseline"]
                 tokens = batch["response_tokens"]
                 is_end = batch["is_end"]
@@ -142,10 +143,24 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                 #    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask) * self.entropy_bonus
 
                 #reinforce_loss = -1 * curr_log_probs * (rewards_with_kl.unsqueeze(-1) - baseline.unsqueeze(-1))
-                if self.cfg.reinforce.disable_baseline:
-                    reinforce_loss = -1 * curr_log_probs * (rewards.unsqueeze(-1)) + self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs )#init_policy_kl
+                kl = self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs)
+                if self.cfg.use_grpo_loss:
+                    # GRPO
+                    assert self.cfg.reinforce.disable_baseline == False, "baseline disable is not supported with grpo loss"
+
+                    advantages = rewards.unsqueeze(-1) - baseline.unsqueeze(-1)
+                    ratios = (curr_log_probs - generation_log_probs).exp()
+                    ratios_clamped = ratios.clamp(1.0 - self.cfg.reinforce.grpo_eps, 1.0 + self.cfg.reinforce.grpo_eps)
+                    
+                    unclamped_loss = -advantages * ratios
+                    clamped_loss = -advantages * ratios_clamped
+                    reinforce_loss = torch.max(unclamped_loss, clamped_loss)
                 else:
-                    reinforce_loss = -1 * curr_log_probs * (rewards.unsqueeze(-1) - baseline.unsqueeze(-1)) + self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs )#init_policy_kl
+                    # RLOO/REINFORCE
+                    if self.cfg.reinforce.disable_baseline:
+                        reinforce_loss = -1 * curr_log_probs * (rewards.unsqueeze(-1)) + kl
+                    else:
+                        reinforce_loss = -1 * curr_log_probs * (rewards.unsqueeze(-1) - baseline.unsqueeze(-1)) + kl
 
                 if is_end_mask.sum() > 0:
                     loss = masked_mean(reinforce_loss, mask * prompt_mask.view(-1, 1))

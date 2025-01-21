@@ -260,6 +260,7 @@ class ReinforceTrainer:
         # collect everything we need to train REINFORCE
         reinforce_rollout_data["mask"] = mask
         reinforce_rollout_data["init_policy_kl"] = init_policy_kl * self.cfg.initial_policy_kl_penalty
+        reinforce_rollout_data["log_probs"] = rollout_batch["logprobs"]
         reinforce_rollout_data["init_log_probs"] = rollout_batch["init_logprobs"]
         reinforce_rollout_data["rewards_with_kl"] = rewards_with_kl
         reinforce_rollout_data["rewards"] = rewards
