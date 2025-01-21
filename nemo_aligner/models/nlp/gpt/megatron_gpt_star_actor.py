@@ -15,13 +15,13 @@
 from contextlib import nullcontext
 
 import torch
+from lightning.pytorch.trainer.trainer import Trainer
 from megatron.core import parallel_state
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
-from lightning.pytorch.trainer.trainer import Trainer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
@@ -187,7 +187,7 @@ class MegatronGPTSTaRModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGene
     def infer(self, inference_batch):
         prompt_tokens = inference_batch["problem"].cuda(non_blocking=True)
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
-        ground_truths = inference_batch["ground_truth"] # string list
+        ground_truths = inference_batch["ground_truth"]  # string list
         inputs = (prompt_tokens, prompt_lengths)
 
         strategy = TrackLengthGPTModelTextGenerationStrategy(
@@ -217,9 +217,10 @@ class MegatronGPTSTaRModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGene
                     f"`response_tokens` ({response_tokens.size(1)})"
                 )
 
-        response_sentences = [self.tokenizer.ids_to_text(
-                        response_tokens[i][prompt_lengths[i]:response_lengths[i]].tolist())
-                        for i in range(response_lengths.shape[0])]
+        response_sentences = [
+            self.tokenizer.ids_to_text(response_tokens[i][prompt_lengths[i] : response_lengths[i]].tolist())
+            for i in range(response_lengths.shape[0])
+        ]
 
         print(response_sentences)
         rollout_batch = {

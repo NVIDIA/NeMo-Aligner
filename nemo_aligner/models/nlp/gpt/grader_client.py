@@ -20,21 +20,23 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 
+from nemo_aligner.models.nlp.gpt.reward_critic_clients import RMFutureResult, get_future_result
 from nemo_aligner.servers.http_communicator import HTTPCommunicator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
-from nemo_aligner.models.nlp.gpt.reward_critic_clients import get_future_result, RMFutureResult
 
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
     over to the remote PyTrition server
 """
 
+
 def triton_textencode(text_batch: List[str]):
-    enc = np.array([[np.char.encode(i, 'utf-8')] for i in text_batch])
+    enc = np.array([[np.char.encode(i, "utf-8")] for i in text_batch])
     enc = np.reshape(enc, (enc.shape[0], 1))
 
     return enc
+
 
 @dataclass
 class RemoteGraderClient:

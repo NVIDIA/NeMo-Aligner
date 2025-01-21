@@ -16,12 +16,12 @@ from contextlib import nullcontext
 
 import torch
 import torch.distributed
+from lightning.pytorch.trainer.trainer import Trainer
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
-from lightning.pytorch.trainer.trainer import Trainer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
@@ -39,6 +39,7 @@ from nemo_aligner.utils.distributed import (
     calculate_distributed_entropy,
     from_parallel_logits_to_logprobs,
 )
+from nemo_aligner.utils.ppo_utils import calculate_kl_penalty_joschu2020
 from nemo_aligner.utils.text_generation_utils import (
     TrackLengthGPTModelTextGenerationStrategy,
     verify_is_valid_and_clamp_range_,
@@ -59,7 +60,6 @@ from nemo_aligner.utils.utils import (
     masked_mean,
     offload_distributed_adam,
 )
-from nemo_aligner.utils.ppo_utils import calculate_kl_penalty_joschu2020
 
 
 class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
@@ -84,7 +84,8 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                 model_cfg=self.cfg,
                 max_generation_length=self.cfg.reinforce.length_params.get("max_length", 1024),
                 max_input_len=self.cfg.reinforce.trt_llm.get("max_input_len", 1024),
-                generation_batch_size=self.cfg.reinforce.get("rollout_micro_batch_size", 4) * self.cfg.reinforce.get("prompt_rollouts_per_microbatch", 1),
+                generation_batch_size=self.cfg.reinforce.get("rollout_micro_batch_size", 4)
+                * self.cfg.reinforce.get("prompt_rollouts_per_microbatch", 1),
                 unload_engine_train=self.cfg.reinforce.trt_llm.get("unload_engine_train", False),
                 trt_model_type=self.cfg.reinforce.trt_llm.get("model_type", "llama"),
                 end_strings=self.cfg.reinforce.sampling_params["end_strings"],
@@ -122,7 +123,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
 
             def loss_func(parallel_logits):
                 mask = batch["mask"]
-                #rewards_with_kl = batch["rewards_with_kl"]
+                # rewards_with_kl = batch["rewards_with_kl"]
                 rewards = batch["rewards"]
                 init_policy_kl = batch["init_policy_kl"]
                 init_log_probs = batch["init_log_probs"]
@@ -131,27 +132,31 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                 tokens = batch["response_tokens"]
                 is_end = batch["is_end"]
                 prompt_mask = batch["prompt_mask"]
-                
+
                 is_end_mask = mask * is_end.view(-1, 1)
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
                 )
 
-                #scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
-                #if self.entropy_bonus > 0:
+                # scaled_entropy = torch.tensor(0.0, dtype=parallel_logits.dtype, device=parallel_logits.device)
+                # if self.entropy_bonus > 0:
                 #    scaled_entropy = calculate_distributed_entropy(parallel_logits, is_end_mask) * self.entropy_bonus
 
-                #reinforce_loss = -1 * curr_log_probs * (rewards_with_kl.unsqueeze(-1) - baseline.unsqueeze(-1))
-                kl = self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs)
+                # reinforce_loss = -1 * curr_log_probs * (rewards_with_kl.unsqueeze(-1) - baseline.unsqueeze(-1))
+                kl = self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(
+                    log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs
+                )
                 if self.cfg.use_grpo_loss:
                     # GRPO
-                    assert self.cfg.reinforce.disable_baseline == False, "baseline disable is not supported with grpo loss"
+                    assert (
+                        self.cfg.reinforce.disable_baseline == False
+                    ), "baseline disable is not supported with grpo loss"
 
                     advantages = rewards.unsqueeze(-1) - baseline.unsqueeze(-1)
                     ratios = (curr_log_probs - generation_log_probs).exp()
                     ratios_clamped = ratios.clamp(1.0 - self.cfg.reinforce.grpo_eps, 1.0 + self.cfg.reinforce.grpo_eps)
-                    
+
                     unclamped_loss = -advantages * ratios
                     clamped_loss = -advantages * ratios_clamped
                     reinforce_loss = torch.max(unclamped_loss, clamped_loss)
@@ -305,7 +310,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
     def infer(self, inference_batch):
         prompt_tokens = inference_batch["problem"].cuda(non_blocking=True)
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
-        ground_truths = inference_batch["ground_truth"] # string list
+        ground_truths = inference_batch["ground_truth"]  # string list
         inputs = (prompt_tokens, prompt_lengths)
 
         strategy = TrackLengthGPTModelTextGenerationStrategy(
@@ -354,12 +359,18 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
             self.cfg.reinforce.sampling_params["end_strings"],
         )
 
-        response_sentences = [self.tokenizer.ids_to_text(
-                        response_tokens[i][prompt_lengths[i]:response_lengths[i]].tolist())
-                        for i in range(response_lengths.shape[0])]
+        response_sentences = [
+            self.tokenizer.ids_to_text(response_tokens[i][prompt_lengths[i] : response_lengths[i]].tolist())
+            for i in range(response_lengths.shape[0])
+        ]
 
-        print([response_tokens[i][response_lengths[i] - 2: response_lengths[i]].tolist() for i in range(response_lengths.shape[0])]) #print last 2 tokens from each seq
-        #print(response_sentences)
+        print(
+            [
+                response_tokens[i][response_lengths[i] - 2 : response_lengths[i]].tolist()
+                for i in range(response_lengths.shape[0])
+            ]
+        )  # print last 2 tokens from each seq
+        # print(response_sentences)
         rollout_batch = {
             "response_tokens": response_tokens,
             "response_lengths": response_lengths,

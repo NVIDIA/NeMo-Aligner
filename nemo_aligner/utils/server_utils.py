@@ -14,7 +14,7 @@
 
 import math
 from abc import ABC, abstractmethod
-from typing import Optional, List
+from typing import List, Optional
 
 import numpy as np
 import torch
@@ -142,7 +142,7 @@ class FutureResult(ABC):
 
 
 def triton_textencode(text_batch: List[str]):
-    enc = np.array([[np.char.encode(i, 'utf-8')] for i in text_batch])
+    enc = np.array([[np.char.encode(i, "utf-8")] for i in text_batch])
     enc = np.reshape(enc, (enc.shape[0], 1))
 
     return enc

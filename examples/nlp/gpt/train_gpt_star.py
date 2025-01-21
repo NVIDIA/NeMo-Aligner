@@ -26,8 +26,8 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_math_datasets,
     math_collate_with_pad_to_max_batch,
 )
-from nemo_aligner.models.nlp.gpt.megatron_gpt_star_actor import MegatronGPTSTaRModel
 from nemo_aligner.models.nlp.gpt.grader_client import RemoteGraderClient
+from nemo_aligner.models.nlp.gpt.megatron_gpt_star_actor import MegatronGPTSTaRModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -63,7 +63,11 @@ def main(cfg) -> None:
     logger = CustomLoggerWrapper(trainer.loggers)
 
     ptl_model = load_from_nemo(
-        MegatronGPTSTaRModel, cfg.model, trainer, strict=True, restore_path=cfg.pretrained_checkpoint.restore_from_path,
+        MegatronGPTSTaRModel,
+        cfg.model,
+        trainer,
+        strict=True,
+        restore_path=cfg.pretrained_checkpoint.restore_from_path,
     )
 
     init_peft(ptl_model, cfg.model)
