@@ -122,6 +122,8 @@ model:
     prompt_rollouts_per_microbatch: ${trainer.reinforce.prompt_rollouts_per_microbatch}
 
     initial_policy_kl_penalty: ${trainer.reinforce.initial_policy_kl_penalty}
+    use_grpo_loss: False
+    grpo_eps: 1e-2 # does nothing unless use_grpo_loss is True
 
     # mbs to do log prob inference, can be set to
     # lower than rollout_micro_batch_size to reduce
