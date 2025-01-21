@@ -6,7 +6,7 @@ trainer:
   devices: 8
   accelerator: gpu
   precision: bf16
-  gradient_clip_val: 0.0  # No need to change. Megatron Core optimizer uses this value
+  gradient_clip_val: ${trainer.dpo.gradient_clip_val}  # No need to change. Megatron Core optimizer uses this value
   
   # dpo specific args
   dpo:

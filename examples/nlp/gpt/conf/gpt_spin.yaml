@@ -6,7 +6,7 @@ trainer:
   devices: 8
   accelerator: gpu
   precision: bf16-mixed
-  gradient_clip_val: 0.0  # No need to change. Megatron Core optimizer uses this value
+  gradient_clip_val: ${trainer.spin.gradient_clip_val}  # No need to change. Megatron Core optimizer uses this value
   
   # spin specific args
   spin:

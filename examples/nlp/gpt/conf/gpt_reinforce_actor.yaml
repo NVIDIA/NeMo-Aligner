@@ -7,6 +7,7 @@ trainer:
   devices: 8
   accelerator: gpu
   precision: bf16
+  gradient_clip_val: ${trainer.reinforce.gradient_clip_val}  # No need to change. Megatron Core optimizer uses this value
 
   reinforce:
 
