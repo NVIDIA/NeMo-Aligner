@@ -15,13 +15,15 @@ NeMo-Aligner/
 │   ├── algorithms/
 │   ├── data/
 │   │   ├── datasets.py
-│   │   └── datasets_test.py
+│   │   └── tests/
+│   │       └── datasets_test.py
 │   └── experimental/               <----- experimental sub-package
 │       ├── <proj-name>/
 │           ├── dataset.py          <----- experimental dataset
 │           ├── new_algo.py         <----- experimental algo
 │           ├── model.py            <----- experimental model
-│           └── model_test.py       <----- experimental model test
+│           └── tests/
+│               └── model_test.py   <----- experimental model test
 └── tests/
     └── functional/
         └── dpo.sh
