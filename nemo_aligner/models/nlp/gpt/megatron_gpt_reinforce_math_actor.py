@@ -113,7 +113,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                     required_keys.update(("response_tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("response_tokens", "baseline", "mask", "rewards_with_kl", "is_end"))
+                    required_keys.update(("response_tokens", "baseline", "mask", "is_end", "init_policy_kl", "init_log_probs", "rewards", "prompt_mask", "log_probs"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
