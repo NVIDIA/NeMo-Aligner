@@ -147,7 +147,7 @@ class MegatronGPTReinforceActorModel(NLPAdapterModelMixin, MegatronGPTModel, Ali
                 kl = self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(
                     log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs
                 )
-                if self.cfg.use_grpo_loss:
+                if self.cfg.reinforce.use_grpo_loss:
                     # GRPO
                     assert (
                         self.cfg.reinforce.disable_baseline == False
