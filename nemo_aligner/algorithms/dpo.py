@@ -119,6 +119,8 @@ def dpo_custom_collate(
     return output
 
 
+## TODO: update and remove dep on cfg
+## see ashors/nemo2-dpo branch
 class DPOTrainer:
     """Trainer to coordinate DPO training"""
 
