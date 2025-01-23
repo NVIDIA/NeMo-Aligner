@@ -108,7 +108,7 @@ def build_dataset_generic(
 ):
     def _build_dataset(current_data_prefix, current_num_samples):
         if data_impl == "mmap":
-            data_payload = get_indexed_dataset_(current_data_prefix, data_impl, cfg.data.get("skip_warmup", True))
+            data_payload = get_indexed_dataset_(current_data_prefix, data_impl, cfg.skip_warmup)
         elif data_impl.startswith("json"):
             with open(current_data_prefix, "r", encoding="utf_8") as fr:
                 data_payload = [json.loads(line.strip()) for line in fr]
@@ -129,7 +129,7 @@ def build_dataset_generic(
 
         drop_last = True
         if name == "valid":
-            drop_last = cfg.data.get("validation_drop_last", True)
+            drop_last = cfg.validation_drop_last
 
         dataset = cls(
             cfg=cfg,
@@ -169,8 +169,8 @@ def build_train_valid_test_datasets(
             and data_prefix.get("test") is not None
             and data_prefix.get("validation") is not None
         ), f"Data prefix dictionary should have train, test and validation keys.  data_prefix currently has only {data_prefix.keys()}"
-        if cfg.data.splits_string is not None:
-            logging.warning(cfg.data.splits_string + " ignored since data path is of type dictionary.")
+        if cfg.splits_string is not None:
+            logging.warning(cfg.splits_string + " ignored since data path is of type dictionary.")
 
         if isinstance(n_examples_per_chunk, DictConfig):
             train_examples_per_chunk = n_examples_per_chunk["train"]
@@ -267,7 +267,7 @@ def _build_train_valid_test_datasets(
 
     # Indexed dataset or jsonl
     if data_impl == "mmap":
-        data_payload = get_indexed_dataset_(data_prefix, data_impl, cfg.data.get("skip_warmup", True))
+        data_payload = get_indexed_dataset_(data_prefix, data_impl, cfg.skip_warmup)
     elif data_impl.startswith("json"):
         with open(data_prefix, "r", encoding="utf_8") as fr:
             data_payload = [json.loads(line.strip()) for line in fr]
@@ -303,7 +303,7 @@ def _build_train_valid_test_datasets(
             documents = np.arange(start=splits[index], stop=splits[index + 1], step=1, dtype=np.int32)
             drop_last = True
             if name == "validation":
-                drop_last = cfg.data.get("validation_drop_last", True)
+                drop_last = cfg.validation_drop_last
             dataset = cls(
                 cfg=cfg,
                 tokenizer=tokenizer,
@@ -336,10 +336,11 @@ build_train_valid_test_knowledge_distillation_datasets = partial(
 )
 
 
+## TODO: replace model_config with parallelism config!
 def build_sft_dataset(
     data_cfg, tokenizer, num_samples, answer_only_loss=True, is_chat=True, special_tokens=None, model_cfg=None
 ):
-    packed_sequence = data_cfg.get("packed_sequence", False)
+    packed_sequence = data_cfg.packed_sequence
     dataset_kwargs = {}
 
     # TE requires that the first input dim is divisible by 8 and the second by 16 for fp8
@@ -360,7 +361,7 @@ def build_sft_dataset(
         # Whether to return `cu_seqlen` to pass to the model. Having `cu_seqlen` in the model input
         # enables THD attention kernel, which is the correct format for training with packed sequence to prevent
         # cross-sequence attention. This flag should be True unless you have a specific use case.
-        dataset_kwargs = {"return_cu_seqlen": data_cfg.get("packed_sequence_return_cu_seqlen", True)}
+        dataset_kwargs = {"return_cu_seqlen": data_cfg.packed_sequence_return_cu_seqlen}
         assert data_cfg.micro_batch_size == 1, "Micro batch size must be 1 if using packed sequence"
     else:
         dataset_cls = GPTSFTDataset
@@ -371,30 +372,24 @@ def build_sft_dataset(
         max_seq_length=data_cfg.max_seq_length,
         min_seq_length=data_cfg.min_seq_length,
         pad_seq_length_to_mult=pad_seq_length_to_mult,
-        add_bos=data_cfg.get("add_bos", False),
-        add_eos=data_cfg.get("add_eos", True),
-        add_sep=data_cfg.get("add_sep", False),
+        add_bos=data_cfg.add_bos,
+        add_eos=data_cfg.add_eos,
+        add_sep=data_cfg.add_sep,
         sep_id=0,
         max_num_samples=num_samples,
-        seed=data_cfg.get("seed", 1234),
-        label_key=data_cfg.get("label_key", "answer"),
+        seed=data_cfg.seed,
+        label_key=data_cfg.label_key,
         answer_only_loss=answer_only_loss,
-        truncation_field=data_cfg.get("truncation_field", "text"),
-        pad_to_max_length=data_cfg.get("pad_to_max_length", False),
-        index_mapping_dir=data_cfg.get("index_mapping_dir", None),
-        prompt_template=data_cfg.get("prompt_template", None),
+        truncation_field=data_cfg.truncation_field,
+        pad_to_max_length=data_cfg.pad_to_max_length,
+        index_mapping_dir=data_cfg.index_mapping_dir,
+        prompt_template=data_cfg.prompt_template,
         virtual_tokens=0,
-        memmap_workers=data_cfg.get(
-            "memmap_workers", None
-        ),  # used to set num. of workers to create the memmap index files
-        hf_dataset=data_cfg.get(
-            "hf_dataset", False
-        ),  # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
-        truncation_method=data_cfg.get(
-            "truncation_method", "right"
-        ),  # used to choose truncation method. Options: ['random', 'left', 'right']
+        memmap_workers=data_cfg.memmap_workers, # used to set num. of workers to create the memmap index files
+        hf_dataset=data_cfg.hf_dataset, # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
+        truncation_method=data_cfg.truncation_method, # used to choose truncation method. Options: ['random', 'left', 'right']
         special_tokens=special_tokens,
-        output_original_text=data_cfg.get("output_original_text", False),
+        output_original_text=data_cfg.output_original_text,
         **dataset_kwargs,
     )
     return dataset
@@ -406,9 +401,9 @@ def collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg, generate_ma
         collate_with_batch_max_sequence_length,
         response_token_length=max_seqlen,
         eos_id=tokenizer_eos_id,
-        reset_position_ids=cfg.model.data.get("reset_position_ids", False),
-        reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
-        eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+        reset_position_ids=cfg.reset_position_ids,
+        reset_attention_mask=cfg.reset_attention_mask,
+        eod_mask_loss=cfg.eod_mask_loss,
         generate_masks_and_position_ids=generate_masks_and_position_ids,
     )
 
