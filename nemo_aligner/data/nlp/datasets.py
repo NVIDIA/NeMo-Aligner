@@ -338,12 +338,12 @@ class DPOModelDataset(Dataset):
         ## dataset as a data preparation step for packing
         self.pad_chosen_rejected_to_max = pad_chosen_rejected_to_max
 
-        self.reset_position_ids = cfg.data.get("reset_position_ids", False)
-        self.reset_attention_mask = cfg.data.get("reset_attention_mask", False)
-        self.eod_mask_loss = cfg.data.get("eod_mask_loss", False)
+        self.reset_position_ids = cfg.reset_position_ids
+        self.reset_attention_mask = cfg.reset_attention_mask
+        self.eod_mask_loss = cfg.eod_mask_loss
         self.eos_id = tokenizer.eos_id
-        self.default_chosen_reward = cfg.data.get("default_chosen_reward", 1.0)
-        self.default_rejected_reward = cfg.data.get("default_rejected_reward", 0.0)
+        self.default_chosen_reward = cfg.default_chosen_reward
+        self.default_rejected_reward = cfg.default_rejected_reward
 
         self.nograd_length = 32
 
@@ -355,7 +355,7 @@ class DPOModelDataset(Dataset):
         return len(self.data)
 
     def encode(self, text, append_eod=False):
-        if self.cfg.data.get("apply_ftfy", False):
+        if self.cfg.apply_ftfy:
             import ftfy
 
             text = ftfy.fix_text(text)
@@ -425,11 +425,11 @@ class DPOModelDataset(Dataset):
         returns:
             conversation:  is a string formatted with the chat template
         """
-        if OmegaConf.select(self.cfg, "data.chat_prompt_tokens") is None:
+        if self.cfg.chat_prompt_tokens is None:
             raise RuntimeError(
-                "You don't have a model (model_config.yaml) which has chat_prompt_tokens, are you sure this is a Chat/Instruction model?"
+                "You did not specify chat_prompt_tokens in your config, are you sure this is a Chat/Instruction model?"
             )
-        special_tokens = self.cfg.data.chat_prompt_tokens
+        special_tokens = self.cfg.chat_prompt_tokens
         nemo_source = self._convert_messages(messages)
         header, conversation, data_type, mask_role = _get_header_conversation_type_mask_role(
             nemo_source, special_tokens
@@ -455,8 +455,8 @@ class DPOModelDataset(Dataset):
             rejected_fmtd = self.convert(payload["prompt"] + [payload["rejected_response"]])
 
         prompt, prompt_len = self.encode(prompt_fmtd, append_eod=False)
-        chosen, chosen_len = self.encode(chosen_fmtd, append_eod=self.cfg.data.get("append_eod", False))
-        reject, reject_len = self.encode(rejected_fmtd, append_eod=self.cfg.data.get("append_eod", False))
+        chosen, chosen_len = self.encode(chosen_fmtd, append_eod=self.cfg.append_eod)
+        reject, reject_len = self.encode(rejected_fmtd, append_eod=self.cfg.append_eod)
 
         # chosen_response_only, chosen_response_len = self.encode(payload['chosen_response'])
         # reject_response_only, reject_response_len = self.encode(payload['rejected_response'])
