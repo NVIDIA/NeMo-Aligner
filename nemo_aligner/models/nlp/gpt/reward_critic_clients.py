@@ -118,7 +118,7 @@ def extract_dialogue_llama(text):
             assistant_text[-1] = assistant_text[-1].split("</think>")[1].strip()
 
     else:
-        assistant_text[-1] = "None"
+        assistant_text[-1] = assistant_text[-1]
     return user_text, assistant_text
 
 
@@ -268,7 +268,7 @@ def code_rewards(response, args):
 
         pass_rate = num_pass / len(results)
         print(f"pass rate: {pass_rate}")
-        low, high = -10, 5
+        low, high = -10, 10
         score = low + (high - low) * pass_rate
         return score, True
     except Exception as e:
@@ -422,7 +422,7 @@ class RMFutureResult(FutureResult):
         # If verifier_rm_future exists, combine values based on conditions
         if self.verifier_rm_future is not None:
             verifier_rewards = self.verifier_rm_future.flatten()
-            out = out + verifier_rewards
+            out = verifier_rewards
 
         return out
 
@@ -452,8 +452,7 @@ class RemoteGPTRMClient:
                 rollout_batch["response_tokens"][i, : rollout_batch["response_lengths"][i]].tolist()
             )
             format_correct = True
-            if "<think>" not in text or not ("<ethink>" in text or "</think>" in text):
-                format_correct = False
+            
             user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
 
             text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
