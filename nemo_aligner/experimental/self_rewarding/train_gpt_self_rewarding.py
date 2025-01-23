@@ -22,8 +22,13 @@ from omegaconf.omegaconf import OmegaConf, open_dict
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
+from nemo_aligner.data.nlp.builders import (
+    build_dataloader,
+    build_sft_dataset,
+    collate_with_pad_to_max_batch,
+    identity_collate,
+)
 from nemo_aligner.experimental.self_rewarding.self_rewarding import SelfRewardingTrainer
-from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset, collate_with_pad_to_max_batch, identity_collate
 from nemo_aligner.models.nlp.gpt.megatron_gpt_spin_model import MegatronGPTSPINModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
