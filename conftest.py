@@ -22,8 +22,8 @@ from nemo.collections.common.tokenizers.huggingface.auto_tokenizer import AutoTo
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.parts.nlp_overrides import NLPDDPStrategy
 from nemo_aligner.models.nlp.gpt.megatron_gpt_ppo_actor import MegatronGPTActorModel
+from nemo_aligner.testing.utils import Utils
 from nemo_aligner.utils.train_script_utils import init_distributed, resolve_and_create_trainer
-from tests.test_mcore_utilities import Utils
 
 dir_path = os.path.dirname(os.path.abspath(__file__))
 # TODO: This file exists because in cases where TRTLLM MPI communicators are involved,
@@ -67,7 +67,7 @@ def run_only_on_device_fixture(request, device):
 
 @pytest.fixture
 def init_model_parallel():
-    from tests.test_mcore_utilities import Utils
+    from nemo_aligner.testing.utils import Utils
 
     def initialize(*args, **kwargs):
         Utils.initialize_model_parallel(*args, **kwargs)
@@ -401,7 +401,9 @@ def pytest_collection_modifyitems(config, items):
 
 def pytest_sessionstart(session):
     # Remove the file at the start of the session, if it exists
-    if os.path.exists(SUCCESS_FILE) and os.environ["LOCAL_RANK"] == "0":
+    if os.path.exists(SUCCESS_FILE) and (
+        os.environ.get("LOCAL_RANK", None) == "0" or os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", None) == "0"
+    ):
         os.remove(SUCCESS_FILE)
 
 

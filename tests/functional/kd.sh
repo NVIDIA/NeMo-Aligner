@@ -83,7 +83,7 @@ torchrun --nproc-per-node 2 ${GPFS}/examples/nlp/gpt/train_gpt_knowledge_distill
     exp_manager.create_checkpoint_callback=False \
     model.data.num_workers=2 \
     ++model.tensor_model_parallel_size=1 \
-    ++model.pipeline_model_parallel_size=1 \
+    ++model.pipeline_model_parallel_size=2 \
     exp_manager.explicit_log_dir=${RESULTS_DIR} \
     ++model.activations_checkpoint_granularity=full \
     ++model.activations_checkpoint_method=uniform \

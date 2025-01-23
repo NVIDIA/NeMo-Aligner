@@ -1,6 +1,8 @@
 .. include:: /content/nemo.rsts
 
-.. _model-aligner-steerlm:
+.. include:: aligner-algo-header.rst
+
+.. _nemo-aligner-steerlm:
 
 Model Alignment by SteerLM Method
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
@@ -12,7 +14,7 @@ The current approach for LLM improvement combines Supervised Fine-Tuning (SFT) a
 SteerLM addresses these challenges and represents a significant advancement in the field, making it easier to tailor LLMs to specific needs and preferences. This document delves into how SteerLM operates and offers guidance on training a SteerLM model.
 
 SteerLM
-###############
+#######
 SteerLM leverages a SFT method that empowers you to control responses during inference. It overcomes the limitations of prior alignment techniques, and consists of four key steps:
 
 1. Train an attribute prediction model on human-annotated datasets to evaluate response quality on any number of attributes like helpfulness, humor, and creativity.
@@ -44,11 +46,6 @@ Train a SteerLM Model
 #####################
 
 This section is a step-by-step tutorial that walks you through how to run a full SteerLM pipeline with a Llama2 70B LLM model.
-
-.. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
-   
-   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 Download the Llama 2 LLM Model
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

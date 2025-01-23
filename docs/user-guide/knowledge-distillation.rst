@@ -1,5 +1,9 @@
 .. include:: /content/nemo.rsts
 
+.. include:: aligner-algo-header.rst
+
+.. _nemo-aligner-knowledge-distillation:
+
 Supervised Fine-Tuning (SFT) with Knowledge Distillation
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
 
@@ -10,14 +14,15 @@ There are two primary benefits of knowledge distillation compared to standard su
 There are many variants of knowledge distillation. NeMo Aligner supports training the student model to match the top-K logits of the teacher model. In this tutorial, we will go through fine-tuning a 2B student using a fine-tuned Nemotron 8B chat model.
 
 .. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
+   Before starting this tutorial, be sure to review the :ref:`introduction <nemo-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
 
    If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 
-Obtain the fine-tuned teacher and pre-trained student models
+Obtain the Fine-Tuned Teacher and Pre-Trained Student Models
 ############################################################
-To start, we must first download both the pre-trained student and fine-tuned teacher models
+
+To start, we must first download both the pre-trained student and fine-tuned teacher models.
 
 .. tab-set::
 
@@ -40,9 +45,10 @@ To start, we must first download both the pre-trained student and fine-tuned tea
         #. Download the `Llama3-8B LLM model and tokenizer <https://huggingface.co/meta-llama/Meta-Llama-3-8B>`__ into the model's folder. You can use the Hugging Face CLI for this:
             
             .. code-block:: bash
+
                huggingface-cli download nvidia/nemotron-3-8b-chat-4k-sft --local-dir teacher_checkpoint
 
-After these steps you should have files ``2b_student.nemo`` and ``teacher_checkpoint/Nemotron-3-8B-Chat-4k-SFT.nemo`` to use in NeMo-Aligner.
+After these steps, you should have files ``2b_student.nemo`` and ``teacher_checkpoint/Nemotron-3-8B-Chat-4k-SFT.nemo`` to use in NeMo-Aligner.
 
 .. note::
    Megatron Core models use TransformerEngine as a backend, which attempts to find efficient kernels. However, depending on your GPU, it may not always succeed. If you encounter errors related to kernel finding, set these variables at the top of your script.

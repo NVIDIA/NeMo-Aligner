@@ -1,5 +1,7 @@
 .. include:: /content/nemo.rsts
 
+.. include:: aligner-algo-header.rst
+
 .. _prerequisite:
 
 Obtain a Pretrained Model
@@ -58,7 +60,7 @@ After these steps, you will have a file called ``mcore_gpt.nemo`` to use in NeMo
       export NVTE_FLASH_ATTN=0
       export NVTE_FUSED_ATTN=0
 
-.. _model-aligner-sft:
+.. _nemo-aligner-sft:
 
 Model Alignment by Supervised Fine-Tuning (SFT)
 ###############################################
@@ -69,13 +71,8 @@ Model Alignment by Supervised Fine-Tuning (SFT)
 
 2. **Chat**. In the *Chat* format, each example contains a multi-turn conversation between different roles (e.g., *User* and *Assistant*). Fine-tuning the base model on a chat format dataset is useful to align a chatbot.
 
-.. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
-   
-   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
-
 Fine-Tune with a Prompt-Response Dataset
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 Step 1: Format the data.
 ^^^^^^^^^^^^^^^^^^^^^^^^

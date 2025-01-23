@@ -1,21 +1,18 @@
 .. include:: /content/nemo.rsts
 
-.. _model-aligner-rlhf:
+.. include:: aligner-algo-header.rst
+
+.. _nemo-aligner-rlhf:
 
 Model Alignment by RLHF
 @@@@@@@@@@@@@@@@@@@@@@@
-
-.. note::
-   Before starting this tutorial, be sure to review the :ref:`introduction <model-aligner-intro>` for tips on setting up your NeMo-Aligner environment.
-
-   If you run into any problems, refer to NeMo's `Known Issues page <https://docs.nvidia.com/nemo-framework/user-guide/latest/knownissues.html>`__. The page enumerates known issues and provides suggested workarounds where appropriate.
 
 For the purposes of this tutorial, we will go through the entire Reinforcement Learning from Human Feedback (RLHF) pipeline using models from the NeMo Framework. These models can include LLaMa or Mistral, and our scripts will function consistently across them.
 
 RLHF is usually preceded by a Supervised Fine-Tuning (SFT). We should first follow the :ref:`Prerequisite guide <prerequisite>` and the :ref:`SFT guide <sft>`. After obtaining the SFT model, we will use this to start the RLHF process. We will use the `PPO <https://arxiv.org/abs/1707.06347>`__ algorithm for reinforcement learning on the `Anthropic-HH-RLHF <https://huggingface.co/datasets/Anthropic/hh-rlhf>`__ dataset.
 
 Data Processing for RLHF
-#########################
+########################
 
 We have a script ready to use for processing the Anthropic-HH dataset into a JSONL format. Run the following command on the `download_and_process.py <https://github.com/NVIDIA/NeMo-Megatron-Launcher/blob/8d4f34c9da6b3254ca316b2c43ee88b77a894529/launcher_scripts/nemo_launcher/collections/dataprep_scripts/anthropichh_dataprep/download_and_process.py#L1>`__ script for anthropic HH.
 
@@ -385,6 +382,30 @@ NeMo-Aligner has support for accelerating RLHF with `TensorRT-LLM <https://githu
 #. `trainer.ppo.batch_iterator.use_flask=True` enables a flask server to balance work across different DP workers.
 
 For more information please see the NeMo-Aligner `paper <https://arxiv.org/abs/2405.01481>`__.
+
+.. note::
+    If you are running ``train_gpt_ppo_actor.py`` interactively (outside of SLURM) with TensorRT-LLM acceleration,
+    you must prepend ``mpirun -n 8 --allow-run-as-root`` to the python run command:
+
+    .. code-block:: bash
+
+        mpirun -n 8 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_ppo_actor.py ...
+
+    If you are using SLURM, you do not need to prepend ``mpirun`` since this will be handled automatically
+    if you run ``srun`` with ``--mpi=pmix``:
+
+    .. code-block:: bash
+
+        read -r -d '' cmd_ppo <<EOF
+        cd ${GPFS} \
+        && export PYTHONPATH="${GPFS}:${PYTHONPATH}" \
+        && export HYDRA_FULL_ERROR=1 \
+        && python -u ${GPFS}/examples/nlp/gpt/train_gpt_ppo_actor.py \
+            ...
+        EOF
+
+        srun --mpi=pmix ... bash -c "${cmd_ppo}"
+
 
 PPO Results with TensorRT-LLM
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%
