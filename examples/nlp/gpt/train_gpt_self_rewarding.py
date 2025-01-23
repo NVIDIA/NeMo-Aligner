@@ -23,7 +23,12 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.self_rewarding import SelfRewardingTrainer
-from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset, collate_with_pad_to_max_batch, identity_collate
+from nemo_aligner.data.nlp.builders import (
+    build_dataloader,
+    build_sft_dataset,
+    collate_with_pad_to_max_batch,
+    identity_collate,
+)
 from nemo_aligner.models.nlp.gpt.megatron_gpt_spin_model import MegatronGPTSPINModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -40,6 +45,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 # crashes with nemotron5 container unless we have this
 try:
     import torch._dynamo
+
     torch._dynamo.config.suppress_errors = True
 except:
     pass

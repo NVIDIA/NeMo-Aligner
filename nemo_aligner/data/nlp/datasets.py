@@ -973,16 +973,18 @@ class TruncatedGPTSFTChatDataset(GPTSFTChatDataset):
         for idx in range(N):
             sample = self[idx]
 
-            #if len(sample[self.truncation_fields[0]]) <= self.max_seq_length:
+            # if len(sample[self.truncation_fields[0]]) <= self.max_seq_length:
             if isinstance(self.max_seq_length, list):
-                if all([len(sample[trunc]) <= limit for trunc, limit in zip(self.truncation_fields, self.max_seq_length)]):
+                if all(
+                    [len(sample[trunc]) <= limit for trunc, limit in zip(self.truncation_fields, self.max_seq_length)]
+                ):
                     good_idxes.append(idx)
             else:
                 if all([len(sample[trunc]) <= self.max_seq_length for trunc in self.truncation_fields]):
                     good_idxes.append(idx)
 
         self.indexed_dataset = self.indexed_dataset.select(good_idxes)
-        
+
         if isinstance(self.max_seq_length, list):
             self.max_seq_length = min(self.max_seq_length)
 

@@ -27,7 +27,12 @@ from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.generation import GenerationTrainer
-from nemo_aligner.data.nlp.builders import build_dataloader, build_sft_dataset, collate_with_pad_to_max_batch, identity_collate
+from nemo_aligner.data.nlp.builders import (
+    build_dataloader,
+    build_sft_dataset,
+    collate_with_pad_to_max_batch,
+    identity_collate,
+)
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
@@ -69,7 +74,7 @@ def main(cfg) -> None:
         cfg.model.encoder_seq_length = ptl_model.cfg.encoder_seq_length
 
     # pull values from checkpoint
-    #trainer_restore_path = trainer.ckpt_path
+    # trainer_restore_path = trainer.ckpt_path
 
     if os.path.exists(gen_file := os.path.join(cfg.exp_manager.explicit_log_dir, "generations", "generations.jsonl")):
         js_line = json.loads(subprocess.check_output(["tail", "-1", gen_file]).decode("utf_8"))

@@ -19,13 +19,13 @@ import math
 import os
 from collections import defaultdict
 from functools import partial
-from jinja2 import meta
 from statistics import mean
 from textwrap import dedent
 
 import numpy as np
 import pandas as pd
 import torch
+from jinja2 import meta
 from megatron.core import parallel_state
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
@@ -86,7 +86,7 @@ def self_rewarding_custom_collate(batch, eos_id):
         "answers_only": answer_ids,
         "prompt_lengths": context_lengths,
         "combined_lengths": combined_lengths,
-        "dataset_mask": batch[0]['metadata']['mask'] if 'metadata' in batch[0] else "",
+        "dataset_mask": batch[0]["metadata"]["mask"] if "metadata" in batch[0] else "",
     }
 
     return output
@@ -218,7 +218,7 @@ class SelfRewardingTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
-        '''
+        """
         if isinstance(self.cfg.get("limit_train_batches", 1.0), int):
             self.train_dataloader.batch_sampler.total_samples = min(
                 self.train_dataloader.batch_sampler.total_samples,
@@ -226,7 +226,7 @@ class SelfRewardingTrainer:
             )
             if hasattr(self.train_dataloader.batch_sampler, "last_batch_size"):
                 self.train_dataloader.batch_sampler.last_batch_size = 0
-        '''
+        """
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
@@ -304,7 +304,7 @@ class SelfRewardingTrainer:
         self.meta_judge_template_fn = jinja2_env.from_string(self.meta_judge_template).render
         self.parse_reward_fn = create_parse_reward_fn(self.reward_regex_template)
         self.meta_parse_reward_fn = create_meta_parse_reward_fn(self.meta_judge_reward_regex_template)
-        
+
         seed = 1234 if self.model.cfg.get("seed", None) is None else self.model.cfg.get("seed")
         self.rng_generator = np.random.default_rng(seed + parallel_state.get_data_parallel_rank())
 
@@ -508,9 +508,11 @@ class SelfRewardingTrainer:
                 response_tokens = None
             else:
                 max_len_list = max([len(x) for x in generations["token_ids"]])
-                padded_list = [x + [self.model.tokenizer.eos_id] * (max_len_list - len(x)) for x in generations["token_ids"]]
-                response_tokens = torch.tensor(padded_list, dtype=torch.long, device='cuda')
-            #response_tokens = torch.tensor(generations["token_ids"], dtype=torch.long, device='cuda') if generations else None
+                padded_list = [
+                    x + [self.model.tokenizer.eos_id] * (max_len_list - len(x)) for x in generations["token_ids"]
+                ]
+                response_tokens = torch.tensor(padded_list, dtype=torch.long, device="cuda")
+            # response_tokens = torch.tensor(generations["token_ids"], dtype=torch.long, device='cuda') if generations else None
             response_tokens = broadcast_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
 
@@ -588,7 +590,10 @@ class SelfRewardingTrainer:
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
         reward_scores = []
         reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
-        if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+        if (
+            torch.distributed.get_rank() == 0
+            and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank()
+        ):
             print(f"*** META_PROMPT_AND_RESP  [ {self.tokenizer.ids_to_text(reward_responses[0].tolist())} ]")
         batch_responses_str = []
         for t, s, e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
@@ -699,7 +704,9 @@ class SelfRewardingTrainer:
 
                         # we update the pandas table here only during validation to avoid blowing up wandb storage space
                         # we update only for rank 0 although this is redudant because .log_table() only works on rank 0
-                        if (not (self.first_iteration_sft and self.iteration == 0)) and torch.distributed.get_rank() == 0:
+                        if (
+                            not (self.first_iteration_sft and self.iteration == 0)
+                        ) and torch.distributed.get_rank() == 0:
                             for idx in range(len(global_batch["bad_samples"])):
                                 if not global_batch["bad_samples"][idx]:
                                     self.train_df.loc[len(self.train_df)] = [
@@ -800,15 +807,27 @@ class SelfRewardingTrainer:
         assert loaded_values == to_broadcast.tolist()
         # restore max steps we need to run for
         self.set_max_steps()
-    
+
     def normalise_prompt(self, prompt, response, dataset_mask):
         if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
-            p_list = re.findall(rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})", prompt)
-            r_list = re.findall(rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask.replace('user', 'assistant')}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})", prompt)
+            p_list = re.findall(
+                rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
+                prompt,
+            )
+            r_list = re.findall(
+                rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask.replace('user', 'assistant')}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
+                prompt,
+            )
             resp_raw = response.replace(self.model.cfg.data.chat_prompt_tokens.end_of_turn, "").strip()
         else:
-            p_list = re.findall(rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})", prompt)
-            r_list = re.findall(rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})", prompt)
+            p_list = re.findall(
+                rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
+                prompt,
+            )
+            r_list = re.findall(
+                rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
+                prompt,
+            )
             resp_raw = response.replace(f"\n{self.model.cfg.data.chat_prompt_tokens.turn_start}", "")
         if len(p_list) == 1 and len(r_list) == 0:
             return "User: " + p_list[0], resp_raw
@@ -857,7 +876,7 @@ class SelfRewardingTrainer:
                         # at this point self.model is the reference policy from cpu_weight_swap
                         self.trtllm_generate.refit(self.model)
                         clear_memory()
-                    
+
                     candidate_responses_with_rewards = [
                         [] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))
                     ]
@@ -868,7 +887,7 @@ class SelfRewardingTrainer:
                         # Transform into batch of LLM-as-judge template samples for reward scoring
                         reward_buffer = []
                         for t, s, e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
-                            '''
+                            """
                             if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
                                 prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
                                     "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", ""
@@ -881,8 +900,12 @@ class SelfRewardingTrainer:
                                     "<extra_id_0>System\n\n", ""
                                 )
                                 response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
-                            '''
-                            prompt, response = self.normalise_prompt(self.tokenizer.ids_to_text(t[:s].tolist()), self.tokenizer.ids_to_text(t[s:e].tolist()), buffer[0]["dataset_mask"])
+                            """
+                            prompt, response = self.normalise_prompt(
+                                self.tokenizer.ids_to_text(t[:s].tolist()),
+                                self.tokenizer.ids_to_text(t[s:e].tolist()),
+                                buffer[0]["dataset_mask"],
+                            )
                             reward_prompt_str = self.template_fn(prompt=prompt, response=response)
                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
@@ -900,7 +923,8 @@ class SelfRewardingTrainer:
                                         )[0]
                                     else:
                                         prompt_ft = re.findall(
-                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})", prompt_and_response
+                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
+                                            prompt_and_response,
                                         )[0]
                                         response_ft = re.findall(
                                             rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
@@ -1026,11 +1050,13 @@ class SelfRewardingTrainer:
                                 # choose based on lowest variance of judgements
                                 idx_chosen = chosen_cands[np.argmin([s[2] for s in chosen_cands])][-1]
                                 idx_reject = reject_cands[np.argmin([s[2] for s in reject_cands])][-1]
-                            #if self.rho == 0:
+                            # if self.rho == 0:
                             #    assert all([s_max == s[0] for s in chosen_cands]), "chosen_cands violation"
                             #    assert all([s_min == s[0] for s in reject_cands]), "reject_cands violation"
                         else:
-                            logging.error(f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]")
+                            logging.error(
+                                f"*** final_scores [ {scores} ]  final_filtered_scores [ {filtered_scores} ]"
+                            )
                             raise RuntimeError("hit strange score selection state, please investigate")
 
                         # 1 x max_len tensor
@@ -1058,7 +1084,9 @@ class SelfRewardingTrainer:
                             orig_response_str = self.tokenizer.ids_to_text(
                                 cand_for_meta[1][cand_for_meta[2] : cand_for_meta[3]].tolist()
                             )
-                            norm_prompt_str, norm_response_str = self.normalise_prompt(orig_prompt_str, orig_response_str, buffer[0]["dataset_mask"])
+                            norm_prompt_str, norm_response_str = self.normalise_prompt(
+                                orig_prompt_str, orig_response_str, buffer[0]["dataset_mask"]
+                            )
                             meta_batch = []
                             for a, b in itertools.combinations(
                                 [self.tokenizer.ids_to_text(s[0][s[1] : s[2]].tolist()) for s in reward_tokens_raw], 2
@@ -1102,7 +1130,7 @@ class SelfRewardingTrainer:
                             if meta_batch and len(meta_buffer_done) < self.model.cfg.global_batch_size * 3:
                                 meta_buffer_pending.append((reward_tokens_raw, meta_batch))
 
-                        samples_seen += 1                        
+                        samples_seen += 1
 
                         # due to DP sync issues, we cannot dynamically increase/decrease samples in the local DP batch
                         # so the only thing we can do is replace/modify existing samples. Hence, at the moment, we only
@@ -1111,7 +1139,13 @@ class SelfRewardingTrainer:
                         # is really an upper bound, not the exact replacement %. This can be easily altered though.
                         if (
                             self.use_meta_judge
-                            and ((bad_ends > 0 or bad_sample) or (self.rng_generator.random() <= self.meta_judge_pcnt - (samples_replaced / samples_seen)))
+                            and (
+                                (bad_ends > 0 or bad_sample)
+                                or (
+                                    self.rng_generator.random()
+                                    <= self.meta_judge_pcnt - (samples_replaced / samples_seen)
+                                )
+                            )
                             and len(meta_buffer_done) > 0
                         ):
                             # if self.use_meta_judge and (bad_ends > 0 or bad_sample) and len(meta_buffer_done) > 0:
@@ -1229,7 +1263,7 @@ class SelfRewardingTrainer:
 
                     new_batch["ref_policy_log_probs_chosen"] = chosen_logps
                     new_batch["ref_policy_log_probs_rejected"] = reject_logps
-                    
+
                     self.model.finish_inference()
                     if self.use_trtllm_generation:
                         self.trtllm_generate.free()
