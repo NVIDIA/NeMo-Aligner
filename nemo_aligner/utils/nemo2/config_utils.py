@@ -2,6 +2,7 @@ from dataclasses import dataclass, fields, make_dataclass
 from typing import Optional
 
 from nemo.collections.llm.gpt.model.base import GPTConfig
+from nemo.lightning.pytorch.strategies import ParallelismConfig
 
 def create_optional_config(base_class):
     field_definitions  = [
@@ -14,6 +15,7 @@ def create_optional_config(base_class):
 ## gives a class with same attributes as GPTConfig, but
 ## defaults value of all attributes is None
 GPTConfigOverrides = create_optional_config(GPTConfig)
+ParallelismOverrides = create_optional_config(ParallelismConfig)
 
 def maybe_override(base_config, overwrite_config):
     for field in fields(base_config.__class__):

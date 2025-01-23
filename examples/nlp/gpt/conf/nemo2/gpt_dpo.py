@@ -20,7 +20,10 @@ from megatron.core.optimizer import OptimizerConfig
 from nemo_aligner.algorithms.dpo import DPOTrainer
 from nemo_aligner.data.nlp.config import DPODataConfig
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import DPOConfig
-from nemo_aligner.utils.nemo2.config_utils import GPTConfigOverrides
+from nemo_aligner.utils.nemo2.config_utils import (
+    GPTConfigOverrides,
+    ParallelismOverrides,
+)
 from nemo_aligner.utils.nemo2.optim import MegatronOptimizer, CosineAnnealingScheduler
 
 def default_dpo_config():
@@ -39,6 +42,11 @@ def default_dpo_config():
 def gpt_config_overrides():
     return GPTConfigOverrides(
         hidden_dropout=0.5, ## test overriding the config
+    )
+
+def default_dpo_parallelism():
+    return ParallelismOverrides(
+        tensor_model_parallel_size=2,
     )
 
 ## hparams not mapped
@@ -65,6 +73,8 @@ def default_dpo_optimizer():
 def default_dpo_data_config():
     return DPODataConfig(
         data_prefix="test",
+        micro_batch_size=4,
+        global_batch_size=32,
     )
 
 ## config for NeMo-Aligner trainer
