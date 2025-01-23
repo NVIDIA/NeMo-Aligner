@@ -5,9 +5,9 @@
 .. toctree::
    :maxdepth: 2
 
-   reinforce.rst
    sft.rst
    knowledge-distillation.rst
+   reinforce.rst
    dpo.rst
    rlhf.rst
    steerlm.rst
@@ -20,14 +20,14 @@
 :ref:`Prerequisite Obtaining a Pre-Trained Model <prerequisite>`
    This section provides instructions on how to download pre-trained LLMs in .nemo format. The following section will use these base LLMs for further fine-tuning and alignment. 
 
-:ref:`Model Alignment by REINFORCE <nemo-aligner-reinforce>`
-   In this tutorial, we will guide you through the process of aligning a NeMo Framework model using REINFORCE. This method can be applied to various models, including LLaMa2 and Mistral, with our scripts functioning consistently across different models.
-
 :ref:`Model Alignment by Supervised Fine-Tuning (SFT) <nemo-aligner-sft>`
    In this section, we walk you through the most straightforward alignment method. We use a supervised dataset in the prompt-response pairs format to fine-tune the base model according to the desired behavior.
 
 :ref:`Supervised Fine-Tuning (SFT) with Knowledge Distillation <nemo-aligner-knowledge-distillation>`
    In this section, we walk through a variation of SFT using Knowledge Distillation where we train a smaller "student" model using a larger "teacher" model.
+
+:ref:`Model Alignment by REINFORCE <nemo-aligner-reinforce>`
+   In this tutorial, we will guide you through the process of aligning a NeMo Framework model using REINFORCE. This method can be applied to various models, including LLaMa2 and Mistral, with our scripts functioning consistently across different models.
 
 :ref:`Model Alignment by DPO, RPO and IPO <nemo-aligner-dpo>`
    DPO, RPO, and IPO are simpler alignment methods compared to RLHF. DPO introduces a novel parameterization of the reward model in RLHF, which allows us to extract the corresponding optimal policy. Similarly, RPO and IPO provide alternative parameterizations or optimization strategies, each contributing unique approaches to refining model alignment.
@@ -63,14 +63,6 @@
      - Mistral
      - Nemotron-4
      - Mixtral
-   * - :ref:`REINFORCE <nemo-aligner-reinforce>`
-     - Yes
-     - Yes
-     - Yes
-     - Yes (✓)
-     - Yes
-     - Yes
-     - 
    * - :ref:`SFT <nemo-aligner-sft>`
      - 
      - Yes (✓)
@@ -84,6 +76,14 @@
      - Yes (✓)
      - Yes
      - Yes
+     - Yes
+     - Yes
+     - 
+   * - :ref:`REINFORCE <nemo-aligner-reinforce>`
+     - Yes
+     - Yes
+     - Yes
+     - Yes (✓)
      - Yes
      - Yes
      - 
