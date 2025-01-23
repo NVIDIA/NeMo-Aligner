@@ -14,9 +14,11 @@
 
 import warnings
 from functools import partial
+from typing import Any, List, Optional
 
 import torch
 from lightning.pytorch.trainer.trainer import Trainer
+from megatron.core.enums import ModelType
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
@@ -90,9 +92,12 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
         
         ## setting default values. Update this following nemo run integration
         if not dpo_config.log_prob_forward_micro_batch_size:
-            dpo_config.log_prob_forward_micro_batch_size = dpo_config.micro_batch_size ## TODO: get this from data config
+            dpo_config.log_prob_forward_micro_batch_size = data_config.micro_batch_size ## TODO: get this from data config
         if dpo_config.sft_average_log_probs is None:
             dpo_config.sft_average_log_probs = dpo_config.preference_average_log_probs
+        
+        self.dpo_config = dpo_config
+        self.data_config = data_config
 
         self.head = MegatronDPOHead(
             dpo_config.ref_policy_kl_penalty,
@@ -104,6 +109,78 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
             dpo_config.gt_reward_scale,
         )
 
+    ## TODO: remove this once we switch to Marc's APIs
+    def build_model(
+        self,
+        wrap_with_ddp: bool = True,
+        virtual_pipeline_model_parallel_size: Optional[int] = None,
+        #model_type, ## for simplicity, assume decoder only
+        on_cpu: bool = False,
+        *args: Any,
+        **kwargs: Any,
+    ) -> List[torch.nn.Module]:
+        if (
+            parallel_state.get_pipeline_model_parallel_world_size() > 1
+            and virtual_pipeline_model_parallel_size is not None
+        ):
+            model = []
+            parallel_state.set_virtual_pipeline_model_parallel_world_size(virtual_pipeline_model_parallel_size)
+            for i in range(virtual_pipeline_model_parallel_size):
+                parallel_state.set_virtual_pipeline_model_parallel_rank(i)
+                model.append(
+                    self.configure_model(
+                        self.tokenizer,
+                        pre_process=parallel_state.is_pipeline_first_stage(),
+                        post_process=parallel_state.is_pipeline_last_stage(),
+                    )
+                )
+        else:
+            model = self.configure_model(
+                self.tokenizer,
+                pre_process=parallel_state.is_pipeline_first_stage(),
+                post_process=parallel_state.is_pipeline_last_stage(),
+                )
+        if not isinstance(model, list):
+            model = [model]
+
+        for model_module in model:
+            model_module.model_type = ModelType.encoder_or_decoder
+
+        # Set tensor model parallel attributes if not set.
+        # Only parameters that are already tensor model parallel have these
+        # attributes set for them. We should make sure the default attributes
+        # are set for all params so the optimizer can use them.
+        for model_module in model:
+            for param in model_module.parameters():
+                set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+
+        # Print number of parameters.
+        if parallel_state.model_parallel_is_initialized() and parallel_state.get_data_parallel_rank() == 0:
+            msg = " > number of parameters on (tensor, pipeline) model parallel rank ({}, {}): {}".format(
+                parallel_state.get_tensor_model_parallel_rank(),
+                parallel_state.get_pipeline_model_parallel_rank(),
+                _calc_number_of_params(model),
+            )
+            logging.info(msg)
+
+        # GPU allocation.
+        if not on_cpu:
+            for model_module in model:
+                model_module.cuda(torch.cuda.current_device())
+
+        if wrap_with_ddp:
+            i = torch.cuda.current_device()
+            model = [
+                torch.nn.parallel.distributed.DistributedDataParallel(
+                    model_module,
+                    device_ids=[i],
+                    output_device=i,
+                    process_group=parallel_state.get_data_parallel_group(with_context_parallel=True),
+                )
+                for model_module in model
+            ]
+        return model
+   
     def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
             batch = next(dataloader_iter)
@@ -158,8 +235,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
 
         fwd_bwd_function = get_forward_backward_func()
 
-        ## TODO: update cfg
-        micro_batch_size = self.cfg.micro_batch_size
+        micro_batch_size = self.data_config.micro_batch_size
         if not packed:
             # each minibatch has 2 comparisons so tensor shape will be mbs * 2
             micro_batch_size *= 2
@@ -168,9 +244,11 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
                 f"Packed sequence is only supported with micro batch size 1,"
                 f" but your micro batch size is {micro_batch_size}."
             )
-            assert self.cfg.get(
+
+            ## TODO: we need a new check here since we pass the layer_spec into GPTConfig directly
+            """assert self.config.get(
                 "transformer_engine", False
-            ), "Transformer Engine should be enabled when using sequence packing."
+            ), "Transformer Engine should be enabled when using sequence packing.""""
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_forward_output_and_loss_func(forward_only, logprobs_only=False),
@@ -210,8 +288,8 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
         seq_length = batch[k].shape[1]
         batch_size = batch[k].shape[0]
 
-        num_microbatches = divide(batch_size, self.cfg.dpo.log_prob_forward_micro_batch_size)
-        micro_batch_size = self.cfg.dpo.log_prob_forward_micro_batch_size
+        num_microbatches = divide(batch_size, self.dpo_config.log_prob_forward_micro_batch_size)
+        micro_batch_size = self.dpo_config.log_prob_forward_micro_batch_size
         if not packed:
             # each minibatch has 2 comparisons so tensor shape will be mbs * 2
             micro_batch_size *= 2

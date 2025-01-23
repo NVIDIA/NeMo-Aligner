@@ -119,24 +119,27 @@ def dpo_custom_collate(
     return output
 
 
-## TODO: update and remove dep on cfg
-## see ashors/nemo2-dpo branch
 class DPOTrainer:
     """Trainer to coordinate DPO training"""
 
     def __init__(
         self,
-        cfg: DictConfig,
         model,
-        optimizer, ## unused
-        scheduler,
+        optimizer, ## unused for now
         train_dataloader,
         val_dataloader,
         test_dataloader,
         collate_fn: DistributedCollateFunction,
         logger,
-        ckpt_callback,
+        ckpt,
         run_timer,
+        limit_val_batches,
+        val_check_interval,
+        gradient_clip_val,
+        max_epochs,
+        save_interval,
+        limit_train_batches=1.0,
+        max_steps=-1,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -144,8 +147,16 @@ class DPOTrainer:
         self.test_dataloader = test_dataloader
         self.collate_fn = collate_fn
         self.logger = logger
-        self.cfg = cfg
+        #self.cfg = cfg
 
+        self.limit_train_batches = limit_train_batches
+        self.limit_val_batches = limit_val_batches
+        self.val_check_interval = val_check_interval
+        self.gradient_clip_val = gradient_clip_val
+        self.max_epochs = max_epochs
+        self.save_interval = save_interval
+
+        ## TODO: make this configurable
         opt_cfg = OptimizerConfig(
             optimizer='adam',
             lr=0.0004,
@@ -172,18 +183,18 @@ class DPOTrainer:
         self.step = 0
         self.consumed_samples = 0
 
-        self.ckpt_callback = ckpt_callback
+        self.ckpt = ckpt
 
         # compute `max_steps`
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
-            self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
+            self.train_dataloader.batch_sampler, self.limit_train_batches
         )
 
-        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
+        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.limit_val_batches)
         self.val_check_interval = (
-            int(self.cfg.val_check_interval * self.num_steps_per_epoch)
-            if isinstance(self.cfg.val_check_interval, float)
-            else self.cfg.val_check_interval
+            int(self.val_check_interval * self.num_steps_per_epoch)
+            if isinstance(self.val_check_interval, float)
+            else self.val_check_interval
         )
         self.set_max_steps()
 
@@ -256,7 +267,7 @@ class DPOTrainer:
 
     def fit(self):
         if (not isinstance(self.train_dataloader.batch_sampler, MegatronPretrainingRandomBatchSampler)) and (
-            self.cfg.max_epochs is not None and self.cfg.max_epochs > 1
+            self.max_epochs is not None and self.max_epochs > 1
         ):
             # if you use MegatronPretrainingBatchSampler as the batch_sampler passed to your train dataloader (in builders.py)
             # then each epoch will repeat all your samples in the same order as the previous epoch, there is no shuffling
@@ -266,7 +277,7 @@ class DPOTrainer:
                 "max_epochs > 1 is not supported unless using `MegatronPretrainingRandomBatchSampler` as the batch_sampler for your train dataloader"
             )
 
-        epoch_iter = range(self.epoch, self.cfg.max_epochs)
+        epoch_iter = range(self.epoch, self.max_epochs)
         if len(epoch_iter) <= 0:
             # epoch done
             return
@@ -300,13 +311,13 @@ class DPOTrainer:
 
                 # TODO(geshen): maybe use the dataloader instead
                 # bump up the consumed samples but not the step
-                self.consumed_samples += self.model.cfg.global_batch_size
+                self.consumed_samples += self.model.global_batch_size
                 metrics["consumed_samples"] = self.consumed_samples
                 metrics["step_time"] = train_step_time
                 metrics["epoch"] = self.epoch + 1
-                self.logger.log_metrics(
+                """self.logger.log_metrics(
                     metrics, step=self.step, prefix="train/",
-                )
+                )"""
                 metrics = {f"train_{k}": v for k, v in metrics.items()}
 
                 self.step += 1
@@ -316,7 +327,7 @@ class DPOTrainer:
                     self.step,
                     self.max_steps,
                     self.val_check_interval,
-                    self.cfg.save_interval,
+                    self.save_interval,
                     self.limit_val_batches,
                     run_time_exceeded=run_time_exceeded,
                 )
@@ -325,7 +336,7 @@ class DPOTrainer:
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
                     # so we use the incremented self.step
-                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+                    #self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                     val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
                     metrics.update(val_metrics)
 
@@ -342,7 +353,7 @@ class DPOTrainer:
 
                 metrics.clear()
 
-        self.logger.finalize()
+        #self.logger.finalize()
 
     def save(self, extra_candidates=None, is_train_end=False):
         """PTL based save"""
@@ -357,9 +368,9 @@ class DPOTrainer:
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
     def set_max_steps(self):
-        self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
+        self.max_steps = self.num_steps_per_epoch * self.max_epochs
 
-        if (max_steps := self.cfg.get("max_steps", -1)) >= 0:
+        if (max_steps := self.get("max_steps", -1)) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
 
     def state_dict(self):
