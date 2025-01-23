@@ -167,7 +167,7 @@ except Exception as e:
             output = self._run_process(code_path)
 
             passed = output.strip() == "PASS"
-            return {"test_number": test_idx, "passed": passed, "assertion": assertion, "output": output.strip()}
+            return {"test_number": test_idx, "passed": passed, "expected_output": assertion, "actual_output": output.strip()}
         except Exception as e:
             self.logger.error(f"Assertion test {test_idx} failed with error: {str(e)}")
             return {"test_number": test_idx, "passed": False, "error": str(e)}
