@@ -17,6 +17,7 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from nemo.core.config import hydra_runner
+from nemo.lightning._strategy_lib import set_model_parallel_attributes
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.algorithms.dpo import DPOTrainer, dpo_custom_collate
@@ -45,6 +46,7 @@ from examples.nlp.gpt.conf.nemo2.gpt_dpo import (
     default_dpo_config,
     default_dpo_data_config,
     default_dpo_optimizer,
+    default_dpo_parallelism,
     default_dpo_trainer,
     gpt_config_overrides,
 )
@@ -62,8 +64,14 @@ mp.set_start_method("spawn", force=True)
 def main(cfg) -> None:
 
     ## load original config, initialize new dpo model, then restore weights from dir
+    ## TODO: move this to a helper function?
     gpt_config = io.load_context(input_path, subpath="model.config")
+    parallelism_config = io.load_context(input_path, subpath="trainer.strategy.parallelism")
     gpt_config = maybe_override(gpt_config, gpt_config_overrides())
+    parallelism_config = maybe_override(parallelism_config, default_dpo_parallelism())
+    
+    ## assuming we are using the same tokenizer as the base model
+    tokenizer = io.load_context(input_path, subpath="model.tokenizer")
 
     ## set logger and exp manager (TODO)
 
@@ -84,15 +92,29 @@ def main(cfg) -> None:
     #init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
     setup_distributed()
 
+    data_cfg = default_dpo_data_config()
+
+    ## setup optimizer and scheduler
+    # TODO: connect this to the model
+    opt_cfg, scheduler = default_dpo_optimizer()
+    optimizer = MegatronOptimizer(
+        opt_cfg,
+        lr_scheduler=scheduler,
+    )
+
     ## initialize the model
     model = MegatronGPTDPOModel(
         gpt_config,
-        default_dpo_config,
+        default_dpo_config(),
+        data_cfg,
+        optimizer=optimizer, ## TODO: where is this used?
+        tokenizer=tokenizer,
     )
+    ## make parallelism in model config match parallelism config
+    gpt_config = set_model_parallel_attributes(model, parallel_config)
 
     model.build_model(
-        ## TODO: parallel_config
-        virtual_pipeline_model_parallel_size = parallel_config.virtual_pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=parallel_config.virtual_pipeline_model_parallel_size,
     )
 
     ## TODO: make configurable
@@ -101,8 +123,12 @@ def main(cfg) -> None:
         ckpt_load_strictness="log_all",
     )
 
+    ## restore from base checkpoint
+    ## just hard-code path to restore from for now
+    restore_from_path = "test" ## TODO: replace with a real dummy checkpoint
+    checkpointer.load_checkpoint(restore_from_path)
+
     ## build the dataset (should be mostly unchanged from before, except the config)
-    data_cfg = default_dpo_data_config()
     if data_cfg.data_impl == "packed_jsonl":
         build_fn = build_train_valid_test_dpo_packed_datasets
     else:
@@ -120,7 +146,7 @@ def main(cfg) -> None:
 
     collate = train_ds.global_collate_fn if cfg.model.data.data_impl == "packed_jsonl" else dpo_custom_collate
     train_dataloader = build_dataloader(
-        cfg=cfg,
+        cfg=data_cfg,
         dataset=train_ds,
         consumed_samples=consumed_samples,
         mbs=gpt_config.micro_batch_size,
@@ -131,7 +157,7 @@ def main(cfg) -> None:
     )
 
     val_dataloader = build_dataloader(
-        cfg=cfg,
+        cfg=data_cfg,
         dataset=validation_ds,
         consumed_samples=0,
         mbs=gpt_config.micro_batch_size,
@@ -144,14 +170,6 @@ def main(cfg) -> None:
 
     ## initialize PTL-related things, call train start hooks
     #init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
-    
-    ## setup optimizer and scheduler
-    # TODO: connect this to the model
-    opt_cfg, scheduler = default_dpo_optimizer()
-    optimizer = MegatronOptimizer(
-        opt_cfg,
-        lr_scheduler=scheduler,
-    )
 
     ## log hparams (TODO)
     #logger.log_hyperparams(OmegaConf.to_container(cfg))
@@ -170,10 +188,10 @@ def main(cfg) -> None:
         collate_fn=partial(
             collate,
             eos_id=ptl_model.tokenizer.eos_id,
-            reset_position_ids=cfg.model.data.get("reset_position_ids", False),
-            reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
-            eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-            pad_length_to_multiple_of=cfg.model.data.get("pad_length_to_multiple_of", None),
+            reset_position_ids=data_cfg.reset_position_ids,
+            reset_attention_mask=data_cfg.reset_attention_mask,
+            eod_mask_loss=data_cfg.eod_mask_loss,
+            pad_length_to_multiple_of=data_cfg.pad_length_to_multiple_of,
         ),
         logger=None, ## TODO
         ckpt=checkpointer,

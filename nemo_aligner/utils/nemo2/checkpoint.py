@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 from megatron.core import parallel_state
 
 from nemo.lightning.io.pl import MegatronCheckpointIO
@@ -67,9 +69,9 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
             parallel_state.set_virtual_pipeline_model_parallel_rank(0)
 
         return sharded_state_dict
-    
+
     ## modified version of https://github.com/NVIDIA/NeMo/blob/main/nemo/lightning/pytorch/strategies/megatron_strategy.py#L724
-    def save_checkpoint(self, checkpoint, filepath, storage_options):
+    def save_checkpoint(self, trainer, filepath, storage_options):
         ## TODO: figure this out. ddp_config is specific to megatron strategy
         """if (
             isinstance(self.ddp_config, DistributedDataParallelConfig)
@@ -77,6 +79,9 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
             and self.ddp_config.overlap_param_gather
         ):
             self.megatron_parallel.force_param_sync()"""
+        
+        ## TODO: need to extract the actual checkpoint dict
+        checkpoint = self.dump_checkpoint(trainer)
 
         checkpoint["state_dict"] = OrderedDict([])  # remove device state_dict
         # retrieve `sharded_state_dict` if it has not already been configured in `on_save_checkpoint`

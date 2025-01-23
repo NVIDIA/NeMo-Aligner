@@ -31,6 +31,7 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 )
 #from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin ## peft callback in nemo 2
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank ## TODO: copy this fn to aligner (just == torch.distributed.get_world_size() - 1)
+from nemo_aligner.data.nlp.config import DPODataConfig
 from nemo_aligner.data.nlp.datasets import DPOPackedDataset
 from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils import parallel_state
@@ -72,6 +73,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
         self,
         gpt_config: GPTConfig,
         dpo_config: DPOConfig,
+        data_config: DPODataConfig, ## TODO: this is only needed for mbs
         optim: Optional[OptimizerModule] = None,
         tokenizer: Optional["TokenizerSpec"] = None, ## TODO: is this needed for us?
         model_transform: Optional[Callable[[nn.Module], nn.Module]] = None,
@@ -83,12 +85,12 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
             model_transform=model_transform,
         )
 
-        ## TODO: put this check elsewhere. model no longer contains parallelism stuff
-        '''if self.cfg.pipeline_model_parallel_size > 1 and not self.cfg.megatron_amp_O2:
+        ## TODO: put this check elsewhere?
+        if self.config.pipeline_model_parallel_size > 1 and not self.config.megatron_amp_O2:
             warnings.warn(
                 "when using pipeline parallelism, it is recommended to set megatron_amp_O2 to be True to "
                 "avoid explicit casting for pipeline communication"
-            )'''
+            )
         
         ## setting default values. Update this following nemo run integration
         if not dpo_config.log_prob_forward_micro_batch_size:
@@ -139,7 +141,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
                 self.tokenizer,
                 pre_process=parallel_state.is_pipeline_first_stage(),
                 post_process=parallel_state.is_pipeline_last_stage(),
-                )
+            )
         if not isinstance(model, list):
             model = [model]
 

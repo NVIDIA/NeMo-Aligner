@@ -365,12 +365,14 @@ class DPOTrainer:
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
-        self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
+        #self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
+        ## TODO: save custom training state dict
+        # self.ckpt.save_checkpoint(self, "test_save_ckpt", storage_options=None)
 
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.max_epochs
 
-        if (max_steps := self.get("max_steps", -1)) >= 0:
+        if (max_steps := self.config.max_steps) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
 
     def state_dict(self):

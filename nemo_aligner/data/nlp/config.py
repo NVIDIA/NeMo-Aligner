@@ -36,6 +36,9 @@ class DataConfig:
     truncation_method: str = "right"
     output_original_text: bool = False
 
+    micro_batch_size: int
+    global_batch_size: int
+
 @dataclass
 class DPODataConfig(DataConfig):
     packed_sequence: bool = False
