@@ -41,15 +41,13 @@ from nemo_aligner.utils.text_generation_utils import (
 )
 from nemo_aligner.utils.train_utils import clip_gradients, set_eval
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
+from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import (
     batch_pad_to_fixed_len,
     clear_memory,
     cpu_weight_swap,
     retrieve_model_state_dict_in_cpu,
 )
-
-from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
-
 
 """
 GPTSFTChatDataset output is dict with keys: ['input_ids', 'mask', 'context_ids', 'answer_ids', 'metadata']
@@ -156,7 +154,6 @@ class GenerationTrainer:
                 unload_engine_train=self.cfg.trt_llm.get("unload_engine_train", False),
                 reshard_model=False,
             )
-            
 
     @torch.no_grad()
     def get_generations(self, list_of_batches):

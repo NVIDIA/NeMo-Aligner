@@ -40,6 +40,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 # crashes with nemotron5 container unless we have this
 try:
     import torch._dynamo
+
     torch._dynamo.config.suppress_errors = True
 except:
     pass

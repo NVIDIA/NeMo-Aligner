@@ -69,7 +69,7 @@ def main(cfg) -> None:
         cfg.model.encoder_seq_length = ptl_model.cfg.encoder_seq_length
 
     # pull values from checkpoint
-    #trainer_restore_path = trainer.ckpt_path
+    # trainer_restore_path = trainer.ckpt_path
 
     if os.path.exists(gen_file := os.path.join(cfg.exp_manager.explicit_log_dir, "generations", "generations.jsonl")):
         js_line = json.loads(subprocess.check_output(["tail", "-1", gen_file]).decode("utf_8"))

@@ -29,7 +29,10 @@ from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import SyncTimer, broadcast_2d_tensor_within_pp
 from nemo_aligner.utils.ppo_utils import create_mask
-from nemo_aligner.utils.text_generation_utils import TrackLengthGPTModelTextGenerationStrategy, verify_is_valid_and_clamp_range_
+from nemo_aligner.utils.text_generation_utils import (
+    TrackLengthGPTModelTextGenerationStrategy,
+    verify_is_valid_and_clamp_range_,
+)
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
@@ -114,7 +117,7 @@ class SPINTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
-        '''
+        """
         if isinstance(self.cfg.get("limit_train_batches", 1.0), int):
             self.train_dataloader.batch_sampler.total_samples = min(
                 self.train_dataloader.batch_sampler.total_samples,
@@ -122,7 +125,7 @@ class SPINTrainer:
             )
             if hasattr(self.train_dataloader.batch_sampler, "last_batch_size"):
                 self.train_dataloader.batch_sampler.last_batch_size = 0
-        '''
+        """
 
         self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
         self.val_check_interval = (
@@ -241,11 +244,18 @@ class SPINTrainer:
         reject_lengths = (global_batch["rejected_lengths"] - global_batch["prompt_lengths"]).sum()
         not_valids = (~global_batch["is_valids"]).sum()
         tensor_to_accumulate = torch.tensor(
-            [chosen_lengths, reject_lengths, num_samples, not_valids], dtype=torch.float32, device=torch.cuda.current_device(),
+            [chosen_lengths, reject_lengths, num_samples, not_valids],
+            dtype=torch.float32,
+            device=torch.cuda.current_device(),
         )
         torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group())
 
-        (global_chosen_lengths, global_reject_lengths, global_num_samples, global_not_valids,) = tensor_to_accumulate.tolist()
+        (
+            global_chosen_lengths,
+            global_reject_lengths,
+            global_num_samples,
+            global_not_valids,
+        ) = tensor_to_accumulate.tolist()
         metrics["chosen_lengths"] = global_chosen_lengths / global_num_samples
         metrics["rejected_lengths"] = global_reject_lengths / global_num_samples
         metrics["bad_valids_per_GBS"] = global_not_valids / global_num_samples
@@ -278,7 +288,7 @@ class SPINTrainer:
         prompt_tokens = prompt_tokens.cuda(non_blocking=True)
         prompt_lengths = prompt_lengths.cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
-        
+
         strategy = TrackLengthGPTModelTextGenerationStrategy(
             model=self.model, context_lengths=prompt_lengths, max_length=adj_generation_length
         )
@@ -297,7 +307,9 @@ class SPINTrainer:
 
             # this is a 1D LongTensor with the length of the responses where response is prompt+response
             max_len_list = max([len(x) for x in generations["token_ids"]])
-            padded_list = [x + [self.model.tokenizer.eos_id] * (max_len_list - len(x)) for x in generations["token_ids"]]
+            padded_list = [
+                x + [self.model.tokenizer.eos_id] * (max_len_list - len(x)) for x in generations["token_ids"]
+            ]
             response_tokens = torch.cuda.LongTensor(padded_list)
             response_tokens = broadcast_2d_tensor_within_pp(response_tokens, dtype=torch.long)
             response_lengths = strategy.get_lengths()
@@ -318,7 +330,7 @@ class SPINTrainer:
                         f"max response length ({max_response_length}) does not match the size of "
                         f"`response_tokens` ({response_tokens.size(1)})"
                     )
-        
+
         is_valid = verify_is_valid_and_clamp_range_(
             response_tokens, response_lengths, strategy, self.model.tokenizer, self.sampling_params["end_strings"]
         )
@@ -423,12 +435,24 @@ class SPINTrainer:
                                 if chk:
                                     self.train_df.loc[len(self.train_df)] = [
                                         self.step,
-                                        self.model.tokenizer.ids_to_text(global_batch["prompts_only"][idx][:global_batch["prompt_lengths"][idx].item()].tolist()),
                                         self.model.tokenizer.ids_to_text(
-                                            global_batch["chosen"][idx][global_batch["prompt_lengths"][idx].item():global_batch["chosen_lengths"][idx].item()].tolist()
+                                            global_batch["prompts_only"][idx][
+                                                : global_batch["prompt_lengths"][idx].item()
+                                            ].tolist()
                                         ),
                                         self.model.tokenizer.ids_to_text(
-                                            global_batch["rejected"][idx][global_batch["prompt_lengths"][idx].item():global_batch["rejected_lengths"][idx].item()].tolist()
+                                            global_batch["chosen"][idx][
+                                                global_batch["prompt_lengths"][idx]
+                                                .item() : global_batch["chosen_lengths"][idx]
+                                                .item()
+                                            ].tolist()
+                                        ),
+                                        self.model.tokenizer.ids_to_text(
+                                            global_batch["rejected"][idx][
+                                                global_batch["prompt_lengths"][idx]
+                                                .item() : global_batch["rejected_lengths"][idx]
+                                                .item()
+                                            ].tolist()
                                         ),
                                     ]
                                     self.logger.log_table(
