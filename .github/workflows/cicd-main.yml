@@ -129,8 +129,6 @@ jobs:
           - dpo-llama3
           - dpo-llama3-pack
           - spin-llama3
-          - self_rewarding-llama3
-          - generation-llama3
           - kd-llama3
           - sft-llama3
           - rm-llama3
