@@ -246,7 +246,10 @@ def code_rewards(response, args):
         code_str = response.replace("```python", "```").split("```")[1].strip()
         tests = args["unittests"]
         verifier = CodeVerifier()
-        results = verifier.verify(code_str, tests, args.get("fn_name", None))
+        if args.get("verifier_type", None) == "code_verifier_assertion":
+            results = verifier.verify_assertions(code_str, tests)
+        else:
+            results = verifier.verify(code_str, tests, args.get("fn_name", None))
         num_pass = 0
         for result in results:
             test_num = result["test_number"]

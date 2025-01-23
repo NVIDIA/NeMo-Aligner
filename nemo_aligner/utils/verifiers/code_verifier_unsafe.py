@@ -82,6 +82,7 @@ class CodeVerifier:
             return actual.strip() == expected.strip()
 
     def _create_function_wrapper(self, code_str, fn_name, input_args):
+        # print(input_args)
         arg_list_str = ", ".join(repr(arg) for arg in input_args)
         return f"""
 import json
@@ -137,6 +138,54 @@ print(json.dumps(result))
             future_to_test = {executor.submit(self._run_single_test, td, code_str, fn_name): td for td in test_data}
 
             with tqdm(total=len(tests), desc="Running tests") as pbar:
+                for future in concurrent.futures.as_completed(future_to_test):
+                    results.append(future.result())
+                    pbar.update(1)
+
+        results.sort(key=lambda x: x["test_number"])
+        return results
+
+    def _create_assertion_wrapper(self, code_str, assertion):
+        return f"""
+{code_str}
+
+try:
+    {assertion}
+    print("PASS")
+except AssertionError:
+    print("FAIL")
+except Exception as e:
+    print(f"ERROR: {{str(e)}}")
+"""
+
+    def _run_assertion_test(self, test_data, code_str):
+        test_idx, assertion = test_data
+        tmp_dir = None
+        try:
+            wrapper_code = self._create_assertion_wrapper(code_str, assertion)
+            tmp_dir, code_path, _ = self._create_temp_files(wrapper_code)
+            output = self._run_process(code_path)
+
+            passed = output.strip() == "PASS"
+            return {"test_number": test_idx, "passed": passed, "assertion": assertion, "output": output.strip()}
+        except Exception as e:
+            self.logger.error(f"Assertion test {test_idx} failed with error: {str(e)}")
+            return {"test_number": test_idx, "passed": False, "error": str(e)}
+        finally:
+            if tmp_dir:
+                import shutil
+
+                shutil.rmtree(tmp_dir)
+
+    def verify_assertions(self, code_str, assertions):
+        max_workers = min(len(assertions), (os.cpu_count() or 1) * 2)
+        test_data = list(enumerate(assertions, 1))
+        results = []
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_test = {executor.submit(self._run_assertion_test, td, code_str): td for td in test_data}
+
+            with tqdm(total=len(assertions), desc="Running assertion tests") as pbar:
                 for future in concurrent.futures.as_completed(future_to_test):
                     results.append(future.result())
                     pbar.update(1)
