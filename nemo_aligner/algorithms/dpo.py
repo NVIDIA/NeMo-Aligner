@@ -22,11 +22,12 @@ import torch.distributed
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
-## TODO: verify that this is functionally equivalent to nemo's get_ltor_masks_and_position_ids
-from megatron.core.datasets.gpt_dataset import _get_ltor_masks_and_position_ids
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.data import MegatronPretrainingRandomBatchSampler
+from nemo_aligner.utils.data import (
+    get_ltor_masks_and_position_ids,
+    MegatronPretrainingRandomBatchSampler,
+)
 from nemo_aligner.utils.distributed import SyncTimer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
@@ -93,10 +94,9 @@ def dpo_custom_collate(
             rejected_labels, (0, padded_max_len - rejected_labels.shape[1]), mode="constant", value=-100
         )
 
-    attention_mask, _, position_ids = _get_ltor_masks_and_position_ids(
-        chosen_tokens.cuda(), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss, create_attention_mask=True
+    attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
+        chosen_tokens.cuda(), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
     )
-    attention_mask = attention_mask.unsqueeze(0)
 
     assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
     if attention_mask.shape[0] == 1:
@@ -282,7 +282,7 @@ class DPOTrainer:
             # epoch done
             return
 
-        self.run_timer.start_time()
+        #self.run_timer.start_time()
 
         for _ in epoch_iter:
             num_steps_in_epoch = min(
@@ -311,7 +311,7 @@ class DPOTrainer:
 
                 # TODO(geshen): maybe use the dataloader instead
                 # bump up the consumed samples but not the step
-                self.consumed_samples += self.model.global_batch_size
+                self.consumed_samples += self.model.data_config.global_batch_size
                 metrics["consumed_samples"] = self.consumed_samples
                 metrics["step_time"] = train_step_time
                 metrics["epoch"] = self.epoch + 1
@@ -322,14 +322,14 @@ class DPOTrainer:
 
                 self.step += 1
 
-                run_time_exceeded = self.run_timer.is_finished()
+                #run_time_exceeded = self.run_timer.is_finished()
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
                     self.val_check_interval,
                     self.save_interval,
                     self.limit_val_batches,
-                    run_time_exceeded=run_time_exceeded,
+                    run_time_exceeded=False, #run_time_exceeded,
                 )
 
                 if run_val:
@@ -347,7 +347,7 @@ class DPOTrainer:
                     metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
                     self.save(metrics, is_train_end=is_train_end)
 
-                if run_time_exceeded:
+                if False: #run_time_exceeded: ## TODO
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
 
@@ -372,7 +372,7 @@ class DPOTrainer:
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.max_epochs
 
-        if (max_steps := self.config.max_steps) >= 0:
+        if (max_steps := self.max_steps) >= 0:
             self.max_steps = min(self.max_steps, max_steps)
 
     def state_dict(self):

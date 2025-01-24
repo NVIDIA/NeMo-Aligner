@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from abc import abstractmethod
 from typing import Callable, Optional
 
@@ -174,6 +175,13 @@ class MegatronOptimizer:
         ## add finalize_model_grads func to config
         ## todo: make sure the args passed to this function are correct
         #self.config.finalize_model_grads_func = finalize_model_grads
+
+    def connect(self, model):
+        model.optim = self
+
+        """if hasattr(self, "__io__") and hasattr(model, "__io__"):
+            if hasattr(model.__io__, "optim"):
+                model.__io__.optim = deepcopy(self.__io__)"""
 
     def setup_optimizer_and_lr_schedule(self, model):
         

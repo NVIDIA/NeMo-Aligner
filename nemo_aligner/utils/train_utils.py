@@ -68,8 +68,9 @@ def set_sync_funcs(ptl_model, forward_only):
 def prepare_for_training_step(ptl_model, zero_grad=True):
     set_train(ptl_model)
     # Initialize userbuffer communicators.
-    if ptl_model.initialize_ub:
-        ptl_model.initialize_ub_func()
+    ## TODO
+    #if ptl_model.initialize_ub:
+    #    ptl_model.initialize_ub_func()
 
     if ptl_model.rampup_batch_size:
         current_global_batch_size = get_current_global_batch_size()
@@ -81,7 +82,7 @@ def prepare_for_training_step(ptl_model, zero_grad=True):
         # we zero grads here because we also call backward in the megatron-core fwd/bwd functions
         ptl_model._optimizer.zero_grad()
 
-    if ptl_model.with_distributed_adam:
+    if True: #ptl_model.with_distributed_adam: ## TODO
         # hack to enable overlapping param sync and forward compute
         # note: the distributed optimizer monkey-patches each
         # parameter's __getattribute__ function so that it can
@@ -94,7 +95,7 @@ def prepare_for_training_step(ptl_model, zero_grad=True):
         for module in modules:
             if isinstance(module, (Float16Module, MCoreFloat16Module)):
                 module = module.module
-            if not ptl_model.mcore_gpt:
+            if False: #not ptl_model.mcore_gpt: ## TODO
                 module = module.language_model
             if hasattr(module, "embedding"):
                 for param in module.embedding.parameters():

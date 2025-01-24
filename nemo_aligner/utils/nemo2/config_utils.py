@@ -2,7 +2,7 @@ from dataclasses import dataclass, fields, make_dataclass
 from typing import Optional
 
 from nemo.collections.llm.gpt.model.base import GPTConfig
-from nemo.lightning.pytorch.strategies import ParallelismConfig
+from nemo.lightning.pytorch.strategies.megatron_strategy import ParallelismConfig
 
 def create_optional_config(base_class):
     field_definitions  = [

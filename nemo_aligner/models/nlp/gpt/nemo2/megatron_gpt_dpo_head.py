@@ -1,12 +1,20 @@
-from typing import Dict, Generic, NamedTuple, TypeVar
+from typing import Dict, Generic, List, NamedTuple, TypeVar
 
+import torch
+
+from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.transformer_config import TransformerConfig
+
+from nemo.collections.nlp.modules.common.megatron.utils import average_losses_across_data_parallel_group ## TODO: move to llm collection. This is used in nemo/lightning as well
+from nemo.collections.nlp.parts.utils_funcs import get_last_rank ## TODO: copy this fn to aligner (just == torch.distributed.get_world_size() - 1)
+from nemo_aligner.utils.distributed import from_parallel_logits_to_logprobs
 
 DataT = TypeVar("DataT")
 
 
 ## args needed for forward, args needed for loss
-class StepData(NamedTuple, Generic[DataT]):
+class StepData(NamedTuple): #, Generic[DataT]):
     forward: Dict[str, DataT]
     loss: Dict[str, DataT]
 
@@ -16,14 +24,14 @@ LossT = TypeVar("LossT")
 ## some algorithms (dpo, for example) don't required a config
 ## since this class has no weights
 class MegatronHead(MegatronModule):
-	def __init__(self, config: TransformerConfig | None = None):
+    def __init__(self, config: TransformerConfig | None = None):
         super().__init__(config)
 
-	def loss_step(self, *args, **kwargs) -> LossT:
-		raise NotImplementedError("")
+    def loss_step(self, *args, **kwargs) -> LossT:
+        raise NotImplementedError("")
 
     def loss_reduce(self, losses_reduced_per_micro_batch: List[LossT]):
-		raise NotImplementedError("")
+        raise NotImplementedError("")
     
     def data_step(self, data_iterator) -> StepData:
         raise NotImplementedError("")
@@ -37,7 +45,7 @@ class MegatronDPOHead(MegatronHead):
     def __init__(
         self,
         ref_policy_kl_penalty=0.0,
-        preference_average_log_probs=False,
+        preference_avg_log_probs=False,
         sft_average_log_probs=False,
         preference_loss_weight=1,
         sft_loss_weight=0,
@@ -52,7 +60,7 @@ class MegatronDPOHead(MegatronHead):
         self.ref_policy_state_dict = None
 
         self.ref_policy_kl_penalty = ref_policy_kl_penalty
-        self.preference_average_log_probs = preference_average_log_probs
+        self.preference_avg_log_probs = preference_avg_log_probs
         self.sft_avg_log_probs = sft_average_log_probs
 
         self.preference_loss_weight = preference_loss_weight
@@ -138,42 +146,43 @@ class MegatronDPOHead(MegatronHead):
         # Model forward pass
         forward_args = {
             "input_ids": tokens,
-            "position_ids": batch["position_ids"],
+            "position_ids": batch["position_ids"].repeat(2, 1), ## TODO: need to double the position ids to account for double the batch size
+            ## why did we not need to do this before?
             "attention_mask": attention_mask,
             "labels": None,
             "loss_mask": None,
         }
 
         # TODO: we can remove this someday when we no longer support legacy models
-        if not self.mcore_gpt:
+        """if not self.mcore_gpt:
             forward_args["checkpoint_activations_all_layers"] = checkpoint_activations_all_layers
             if not self.use_loss_mask:
                 forward_args.pop("loss_mask")
-        else:
-            forward_args.pop("loss_mask")
+        else:"""
+        forward_args.pop("loss_mask")
 
-            if "cu_seqlens" in batch:  # packed sequence from DPOPackedDataset
-                # these args are passed eventually into TEDotProductAttention.forward()
-                cu_seqlens = batch["cu_seqlens"].squeeze()  # remove batch size dimension (mbs=1)
+        if "cu_seqlens" in batch:  # packed sequence from DPOPackedDataset
+            # these args are passed eventually into TEDotProductAttention.forward()
+            cu_seqlens = batch["cu_seqlens"].squeeze()  # remove batch size dimension (mbs=1)
 
-                max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
-                cu_seqlens_argmin = batch["cu_seqlens_argmin"] if "cu_seqlens_argmin" in batch else None
+            max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
+            cu_seqlens_argmin = batch["cu_seqlens_argmin"] if "cu_seqlens_argmin" in batch else None
 
-                # remove -1 "paddings" added in collate_fn
-                if cu_seqlens_argmin is not None:
-                    cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
-                else:
-                    cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
+            # remove -1 "paddings" added in collate_fn
+            if cu_seqlens_argmin is not None:
+                cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
+            else:
+                cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
 
-                from megatron.core.packed_seq_params import PackedSeqParams
+            from megatron.core.packed_seq_params import PackedSeqParams
 
-                forward_args["packed_seq_params"] = PackedSeqParams(
-                    cu_seqlens_q=cu_seqlens,
-                    cu_seqlens_kv=cu_seqlens,
-                    max_seqlen_q=max_seqlen,
-                    max_seqlen_kv=max_seqlen,
-                    qkv_format="thd",
-                )
+            forward_args["packed_seq_params"] = PackedSeqParams(
+                cu_seqlens_q=cu_seqlens,
+                cu_seqlens_kv=cu_seqlens,
+                max_seqlen_q=max_seqlen,
+                max_seqlen_kv=max_seqlen,
+                qkv_format="thd",
+            )
 
         loss_args = {
             "labels": labels,
@@ -188,12 +197,12 @@ class MegatronDPOHead(MegatronHead):
         per_token_logps = from_parallel_logits_to_logprobs(
             vocab_parallel_logits=output_tensor,
             target=labels,
-            inference_only=validation_step,
+            inference_only=False, #validation_step, ## TODO
             higher_stability=True,
-            ignore_last=not packed,
+            ignore_last=True, #not packed, ## TODO
         )
 
-        if not packed:
+        if True: #not packed: ## TODO: packing support
             labels_for_loss = labels[:, 1:]
         else:
             labels_for_loss = labels
@@ -203,7 +212,7 @@ class MegatronDPOHead(MegatronHead):
             ref_logprobs,
             labels_for_loss,
             gt_rewards,
-            cu_seqlens,
+            None, #cu_seqlens, ## TODO: packing
             average_log_probs=self.preference_avg_log_probs,
         )
 
@@ -225,7 +234,7 @@ class MegatronDPOHead(MegatronHead):
             per_token_logps,
             ref_logprobs,
             labels_for_loss,
-            cu_seqlens,
+            None, #cu_seqlens, ## TODO: packing support
             average_log_probs=self.preference_avg_log_probs,
         )
 

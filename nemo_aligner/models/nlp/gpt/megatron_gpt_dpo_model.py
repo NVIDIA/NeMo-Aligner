@@ -13,24 +13,32 @@
 # limitations under the License.
 
 import warnings
+from dataclasses import dataclass
 from functools import partial
-from typing import Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
+from torch import nn
 from lightning.pytorch.trainer.trainer import Trainer
+from megatron.core.distributed import DistributedDataParallel as McoreDDP
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
+from megatron.core.tensor_parallel import set_defaults_if_not_set_tensor_model_parallel_attributes
 from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 
 from nemo.collections.llm.gpt.model.base import GPTConfig, GPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
-    average_losses_across_data_parallel_group, ## TODO: move to llm collection. This is used in nemo/lightning as well
     get_iterator_k_split, ## TODO: move to llm collection. This is used in nemo/lightning as well
 )
 #from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin ## peft callback in nemo 2
-from nemo.collections.nlp.parts.utils_funcs import get_last_rank ## TODO: copy this fn to aligner (just == torch.distributed.get_world_size() - 1)
+from nemo.lightning import io
+from nemo.lightning.megatron_parallel import _calc_number_of_params
+from nemo.lightning.pytorch.optim import OptimizerModule
+from nemo.utils import logging
+
 from nemo_aligner.data.nlp.config import DPODataConfig
 from nemo_aligner.data.nlp.datasets import DPOPackedDataset
 from nemo_aligner.models.alignable_interface import SupervisedInterface
@@ -54,7 +62,7 @@ class DPOConfig:
     # A higher value can be used to speed-up log probs computations, but may cause numeric differences.
     log_prob_forward_micro_batch_size: Optional[int] = None
     ref_policy_kl_penalty: float = 0.2
-    preference_average_log_probs: bool = False # whether normalizing log probs according to the sequence length in preference_loss
+    preference_avg_log_probs: bool = False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: Optional[bool] = None # whether normalizing log probs according to the sequence length in sft_loss. If not specified, defaults to preference_average_log_probs
     gt_reward_scale: float = 1. # the scale of the rewards in RPO
     preference_loss: str = "dpo" # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
@@ -62,7 +70,7 @@ class DPOConfig:
     sft_loss_weight: float = 0 # the coefficient of the SFT loss
 
 ## TODO: add peft support
-class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
+class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
     """
     Megatron GPT DPO Model Training.
     """
@@ -71,7 +79,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
     ## if not provided during init, needs to be done later via model.optim = optim
     def __init__(
         self,
-        gpt_config: GPTConfig,
+        config: GPTConfig,
         dpo_config: DPOConfig,
         data_config: DPODataConfig, ## TODO: this is only needed for mbs
         optim: Optional[OptimizerModule] = None,
@@ -79,7 +87,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
         model_transform: Optional[Callable[[nn.Module], nn.Module]] = None,
     ):
         super().__init__(
-            gpt_config,
+            config=config,
             optim=optim,
             tokenizer=tokenizer,
             model_transform=model_transform,
@@ -96,14 +104,14 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
         if not dpo_config.log_prob_forward_micro_batch_size:
             dpo_config.log_prob_forward_micro_batch_size = data_config.micro_batch_size ## TODO: get this from data config
         if dpo_config.sft_average_log_probs is None:
-            dpo_config.sft_average_log_probs = dpo_config.preference_average_log_probs
+            dpo_config.sft_average_log_probs = dpo_config.preference_avg_log_probs
         
         self.dpo_config = dpo_config
         self.data_config = data_config
 
         self.head = MegatronDPOHead(
             dpo_config.ref_policy_kl_penalty,
-            dpo_config.preference_average_log_probs,
+            dpo_config.preference_avg_log_probs,
             dpo_config.sft_average_log_probs,
             dpo_config.preference_loss_weight,
             dpo_config.sft_loss_weight,
@@ -111,10 +119,13 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
             dpo_config.gt_reward_scale,
         )
 
+        ## TODO
+        self.rampup_batch_size = None
+
     ## TODO: remove this once we switch to Marc's APIs
     def build_model(
         self,
-        wrap_with_ddp: bool = True,
+        wrap_with_ddp: bool = False,
         virtual_pipeline_model_parallel_size: Optional[int] = None,
         #model_type, ## for simplicity, assume decoder only
         on_cpu: bool = False,
@@ -130,17 +141,17 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
             for i in range(virtual_pipeline_model_parallel_size):
                 parallel_state.set_virtual_pipeline_model_parallel_rank(i)
                 model.append(
-                    self.configure_model(
+                    self.config.configure_model(
                         self.tokenizer,
-                        pre_process=parallel_state.is_pipeline_first_stage(),
-                        post_process=parallel_state.is_pipeline_last_stage(),
+                        #pre_process=parallel_state.is_pipeline_first_stage(),
+                        #post_process=parallel_state.is_pipeline_last_stage(),
                     )
                 )
         else:
-            model = self.configure_model(
+            model = self.config.configure_model(
                 self.tokenizer,
-                pre_process=parallel_state.is_pipeline_first_stage(),
-                post_process=parallel_state.is_pipeline_last_stage(),
+                #pre_process=parallel_state.is_pipeline_first_stage(),
+                #post_process=parallel_state.is_pipeline_last_stage(),
             )
         if not isinstance(model, list):
             model = [model]
@@ -181,7 +192,38 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
                 )
                 for model_module in model
             ]
-        return model
+        ## TODO: do we want this class to have a model attribute?
+        self.model = model
+
+        ## wrap model in mcore DDP
+
+        ## TODO: make this configurable
+        ddp_config = DistributedDataParallelConfig(
+            grad_reduce_in_fp32=False, #(self.cfg.optim.get('grad_sync_dtype', 'fp32') == 'fp32'),
+            overlap_grad_reduce=False, #self.cfg.optim.get('overlap_grad_sync', False),
+            num_distributed_optimizer_instances=1, #self.cfg.optim.get('num_distributed_optimizer_instances', 1),
+            use_distributed_optimizer=True,
+            check_for_nan_in_grad=False, #self.cfg.optim.get('check_for_nan_in_grad', False),
+            # mcore bucket_size is based on num of parameters, therefore not
+            # using bucket_cap_mb to configure bucket_size here
+            bucket_size=None, #self.cfg.optim.get('ddp_bucket_size', None),
+            average_in_collective=True, #self.cfg.optim.get('average_in_collective', True),
+            overlap_param_gather=False, #self.cfg.optim.get('overlap_param_sync', False),
+            align_param_gather=False, #self.cfg.optim.get('align_param_gather', False),
+            fp8_param_gather=False, #self.cfg.get('fp8_params', False),
+        )
+        self.model = [
+            McoreDDP(
+                self.config,
+                ddp_config,
+                model_chunk,
+                # Turn off bucketing for model_chunk 2 onwards, since communication for these
+                # model chunks is overlapped with compute anyway.
+                disable_bucketing=(model_chunk_idx > 0)
+                or False, #self.cfg.optim.get('overlap_param_gather_with_optimizer_step', False),
+            )
+            for (model_chunk_idx, model_chunk) in enumerate(self.model)
+        ]
    
     def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
@@ -233,7 +275,9 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
             seq_length = batch["chosen"].shape[1]
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
-        set_sync_funcs(self, forward_only)
+        
+        ## TODO
+        #set_sync_funcs(self, forward_only)
 
         fwd_bwd_function = get_forward_backward_func()
 
@@ -250,7 +294,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
             ## TODO: we need a new check here since we pass the layer_spec into GPTConfig directly
             """assert self.config.get(
                 "transformer_engine", False
-            ), "Transformer Engine should be enabled when using sequence packing.""""
+            ), "Transformer Engine should be enabled when using sequence packing."""
 
         losses_reduced_per_micro_batch = fwd_bwd_function(
             forward_step_func=self.get_forward_output_and_loss_func(forward_only, logprobs_only=False),
@@ -302,7 +346,9 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
             )
 
         data_iter = get_iterator_k_split(batch, num_microbatches)
-        set_sync_funcs(self, forward_only=True)
+        
+        ## TODO: fix this function!!
+        #set_sync_funcs(self, forward_only=True)
 
         fwd_bwd_function = get_forward_backward_func()
 
@@ -322,7 +368,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
                 chosen_logprobs_list = []
                 rejected_logprobs_list = []
                 for item in logprobs_list:
-                    chosen_logprobs, rejected_logprobs = self.split_output_tensor(item["logprobs"])
+                    chosen_logprobs, rejected_logprobs = self.head.split_output_tensor(item["logprobs"])
                     chosen_logprobs_list.append(chosen_logprobs)
                     rejected_logprobs_list.append(rejected_logprobs)
 
@@ -344,14 +390,52 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface):
         return logprobs
 
     def get_ref_policy_logprobs(self, batch):
-        if self.use_peft and self.ref_policy_state_dict is None:
+        ## TODO: peft support
+        if False: # self.use_peft and self.ref_policy_state_dict is None:
             # when using adapters instead of full-tuning, the actor is reference model + adapters
             with adapter_control(self):
                 # With adapters disabled (meaning using the reference model), calculate ref_log_probs
                 ref_log_probs = self.get_logprob_batch(batch)
         else:
-            with cpu_weight_swap(self, self.ref_policy_state_dict, megatron_amp_O2=self.megatron_amp_O2):
+            with cpu_weight_swap(self, self.ref_policy_state_dict, False): #megatron_amp_O2=self.megatron_amp_O2):
                 ref_log_probs = self.get_logprob_batch(batch)
 
         # return in GPU, trainer needs to move to cpu
         return ref_log_probs
+    
+    ## TODO: refactor!
+    def sharded_state_dict(self, prefix: str = "") -> Dict[str, Any]:
+
+        """
+        Creates the sharded state dict which is used by dist_checkpoint to save the sharded tensors to disk.
+        When given the sharded_stated_dict, dist_checkpoint.load will load the tensors corresponding to
+        self.state_dict().
+        The sharded tensor mapping is defined in the GPTModel class from mcore.
+        """
+        sharded_state_dict = {}
+        for index, module in enumerate(self.model):
+            if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+                # virtual pipline rank must be set so that GPTModel returns the correct sharded state dict
+                parallel_state.set_virtual_pipeline_model_parallel_rank(index)
+                module_sharded_state_dict = self._module_sharded_state_dict(module)
+                sharded_state_dict[f"model_{index}"] = module_sharded_state_dict
+            else:
+                module_sharded_state_dict = self._module_sharded_state_dict(module)
+                sharded_state_dict.update(module_sharded_state_dict)
+        return sharded_state_dict
+        
+    def _module_sharded_state_dict(self, module, *args, **kwargs) -> Dict[str, Any]:
+        if hasattr(module, "sharded_state_dict"):
+            return module.sharded_state_dict(*args, **kwargs)
+        #elif hasattr(module, "configure_model"):
+        elif hasattr(module, "module"):
+            prefix = "".join([kwargs.pop("prefix", ""), "module."])
+            return self._module_sharded_state_dict(module.module, *args, prefix=prefix, **kwargs)
+
+        raise ValueError("Could not find sharded state dict")
+
+        # reset vp rank
+        if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
+            parallel_state.set_virtual_pipeline_model_parallel_rank(0)
+
+        return sharded_state_dict
