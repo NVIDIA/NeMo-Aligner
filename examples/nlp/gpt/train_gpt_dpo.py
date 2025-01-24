@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import argparse
 from functools import partial
 
 import torch.multiprocessing as mp
@@ -62,13 +63,20 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 
 mp.set_start_method("spawn", force=True)
 
+def get_args():
+    parser = argparse.ArgumentParser(prog="", description="")
+    parser.add_argument('--restore-from-path', type=str, required=True, help="Path to the base model to restore")
+    parser.add_argument('--tp', type=int, default=1, help="Tensor parallel size")
+    parser.add_argument('--pp', type=int, default=1, help="Pipeline parallel size")
+    parser.add_argument('--vp', type=int, default=None, help="VPP size")
 
-@hydra_runner(config_path="conf", config_name="gpt_dpo")
-def main(cfg) -> None:
+    return parser.parse_args()
 
-    ## hard-code path to restore from for now
-    ## trying to restore optim states here fails
-    restore_from_path = "/mnt/checkpoints/model_name=0--val_loss=11.03-step=9-consumed_samples=160.0-last/"
+def main() -> None:
+
+    args = get_args()
+
+    restore_from_path = args.restore_from_path
 
     ## load original config, initialize new dpo model, then restore weights from dir
     ## TODO: move this to a helper function?
@@ -81,7 +89,13 @@ def main(cfg) -> None:
     tokenizer = loaded.model.tokenizer
 
     gpt_config = maybe_override(gpt_config, gpt_config_overrides())
-    parallelism_config = maybe_override(parallelism_config, default_dpo_parallelism())
+
+    override_config = default_dpo_parallelism()
+    override_config.tensor_model_parallel_size = args.tp
+    override_config.pipeline_model_parallel_size = args.pp
+    override_config.virtual_pipeline_model_parallel_size = args.vp
+
+    parallelism_config = maybe_override(parallelism_config, override_config)
     
     ## assuming we are using the same tokenizer as the base model
     #tokenizer = io.load_context(restore_from_path, subpath="model.tokenizer")
@@ -102,6 +116,8 @@ def main(cfg) -> None:
         consumed_samples = 0"""
 
     data_config = default_dpo_data_config()
+
+    ## hard-code data prefixes for now
     data_config.data_prefix = {
         "train": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
         "validation": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
@@ -157,7 +173,7 @@ def main(cfg) -> None:
         model.ref_policy_state_dict = ref_policy_state_dict
 
     # use the entire dataset
-    train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
+    train_valid_test_num_samples = [-1 * data_config.global_batch_size] * 3
     ## build the dataset (should be mostly unchanged from before, except the config)
     if data_config.data_impl == "packed_jsonl":
         build_fn = build_train_valid_test_dpo_packed_datasets
@@ -174,7 +190,7 @@ def main(cfg) -> None:
         tokenizer=model.tokenizer, ## TODO: tokenizer
     )
 
-    collate = train_ds.global_collate_fn if cfg.model.data.data_impl == "packed_jsonl" else dpo_custom_collate
+    collate = train_ds.global_collate_fn if data_config.data_impl == "packed_jsonl" else dpo_custom_collate
     train_dataloader = build_dataloader(
         cfg=data_config,
         dataset=train_ds,
