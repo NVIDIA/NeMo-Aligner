@@ -55,7 +55,7 @@ class PPORolloutBatch(UserDict):
         """Given a list of rollout batches, stack the tensors within and put them in a single dictionary
         """
         stacked_dict = cls()
-
+        print("rollout_batches\n", rollout_batches)
         for k in sorted(rollout_batches[0]):
 
             list_of_tensors = [item[k] for item in rollout_batches]
