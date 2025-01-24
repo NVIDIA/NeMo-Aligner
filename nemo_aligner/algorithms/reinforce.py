@@ -113,10 +113,7 @@ class PPORolloutBatch(UserDict):
         indices = torch.arange(B).tensor_split(split_size)[rank]
 
         for k in self.data:
-            if torch.is_tensor(self.data[k]):
-                chunked_rollout_batch[k] = self.data[k][indices].clone()
-            else:
-                chunked_rollout_batch[k] = [self.data[k][i] for i in indices]
+            chunked_rollout_batch[k] = self.data[k][indices].clone()
 
         return chunked_rollout_batch
 
