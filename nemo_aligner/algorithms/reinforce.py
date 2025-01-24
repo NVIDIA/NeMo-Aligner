@@ -271,7 +271,9 @@ class ReinforceTrainer:
                 # futures.append(self.rm_critic.infer_rm_critic(rollout_batch))
                 if not is_validation:
                     for _ in range(self.num_rollouts_per_prompt):
+                        print("batch:\n", batch)
                         rollout_batch = self.model.infer(batch)
+                        print("rollout batch:\n", rollout_batch)
                         rollout_batch["prompt_tokens"] = batch["text"]  # Save prompt tokens for rloo
                         rollout_batches.append(rollout_batch)
                         futures.append(self.rm_critic.infer_rm_critic(rollout_batch, self.model, batch["args"]))
