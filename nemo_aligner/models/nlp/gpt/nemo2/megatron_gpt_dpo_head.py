@@ -143,11 +143,15 @@ class MegatronDPOHead(MegatronHead):
         ## if using packing via TE, attention mask is generated in TE
         attention_mask = batch["attention_mask"][0:1] if not packed else None
 
+        position_ids = batch["position_ids"]
+        if position_ids is not None:
+            position_ids = position_ids.repeat(2, 1)
+
         # Model forward pass
         forward_args = {
             "input_ids": tokens,
-            "position_ids": batch["position_ids"].repeat(2, 1), ## TODO: need to double the position ids to account for double the batch size
-            ## why did we not need to do this before?
+            "position_ids": position_ids, ## TODO: need to double the position ids to account for double the batch size
+            ## why did we not need to do ^ before?
             "attention_mask": attention_mask,
             "labels": None,
             "loss_mask": None,

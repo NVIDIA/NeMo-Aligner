@@ -20,6 +20,9 @@ def _setup_distributed() -> None:
 
     global_rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
+
+    torch.cuda.set_device(global_rank)
+
     torch.distributed.init_process_group(_process_group_backend, rank=global_rank, world_size=world_size)
 
 def _init_mb_calculator(
