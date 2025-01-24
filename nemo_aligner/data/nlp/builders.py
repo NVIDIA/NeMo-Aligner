@@ -23,7 +23,6 @@ from functools import partial
 import numpy as np
 import torch
 import torch.utils.data
-from omegaconf.dictconfig import DictConfig
 
 ## TODO: should nemo own this?
 from nemo_aligner.utils.data import (
@@ -163,7 +162,7 @@ def build_train_valid_test_datasets(
     n_chunks=None,
     n_examples_per_chunk=None,
 ):
-    if isinstance(data_prefix, DictConfig):
+    if isinstance(data_prefix, dict):
         assert (
             data_prefix.get("train") is not None
             and data_prefix.get("test") is not None
@@ -172,7 +171,7 @@ def build_train_valid_test_datasets(
         if cfg.splits_string is not None:
             logging.warning(cfg.splits_string + " ignored since data path is of type dictionary.")
 
-        if isinstance(n_examples_per_chunk, DictConfig):
+        if isinstance(n_examples_per_chunk, dict):
             train_examples_per_chunk = n_examples_per_chunk["train"]
             validation_examples_per_chunk = n_examples_per_chunk["validation"]
             test_examples_per_chunk = n_examples_per_chunk["test"]
@@ -181,7 +180,7 @@ def build_train_valid_test_datasets(
             validation_examples_per_chunk = n_examples_per_chunk
             test_examples_per_chunk = n_examples_per_chunk
 
-        if isinstance(n_chunks, DictConfig):
+        if isinstance(n_chunks, dict):
             train_n_chunks = n_chunks["train"]
             validation_n_chunks = n_chunks["validation"]
             test_n_chunks = n_chunks["test"]
@@ -445,7 +444,7 @@ def build_dataloader(
 
     if use_random_sampler:
         cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
-        common_params["seed"] = cfg.model.seed
+        common_params["seed"] = cfg.seed
     else:
         cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
     batch_sampler = cls(**common_params)
@@ -453,7 +452,7 @@ def build_dataloader(
     return torch.utils.data.DataLoader(
         dataset,
         batch_sampler=batch_sampler,
-        num_workers=cfg.model.data.num_workers,
+        num_workers=cfg.num_workers,
         pin_memory=True,
         collate_fn=collate_fn,
     )

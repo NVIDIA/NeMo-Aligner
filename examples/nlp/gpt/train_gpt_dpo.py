@@ -17,6 +17,7 @@ import torch.multiprocessing as mp
 from omegaconf.omegaconf import OmegaConf
 
 from nemo.core.config import hydra_runner
+from nemo.lightning import io
 from nemo.lightning._strategy_lib import set_model_parallel_attributes
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
@@ -42,6 +43,7 @@ from nemo_aligner.utils.train_script_utils import (
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
 ### nemo2 things
+## TODO: move these elsewhere?
 from examples.nlp.gpt.conf.nemo2.gpt_dpo import (
     default_dpo_config,
     default_dpo_data_config,
@@ -52,6 +54,7 @@ from examples.nlp.gpt.conf.nemo2.gpt_dpo import (
 )
 from nemo_aligner.utils.nemo2.checkpoint import AlignerCheckpointIO
 from nemo_aligner.utils.nemo2.config_utils import maybe_override
+from nemo_aligner.utils.nemo2.optim import MegatronOptimizer
 from nemo_aligner.utils.nemo2.train_script_utils import setup_distributed
 
 OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
@@ -63,15 +66,25 @@ mp.set_start_method("spawn", force=True)
 @hydra_runner(config_path="conf", config_name="gpt_dpo")
 def main(cfg) -> None:
 
+    ## hard-code path to restore from for now
+    ## trying to restore optim states here fails
+    restore_from_path = "/mnt/checkpoints/model_name=0--val_loss=11.03-step=9-consumed_samples=160.0-last/"
+
     ## load original config, initialize new dpo model, then restore weights from dir
     ## TODO: move this to a helper function?
-    gpt_config = io.load_context(input_path, subpath="model.config")
-    parallelism_config = io.load_context(input_path, subpath="trainer.strategy.parallelism")
+    ## get this working. Getting serialization error right now
+    """gpt_config = io.load_context(restore_from_path, subpath="model.config")
+    parallelism_config = io.load_context(restore_from_path, subpath="trainer.strategy.parallelism")"""
+    loaded = io.load_context(restore_from_path)
+    gpt_config = loaded.model.config
+    parallelism_config = loaded.trainer.strategy.parallelism
+    tokenizer = loaded.model.tokenizer
+
     gpt_config = maybe_override(gpt_config, gpt_config_overrides())
     parallelism_config = maybe_override(parallelism_config, default_dpo_parallelism())
     
     ## assuming we are using the same tokenizer as the base model
-    tokenizer = io.load_context(input_path, subpath="model.tokenizer")
+    #tokenizer = io.load_context(restore_from_path, subpath="model.tokenizer")
 
     ## set logger and exp manager (TODO)
 
@@ -88,11 +101,19 @@ def main(cfg) -> None:
         custom_trainer_state_dict = None
         consumed_samples = 0"""
 
+    data_config = default_dpo_data_config()
+    data_config.data_prefix = {
+        "train": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
+        "validation": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
+        "test": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"]
+    }
+
     ## intialize distributed
     #init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
-    setup_distributed()
-
-    data_cfg = default_dpo_data_config()
+    setup_distributed(
+        parallelism_config,
+        data_config,
+    )
 
     ## setup optimizer and scheduler
     # TODO: connect this to the model
@@ -104,18 +125,20 @@ def main(cfg) -> None:
 
     ## initialize the model
     model = MegatronGPTDPOModel(
-        gpt_config,
-        default_dpo_config(),
-        data_cfg,
-        optimizer=optimizer, ## TODO: where is this used?
+        config=gpt_config,
+        dpo_config=default_dpo_config(),
+        data_config=data_config,
+        optim=optimizer, ## TODO: where is this used?
         tokenizer=tokenizer,
     )
+
     ## make parallelism in model config match parallelism config
-    gpt_config = set_model_parallel_attributes(model, parallel_config)
+    gpt_config = set_model_parallel_attributes(model, parallelism_config)
 
     model.build_model(
-        virtual_pipeline_model_parallel_size=parallel_config.virtual_pipeline_model_parallel_size,
+        virtual_pipeline_model_parallel_size=parallelism_config.virtual_pipeline_model_parallel_size,
     )
+    optimizer.setup_optimizer_and_lr_schedule(model)
 
     ## TODO: make configurable
     checkpointer = AlignerCheckpointIO(
@@ -124,44 +147,51 @@ def main(cfg) -> None:
     )
 
     ## restore from base checkpoint
-    ## just hard-code path to restore from for now
-    restore_from_path = "test" ## TODO: replace with a real dummy checkpoint
     checkpointer.load_checkpoint(restore_from_path)
 
+    ## TODO: update once we have peft support
+    if True: #cfg.model.peft.peft_scheme == "none":
+        ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
+            model, megatron_amp_O2=False, ## TODO: configure
+        )
+        model.ref_policy_state_dict = ref_policy_state_dict
+
+    # use the entire dataset
+    train_valid_test_num_samples = [-1 * cfg.model.global_batch_size] * 3
     ## build the dataset (should be mostly unchanged from before, except the config)
-    if data_cfg.data_impl == "packed_jsonl":
+    if data_config.data_impl == "packed_jsonl":
         build_fn = build_train_valid_test_dpo_packed_datasets
     else:
         build_fn = build_train_valid_test_dpo_datasets
     train_ds, validation_ds, _ = build_fn(
-        cfg=data_cfg,
-        data_prefix=data_cfg.data_prefix,
-        data_impl=data_cfg.data_impl,
-        splits_string=data_cfg.splits_string,
+        cfg=data_config,
+        data_prefix=data_config.data_prefix,
+        data_impl=data_config.data_impl,
+        splits_string=data_config.splits_string,
         train_valid_test_num_samples=train_valid_test_num_samples,
         seq_length=gpt_config.seq_length, ## TODO: check
-        seed=gpt_config.seed, ## TODO: check
+        seed=data_config.seed, ## TODO: check
         tokenizer=model.tokenizer, ## TODO: tokenizer
     )
 
     collate = train_ds.global_collate_fn if cfg.model.data.data_impl == "packed_jsonl" else dpo_custom_collate
     train_dataloader = build_dataloader(
-        cfg=data_cfg,
+        cfg=data_config,
         dataset=train_ds,
-        consumed_samples=consumed_samples,
-        mbs=gpt_config.micro_batch_size,
-        gbs=gpt_config.global_batch_size,
+        consumed_samples=0, #consumed_samples, ## TODO: UPDATE
+        mbs=data_config.micro_batch_size,
+        gbs=data_config.global_batch_size,
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
         collate_fn=identity_collate,
     )
 
     val_dataloader = build_dataloader(
-        cfg=data_cfg,
+        cfg=data_config,
         dataset=validation_ds,
         consumed_samples=0,
-        mbs=gpt_config.micro_batch_size,
-        gbs=gpt_config.global_batch_size,
+        mbs=data_config.micro_batch_size,
+        gbs=data_config.global_batch_size,
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
         collate_fn=identity_collate,
@@ -179,19 +209,19 @@ def main(cfg) -> None:
     timer = None
 
     ## initialize DPO trainer
-    dpo_trainer = default_dpo_trainer(
+    dpo_trainer = default_dpo_trainer()(
         model=model,
         optimizer=optimizer,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
-        test_dataloader=test_dataloader,
+        test_dataloader=None,
         collate_fn=partial(
             collate,
-            eos_id=ptl_model.tokenizer.eos_id,
-            reset_position_ids=data_cfg.reset_position_ids,
-            reset_attention_mask=data_cfg.reset_attention_mask,
-            eod_mask_loss=data_cfg.eod_mask_loss,
-            pad_length_to_multiple_of=data_cfg.pad_length_to_multiple_of,
+            eos_id=model.tokenizer.eos_id,
+            reset_position_ids=data_config.reset_position_ids,
+            reset_attention_mask=data_config.reset_attention_mask,
+            eod_mask_loss=data_config.eod_mask_loss,
+            pad_length_to_multiple_of=data_config.pad_length_to_multiple_of,
         ),
         logger=None, ## TODO
         ckpt=checkpointer,

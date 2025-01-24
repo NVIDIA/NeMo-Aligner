@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -29,7 +31,7 @@ from nemo_aligner.utils.nemo2.optim import MegatronOptimizer, CosineAnnealingSch
 def default_dpo_config():
     return DPOConfig(
         ref_policy_kl_penalty=0.2,
-        preference_average_log_probs=False,
+        preference_avg_log_probs=False,
         gt_reward_scale=1.,
         preference_loss='dpo',
         preference_loss_weight=1,
@@ -46,7 +48,7 @@ def gpt_config_overrides():
 
 def default_dpo_parallelism():
     return ParallelismOverrides(
-        tensor_model_parallel_size=2,
+        tensor_model_parallel_size=1, #2,
     )
 
 ## hparams not mapped
@@ -67,6 +69,7 @@ def default_dpo_optimizer():
     )
     scheduler = CosineAnnealingScheduler(
         max_steps=5,
+        min_lr=1e-6,
     )
     return opt_cfg, scheduler
 

@@ -1,7 +1,10 @@
 from collections import OrderedDict
+from typing import Any, Dict, Optional
+import torch
 
 from megatron.core import parallel_state
 
+from nemo.lightning import _strategy_lib
 from nemo.lightning.io.pl import MegatronCheckpointIO
 
 ## class that defers to MegatronCheckpointIO and additionally
@@ -35,40 +38,6 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
         self.model = model
         self.ckpt_load_optimizer = ckpt_load_optimizer
         self.ckpt_load_strictness = ckpt_load_strictness
-    
-    def sharded_state_dict(self, prefix: str = "") -> Dict[str, Any]:
-
-        """
-        Creates the sharded state dict which is used by dist_checkpoint to save the sharded tensors to disk.
-        When given the sharded_stated_dict, dist_checkpoint.load will load the tensors corresponding to
-        self.state_dict().
-        The sharded tensor mapping is defined in the GPTModel class from mcore.
-        """
-        sharded_state_dict = {}
-        for index, module in enumerate(self.model):
-            if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-                # virtual pipline rank must be set so that GPTModel returns the correct sharded state dict
-                parallel_state.set_virtual_pipeline_model_parallel_rank(index)
-                module_sharded_state_dict = self._module_sharded_state_dict(module)
-                sharded_state_dict[f"model_{index}"] = module_sharded_state_dict
-            else:
-                module_sharded_state_dict = self._module_sharded_state_dict(module)
-                sharded_state_dict.update(module_sharded_state_dict)
-        
-    def _module_sharded_state_dict(self, module, *args, **kwargs) -> Dict[str, Any]:
-        if hasattr(module, "sharded_state_dict"):
-            return module.sharded_state_dict(*args, **kwargs)
-        elif hasattr(module, "configure_model"):
-            prefix = "".join([kwargs.pop("prefix", ""), "module."])
-            return self._module_sharded_state_dict(module.module, *args, prefix=prefix, **kwargs)
-
-        raise ValueError("Could not find sharded state dict")
-
-        # reset vp rank
-        if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
-            parallel_state.set_virtual_pipeline_model_parallel_rank(0)
-
-        return sharded_state_dict
 
     ## modified version of https://github.com/NVIDIA/NeMo/blob/main/nemo/lightning/pytorch/strategies/megatron_strategy.py#L724
     def save_checkpoint(self, trainer, filepath, storage_options):
@@ -86,7 +55,7 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
         checkpoint["state_dict"] = OrderedDict([])  # remove device state_dict
         # retrieve `sharded_state_dict` if it has not already been configured in `on_save_checkpoint`
         if "sharded_state_dict" not in checkpoint:
-            checkpoint["sharded_state_dict"] = self.sharded_state_dict()
+            checkpoint["sharded_state_dict"] = self.model.sharded_state_dict()
 
         if "optimizer_states" in checkpoint: # and self.trainer.state.fn == TrainerFn.FITTING:
             # Clear the optimizer states. This handles the case where ckpt_save_optimizer=False
@@ -97,7 +66,12 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
             ## note that if trainer.save_checkpoint(path, save_weights_only=True) is called,
             ## the checkpoint will contain only model weights. Optimizer states will be omitted.
             if self.ckpt_save_optimizer:
-                checkpoint["optimizer"] = [self.optimizer_sharded_state_dict()]
+                checkpoint["optimizer"] = [_strategy_lib.optimizer_sharded_state_dict(
+                    self.model,
+                    self.model.optim,
+                    is_loading=False,
+                    #sharding_type = "fully_sharded_model_space" if self.parallel_save_optim else "dp_zero_gather_scatter"
+                )]
 
         super().save_checkpoint(checkpoint, filepath, storage_options=storage_options)
 
@@ -111,14 +85,23 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
 
         # After dist_checkpointing.load, sharded tensors will be replaced with tensors
         sharded_state_dict = {}
-        sharded_state_dict["state_dict"] = self.sharded_state_dict()
+        sharded_state_dict["state_dict"] = self.model.sharded_state_dict()
 
         if (
             self.ckpt_load_optimizer
             #and self.trainer.state.fn == TrainerFn.FITTING
         ):
             #if self.lightning_module.optimizers(use_pl_optimizer=False): ## TODO: replace lightning_module?
-            sharded_state_dict["optimizer"] = [self.optimizer_sharded_state_dict(is_loading=True)]
+            #sharded_state_dict["optimizer"] = [self.optimizer_sharded_state_dict(is_loading=True)]
+            
+            ## TODO: get this to work for us
+            ## how do we load the lr scheduler?
+            """sharded_state_dict["optimizer"] = [_strategy_lib.optimizer_sharded_state_dict(
+                    self.model,
+                    self.model.optim.optimizer,
+                    is_loading=True,
+                    #sharding_type = "fully_sharded_model_space" if self.parallel_save_optim else "dp_zero_gather_scatter"
+                )]"""
 
         strict = self.ckpt_load_strictness
         checkpoint = super().load_checkpoint(

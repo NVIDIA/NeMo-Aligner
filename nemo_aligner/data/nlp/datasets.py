@@ -277,7 +277,7 @@ class RewardModelDataset(Dataset):
         chosen_tokens = torch.tensor(chosen_np_pad)
         rejected_tokens = torch.tensor(rejected_np_pad)
 
-        attention_mask, loss_mask, position_ids = con_get_ltor_masks_and_position_idsfig(
+        attention_mask, loss_mask, position_ids = _get_ltor_masks_and_position_ids(
             chosen_tokens, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
         )
 
@@ -828,7 +828,7 @@ class RegressionRewardModelDataset(RewardModelDataset):
         )
 
         text_tensor = torch.tensor(text_np_pad)
-        attention_mask, loss_mask, position_ids = con_get_ltor_masks_and_position_idsfig(
+        attention_mask, loss_mask, position_ids = _get_ltor_masks_and_position_ids(
             text_tensor, self.eos_id, self.reset_position_ids, self.reset_attention_mask, self.eod_mask_loss,
         )
 
