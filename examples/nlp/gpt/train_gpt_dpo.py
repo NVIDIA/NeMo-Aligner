@@ -45,7 +45,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 ### nemo2 things
 ## TODO: move these elsewhere?
-from examples.nlp.gpt.conf.nemo2.gpt_dpo import (
+from nemo_aligner.experimental.run.gpt_dpo import (
     default_dpo_config,
     default_dpo_data_config,
     default_dpo_optimizer,
