@@ -50,3 +50,10 @@ repos:
       - id: black
         name: Format code
         additional_dependencies: ['click==8.0.2']
+  - repo: local
+    hooks:
+      - id: test-dpo-script
+        name: Test DPO Script
+        entry: bash tests/functional/nemo2/test_dpo.sh
+        language: system
+        stages: [pre-commit]
