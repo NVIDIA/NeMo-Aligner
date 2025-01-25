@@ -49,7 +49,7 @@ After these steps you should have a file ``mcore_gpt.nemo`` to use in NeMo-Align
       export NVTE_FLASH_ATTN=0
       export NVTE_FUSED_ATTN=0
 
-Additionally, TransformerEngine is non-deterministic by default, meaning subsequent runs of SPIN using identical parameters will produce different results, which is not ideal for parameter perturbation.
+Additionally, TransformerEngine is non-deterministic by default, meaning subsequent runs of Self-Rewarding using identical parameters will produce different results, which is not ideal for parameter perturbation.
 Helpfully, TransformerEngine exposes a flag to set if you want to guarantee deterministic training runs:
 
 .. code-block:: bash
@@ -65,7 +65,7 @@ or, you can also run Self-Rewarding on models which have been SFTed on instructi
 Self-Rewarding Model Training
 #############################
 
-Self-Rewarding training uses the exact same dataset formatting and files as the NeMo-Aligner SFT trainer. Please see the data formatting section of SFT to understand the data format necessary for SPIN :ref:`SFT guide <sft>`
+Self-Rewarding training uses the exact same dataset formatting and files as the NeMo-Aligner SFT trainer. Please see the data formatting section of SFT to understand the data format necessary for Self-Rewarding :ref:`SFT guide <sft>`
 
 Once your data is processed into the correct format you are ready to begin Self-Rewarding training. You must start with a pretrained or SFT trained model. For this section we will use the SFT model trained in the previous step to train the Self-Rewarding model.
 For the purposes of the following sections, we'll assume your training jsonl file is located in ``/path/to/train_sft_format.jsonl`` and your validation jsonl file is located in ``/path/to/valid_sft_format.jsonl``.
@@ -104,8 +104,8 @@ You can also control which variant of DPO loss is used for training using the ``
                "model.data.train_ds.file_path=${TRAIN_DATA_PATH}" \
                "model.data.validation_ds.file_path=${VALID_DATA_PATH}" \
                exp_manager.create_wandb_logger=false \
-               exp_manager.wandb_logger_kwargs.project=spin_training \
-               exp_manager.wandb_logger_kwargs.name=spin_training \
+               exp_manager.wandb_logger_kwargs.project=self_rewarding_training \
+               exp_manager.wandb_logger_kwargs.name=self_rewarding_training \
                exp_manager.explicit_log_dir=/results \
                ++model.sequence_parallel=false \
                ++model.apply_rope_fusion=false \
@@ -119,7 +119,7 @@ You can also control which variant of DPO loss is used for training using the ``
     .. tab-item:: Slurm
         :sync: key4
 
-         To run SPIN model training with Slurm, use the script below. The script uses 4 nodes, but you can change the node count to something different:
+         To run Self-Rewarding model training with Slurm, use the script below. The script uses 4 nodes, but you can change the node count to something different:
 
          .. code-block:: bash 
 

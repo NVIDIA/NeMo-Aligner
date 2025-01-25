@@ -42,7 +42,7 @@ from nemo_aligner.utils.train_script_utils import (
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
-# crashes with nemotron5 container unless we have this
+# may crash with some containers unless we have this
 try:
     import torch._dynamo
 

@@ -398,11 +398,7 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
         if (
             data_cfg.get("hf_dataset", False)
             and data_cfg.max_seq_length is not None
-            and (isinstance(data_cfg.max_seq_length, int) and data_cfg.max_seq_length > 1)
-            or (
-                isinstance(data_cfg.max_seq_length, (list, ListConfig))
-                and all([x > 1 for x in data_cfg.max_seq_length])
-            )
+            and ((isinstance(data_cfg.max_seq_length, int) and data_cfg.max_seq_length > 1) or (isinstance(data_cfg.max_seq_length, (list, ListConfig)) and all([x > 1 for x in data_cfg.max_seq_length])))
             and num_samples is None
         ):
             dataset_cls = TruncatedGPTSFTChatDataset
