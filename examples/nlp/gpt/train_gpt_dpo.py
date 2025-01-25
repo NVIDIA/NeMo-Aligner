@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import argparse
 from functools import partial
+from threading import local
 
+import nemo_run as run
 import torch.multiprocessing as mp
-from omegaconf.omegaconf import OmegaConf
+from distributed import LocalCluster
 
-from nemo.core.config import hydra_runner
 from nemo.lightning import io
 from nemo.lightning._strategy_lib import set_model_parallel_attributes
 from nemo.utils import logging
@@ -29,8 +29,23 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_dpo_packed_datasets,
     identity_collate,
 )
+
+### nemo2 things
+## TODO: move these elsewhere?
+from nemo_aligner.experimental.run.gpt_dpo import (
+    default_dpo_config,
+    default_dpo_data_config,
+    default_dpo_optimizer,
+    default_dpo_parallelism,
+    default_dpo_trainer,
+    gpt_config_overrides,
+)
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
 from nemo_aligner.utils.distributed import Timer
+from nemo_aligner.utils.nemo2.checkpoint import AlignerCheckpointIO
+from nemo_aligner.utils.nemo2.config_utils import maybe_override
+from nemo_aligner.utils.nemo2.optim import MegatronOptimizer
+from nemo_aligner.utils.nemo2.train_script_utils import setup_distributed
 from nemo_aligner.utils.train_script_utils import (
     CustomLoggerWrapper,
     add_custom_checkpoint_callback,
@@ -43,40 +58,13 @@ from nemo_aligner.utils.train_script_utils import (
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
-### nemo2 things
-## TODO: move these elsewhere?
-from nemo_aligner.experimental.run.gpt_dpo import (
-    default_dpo_config,
-    default_dpo_data_config,
-    default_dpo_optimizer,
-    default_dpo_parallelism,
-    default_dpo_trainer,
-    gpt_config_overrides,
-)
-from nemo_aligner.utils.nemo2.checkpoint import AlignerCheckpointIO
-from nemo_aligner.utils.nemo2.config_utils import maybe_override
-from nemo_aligner.utils.nemo2.optim import MegatronOptimizer
-from nemo_aligner.utils.nemo2.train_script_utils import setup_distributed
-
-OmegaConf.register_new_resolver("multiply", lambda x, y: x * y, replace=True)
-OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
-
 mp.set_start_method("spawn", force=True)
 
-def get_args():
-    parser = argparse.ArgumentParser(prog="", description="")
-    parser.add_argument('--restore-from-path', type=str, required=True, help="Path to the base model to restore")
-    parser.add_argument('--tp', type=int, default=1, help="Tensor parallel size")
-    parser.add_argument('--pp', type=int, default=1, help="Pipeline parallel size")
-    parser.add_argument('--vp', type=int, default=None, help="VPP size")
 
-    return parser.parse_args()
-
-def main() -> None:
-
-    args = get_args()
-
-    restore_from_path = args.restore_from_path
+@run.cli.entrypoint(namespace="align")
+def dpo_train(
+    restore_from_path: str, tp: int = 1, pp: int = 1, vp: int | None = None,
+):
 
     ## load original config, initialize new dpo model, then restore weights from dir
     ## TODO: move this to a helper function?
@@ -91,14 +79,14 @@ def main() -> None:
     gpt_config = maybe_override(gpt_config, gpt_config_overrides())
 
     override_config = default_dpo_parallelism()
-    override_config.tensor_model_parallel_size = args.tp
-    override_config.pipeline_model_parallel_size = args.pp
-    override_config.virtual_pipeline_model_parallel_size = args.vp
+    override_config.tensor_model_parallel_size = tp
+    override_config.pipeline_model_parallel_size = pp
+    override_config.virtual_pipeline_model_parallel_size = vp
 
     parallelism_config = maybe_override(parallelism_config, override_config)
-    
+
     ## assuming we are using the same tokenizer as the base model
-    #tokenizer = io.load_context(restore_from_path, subpath="model.tokenizer")
+    # tokenizer = io.load_context(restore_from_path, subpath="model.tokenizer")
 
     ## set logger and exp manager (TODO)
 
@@ -121,58 +109,46 @@ def main() -> None:
     data_config.data_prefix = {
         "train": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
         "validation": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
-        "test": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"]
+        "test": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
     }
 
     ## intialize distributed
-    #init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
+    # init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
     setup_distributed(
-        parallelism_config,
-        data_config,
+        parallelism_config, data_config,
     )
 
     ## setup optimizer and scheduler
     # TODO: connect this to the model
     opt_cfg, scheduler = default_dpo_optimizer()
-    optimizer = MegatronOptimizer(
-        opt_cfg,
-        lr_scheduler=scheduler,
-    )
+    optimizer = MegatronOptimizer(opt_cfg, lr_scheduler=scheduler,)
 
     ## initialize the model
     model = MegatronGPTDPOModel(
         config=gpt_config,
         dpo_config=default_dpo_config(),
         data_config=data_config,
-        optim=optimizer, ## TODO: where is this used?
+        optim=optimizer,  ## TODO: where is this used?
         tokenizer=tokenizer,
     )
 
     ## make parallelism in model config match parallelism config
     gpt_config = set_model_parallel_attributes(model, parallelism_config)
 
-    model.build_model(
-        virtual_pipeline_model_parallel_size=parallelism_config.virtual_pipeline_model_parallel_size,
-    )
+    model.build_model(virtual_pipeline_model_parallel_size=parallelism_config.virtual_pipeline_model_parallel_size,)
 
     ## TODO: make configurable
-    checkpointer = AlignerCheckpointIO(
-        model,
-        ckpt_load_strictness="log_all",
-    )
+    checkpointer = AlignerCheckpointIO(model, ckpt_load_strictness="log_all",)
 
     ## restore from base checkpoint
     ## do not restore the optimizer states
     checkpointer.load_checkpoint(
-        restore_from_path,
-        load_optim=False,
+        restore_from_path, load_optim=False,
     )
 
     ## TODO: update once we have peft support
-    if True: #cfg.model.peft.peft_scheme == "none":
-        ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
-            model, megatron_amp_O2=False, ## TODO: configure
-        )
+    if True:  # cfg.model.peft.peft_scheme == "none":
+        ref_policy_state_dict = retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=False,)  ## TODO: configure
         model.ref_policy_state_dict = ref_policy_state_dict
 
     # use the entire dataset
@@ -188,16 +164,16 @@ def main() -> None:
         data_impl=data_config.data_impl,
         splits_string=data_config.splits_string,
         train_valid_test_num_samples=train_valid_test_num_samples,
-        seq_length=gpt_config.seq_length, ## TODO: check
-        seed=data_config.seed, ## TODO: check
-        tokenizer=model.tokenizer, ## TODO: tokenizer
+        seq_length=gpt_config.seq_length,  ## TODO: check
+        seed=data_config.seed,  ## TODO: check
+        tokenizer=model.tokenizer,  ## TODO: tokenizer
     )
 
     collate = train_ds.global_collate_fn if data_config.data_impl == "packed_jsonl" else dpo_custom_collate
     train_dataloader = build_dataloader(
         cfg=data_config,
         dataset=train_ds,
-        consumed_samples=0, #consumed_samples, ## TODO: UPDATE
+        consumed_samples=0,  # consumed_samples, ## TODO: UPDATE
         mbs=data_config.micro_batch_size,
         gbs=data_config.global_batch_size,
         load_gbs=True,
@@ -218,13 +194,13 @@ def main() -> None:
     )
 
     ## initialize PTL-related things, call train start hooks
-    #init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
+    # init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
 
     ## log hparams (TODO)
-    #logger.log_hyperparams(OmegaConf.to_container(cfg))
+    # logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     ## set run timer (TODO)
-    #timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
+    # timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
     timer = None
 
     ## initialize DPO trainer
@@ -242,7 +218,7 @@ def main() -> None:
             eod_mask_loss=data_config.eod_mask_loss,
             pad_length_to_multiple_of=data_config.pad_length_to_multiple_of,
         ),
-        logger=None, ## TODO
+        logger=None,  ## TODO
         ckpt=checkpointer,
         run_timer=timer,
     )
@@ -253,6 +229,26 @@ def main() -> None:
 
     dpo_trainer.fit()
 
+    # with run.Experiment("dpo_train", executor=ctx.executor, log_level="WARN") as exp:
+    #    fit = run.Partial(dpo_trainer.fit)
+    #    exp.add(fit, tail_logs=True)
+    #    #exp.run(detach=False)
+    #    ctx.launch(experiment=exp)
+
+
+DEFAULT_ENV_VARS = {
+    "TRANSFORMERS_OFFLINE": "1",
+    "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
+    "NCCL_NVLS_ENABLE": "0",
+    "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
+    "NVTE_ASYNC_AMAX_REDUCTION": "1",
+}
+
+# TODO: signature is incorrect of default_signature. It appears to need to be a config, but typing isn't right
+def local_executor_torchrun(devices: int = 1) -> run.LocalExecutor:
+    # TODO: need mpi one
+    return run.LocalExecutor(ntasks_per_node=devices, launcher="torchrun", env_vars=DEFAULT_ENV_VARS)
+
 
 if __name__ == "__main__":
-    main()
+    run.cli.main(dpo_train, default_executor=local_executor_torchrun())
