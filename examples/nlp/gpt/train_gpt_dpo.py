@@ -154,7 +154,6 @@ def main() -> None:
     model.build_model(
         virtual_pipeline_model_parallel_size=parallelism_config.virtual_pipeline_model_parallel_size,
     )
-    optimizer.setup_optimizer_and_lr_schedule(model)
 
     ## TODO: make configurable
     checkpointer = AlignerCheckpointIO(
@@ -163,7 +162,11 @@ def main() -> None:
     )
 
     ## restore from base checkpoint
-    checkpointer.load_checkpoint(restore_from_path)
+    ## do not restore the optimizer states
+    checkpointer.load_checkpoint(
+        restore_from_path,
+        load_optim=False,
+    )
 
     ## TODO: update once we have peft support
     if True: #cfg.model.peft.peft_scheme == "none":

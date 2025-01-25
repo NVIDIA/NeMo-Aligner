@@ -153,14 +153,9 @@ class MegatronDPOHead(MegatronHead):
             "loss_mask": None,
         }
 
-        # TODO: we can remove this someday when we no longer support legacy models
-        """if not self.mcore_gpt:
-            forward_args["checkpoint_activations_all_layers"] = checkpoint_activations_all_layers
-            if not self.use_loss_mask:
-                forward_args.pop("loss_mask")
-        else:"""
         forward_args.pop("loss_mask")
 
+        cu_seqlens = None
         if "cu_seqlens" in batch:  # packed sequence from DPOPackedDataset
             # these args are passed eventually into TEDotProductAttention.forward()
             cu_seqlens = batch["cu_seqlens"].squeeze()  # remove batch size dimension (mbs=1)
@@ -189,20 +184,32 @@ class MegatronDPOHead(MegatronHead):
             "ref_logprobs": ref_logprobs,
             "gt_rewards": gt_rewards,
             "average_log_probs": self.preference_avg_log_probs,
+            "packed": packed,
+            "cu_seqlens": cu_seqlens,
         }
 
         return StepData(forward_args, loss_args)
     
-    def loss_step(self, output_tensor, labels, ref_logprobs, gt_rewards, average_log_probs):
+    def loss_step(
+        self,
+        output_tensor,
+        validation_step,
+        labels,
+        ref_logprobs,
+        gt_rewards,
+        average_log_probs,
+        packed,
+        cu_seqlens,
+    ):
         per_token_logps = from_parallel_logits_to_logprobs(
             vocab_parallel_logits=output_tensor,
             target=labels,
-            inference_only=False, #validation_step, ## TODO
+            inference_only=validation_step,
             higher_stability=True,
-            ignore_last=True, #not packed, ## TODO
+            ignore_last=not packed,
         )
 
-        if True: #not packed: ## TODO: packing support
+        if not packed:
             labels_for_loss = labels[:, 1:]
         else:
             labels_for_loss = labels
@@ -212,7 +219,7 @@ class MegatronDPOHead(MegatronHead):
             ref_logprobs,
             labels_for_loss,
             gt_rewards,
-            None, #cu_seqlens, ## TODO: packing
+            cu_seqlens,
             average_log_probs=self.preference_avg_log_probs,
         )
 

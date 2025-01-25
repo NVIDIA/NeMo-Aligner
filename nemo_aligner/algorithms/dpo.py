@@ -125,7 +125,7 @@ class DPOTrainer:
     def __init__(
         self,
         model,
-        optimizer, ## unused for now
+        optimizer,
         train_dataloader,
         val_dataloader,
         test_dataloader,
@@ -156,25 +156,7 @@ class DPOTrainer:
         self.max_epochs = max_epochs
         self.save_interval = save_interval
 
-        ## TODO: make this configurable
-        opt_cfg = OptimizerConfig(
-            optimizer='adam',
-            lr=0.0004,
-            min_lr=0.00004,
-            fp16=True,
-            use_distributed_optimizer=True,
-            clip_grad=1.0,
-        )
-
-        scheduler = CosineAnnealingScheduler(
-            max_steps=5,
-        )
-
-        self.optimizer = MegatronOptimizer(
-            opt_cfg,
-            lr_scheduler=scheduler,
-        )
-
+        self.optimizer = optimizer
         self.optimizer.setup_optimizer_and_lr_schedule(self.model)
 
         # this timer checks if we should stop training

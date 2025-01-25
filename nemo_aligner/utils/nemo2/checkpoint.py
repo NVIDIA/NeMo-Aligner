@@ -21,7 +21,6 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
         parallel_save: bool = True,
         parallel_save_within_dp: bool = False,
         parallel_load: bool = False,
-        ckpt_load_optimizer: bool = True,
         ckpt_load_strictness: Optional['StrictHandling'] = None,
     ):
         super().__init__(
@@ -36,7 +35,6 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
         )
 
         self.model = model
-        self.ckpt_load_optimizer = ckpt_load_optimizer
         self.ckpt_load_strictness = ckpt_load_strictness
 
     ## modified version of https://github.com/NVIDIA/NeMo/blob/main/nemo/lightning/pytorch/strategies/megatron_strategy.py#L724
@@ -79,6 +77,7 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
     def load_checkpoint(
         self,
         checkpoint_path,
+        load_optim=True,
         #selective_restore = False
     ): ## TODO: selective_restore. Not needed right now
         torch.cuda.empty_cache()
@@ -88,7 +87,7 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
         sharded_state_dict["state_dict"] = self.model.sharded_state_dict()
 
         if (
-            self.ckpt_load_optimizer
+            load_optim
             #and self.trainer.state.fn == TrainerFn.FITTING
         ):
             #if self.lightning_module.optimizers(use_pl_optimizer=False): ## TODO: replace lightning_module?
@@ -96,12 +95,12 @@ class AlignerCheckpointIO(MegatronCheckpointIO):
             
             ## TODO: get this to work for us
             ## how do we load the lr scheduler?
-            """sharded_state_dict["optimizer"] = [_strategy_lib.optimizer_sharded_state_dict(
-                    self.model,
-                    self.model.optim.optimizer,
-                    is_loading=True,
-                    #sharding_type = "fully_sharded_model_space" if self.parallel_save_optim else "dp_zero_gather_scatter"
-                )]"""
+            sharded_state_dict["optimizer"] = [_strategy_lib.optimizer_sharded_state_dict(
+                self.model,
+                self.model.optim.optimizer,
+                is_loading=True,
+                #sharding_type = "fully_sharded_model_space" if self.parallel_save_optim else "dp_zero_gather_scatter"
+            )]
 
         strict = self.ckpt_load_strictness
         checkpoint = super().load_checkpoint(

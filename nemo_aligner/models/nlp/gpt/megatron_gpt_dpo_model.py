@@ -45,6 +45,7 @@ from nemo_aligner.models.alignable_interface import SupervisedInterface
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor, from_parallel_logits_to_logprobs
 from nemo_aligner.utils.train_utils import (
+    _init_te_userbuffers,
     finish_validation_step,
     grad_reductions,
     prepare_for_training_step,
@@ -121,6 +122,8 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
 
         ## TODO
         self.rampup_batch_size = None
+
+        self.need_tp_overlap_ub_init = self.config.tp_comm_overlap
 
     ## TODO: remove this once we switch to Marc's APIs
     def build_model(
@@ -254,11 +257,10 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
                 return {"logprobs": logprobs}
 
             def loss_func(output_tensor):
-                ## TODO: handle this
-                """if validation_step and not self.cfg.data.get("validation_drop_last", True):
-                    raise NotImplementedError("DPO does not support validation when cfg.data.drop_last=False")"""
+                if validation_step and not self.data_config.validation_drop_last:
+                    raise NotImplementedError("DPO does not support validation when cfg.data.drop_last=False")
 
-                return self.head.loss_step(output_tensor, **loss_args)
+                return self.head.loss_step(output_tensor, validation_step, **loss_args)
 
             if logprobs_only:
                 return output_tensor, logprobs_func
@@ -276,7 +278,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
 
         data_iter = get_iterator_k_split(batch, get_num_microbatches())
         
-        ## TODO
+        ## TODO: is this needed in nemo2?
         #set_sync_funcs(self, forward_only)
 
         fwd_bwd_function = get_forward_backward_func()
@@ -310,6 +312,10 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
         return self.head.loss_reduce(losses_reduced_per_micro_batch)
 
     def prepare_for_training_step(self):
+        if self.need_tp_overlap_ub_init:
+            _init_te_userbuffers(self.model.config)
+            self.need_tp_overlap_ub_init = False
+
         # custom trainers will always zero grad for us
         prepare_for_training_step(self, zero_grad=False)
 
@@ -319,6 +325,9 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
         #grad_reductions(self)
 
     def prepare_for_validation_step(self):
+        if self.need_tp_overlap_ub_init:
+            _init_te_userbuffers(self.model.config)
+            self.need_tp_overlap_ub_init = False
         prepare_for_validation_step(self)
 
     def finish_validation_step(self):
@@ -347,7 +356,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
 
         data_iter = get_iterator_k_split(batch, num_microbatches)
         
-        ## TODO: fix this function!!
+        ## TODO: is this needed in nemo2?
         #set_sync_funcs(self, forward_only=True)
 
         fwd_bwd_function = get_forward_backward_func()
@@ -397,7 +406,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
                 # With adapters disabled (meaning using the reference model), calculate ref_log_probs
                 ref_log_probs = self.get_logprob_batch(batch)
         else:
-            with cpu_weight_swap(self, self.ref_policy_state_dict, False): #megatron_amp_O2=self.megatron_amp_O2):
+            with cpu_weight_swap(self, self.ref_policy_state_dict, False): #megatron_amp_O2=self.megatron_amp_O2): ## TODO: megatron_amp_O2?
                 ref_log_probs = self.get_logprob_batch(batch)
 
         # return in GPU, trainer needs to move to cpu

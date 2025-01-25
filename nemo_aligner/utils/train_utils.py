@@ -17,6 +17,7 @@ mostly adapted from https://github.com/NVIDIA/NeMo/blob/8c061debd05837148e86fac1
 """
 from functools import partial
 
+from megatron.core import ModelParallelConfig
 from megatron.core.distributed import finalize_model_grads
 from megatron.core.num_microbatches_calculator import get_current_global_batch_size
 from megatron.core.transformer.module import Float16Module as MCoreFloat16Module
@@ -34,27 +35,27 @@ def set_sync_funcs(ptl_model, forward_only):
     no_sync_func = None
     grad_sync_func = None
     param_sync_func = None
-    if ptl_model.with_distributed_adam:
-        if forward_only:
-            if ptl_model.validation_param_sync_overlap:
-                param_sync_func = ptl_model.sync_overlap_parameters
-        elif not ptl_model.use_mcore_dist_optim:
-            no_sync_func = partial(ptl_model._optimizer.no_sync, greedy_grad_copy=ptl_model.megatron_amp_O2,)
-            grad_sync_func = ptl_model.reduce_overlap_gradients
+    #if ptl_model.with_distributed_adam: ## always true now
+    if forward_only:
+        if ptl_model.validation_param_sync_overlap:
             param_sync_func = ptl_model.sync_overlap_parameters
-        else:
-            if ptl_model.cfg.optim.get("overlap_grad_sync", False):
-                no_sync_func = [model_chunk.no_sync for model_chunk in ptl_model.model]
-                no_sync_func = no_sync_func[0] if len(ptl_model.model) == 1 else no_sync_func
+    elif not ptl_model.use_mcore_dist_optim:
+        no_sync_func = partial(ptl_model._optimizer.no_sync, greedy_grad_copy=ptl_model.megatron_amp_O2,)
+        grad_sync_func = ptl_model.reduce_overlap_gradients
+        param_sync_func = ptl_model.sync_overlap_parameters
+    else:
+        if ptl_model.cfg.optim.get("overlap_grad_sync", False):
+            no_sync_func = [model_chunk.no_sync for model_chunk in ptl_model.model]
+            no_sync_func = no_sync_func[0] if len(ptl_model.model) == 1 else no_sync_func
 
-                if ptl_model.cfg.optim.get("align_grad_reduce", True):
-                    grad_sync_func = [model_chunk.start_grad_sync for model_chunk in ptl_model.model]
-                    grad_sync_func = grad_sync_func[0] if len(ptl_model.model) == 1 else grad_sync_func
-            if ptl_model.cfg.optim.get("overlap_param_sync", False) and ptl_model.cfg.optim.get(
-                "align_param_gather", False
-            ):
-                param_sync_func = [model_chunk.start_param_sync for model_chunk in ptl_model.model]
-                param_sync_func = param_sync_func[0] if len(ptl_model.model) == 1 else param_sync_func
+            if ptl_model.cfg.optim.get("align_grad_reduce", True):
+                grad_sync_func = [model_chunk.start_grad_sync for model_chunk in ptl_model.model]
+                grad_sync_func = grad_sync_func[0] if len(ptl_model.model) == 1 else grad_sync_func
+        if ptl_model.cfg.optim.get("overlap_param_sync", False) and ptl_model.cfg.optim.get(
+            "align_param_gather", False
+        ):
+            param_sync_func = [model_chunk.start_param_sync for model_chunk in ptl_model.model]
+            param_sync_func = param_sync_func[0] if len(ptl_model.model) == 1 else param_sync_func
 
     # pipeline schedules will get these from self.model.config
     for module in ptl_model.get_model_module_list():
@@ -65,12 +66,41 @@ def set_sync_funcs(ptl_model, forward_only):
             module.config.finalize_model_grads_func = finalize_model_grads
 
 
+def _init_te_userbuffers(model_parallel_cfg: ModelParallelConfig):
+    from megatron.core import parallel_state
+
+    if self.tp_comm_overlap_cfg is None:
+        logging.warning(
+            "Tensor parallel overlap: No overlap config provided. Initializing TP comm overlap with the default config."
+        )
+    else:
+        # ub_cfgs is a dataclass, however TE needs a dict, so convert here
+        self.tp_comm_overlap_cfg = asdict(self.tp_comm_overlap_cfg)
+
+    micro_batch_size = get_micro_batch_size()
+    hidden_size = model_parallel_cfg.hidden_size
+    sequence_length = model_parallel_cfg.seq_length
+    fp8 = model_parallel_cfg.fp8 is not None
+
+    input_shape = [
+        sequence_length * micro_batch_size // parallel_state.get_context_parallel_world_size(),
+        hidden_size,
+    ]
+
+    try:
+        transformer_engine.pytorch.module.base.initialize_ub(
+            shape=input_shape,
+            tp_size=parallel_state.get_tensor_model_parallel_world_size(),
+            use_fp8=fp8,
+            ub_cfgs=self.tp_comm_overlap_cfg,
+            bootstrap_backend=self.tp_comm_bootstrap_backend,
+        )
+    except Exception as error:
+        raise Exception(f"Tensor parallel overlap: userbuffer initialization failed with {error}")
+
 def prepare_for_training_step(ptl_model, zero_grad=True):
+
     set_train(ptl_model)
-    # Initialize userbuffer communicators.
-    ## TODO
-    #if ptl_model.initialize_ub:
-    #    ptl_model.initialize_ub_func()
 
     if ptl_model.rampup_batch_size:
         current_global_batch_size = get_current_global_batch_size()
@@ -82,26 +112,25 @@ def prepare_for_training_step(ptl_model, zero_grad=True):
         # we zero grads here because we also call backward in the megatron-core fwd/bwd functions
         ptl_model._optimizer.zero_grad()
 
-    if True: #ptl_model.with_distributed_adam: ## TODO
-        # hack to enable overlapping param sync and forward compute
-        # note: the distributed optimizer monkey-patches each
-        # parameter's __getattribute__ function so that it can
-        # launch parameter all-gathers the first time the
-        # parameter is accessed after the optimizer step. However,
-        # PyTorch directly passes embedding parameters into a C++,
-        # bypassing this process. A quick-and-dirty hack is to
-        # manually interact with the parameter.
-        modules = ptl_model.model if isinstance(ptl_model.model, list) else [ptl_model.model]
-        for module in modules:
-            if isinstance(module, (Float16Module, MCoreFloat16Module)):
-                module = module.module
-            if False: #not ptl_model.mcore_gpt: ## TODO
-                module = module.language_model
-            if hasattr(module, "embedding"):
-                for param in module.embedding.parameters():
-                    param.data_ptr()
+    # ptl_model.with_distributed_adam: ## always true now
+    # hack to enable overlapping param sync and forward compute
+    # note: the distributed optimizer monkey-patches each
+    # parameter's __getattribute__ function so that it can
+    # launch parameter all-gathers the first time the
+    # parameter is accessed after the optimizer step. However,
+    # PyTorch directly passes embedding parameters into a C++,
+    # bypassing this process. A quick-and-dirty hack is to
+    # manually interact with the parameter.
+    modules = ptl_model.model if isinstance(ptl_model.model, list) else [ptl_model.model]
+    for module in modules:
+        if isinstance(module, (Float16Module, MCoreFloat16Module)):
+            module = module.module
+        if hasattr(module, "embedding"):
+            for param in module.embedding.parameters():
+                param.data_ptr()
 
 
+## TODO: remove. No longer needed with nemo2 migration
 # TODO: Delete this once API introduced in NeMo (https://github.com/NVIDIA/NeMo/pull/10803)
 # TODO: Update PR to move this logic into staticmethod in nemo/collections/nlp/models/language_modeling/megatron_gpt_model.py
 def grad_reductions(ptl_model):
@@ -151,9 +180,6 @@ def grad_reductions(ptl_model):
 
 
 def prepare_for_validation_step(ptl_model):
-    if ptl_model.initialize_ub:
-        ptl_model.initialize_ub_func()
-
     set_eval(ptl_model)
 
 
@@ -177,6 +203,8 @@ def set_eval(ptl_model):
         ptl_model.eval()
 
 
+## TODO: remove. This should no longer be needed since 
+## grad clipping is handled in Megatron
 # TODO: adapt the version in /opt/NeMo/nemo/collections/nlp/models/language_modeling/megatron_base_model.py
 def clip_gradients(ptl_model, clip_val):
     """PTL hook to configure gradients.
