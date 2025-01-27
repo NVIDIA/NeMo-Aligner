@@ -1,6 +1,6 @@
 .. include:: /content/nemo.rsts
 
-.. _model-aligner-reinforce:
+.. _nemo-aligner-reinforce:
 
 Model Alignment by REINFORCE
 @@@@@@@@@@@@@@@@@@@@@@@@@@@@
