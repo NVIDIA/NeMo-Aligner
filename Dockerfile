@@ -107,6 +107,11 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     pip install -e ".[nlp]" && \
     cd nemo/collections/nlp/data/language_modeling/megatron && make
 
+# TODO: While we are on Pytorch 24.07, we need to downgrade triton since 3.2.0 introduced a breaking change
+#   This un-pinned requirement comes from mamba-ssm, and this pin can be removed once Pytorch base image is
+#   updated.
+RUN pip install triton==3.1.0
+
 # MLM
 ARG MLM_TAG
 RUN pip uninstall -y megatron-core && \
