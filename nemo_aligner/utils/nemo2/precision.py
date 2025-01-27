@@ -5,22 +5,8 @@ import torch
 from torch.nn import Module
 from torch.optim import Optimizer
 
-from nemo.lightning.pytorch.plugins.mixed_precision import DtypeConfig
+from nemo.lightning.pytorch.plugins.mixed_precision import DtypeConfig, get_optim_config
 from nemo.utils import logging
-
-## TODO: why doesn't our optimizer have a mcore_optimizer attribute?
-def get_optim_config(optimizer: Optimizer):
-    extract_config = lambda x: x.config
-    #try:
-    from megatron.core.optimizer import ChainedOptimizer
-
-    if isinstance(optimizer, ChainedOptimizer):
-        opts = optimizer.chained_optimizers
-    else:
-        opts = [optimizer]
-    yield from map(extract_config, opts)
-    #except:
-    #    raise ValueError("Failed to extract optimizer config from module.")
 
 ## modified version of https://github.com/NVIDIA/NeMo/blob/6d90758fa36c1c0d4383d67c44785ac227990a4b/nemo/lightning/pytorch/plugins/mixed_precision.py
 ## without PTL dependency
@@ -120,7 +106,7 @@ class MegatronMixedPrecision:
         This is optional and depends on the precision limitations during optimization.
 
         """
-        for optim_config in get_optim_config(optimizer):
+        for optim_config in get_optim_config(optimizer.optimizer):
             assert optim_config.bf16 == self.dtype_config.bf16, "BF16 model/optim config mismatch"
             assert optim_config.fp16 == self.dtype_config.fp16, "FP16 model/optim config mismatch"
 
