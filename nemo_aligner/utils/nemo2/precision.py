@@ -11,7 +11,6 @@ from nemo.utils import logging
 ## TODO: why doesn't our optimizer have a mcore_optimizer attribute?
 def get_optim_config(optimizer: Optimizer):
     extract_config = lambda x: x.config
-    print(f'{optimizer=}')
     #try:
     from megatron.core.optimizer import ChainedOptimizer
 
