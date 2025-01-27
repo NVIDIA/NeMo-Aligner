@@ -28,6 +28,7 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_dpo_packed_datasets,
     identity_collate,
 )
+from nemo_aligner.data.nlp.config import DPODataConfig
 
 ### nemo2 things
 ## TODO: move these elsewhere?
@@ -58,7 +59,9 @@ from nemo_aligner.utils.train_script_utils import (
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
 
-def dpo_loop(restore_from_path: str, tp: int = 1, pp: int = 1, vp: int | None = None,) -> str:
+def dpo_loop(
+    restore_from_path: str, data_config: DPODataConfig, tp: int = 1, pp: int = 1, vp: int | None = None,
+) -> str:
     mp.set_start_method("spawn", force=True)
 
     ## load original config, initialize new dpo model, then restore weights from dir
@@ -98,14 +101,13 @@ def dpo_loop(restore_from_path: str, tp: int = 1, pp: int = 1, vp: int | None = 
         custom_trainer_state_dict = None
         consumed_samples = 0"""
 
-    data_config = default_dpo_data_config()
-
+    # NOTE(terry): moved to test_dpo.sh
     ## hard-code data prefixes for now
-    data_config.data_prefix = {
-        "train": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
-        "validation": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
-        "test": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
-    }
+    # data_config.data_prefix = {
+    #    "train": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
+    #    "validation": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
+    #    "test": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
+    # }
 
     ## intialize distributed
     # init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
