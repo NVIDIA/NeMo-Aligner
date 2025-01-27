@@ -240,8 +240,7 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
             # in this nemo version the model and autocast dtypes are not synced
             # so we need to explicitly cast it
             if not parallel_state.is_pipeline_last_stage():
-                ## TODO: support different precisions
-                output_tensor = output_tensor.to(dtype=torch.float32)
+                output_tensor = output_tensor.to(dtype=self.config.autocast_dtype)
 
             def logprobs_func(output_tensor, non_loss_data=True):
                 # This function is expected to be used only when `collect_non_loss_data=True` in the fwd_bwd_function of Megatron-LM.

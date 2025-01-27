@@ -16,6 +16,8 @@ import functools
 from dataclasses import dataclass
 from typing import Optional
 
+import torch
+
 import nemo_run as run
 from megatron.core.optimizer import OptimizerConfig
 
@@ -24,7 +26,7 @@ from nemo_aligner.data.nlp.config import DPODataConfig
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import DPOConfig
 from nemo_aligner.utils.nemo2.config_utils import GPTConfigOverrides, ParallelismOverrides
 from nemo_aligner.utils.nemo2.optim import CosineAnnealingScheduler, MegatronOptimizer
-
+from nemo_aligner.utils.nemo2.precision import MegatronMixedPrecision
 
 @run.cli.factory
 def default_dpo_config() -> run.Config[DPOConfig]:
@@ -76,7 +78,6 @@ def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
         lr_scheduler=run.Config(CosineAnnealingScheduler, max_steps=5, min_lr=1e-6,),
     )
 
-
 @run.cli.factory
 def default_dpo_data_config() -> run.Config[DPODataConfig]:
     return run.Config(DPODataConfig, data_prefix="test", micro_batch_size=4, global_batch_size=32,)
@@ -93,4 +94,13 @@ def default_dpo_trainer():
         save_interval=100,
         limit_train_batches=1.0,
         max_steps=-1,
+        #precision=run.Config(
+        #    MegatronMixedPrecision,
+        #    precision="bf16-mixed",
+        #    params_dtype=torch.bfloat16,
+        #),
+        precision=MegatronMixedPrecision(
+            precision="bf16-mixed",
+            params_dtype=torch.bfloat16,
+        )
     )

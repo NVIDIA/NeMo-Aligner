@@ -140,6 +140,7 @@ class DPOTrainer:
         save_interval,
         limit_train_batches=1.0,
         max_steps=-1,
+        precision=None,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -155,6 +156,7 @@ class DPOTrainer:
         self.gradient_clip_val = gradient_clip_val
         self.max_epochs = max_epochs
         self.save_interval = save_interval
+        self.precision = precision
 
         self.optimizer = optimizer
         self.optimizer.setup_optimizer_and_lr_schedule(self.model)
@@ -183,6 +185,13 @@ class DPOTrainer:
         self.timer = SyncTimer(
             reduction="mean", sync_cuda=True, buffer_size=1, reduce_op=torch.distributed.ReduceOp.MAX
         )
+
+        ## TODO: is this a good place to put this?
+        ## model should have already been built
+        if self.precision is not None:
+            self.model.model[0] = self.precision.convert_module(self.model.model[0])
+            self.precision.verify_dtype(self.optimizer)
+            self.model.config = self.precision.update_config_with_dtype_overrides(self.model.config)
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper
