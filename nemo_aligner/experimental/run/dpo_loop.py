@@ -16,7 +16,6 @@ from threading import local
 
 import nemo_run as run
 import torch.multiprocessing as mp
-from distributed import LocalCluster
 
 from nemo.lightning import io
 from nemo.lightning._strategy_lib import set_model_parallel_attributes
@@ -58,13 +57,9 @@ from nemo_aligner.utils.train_script_utils import (
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo, retrieve_model_state_dict_in_cpu
 
-mp.set_start_method("spawn", force=True)
 
-
-@run.cli.entrypoint(namespace="align")
-def dpo_train(
-    restore_from_path: str, tp: int = 1, pp: int = 1, vp: int | None = None,
-):
+def dpo_loop(restore_from_path: str, tp: int = 1, pp: int = 1, vp: int | None = None,) -> str:
+    mp.set_start_method("spawn", force=True)
 
     ## load original config, initialize new dpo model, then restore weights from dir
     ## TODO: move this to a helper function?
@@ -229,26 +224,4 @@ def dpo_train(
 
     dpo_trainer.fit()
 
-    # with run.Experiment("dpo_train", executor=ctx.executor, log_level="WARN") as exp:
-    #    fit = run.Partial(dpo_trainer.fit)
-    #    exp.add(fit, tail_logs=True)
-    #    #exp.run(detach=False)
-    #    ctx.launch(experiment=exp)
-
-
-DEFAULT_ENV_VARS = {
-    "TRANSFORMERS_OFFLINE": "1",
-    "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
-    "NCCL_NVLS_ENABLE": "0",
-    "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
-    "NVTE_ASYNC_AMAX_REDUCTION": "1",
-}
-
-# TODO: signature is incorrect of default_signature. It appears to need to be a config, but typing isn't right
-def local_executor_torchrun(devices: int = 1) -> run.LocalExecutor:
-    # TODO: need mpi one
-    return run.LocalExecutor(ntasks_per_node=devices, launcher="torchrun", env_vars=DEFAULT_ENV_VARS)
-
-
-if __name__ == "__main__":
-    run.cli.main(dpo_train, default_executor=local_executor_torchrun())
+    return "TODO: return path"
