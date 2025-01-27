@@ -34,8 +34,6 @@ from nemo_aligner.data.nlp.config import DPODataConfig
 ## TODO: move these elsewhere?
 from nemo_aligner.experimental.run.gpt_dpo import (
     default_dpo_config,
-    default_dpo_data_config,
-    default_dpo_optimizer,
     default_dpo_parallelism,
     default_dpo_trainer,
     gpt_config_overrides,
@@ -60,7 +58,13 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 
 
 def dpo_loop(
-    restore_from_path: str, data_config: DPODataConfig, tp: int = 1, pp: int = 1, vp: int | None = None,
+    #
+    restore_from_path: str,
+    data_config: DPODataConfig,
+    optimizer: MegatronOptimizer,
+    tp: int = 1,
+    pp: int = 1,
+    vp: int | None = None,
 ) -> str:
     mp.set_start_method("spawn", force=True)
 
@@ -117,8 +121,8 @@ def dpo_loop(
 
     ## setup optimizer and scheduler
     # TODO: connect this to the model
-    opt_cfg, scheduler = default_dpo_optimizer()
-    optimizer = MegatronOptimizer(opt_cfg, lr_scheduler=scheduler,)
+    # opt_cfg, scheduler = default_dpo_optimizer()
+    # optimizer = MegatronOptimizer(opt_cfg, lr_scheduler=scheduler,)
 
     ## initialize the model
     model = MegatronGPTDPOModel(

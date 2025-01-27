@@ -14,6 +14,7 @@
 
 import inspect
 from abc import abstractmethod
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from megatron.core.distributed import finalize_model_grads
@@ -21,10 +22,10 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.utils import get_model_config
 
 from nemo.core.optim.lr_scheduler import CosineAnnealing
-from nemo.lightning._strategy_lib import setup_megatron_optimizer
+from nemo.lightning._strategy_lib import setup_megatron_optimizer  # TODO: need this import?
+
 
 class LRScheduler:
-    
     @abstractmethod
     def init_scheduler(self, model, optimizers):
         """Abstract method to define the learning rate scheduler.
@@ -38,8 +39,7 @@ class LRScheduler:
         """
         raise NotImplementedError("The scheduler method should be implemented by subclasses.")
 
-
-    def __call__(self, model, optimizer): ## maybe rename this to setup? 
+    def __call__(self, model, optimizer):  ## maybe rename this to setup?
 
         """self.connect(model, optimizers)
 
@@ -51,6 +51,7 @@ class LRScheduler:
         return self._scheduler"""
 
         return self.init_scheduler(model, optimizer)
+
 
 ## copied from nemo
 class CosineAnnealingScheduler(LRScheduler):
@@ -104,7 +105,8 @@ class CosineAnnealingScheduler(LRScheduler):
         }"""
         return lr_scheduler
 
-## copied from https://github.com/NVIDIA/NeMo/blob/main/nemo/lightning/_strategy_lib.py#L600, 
+
+## copied from https://github.com/NVIDIA/NeMo/blob/main/nemo/lightning/_strategy_lib.py#L600,
 ## with some minor modifications to remove the dep on strategy
 def setup_megatron_optimizer(
     model,
@@ -125,7 +127,7 @@ def setup_megatron_optimizer(
             model_sharded_state_dict,
             optimizer_state_dict=None,
             is_loading=False,
-            sharding_type='fully_sharded_model_space',
+            sharding_type="fully_sharded_model_space",
         ):
             mcore_optimizer_sig = inspect.signature(self.mcore_optimizer.sharded_state_dict).parameters
             distrib_optim_kwargs = {}
@@ -138,13 +140,9 @@ def setup_megatron_optimizer(
 
     # TODO: update once we migrate to nemo2
     ddp_modules = model
-    #ddp_modules = [m.module for m in model]
+    # ddp_modules = [m.module for m in model]
     mcore_opt = get_megatron_optimizer(
-        config,
-        ddp_modules,
-        no_weight_decay_cond=no_weight_decay_cond,
-        scale_lr_cond=scale_lr_cond,
-        lr_mult=lr_mult,
+        config, ddp_modules, no_weight_decay_cond=no_weight_decay_cond, scale_lr_cond=scale_lr_cond, lr_mult=lr_mult,
     )
 
     """if getattr(model.ddp_config, "overlap_param_gather", False) and getattr(
@@ -157,24 +155,20 @@ def setup_megatron_optimizer(
 
     return McoreOpt(mcore_opt)
 
-class MegatronOptimizer:
-    def __init__(
-        self,
-        config: OptimizerConfig,
-        lr_scheduler: Optional[LRScheduler] = None, ## TODO: type hint
-        no_weight_decay_cond: Optional[Callable] = None,
-        scale_lr_cond: Optional[Callable] = None,
-        lr_mult: float = 1.0,
-    ):
-        self.config = config
-        self.lr_scheduler = lr_scheduler
-        self.no_weight_decay_cond = no_weight_decay_cond
-        self.scale_lr_cond = scale_lr_cond
-        self.lr_mult = lr_mult
 
+@dataclass
+class MegatronOptimizer:
+    config: OptimizerConfig
+    lr_scheduler: Optional[LRScheduler] = None  ## TODO: type hint
+    no_weight_decay_cond: Optional[Callable] = None
+    scale_lr_cond: Optional[Callable] = None
+    lr_mult: float = 1.0
+
+    def __post_init__(self):
         ## add finalize_model_grads func to config
         ## todo: make sure the args passed to this function are correct
-        #self.config.finalize_model_grads_func = finalize_model_grads
+        # self.config.finalize_model_grads_func = finalize_model_grads
+        pass
 
     def connect(self, model):
         model.optim = self
@@ -184,9 +178,9 @@ class MegatronOptimizer:
                 model.__io__.optim = deepcopy(self.__io__)"""
 
     def setup_optimizer_and_lr_schedule(self, model):
-        
+
         ## TODO: change this when we migrate from nemo1
-        #get_model_config(model).finalize_model_grads_func = finalize_model_grads
+        # get_model_config(model).finalize_model_grads_func = finalize_model_grads
         get_model_config(model.model[0]).finalize_model_grads_func = finalize_model_grads
 
         self.optimizer = setup_megatron_optimizer(
@@ -200,8 +194,7 @@ class MegatronOptimizer:
         self.scheduler = None
         if self.lr_scheduler is not None:
             self.scheduler = self.lr_scheduler(model, self.optimizer)
-        
-    
+
     def step(self):
         assert hasattr(self, "optimizer"), "make sure to call setup_optimizer_and_lr_schedule first"
 

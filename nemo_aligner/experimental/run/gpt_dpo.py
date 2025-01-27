@@ -26,8 +26,10 @@ from nemo_aligner.utils.nemo2.config_utils import GPTConfigOverrides, Parallelis
 from nemo_aligner.utils.nemo2.optim import CosineAnnealingScheduler, MegatronOptimizer
 
 
-def default_dpo_config():
-    return DPOConfig(
+@run.cli.factory
+def default_dpo_config() -> run.Config[DPOConfig]:
+    return run.Config(
+        DPOConfig,
         ref_policy_kl_penalty=0.2,
         preference_avg_log_probs=False,
         gt_reward_scale=1.0,
@@ -53,19 +55,26 @@ def default_dpo_parallelism():
 ## overlap_grad_sync
 ## contiguous_grad_buffer
 ## ** scheduler **
-def default_dpo_optimizer():
-    opt_cfg = OptimizerConfig(
-        optimizer="adam",
-        lr=9e-6,
-        weight_decay=0.1,
-        bf16=True,
-        adam_beta1=0.9,
-        adam_beta2=0.98,
-        use_distributed_optimizer=True,
-        # clip_grad=clip_grad,
+@run.cli.factory
+def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
+    ## setup optimizer and scheduler
+    # TODO: connect this to the model
+    # opt_cfg, scheduler = default_dpo_optimizer()
+    # optimizer = MegatronOptimizer(opt_cfg, lr_scheduler=scheduler,)
+    return run.Config(
+        MegatronOptimizer,
+        config=run.Config(
+            OptimizerConfig,
+            optimizer="adam",
+            lr=9e-6,
+            weight_decay=0.1,
+            bf16=True,
+            adam_beta1=0.9,
+            adam_beta2=0.98,
+            use_distributed_optimizer=True,
+        ),
+        lr_scheduler=run.Config(CosineAnnealingScheduler, max_steps=5, min_lr=1e-6,),
     )
-    scheduler = CosineAnnealingScheduler(max_steps=5, min_lr=1e-6,)
-    return opt_cfg, scheduler
 
 
 @run.cli.factory
