@@ -60,9 +60,6 @@ def default_dpo_parallelism():
 @run.cli.factory
 def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
     ## setup optimizer and scheduler
-    # TODO: connect this to the model
-    # opt_cfg, scheduler = default_dpo_optimizer()
-    # optimizer = MegatronOptimizer(opt_cfg, lr_scheduler=scheduler,)
     return run.Config(
         MegatronOptimizer,
         config=run.Config(
@@ -75,7 +72,14 @@ def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
             adam_beta2=0.98,
             use_distributed_optimizer=True,
         ),
-        lr_scheduler=run.Config(CosineAnnealingScheduler, max_steps=5, min_lr=1e-6,),
+        ## TODO: bucket_cap_mb
+        lr_scheduler=run.Config(
+            CosineAnnealingScheduler,
+            warmup_steps=10,
+            constant_steps=1000,
+            max_steps=10000, ## TODO: make this match trainer.max_steps
+            min_lr=9e-7,
+        ),
     )
 
 @run.cli.factory
