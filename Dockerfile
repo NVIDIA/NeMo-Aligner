@@ -126,7 +126,7 @@ RUN pip uninstall -y megatron-core && \
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
-    pip install --no-deps -e .
+    bash reinstall.sh
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
