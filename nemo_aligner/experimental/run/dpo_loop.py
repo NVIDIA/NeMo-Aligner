@@ -69,6 +69,9 @@ def dpo_loop(
 ) -> str:
     mp.set_start_method("spawn", force=True)
 
+    #################
+    # MODEL RESTORE #
+    #################
     ## load original config, initialize new dpo model, then restore weights from dir
     ## TODO: move this to a helper function?
     ## get this working. Getting serialization error right now
@@ -91,8 +94,14 @@ def dpo_loop(
     ## assuming we are using the same tokenizer as the base model
     # tokenizer = io.load_context(restore_from_path, subpath="model.tokenizer")
 
+    ################
+    # LOGGER SETUP #
+    ################
     logger = CustomLoggerWrapper([wandb_logger()])
 
+    #############
+    # INIT PEFT #
+    #############
     ## init peft (TODO)
 
     # pull values from checkpoint (??)
@@ -106,14 +115,9 @@ def dpo_loop(
         custom_trainer_state_dict = None
         consumed_samples = 0"""
 
-    # NOTE(terry): moved to test_dpo.sh
-    ## hard-code data prefixes for now
-    # data_config.data_prefix = {
-    #    "train": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
-    #    "validation": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
-    #    "test": ["/opt/NeMo-Aligner/tests/functional/test_data/dummy-dpo.jsonl"],
-    # }
-
+    ####################
+    # INIT DISTRIBUTED #
+    ####################
     ## intialize distributed
     # init_distributed(trainer, ptl_model, cfg.model.get("transformer_engine", False))
     setup_distributed(
@@ -125,12 +129,11 @@ def dpo_loop(
     # opt_cfg, scheduler = default_dpo_optimizer()
     # optimizer = MegatronOptimizer(opt_cfg, lr_scheduler=scheduler,)
 
-    ## initialize the model
+    ##############
+    # INIT MODEL #
+    ##############
     model = MegatronGPTDPOModel(
-        config=gpt_config,
-        dpo_config=default_dpo_config(),
-        data_config=data_config,
-        tokenizer=tokenizer,
+        config=gpt_config, dpo_config=default_dpo_config(), data_config=data_config, tokenizer=tokenizer,
     )
 
     ## make parallelism in model config match parallelism config
@@ -138,6 +141,9 @@ def dpo_loop(
 
     model.build_model(virtual_pipeline_model_parallel_size=parallelism_config.virtual_pipeline_model_parallel_size,)
 
+    #####################
+    # INIT CHECKPOINTER #
+    #####################
     ## TODO: make configurable
     checkpointer = AlignerCheckpointIO(model, ckpt_load_strictness="log_all",)
 
@@ -152,6 +158,9 @@ def dpo_loop(
         ref_policy_state_dict = retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=False,)  ## TODO: configure
         model.ref_policy_state_dict = ref_policy_state_dict
 
+    ####################
+    # INIT DATALOADERS #
+    ####################
     # use the entire dataset
     train_valid_test_num_samples = [-1 * data_config.global_batch_size] * 3
     ## build the dataset (should be mostly unchanged from before, except the config)
@@ -204,7 +213,9 @@ def dpo_loop(
     # timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
     timer = None
 
-    ## initialize DPO trainer
+    ################
+    # INIT TRAINER #
+    ################
     dpo_trainer = default_dpo_trainer()(
         model=model,
         optimizer=optimizer,
@@ -228,6 +239,9 @@ def dpo_loop(
     """if custom_trainer_state_dict is not None:
         dpo_trainer.load_state_dict(custom_trainer_state_dict)"""
 
+    ###############
+    # RUN TRAINER #
+    ###############
     dpo_trainer.fit()
 
     return "TODO: return path"
