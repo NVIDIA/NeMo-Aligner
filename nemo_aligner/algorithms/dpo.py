@@ -188,7 +188,6 @@ class DPOTrainer:
         if self.precision is not None:
             self.model.model[0] = self.precision.convert_module(self.model.model[0])
             self.precision.verify_dtype(self.optimizer)
-            self.model.config = self.precision.update_config_with_dtype_overrides(self.model.config)
 
     def validation_step(self, global_batch):
         # these things should go into a GPTModel wrapper

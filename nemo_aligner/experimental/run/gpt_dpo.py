@@ -53,6 +53,13 @@ def default_dpo_parallelism():
     return ParallelismOverrides(tensor_model_parallel_size=1,)  # 2,
 
 
+def default_precision():
+    return MegatronMixedPrecision(
+        precision="bf16-mixed",
+        params_dtype=torch.bfloat16,
+        pipeline_dtype=torch.bfloat16,
+    )
+
 ## hparams not mapped
 ## bucket_cap_mb -- passed to NLPDDPStrategy
 ## overlap_grad_sync
@@ -112,9 +119,4 @@ def default_dpo_trainer():
         #    precision="bf16-mixed",
         #    params_dtype=torch.bfloat16,
         #),
-        precision=MegatronMixedPrecision(
-            precision="bf16-mixed",
-            params_dtype=torch.bfloat16,
-            pipeline_dtype=torch.bfloat16,
-        )
     )

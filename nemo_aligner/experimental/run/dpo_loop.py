@@ -36,6 +36,7 @@ from nemo_aligner.experimental.run.gpt_dpo import (
     default_dpo_config,
     default_dpo_parallelism,
     default_dpo_trainer,
+    default_precision,
     gpt_config_overrides,
     wandb_logger,
 )
@@ -124,6 +125,10 @@ def dpo_loop(
     # TODO: connect this to the model
     # opt_cfg, scheduler = default_dpo_optimizer()
     # optimizer = MegatronOptimizer(opt_cfg, lr_scheduler=scheduler,)
+
+    ## TODO: do this elsewhere
+    precision = default_precision()
+    precision.update_config_with_dtype_overrides(gpt_config)
 
     ## initialize the model
     model = MegatronGPTDPOModel(
@@ -222,6 +227,7 @@ def dpo_loop(
         logger=logger,  ## TODO
         ckpt=checkpointer,
         run_timer=timer,
+        precision=precision,
     )
 
     ## load custom trainer state dict (??)
