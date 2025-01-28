@@ -17,6 +17,7 @@ from threading import local
 import nemo_run as run
 import torch.multiprocessing as mp
 
+from nemo.collections.llm.gpt.model.base import GPTConfig, GPTModel
 from nemo.lightning import io
 from nemo.lightning._strategy_lib import set_model_parallel_attributes
 from nemo.utils import logging
@@ -61,6 +62,7 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 def dpo_loop(
     #
     restore_from_path: str,
+    model_cls: type[GPTModel],
     data_config: DPODataConfig,
     optimizer: MegatronOptimizer,
     tp: int = 1,
@@ -132,7 +134,7 @@ def dpo_loop(
     ##############
     # INIT MODEL #
     ##############
-    model = MegatronGPTDPOModel(
+    model = model_cls(
         config=gpt_config, dpo_config=default_dpo_config(), data_config=data_config, tokenizer=tokenizer,
     )
 
