@@ -54,18 +54,13 @@ RUN pip uninstall -y apex && \
     fi && \
     pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
 
-# Git LFS
-RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash && \
-    apt-get install git-lfs && \
-    git lfs install && \
-    apt-get clean
-
 # TRTLLM
 ARG TRTLLM_VERSION
 COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh 
 RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
-    reinstall.sh --library trtllm --mode build && \
-    reinstall.sh --library trtllm --mode install 
+    cd /opt/NeMo-Aligner && \
+    bash reinstall.sh --library trtllm --mode build && \
+    bash reinstall.sh --library trtllm --mode install 
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TODO: This pinning of pynvml is only needed while on TRTLLM v13 since pynvml>=11.5.0 but pynvml==12.0.0 contains a
