@@ -128,7 +128,7 @@ def dpo_loop(
 
     ## TODO: do this elsewhere
     precision = default_precision()
-    precision.update_config_with_dtype_overrides(gpt_config)
+    precision.update_config_with_dtype_overrides(parallelism_config)
 
     ## initialize the model
     model = MegatronGPTDPOModel(
