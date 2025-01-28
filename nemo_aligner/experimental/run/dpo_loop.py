@@ -129,7 +129,6 @@ def dpo_loop(
         config=gpt_config,
         dpo_config=default_dpo_config(),
         data_config=data_config,
-        optim=optimizer,  ## TODO: where is this used?
         tokenizer=tokenizer,
     )
 

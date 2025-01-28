@@ -195,6 +195,8 @@ class MegatronOptimizer:
         if self.lr_scheduler is not None:
             self.scheduler = self.lr_scheduler(model, self.optimizer)
 
+        model.optim = self
+
     def step(self):
         assert hasattr(self, "optimizer"), "make sure to call setup_optimizer_and_lr_schedule first"
 
