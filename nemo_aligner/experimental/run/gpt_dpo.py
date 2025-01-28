@@ -91,8 +91,8 @@ def default_dpo_data_config() -> run.Config[DPODataConfig]:
 ## need to export WANDB_API_KEY in order for this to work
 def wandb_logger() -> WandbLogger:
     return WandbLogger(
-        name="test_dpo",
-        project="aligner_nemo2_tests",
+        name="llama3_dpo_nemo2",
+        project="nemo_dpo_baseline",
         save_dir="/tmp/test_wandb",
     )
 
@@ -103,7 +103,7 @@ def default_dpo_trainer():
         limit_val_batches=-1,  ## TODO: is this right?
         val_check_interval=0.1,
         gradient_clip_val=1.0,
-        max_epochs=1,
+        max_epochs=3,
         save_interval=100,
         limit_train_batches=1.0,
         max_steps=-1,
