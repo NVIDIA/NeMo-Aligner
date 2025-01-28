@@ -5,6 +5,7 @@ trainer:
   devices: 1
   accelerator: gpu
   precision: bf16
+  gradient_clip_val: ${trainer.sft.gradient_clip_val}  # No need to change. Megatron Core optimizer uses this value
 
   sft:
     max_epochs: 1
@@ -15,6 +16,7 @@ trainer:
     limit_train_batches: 1.0
 
     limit_val_batches: 1.0
+    # TODO: delete once Megatron Core optimizer becomes default
     gradient_clip_val: 1.0
 
     # can be used to register any custom metrics that require token-by-token generation
