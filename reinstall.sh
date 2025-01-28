@@ -50,12 +50,13 @@ trtllm() {
         curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash &&
             apt-get install git-lfs &&
             git lfs install &&
+            git lfs pull &&
             apt-get clean
 
-        source docker/common/install_tensorrt.sh &&
-            python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt --python_bindings --benchmarks --build_dir /tmp/trtllm
+        . docker/common/install_tensorrt.sh &&
+            python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt --python_bindings --benchmarks
     else
-        pip install -e /tmp/wheels/trtllm*.whl
+        pip install -e build/trtllm*.whl
     fi
 }
 

@@ -62,12 +62,10 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
 
 # TRTLLM
 ARG TRTLLM_VERSION
-RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
-    cd TensorRT-LLM && \
-    git checkout ${TRTLLM_VERSION} && \
-    . docker/common/install_tensorrt.sh && \
-    python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt  --python_bindings --benchmarks && \
-    pip install -e .
+COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh 
+RUN export $TRTLLM_VERSION && \
+    reinstall.sh --library trtllm --mode build && \
+    reinstall.sh --library trtllm --mode install 
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TODO: This pinning of pynvml is only needed while on TRTLLM v13 since pynvml>=11.5.0 but pynvml==12.0.0 contains a
