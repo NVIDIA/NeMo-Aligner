@@ -303,9 +303,9 @@ class DPOTrainer:
                 metrics["consumed_samples"] = self.consumed_samples
                 metrics["step_time"] = train_step_time
                 metrics["epoch"] = self.epoch + 1
-                """self.logger.log_metrics(
+                self.logger.log_metrics(
                     metrics, step=self.step, prefix="train/",
-                )"""
+                )
                 metrics = {f"train_{k}": v for k, v in metrics.items()}
 
                 self.step += 1
@@ -324,7 +324,7 @@ class DPOTrainer:
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
                     # so we use the incremented self.step
-                    # self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                     val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
                     metrics.update(val_metrics)
 
@@ -341,7 +341,7 @@ class DPOTrainer:
 
                 metrics.clear()
 
-        # self.logger.finalize()
+        self.logger.finalize()
 
     def save(self, extra_candidates=None, is_train_end=False):
         """PTL based save"""

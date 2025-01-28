@@ -37,6 +37,7 @@ from nemo_aligner.experimental.run.gpt_dpo import (
     default_dpo_parallelism,
     default_dpo_trainer,
     gpt_config_overrides,
+    wandb_logger,
 )
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
 from nemo_aligner.utils.distributed import Timer
@@ -90,7 +91,7 @@ def dpo_loop(
     ## assuming we are using the same tokenizer as the base model
     # tokenizer = io.load_context(restore_from_path, subpath="model.tokenizer")
 
-    ## set logger and exp manager (TODO)
+    logger = CustomLoggerWrapper([wandb_logger()])
 
     ## init peft (TODO)
 
@@ -218,7 +219,7 @@ def dpo_loop(
             eod_mask_loss=data_config.eod_mask_loss,
             pad_length_to_multiple_of=data_config.pad_length_to_multiple_of,
         ),
-        logger=None,  ## TODO
+        logger=logger,  ## TODO
         ckpt=checkpointer,
         run_timer=timer,
     )

@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import torch
+from lightning.pytorch.loggers import WandbLogger
 
 import nemo_run as run
 from megatron.core.optimizer import OptimizerConfig
@@ -86,6 +87,14 @@ def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
 def default_dpo_data_config() -> run.Config[DPODataConfig]:
     return run.Config(DPODataConfig, data_prefix="test", micro_batch_size=4, global_batch_size=32,)
 
+## TODO: remove PTL dependency
+## need to export WANDB_API_KEY in order for this to work
+def wandb_logger() -> WandbLogger:
+    return WandbLogger(
+        name="test_dpo",
+        project="aligner_nemo2_tests",
+        save_dir="/tmp/test_wandb",
+    )
 
 ## config for NeMo-Aligner trainer
 def default_dpo_trainer():
