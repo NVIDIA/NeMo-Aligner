@@ -19,22 +19,19 @@ from typing import Any, Protocol
 
 import torch
 import torch.distributed
+from megatron.core.optimizer import OptimizerConfig
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
 from nemo.utils import logging
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.data import (
-    get_ltor_masks_and_position_ids,
-    MegatronPretrainingRandomBatchSampler,
-)
+from nemo_aligner.utils.data import MegatronPretrainingRandomBatchSampler, get_ltor_masks_and_position_ids
 from nemo_aligner.utils.distributed import SyncTimer
+from nemo_aligner.utils.nemo2.optim import CosineAnnealingScheduler, MegatronOptimizer
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_limit_batches, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory
 
-from nemo_aligner.utils.nemo2.optim import MegatronOptimizer, CosineAnnealingScheduler
-from megatron.core.optimizer import OptimizerConfig
 
 class DistributedCollateFunction(Protocol):
     def __call__(self, batch: list[dict], **kwargs: Any) -> dict[str, torch.Tensor]:
@@ -148,7 +145,7 @@ class DPOTrainer:
         self.test_dataloader = test_dataloader
         self.collate_fn = collate_fn
         self.logger = logger
-        #self.cfg = cfg
+        # self.cfg = cfg
 
         self.limit_train_batches = limit_train_batches
         self.limit_val_batches = limit_val_batches
@@ -242,15 +239,15 @@ class DPOTrainer:
         self.model.finish_training_step()
 
         ## gradient clipping should be handled from mcore
-        #grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
-        #grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
+        # grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
+        # grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
         lr = self.optimizer.param_groups[0]["lr"]
 
-        self.optimizer.step(closure=None) ## does a scheduler and an optimizer step
-        #self.scheduler.step()
+        self.optimizer.step()  ## does a scheduler and an optimizer step
+        # self.scheduler.step()
 
         trainer_metrics = {}
-        #if grad_norm is not None:
+        # if grad_norm is not None:
         #    trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
 
@@ -273,7 +270,7 @@ class DPOTrainer:
             # epoch done
             return
 
-        #self.run_timer.start_time()
+        # self.run_timer.start_time()
 
         for _ in epoch_iter:
             num_steps_in_epoch = min(
@@ -313,21 +310,21 @@ class DPOTrainer:
 
                 self.step += 1
 
-                #run_time_exceeded = self.run_timer.is_finished()
+                # run_time_exceeded = self.run_timer.is_finished()
                 run_val, save_model, is_train_end = check_progress(
                     self.step,
                     self.max_steps,
                     self.val_check_interval,
                     self.save_interval,
                     self.limit_val_batches,
-                    run_time_exceeded=False, #run_time_exceeded,
+                    run_time_exceeded=False,  # run_time_exceeded,
                 )
 
                 if run_val:
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
                     # so we use the incremented self.step
-                    #self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
+                    # self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                     val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
                     metrics.update(val_metrics)
 
@@ -338,13 +335,13 @@ class DPOTrainer:
                     metrics = {k: torch.as_tensor(v) for k, v in metrics.items()}
                     self.save(metrics, is_train_end=is_train_end)
 
-                if False: #run_time_exceeded: ## TODO
+                if False:  # run_time_exceeded: ## TODO
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
                     return
 
                 metrics.clear()
 
-        #self.logger.finalize()
+        # self.logger.finalize()
 
     def save(self, extra_candidates=None, is_train_end=False):
         """PTL based save"""
@@ -356,7 +353,7 @@ class DPOTrainer:
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
-        #self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
+        # self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
         ## TODO: save custom training state dict
         # self.ckpt.save_checkpoint(self, "test_save_ckpt", storage_options=None)
 
