@@ -20,7 +20,8 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 from torch import nn
 from lightning.pytorch.trainer.trainer import Trainer
-from megatron.core.distributed import DistributedDataParallel as McoreDDP
+#from megatron.core.distributed import DistributedDataParallel as McoreDDP
+from nemo.lightning.megatron_parallel import DDP
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.num_microbatches_calculator import get_num_microbatches
@@ -215,8 +216,11 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
             align_param_gather=False, #self.cfg.optim.get('align_param_gather', False),
             fp8_param_gather=False, #self.cfg.get('fp8_params', False),
         )
+
+        ## this wrapping should only happen when we set up mcore distributed parallel
+        ## does not happen during init
         self.model = [
-            McoreDDP(
+            DDP(
                 self.config,
                 ddp_config,
                 model_chunk,
@@ -227,6 +231,12 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
             )
             for (model_chunk_idx, model_chunk) in enumerate(self.model)
         ]
+
+        ## TODO: handle this correctly
+        ## this should only be done when both VPP and mcore_dist_optim are disabled: 
+        ## https://github.com/NVIDIA/NeMo/blob/f67eef6870d95723ed46c090c27de52a6d7814e7/nemo/collections/nlp/models/language_modeling/megatron_gpt_model.py#L414-L415
+        if len(self.model) == 1:
+            self.model = self.model[0]
    
     def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
@@ -422,7 +432,12 @@ class MegatronGPTDPOModel(GPTModel, SupervisedInterface, io.IOMixin):
         The sharded tensor mapping is defined in the GPTModel class from mcore.
         """
         sharded_state_dict = {}
-        for index, module in enumerate(self.model):
+
+        model = self.model
+
+        if not isinstance(model, list):   
+            model = [model]
+        for index, module in enumerate(model):
             if parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None:
                 # virtual pipline rank must be set so that GPTModel returns the correct sharded state dict
                 parallel_state.set_virtual_pipeline_model_parallel_rank(index)

@@ -510,7 +510,13 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
         cpu_dict = convert_to_amp_o2_format(cpu_dict)
 
     torch.cuda.synchronize()
-    return cpu_dict
+
+    renamed_cpu_dict = {}
+    for k,val in cpu_dict.items():
+        correct_name = k.replace("model.", "model.module.module.")
+        renamed_cpu_dict[correct_name] = val
+
+    return renamed_cpu_dict
 
 
 @torch.no_grad()

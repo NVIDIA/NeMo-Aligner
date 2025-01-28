@@ -90,7 +90,7 @@ class MegatronMixedPrecision:
 
         if self.dtype_config.fp16 or self.dtype_config.bf16:
             # Patch config options
-            config = get_model_config(module.module)
+            config = get_model_config(module) #module.module if wrapped in DDP
             config.fp16 = self.dtype_config.fp16
             config.bf16 = self.dtype_config.bf16
             if hasattr(module, 'module'):

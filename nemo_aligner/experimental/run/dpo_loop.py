@@ -142,6 +142,8 @@ def dpo_loop(
     gpt_config = set_model_parallel_attributes(model, parallelism_config)
 
     model.build_model(virtual_pipeline_model_parallel_size=parallelism_config.virtual_pipeline_model_parallel_size,)
+    ## TODO: refactor
+    model.model = precision.convert_module(model.model)
 
     ## TODO: make configurable
     checkpointer = AlignerCheckpointIO(model, ckpt_load_strictness="log_all",)

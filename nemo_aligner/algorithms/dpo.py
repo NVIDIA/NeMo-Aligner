@@ -186,7 +186,7 @@ class DPOTrainer:
         ## TODO: is this a good place to put this?
         ## model should have already been built
         if self.precision is not None:
-            self.model.model[0] = self.precision.convert_module(self.model.model[0])
+            #self.model.model[0] = self.precision.convert_module(self.model.model[0])
             self.precision.verify_dtype(self.optimizer)
 
     def validation_step(self, global_batch):

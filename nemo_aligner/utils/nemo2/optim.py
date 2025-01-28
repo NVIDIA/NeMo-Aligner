@@ -181,10 +181,10 @@ class MegatronOptimizer:
 
         ## TODO: change this when we migrate from nemo1
         # get_model_config(model).finalize_model_grads_func = finalize_model_grads
-        get_model_config(model.model[0]).finalize_model_grads_func = finalize_model_grads
+        get_model_config(model.model).finalize_model_grads_func = finalize_model_grads
 
         self.optimizer = setup_megatron_optimizer(
-            model.model,
+            [model.model],
             self.config,
             no_weight_decay_cond=self.no_weight_decay_cond,
             scale_lr_cond=self.scale_lr_cond,
