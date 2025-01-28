@@ -167,12 +167,13 @@ class GPTGenerateTRTLLM:
                 max_batch_size=self.generation_batch_size,
                 use_refit=True,
                 reshard_model=self.reshard_model,
+                vocab_size=model.module.vocab_size,
             )
             self._trtllm_model_compiled = True
             log_memory("After TRT-LLM engine build")
         else:
             log_memory("Before TRT-LLM engine refit")
-            self.trt_llm_exporter.refit(model, self.model_cfg)
+            self.trt_llm_exporter.refit(model, self.model_cfg, vocab_size=model.module.vocab_size)
             log_memory("After TRT-LLM engine refit")
 
     def _generate(self, inputs: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
