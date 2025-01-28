@@ -20,8 +20,9 @@ def _setup_distributed() -> None:
 
     global_rank = int(os.environ["RANK"])
     world_size = int(os.environ["WORLD_SIZE"])
+    local_rank = int(os.environ["LOCAL_RANK"])
 
-    torch.cuda.set_device(global_rank)
+    torch.cuda.set_device(local_rank)
 
     torch.distributed.init_process_group(_process_group_backend, rank=global_rank, world_size=world_size)
 
