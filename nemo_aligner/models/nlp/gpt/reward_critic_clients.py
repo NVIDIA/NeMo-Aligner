@@ -87,38 +87,7 @@ def extract_dialogue_llama(text):
 
     user_text = re.findall(user_pattern, text, re.DOTALL)
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
-    # TPO
-    if "<R>" in assistant_text[-1]:
-        for phrase in ["internal thought", "draft response", "evaluation"]:
-            if phrase not in assistant_text[-1].lower():
-                assistant_text[-1] = "None"
-                break
-        if assistant_text[-1] != "None":
-            assistant_text[-1] = assistant_text[-1].replace("**<R>**", "<R>").split("<R>")[1].strip()
-    elif "Here is my response:" in assistant_text[-1]:
-        assistant_text[-1] = (
-            assistant_text[-1]
-            .replace("**Here is my response:**", "Here is my response:")
-            .split("Here is my response:")[1]
-            .strip()
-        )
-    elif "<think>" in assistant_text[-1] and "<ethink>" in assistant_text[-1]:
-        # a naive constraint to force thinking
-        thoughts = assistant_text[-1].split("<ethink>")[0]
-        if len(thoughts.split()) < 100:
-            assistant_text[-1] = "None"
-        else:
-            assistant_text[-1] = assistant_text[-1].split("<ethink>")[1].strip()
-    elif "<think>" in assistant_text[-1] and "</think>" in assistant_text[-1]:
-        # a naive constraint to force thinking
-        thoughts = assistant_text[-1].split("</think>")[0]
-        if len(thoughts.split()) < 100:
-            assistant_text[-1] = "None"
-        else:
-            assistant_text[-1] = assistant_text[-1].split("</think>")[1].strip()
 
-    else:
-        assistant_text[-1] = "None"
     return user_text, assistant_text
 
 
@@ -452,11 +421,10 @@ class RemoteGPTRMClient:
                 rollout_batch["response_tokens"][i, : rollout_batch["response_lengths"][i]].tolist()
             )
             format_correct = True
-            if "<think>" not in text or not ("<ethink>" in text or "</think>" in text):
-                format_correct = False
-            user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
 
-            text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
+            # user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
+
+            # text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
             texts.append(text)
             print(text)
 
