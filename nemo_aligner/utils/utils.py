@@ -670,3 +670,49 @@ def deprecated_in_version(version: str, message: str | None = None):
         return wrapper
 
     return decorator
+
+def batch_repeat(batch, num_repetitions=1):
+    output = {}
+    special_keys = ["attention_mask"]
+    for k in batch.keys():
+        if k in special_keys:
+            continue
+        if isinstance(batch[k], torch.Tensor):
+            output[k] = torch.cat([batch[k] for _ in range(num_repetitions)])
+        else:
+            output[k] = [item for _ in range(num_repetitions) for item in batch[k]]
+
+    other = {}
+    for k in special_keys:
+        if k in batch.keys():
+            other[k] = batch[k] 
+
+    return output | other
+
+def batch_index_select(batch: dict, indices) -> dict:
+    """
+    Selects specified indices from each value in a dictionary of tensors/lists.
+    
+    Args:
+        batch: A dictionary where values are tensors or lists.
+        indices: Indices to select (list or tensor of integers).
+    
+    Returns:
+        A new dictionary with values sliced at the specified indices.
+    """
+    result = {}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            # Handle tensor indexing
+            result[key] = value[indices]
+        elif isinstance(value, list):
+            # Convert tensor indices to list if needed
+            if isinstance(indices, torch.Tensor):
+                idx = indices.tolist()
+            else:
+                idx = indices
+            # Handle list indexing
+            result[key] = [value[i] for i in idx]
+        else:
+            raise TypeError(f"Unsupported type {type(value)} for key '{key}'")
+    return result
