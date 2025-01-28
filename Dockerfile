@@ -63,7 +63,7 @@ RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.d
 # TRTLLM
 ARG TRTLLM_VERSION
 COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh 
-RUN export $TRTLLM_VERSION && \
+RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
     reinstall.sh --library trtllm --mode build && \
     reinstall.sh --library trtllm --mode install 
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
