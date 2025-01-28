@@ -4,3 +4,6 @@ lightning>2.2.1
 megatron_core>=0.8
 nemo_toolkit[nlp]
 nvidia-pytriton
+# pynvml pin is needed for TRTLLM v0.13.0 since 12.0.0 contains a breaking change.
+pynvml==11.5.3
+tensorrt-llm==0.13.0
