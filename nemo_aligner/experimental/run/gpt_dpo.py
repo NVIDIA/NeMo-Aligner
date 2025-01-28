@@ -33,12 +33,12 @@ from nemo_aligner.utils.nemo2.precision import MegatronMixedPrecision
 def default_dpo_config() -> run.Config[DPOConfig]:
     return run.Config(
         DPOConfig,
-        ref_policy_kl_penalty=0.2,
+        ref_policy_kl_penalty=0.1,
         preference_avg_log_probs=False,
         gt_reward_scale=1.0,
         preference_loss="dpo",
         preference_loss_weight=1,
-        sft_loss_weight=0,
+        sft_loss_weight=0.01,
     )
 
 
@@ -115,5 +115,6 @@ def default_dpo_trainer():
         precision=MegatronMixedPrecision(
             precision="bf16-mixed",
             params_dtype=torch.bfloat16,
+            pipeline_dtype=torch.bfloat16,
         )
     )
