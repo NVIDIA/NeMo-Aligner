@@ -76,7 +76,7 @@ def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
         config=run.Config(
             OptimizerConfig,
             optimizer="adam",
-            lr=9e-6,
+            lr=1,
             weight_decay=0.1,
             bf16=True,
             adam_beta1=0.9,
@@ -89,7 +89,7 @@ def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
             warmup_steps=10,
             constant_steps=1000,
             max_steps=10000, ## TODO: make this match trainer.max_steps
-            min_lr=9e-7,
+            min_lr=0.9,
         ),
     )
 
@@ -111,7 +111,7 @@ def default_dpo_trainer():
     return functools.partial(
         DPOTrainer,
         limit_val_batches=-1,  ## TODO: is this right?
-        val_check_interval=0.1,
+        val_check_interval=10000,
         gradient_clip_val=1.0,
         max_epochs=3,
         save_interval=100,
