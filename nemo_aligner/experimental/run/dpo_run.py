@@ -6,10 +6,15 @@ import nemo_run as run
 
 # Import executors module to register the executor factories to the CLI
 import nemo_aligner.experimental.run.executors
+from nemo_aligner.algorithms.dpo import DPOTrainer
 from nemo_aligner.data.nlp.config import DPODataConfig
 from nemo_aligner.experimental.run.dpo_loop import dpo_loop
 from nemo_aligner.experimental.run.executors import local_executor_torchrun
-from nemo_aligner.experimental.run.gpt_dpo import default_dpo_data_config, megatron_adam_optimizer
+from nemo_aligner.experimental.run.gpt_dpo import (
+    default_dpo_data_config,
+    default_dpo_trainer_fn,
+    megatron_adam_optimizer,
+)
 from nemo_aligner.models.nlp.gpt.megatron_gpt_dpo_model import MegatronGPTDPOModel
 from nemo_aligner.utils.nemo2.optim import MegatronOptimizer
 
@@ -19,6 +24,7 @@ def experiment(
     restore_from_path: str,
     optimizer: MegatronOptimizer = megatron_adam_optimizer(),
     data_config: DPODataConfig = default_dpo_data_config(),
+    trainer_fn: DPOTrainer = default_dpo_trainer_fn(),
     tp: int = 1,
     pp: int = 1,
     vp: int = None,
@@ -45,6 +51,7 @@ def experiment(
             model_cls=MegatronGPTDPOModel,
             optimizer=optimizer,
             data_config=data_config,
+            trainer_fn=trainer_fn,
             tp=tp,
             pp=pp,
             vp=vp,

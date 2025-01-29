@@ -13,7 +13,7 @@
 # limitations under the License.
 from functools import partial
 from threading import local
-from typing import Any
+from typing import Any, Callable
 
 import nemo_run as run
 import torch.multiprocessing as mp
@@ -38,7 +38,7 @@ from nemo_aligner.experimental.run.configs.validate import _validate_config
 from nemo_aligner.experimental.run.gpt_dpo import (
     default_dpo_config,
     default_dpo_parallelism,
-    default_dpo_trainer,
+    default_dpo_trainer_fn,
     gpt_config_overrides,
     wandb_logger,
 )
@@ -67,7 +67,7 @@ def dpo_loop(
     model_cls: type[GPTModel],  # TODO more precise typing since unexected args in __init__
     data_config: DPODataConfig,
     optimizer: MegatronOptimizer,
-    # trainer_cls: type,  # TODO placeholder
+    trainer_fn: Callable,  # TODO placeholder type
     tp: int = 1,
     pp: int = 1,
     vp: int | None = None,
@@ -186,7 +186,7 @@ def dpo_loop(
     ################
     # INIT TRAINER #
     ################
-    dpo_trainer = default_dpo_trainer()(
+    dpo_trainer = trainer_fn(
         model=model,
         optimizer=optimizer,
         train_dataloader=train_dataloader,

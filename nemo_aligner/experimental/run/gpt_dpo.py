@@ -101,8 +101,9 @@ def wandb_logger() -> WandbLogger:
 
 
 ## config for NeMo-Aligner trainer
-def default_dpo_trainer():
-    return functools.partial(
+@run.cli.factory
+def default_dpo_trainer_fn() -> run.Partial[DPOTrainer]:
+    return run.Partial(
         DPOTrainer,
         limit_val_batches=-1,  ## TODO: is this right?
         val_check_interval=0.1,
@@ -116,5 +117,5 @@ def default_dpo_trainer():
         #    precision="bf16-mixed",
         #    params_dtype=torch.bfloat16,
         # ),
-        precision=MegatronMixedPrecision(precision="bf16-mixed", params_dtype=torch.bfloat16,),
+        precision=run.Config(MegatronMixedPrecision, precision="bf16-mixed", params_dtype=torch.bfloat16,),
     )
