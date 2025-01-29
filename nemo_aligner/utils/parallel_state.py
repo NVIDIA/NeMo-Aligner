@@ -16,6 +16,8 @@
 
 from contextlib import contextmanager
 
+import torch
+
 from megatron.core import parallel_state as mcore_parallel_state
 
 from nemo.collections.nlp.modules.common.text_generation_utils import (

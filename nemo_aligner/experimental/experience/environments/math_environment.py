@@ -52,9 +52,9 @@ class MathEnvironment(EnvironmentInterface):
         correct_solution_generation_lengths = (
             (batch["response_lengths"] - batch["prompt_lengths"])[batch["rewards"] == 1].float().mean().item()
         )
-
+        
         metrics = {
-            "table": table,
+            #"table": table, TODO @sahilj WIP
             "accuracy": batch["rewards"].mean().item(),
             "pass@samples_per_prompt": calculate_pass_rate_per_prompt(batch["text"], batch["rewards"]),
             "fraction_of_samples_properly_ended": batch["is_end"].float().mean().item(),

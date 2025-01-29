@@ -1,0 +1,6 @@
+from functools import partial
+
+from nemo_aligner.data.nlp.builders import build_train_valid_test_datasets
+from nemo_aligner.experimental.data.datasets import AllTaskDataset
+
+build_train_valid_test_task_datasets = partial(build_train_valid_test_datasets, AllTaskDataset)

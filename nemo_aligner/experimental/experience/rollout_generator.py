@@ -11,6 +11,7 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import batch_repeat, batch_index_select, reconstruct_split_batch, cpu_dict
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
+from nemo_aligner.utils.distributed import ScopedTimer
 from nemo_aligner.experimental.experience.interfaces import RolloutGeneratorInterface, EnvironmentInterface
 from nemo_aligner.experimental.experience.rollout_batch import GPTRolloutBatch
 
@@ -42,20 +43,20 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         self.val_samples_per_prompt = cfg.val_samples_per_prompt
         self.val_prompt_batch_size = cfg.val_prompt_batch_size
         self.rollout_batch_seq_length = cfg.rollout_batch_seq_length
-        self.reshard_weights_for_trtllm_inference = cfg.trtllm_reshard
+        self.reshard_weights_for_trtllm_generation = cfg.trtllm_reshard
+        self.generation_save_dir = cfg.generation_save_dir
+        self.timer = ScopedTimer()
         
         assert self.rollout_mbs % self.prompt_batch_size == 0, \
-            (f"The inference microbatch size of the model ({self.rollout_mbs}) must be a ",
-             f"clean multiple of the prompt_batch_size ({self.prompt_batch_size}) from the",
-             f" dataloader.")
+            (f"The generation microbatch size of the model ({self.rollout_mbs}) must be a ",
+             f"multiple of the prompt_batch_size ({self.prompt_batch_size}) from the dataloader.")
         assert self.rollout_mbs % self.val_prompt_batch_size == 0, \
-            (f"The inference microbatch size of the model ({self.rollout_mbs}) must be a ",
-             f"clean multiple of the val_prompt_batch_size ({self.val_prompt_batch_size}) from the",
-             f" dataloader.")
+            (f"The generation microbatch size of the model ({self.rollout_mbs}) must be a ",
+             f"multiple of the val_prompt_batch_size ({self.val_prompt_batch_size}) from the dataloader.")
 
         assert self.samples_per_prompt % (self.rollout_mbs // self.prompt_batch_size) == 0, \
-            (f"The number of total samples per prompt ({self.samples_per_prompt}) must be a",
-             f" multiple of the number of samples per prompt in each microbatch \n\n",
+            (f"The number of total samples per prompt ({self.samples_per_prompt}) must be a ",
+             f"multiple of the number of samples per prompt in each microbatch \n\n",
              f"Samples per prompt per microbatch = rollout_mbs / prompt_batch_size\n",
              f"{self.rollout_mbs} / {self.prompt_batch_size} = {self.rollout_mbs / self.prompt_batch_size}\n",
              f"{self.samples_per_prompt} % {self.rollout_mbs // self.prompt_batch_size} != 0.")
@@ -65,62 +66,6 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
              f"val samples per prompt per microbatch = rollout_mbs / val_prompt_batch_size\n",
              f"{self.rollout_mbs} / {self.val_prompt_batch_size} = {self.rollout_mbs / self.val_prompt_batch_size}\n",
              f"{self.val_samples_per_prompt} % {self.rollout_mbs // self.val_prompt_batch_size} != 0.")
-
-    def generation_log(self, rollout_batch, savefile):
-        """
-        Logs all generations and related metadata to savefile. The savefile should be unique per rank.
-        Runs on all ranks. We assume that the input "rollout_batch" is global here.
-        """
-
-        def dict_get(batch, idx):
-            inst = {}
-            for k in batch.keys():
-                inst[k] = batch[k][idx]
-            return inst
-
-        batch_size = rollout_batch["prompt_tokens"].shape[0]
-        per_rank_batch = batch_size // torch.distributed.get_world_size()
-        rank = torch.distributed.get_rank()
-        end_idx = (rank + 1) * per_rank_batch if rank < torch.distributed.get_world_size() - 1 else batch_size
-        records = []
-        for idx in range(rank * per_rank_batch, end_idx):
-            # get individual element of batch
-            instance = dict_get(rollout_batch, idx)
-            response_tokens = instance["response_tokens"]
-            response_length = instance["response_lengths"].item()
-            prompt_length = instance["prompt_lengths"].item()
-            ground_truth = instance["ground_truths"]
-            is_end = instance["is_end"].item()
-            reward = instance["rewards"].item()
-            problem_str = self.model.tokenizer.ids_to_text(response_tokens[:prompt_length].tolist())
-            response_str = self.model.tokenizer.ids_to_text(response_tokens[prompt_length:].tolist())
-            problem_hash = hashlib.sha256(problem_str.encode("utf-8")).hexdigest()
-            generator_rank = instance["generator_rank"].item()
-            lps = instance["logprobs"][prompt_length:response_length].cpu().tolist()
-            init_lps = instance["init_logprobs"][prompt_length:response_length].cpu().tolist()
-
-            record = {
-                "problem_hash": problem_hash,
-                "idx_in_batch": idx,
-                "problem": problem_str,
-                "response": response_str,
-                "response_length": response_length,
-                "ground_truth": ground_truth,
-                "rank": generator_rank,
-                "ended_correctly": is_end,
-                "step": self.reinforce_optimization_step,
-                "reward": reward,
-                "accuracy": instance["accuracy"].item(),
-                "baseline": instance["baseline"].item(),
-                "logprobs": lps,
-                "init_logprobs": init_lps,
-            }
-            records.append(record)
-
-        with open(savefile, "a", encoding="utf-8") as f:
-            for record in records:
-                json.dump(record, f)
-                f.write("\n")
 
     def detokenize(self, policy_model, rollout_batch):
         response_tokens = rollout_batch["response_tokens"]
@@ -136,8 +81,6 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             policy_model.tokenizer.ids_to_text(response_tokens[i][prompt_lengths[i] : response_lengths[i]].tolist())
             for i in range(response_lengths.shape[0])
         ]
-        #interactions = [[p, r] for p, r in zip(prompt_sentences, response_sentences)]
-        #metadata = rollout_batch["extra_verifier_info"]
         
         rollout_batch["prompt_sentences"] = prompt_sentences
         rollout_batch["response_sentences"] = response_sentences
@@ -148,18 +91,24 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         metadata = rollout_batch["extra_verifier_info"]
         return interactions, metadata
         
-
-    def generate_rollouts(self, batch_iterator, policy_model, timer, is_validation=False):
+    def generate_rollouts(self,
+                          batch_iterator,
+                          policy_model,
+                          is_validation=False,
+                          greedy=False):
         """
         Generate experience rollouts using the policy model and environments.
-        Currently only supports single-turn (no feedback)
-        """
-        # Set up an inference environment with less sharding/parallelism to accelerate inference
-        inference_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_inference else nullcontext
+        Currently only supports single-turn (no environment feedback).
 
+        Returns a global rollout batch (sharded out later by the GRPO trainer)
+        """
+        # Set up a generation environment with less sharding/parallelism to accelerate it
+        generation_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_generation else nullcontext
+
+        # policy generation
         rollout_batches, futures = [], []
-        with inference_reshard_context():
-            with timer("generate"):
+        with generation_reshard_context():
+            with self.timer("generate"):
                 for batch in batch_iterator:
                     if is_validation:
                         num_repetitions = self.rollout_mbs // self.val_prompt_batch_size
@@ -171,7 +120,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                     print(batch["text"].shape)
                     batch = batch_repeat(batch, num_repetitions=num_repetitions)
                     for _ in range(num_rollout_batches_per_data_batch):
-                        rollout_batch = policy_model.infer(batch)
+                        rollout_batch = policy_model.infer(batch, greedy=greedy)
                         rollout_batch = batch | rollout_batch
                         rollout_batch["generator_rank"] = (
                             torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
@@ -204,31 +153,31 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
 
         padded_rollout_sequence_length = global_rollout_batch["response_tokens"].size(-1)
 
-        # the chunking must be outside of the inference TRT-LLM context because we do 
-        # logprob calculation in nemo with training sharding
         balanced_local_batch = global_rollout_batch.chunk(
-            rank=parallel_state.get_data_parallel_rank(),
-            split_size=parallel_state.get_data_parallel_world_size(),
+            rank=parallel_state.get_training_data_parallel_rank(),
+            split_size=parallel_state.get_training_data_parallel_world_size(),
         )
 
-        # since we compute the logprobs in nemo we need to be outside the inference resharding context
+        # logprob calculation
+        # since we compute the logprobs in nemo we need to be outside the generation resharding context
         # we also do the logprob and init_logprob calculations here to overlap with async environment compute
         batched_response_tokens = balanced_local_batch["response_tokens"]
 
-        with timer("logprobs"):
+        with self.timer("logprobs"):
             rollout_logprobs = policy_model.get_inference_log_probs(batched_response_tokens)
             balanced_local_batch["logprobs"] = rollout_logprobs
 
         # compute init logprobs only if not in validation
         if not is_validation:
-            with timer("init_logprobs"):
+            with self.timer("init_logprobs"):
                 rollout_init_logprobs = policy_model.get_init_policy_logprobs(batched_response_tokens)
                 balanced_local_batch["init_logprobs"] = rollout_init_logprobs
         global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
 
+        # getting environment results
         # we send environment step requests in the sharded context, so we need to keep this sharding and then undo it
-        with inference_reshard_context():
-            with timer("environment_wait"):
+        with generation_reshard_context():
+            with self.timer("environment_wait"):
                 env_rollout_batches = []
                 for batch_futures in futures:
                     all_task_indices, all_task_results = [], []
@@ -247,23 +196,22 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             )
             global_env_batch = unbalanced_env_batch.gather_and_balance_globally()
 
-        # chunking needs to be done with training sharding
-        balanced_env_batch = global_env_batch.chunk(
-            rank=parallel_state.get_training_data_parallel_rank(),
-            split_size=parallel_state.get_training_data_parallel_world_size(),
-        )
-        balanced_local_batch.update(balanced_env_batch)
-
-        global_rollout_batch["mask"] = create_mask(values=global_rollout_batch["logprobs"], prompt_lengths=global_rollout_batch["prompt_lengths"], response_lengths=global_rollout_batch["response_lengths"])
-
         global_rollout_batch.update(global_env_batch)
-        rank = torch.distributed.get_rank()
-        savefile = f"train_{rank}.jsonl" if not is_validation else f"validation_{rank}.jsonl"
-        self.generation_log(global_rollout_batch, os.path.join(self.cfg.generation_save_dir, savefile))
+        with self.timer("env_postproc_and_metrics"):
+            global_rollout_batch, metrics = self.post_process_and_compute_rollout_metrics(global_rollout_batch)
 
-        return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch))
+        # saving generations
+        with self.timer("generation_save"):
+            rank = torch.distributed.get_rank()
+            savefile = f"train_{rank}.jsonl" if not is_validation else f"validation_{rank}.jsonl"
+            self.generation_log(global_rollout_batch, os.path.join(self.generation_save_dir, savefile))
+        
+        return global_rollout_batch, cpu_dict(metrics), self.timer.consume_durations()
     
     def post_process_and_compute_rollout_metrics(self, global_rollout_batch):
+        def add_prefix(dict, prefix):
+            return {f"{prefix}/{k}": v for k, v in dict.items()}
+
         # iterate over tasks and call the environments to get metrics and finalized batches
         split_idxs, split_batches, metrics = [], [], {}
         for task in self.tasks_to_environments.keys():
@@ -271,12 +219,78 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             for idx, t in enumerate(global_rollout_batch["task_name"]):
                 if t == task:
                     indices.append(idx)
-            task_batch = batch_index_select(global_rollout_batch, indices)
-            task_batch, task_metrics = \
-                self.tasks_to_environments[task].global_post_process_and_metrics(task_batch)
-            split_idxs.append(indices)
-            split_batches.append(task_batch)
-            metrics[task] = task_metrics
+            if len(indices) > 0:
+                task_batch = batch_index_select(global_rollout_batch, indices)
+                task_batch, task_metrics = \
+                    self.tasks_to_environments[task].global_post_process_and_metrics(task_batch)
+                split_idxs.append(indices)
+                split_batches.append(task_batch)
+                metrics[task] = add_prefix(task_metrics, task)
         
         # recompose batches
-        return reconstruct_split_batch(split_idxs, split_batches), metrics
+        return reconstruct_split_batch(split_idxs, split_batches), {metrics | self.compute_overall_metrics(global_rollout_batch)}
+
+    def compute_overall_metrics(self, rollout_batch):
+        prompt_lengths = rollout_batch["prompt_lengths"]
+        response_lengths = rollout_batch["response_lengths"]
+        rewards = rollout_batch["rewards"]
+        is_end = rollout_batch["is_end"]
+
+        metrics = {
+            "rollout_size": prompt_lengths.size(0),
+            "prompt_lengths": prompt_lengths.float().mean().item(),
+            "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
+            "rewards": rewards.mean().item(),
+            "fraction_of_samples_properly_ended": is_end.float().mean().item(),
+        }
+
+        return metrics
+
+    def generation_log(self, rollout_batch, savefile):
+        """
+        Logs all generations and related metadata to savefile. The savefile should be unique per rank.
+        Runs on all ranks. We assume that the input "rollout_batch" is global here.
+        """
+
+        def dict_get(batch, idx):
+            inst = {}
+            for k in batch.keys():
+                inst[k] = batch[k][idx]
+            return inst
+
+        batch_size = rollout_batch["prompt_tokens"].shape[0]
+        per_rank_batch = batch_size // torch.distributed.get_world_size()
+        rank = torch.distributed.get_rank()
+        end_idx = (rank + 1) * per_rank_batch if rank < torch.distributed.get_world_size() - 1 else batch_size
+        records = []
+        for idx in range(rank * per_rank_batch, end_idx):
+            # get individual element of batch
+            instance = dict_get(rollout_batch, idx)
+            response_length = instance["response_lengths"].item()
+            prompt_length = instance["prompt_lengths"].item()
+            prompt_str = instance["prompt_sentences"]
+            prompt_hash = hashlib.sha256(prompt_str.encode("utf-8")).hexdigest()
+            lps = instance["logprobs"][prompt_length:response_length].cpu().tolist()
+            init_lps = instance["init_logprobs"][prompt_length:response_length].cpu().tolist()
+
+            record = {
+                "prompt_hash": prompt_hash,
+                "idx_in_batch": idx,
+                "problem": instance["prompt_sentences"],
+                "response": instance["response_sentences"],
+                "response_length": response_length,
+                "extra_verifier_info": instance.get("extra_verifier_info", None),
+                "rank": instance["generator_rank"].item(),
+                "ended_correctly": instance["is_end"].item(),
+                "step": self.grpo_optimization_step,
+                "reward": instance["rewards"].item(),
+                "logprobs": lps,
+                "init_logprobs": init_lps,
+            }
+            records.append(record)
+
+        with open(savefile, "a", encoding="utf-8") as f:
+            for record in records:
+                json.dump(record, f)
+                f.write("\n")
+

@@ -6,15 +6,14 @@ import torch
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.utils import batch_pad_to_fixed_len
 
-class GenericDataset:
-    def __init__(self, data_path, tokenizer, apply_chat_template: bool = True, system_prompt_file: str = None, prompt_file: str = None):
+class AllTaskDataset:
+    def __init__(self, data_path, tokenizer, apply_chat_template: bool = True, system_prompt_file: str = None, prompt_file: str = None, seq_length=None):
         super().__init__()
         self.data_path = data_path
         self.tokenizer = tokenizer
         self.apply_chat_template = apply_chat_template
         self.system_prompt = None
         self.prompt = "{}"
-        self.dataset_prompt_key = "problem"
 
         assert os.path.exists(self.data_path), f"{self.data_path} must exist"
 
@@ -49,19 +48,24 @@ class GenericDataset:
         """
         task_name = self.data[idx]["task_name"]
         extra_verifier_info = None
+        if task_name == "math":
+            text_str = self.data[idx]["problem"]
+            extra_verifier_info = {"ground_truth": self.data[idx]["ground_truth"]}
+        else:
+            raise NotImplementedError(f"task name {task_name} in your dataset doesn't have a handler yet!")
 
         if self.apply_chat_template:
             chat = []
             if self.system_prompt:
                 chat.append({"role": "system", "content": self.system_prompt})
-            chat.append({"role": "user", "content": self.prompt.format(self.data[idx][self.dataset_prompt_key])})
+            chat.append({"role": "user", "content": self.prompt.format(text_str)})
             text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
         else:
-            text = self.prompt.format(self.data[idx][self.dataset_prompt_key])
+            text = self.prompt.format(text_str)
 
         sample, _ = self.encode(text)
         sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
-
+        
         output = {
             "text": sample_tensor,
             "length": sample_tensor.shape[0],
@@ -71,17 +75,6 @@ class GenericDataset:
             "task_name": task_name,
         }
         return output  
-    
-class MathDataset(GenericDataset):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.dataset_prompt_key = "problem"
-    
-    def __getitem__(self, idx):
-        extra_verifier_info = {"ground_truth": self.data[idx]["ground_truth"]}
-        output = super().__getitem__(idx)
-        output["extra_verifier_info"] = extra_verifier_info
-        return output
     
 def environments_collate_with_batch_max_sequence_length(
     data_batch,
