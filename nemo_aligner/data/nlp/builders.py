@@ -503,7 +503,7 @@ def build_dataloader(
         "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
 
-    if (isinstance(limit_train_batches, float) and limit_train_batches > 1.0):
+    if isinstance(limit_train_batches, float) and limit_train_batches > 1.0:
         raise RuntimeError("`limit_train_batches` cannot be a float value > 1.0")
 
     if (

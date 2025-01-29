@@ -23,8 +23,8 @@ from typing import Dict, List
 import numpy as np
 import scipy
 import torch
-from omegaconf import OmegaConf
 from datasets import load_dataset
+from omegaconf import OmegaConf
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_dataset import _create_ltor_masks_and_position_ids
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import (
@@ -963,6 +963,7 @@ class SteerLM2Dataset(GPTSFTChatDataset):
 
         return processed_batch
 
+
 # this is a lightweight wrapper around GPTSFTChatDataset for the purposes of removing samples in the dataset which are longer in
 # token-length than the `max_seq_length` parameter. This is extremely important for algorithms running TRT, which has a hard input token limit
 # and violating this limit causes a crash. Therefore, to avoid building tedious preprocessing scripts for every kind of data we use
@@ -992,7 +993,9 @@ class TruncatedGPTSFTChatDataset(GPTSFTChatDataset):
             sample = self[idx]
 
             if isinstance(self.max_seq_length, list):
-                assert len(self.truncation_fields) == len(self.max_seq_length), "If passing a list for `max_seq_length` it must be equal in length to `truncation_fields`"
+                assert len(self.truncation_fields) == len(
+                    self.max_seq_length
+                ), "If passing a list for `max_seq_length` it must be equal in length to `truncation_fields`"
                 if all(
                     [len(sample[trunc]) <= limit for trunc, limit in zip(self.truncation_fields, self.max_seq_length)]
                 ):
@@ -1004,7 +1007,7 @@ class TruncatedGPTSFTChatDataset(GPTSFTChatDataset):
         if hasattr(self.indexed_dataset, "select"):
             self.indexed_dataset = self.indexed_dataset.select(good_idxes)
         else:
-            self.indexed_dataset = [x for i,x in enumerate(self.indexed_dataset) if i in good_idxes]
+            self.indexed_dataset = [x for i, x in enumerate(self.indexed_dataset) if i in good_idxes]
 
         if isinstance(self.max_seq_length, list):
             self.max_seq_length = min(self.max_seq_length)
@@ -1012,7 +1015,7 @@ class TruncatedGPTSFTChatDataset(GPTSFTChatDataset):
         logging.info(
             f"TruncatedSFTChatDataset has {len(good_idxes)} total samples. Dropped {N - len(good_idxes)} samples."
         )
-    
+
     # if we are unable to use datasets.load_dataset due to certain dataset formats causing issues, then we need to fallback
     # to loading a jsonl manually. In that case, we need to ensure each sample sent to _process_example is immutable or else
     # you will have corrupted text, see here: https://github.com/NVIDIA/NeMo/blob/25b7d3d7f217a11f85ed23b5917b7b840f330e2f/nemo/collections/nlp/data/language_modeling/megatron/gpt_sft_chat_dataset.py#L204
@@ -1022,7 +1025,7 @@ class TruncatedGPTSFTChatDataset(GPTSFTChatDataset):
         else:
             example_ = copy.deepcopy(example)
             return super()._process_example(example_)
-    
+
     # unfortunately, GPTSFTDataset uses datasets.load_dataset for loading JSONL files, which causes massive issues if your JSONL file
     # has irregular/jagged fields, for example when including metadata for the code/math Verifier. HF's datasets library can't parse
     # these fields because it expands everything to a Pandas table under the bonnet, which means it needs an immutable, old-fashioned
