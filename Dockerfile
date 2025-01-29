@@ -11,14 +11,21 @@
 # if you get errors building TE or Apex, decrease this to 4
 ARG MAX_JOBS=8
 # Git refs for dependencies
-ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
-ARG PYTRITON_VERSION=0.5.10
+
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.07-py3
+ARG NEMO_REPO=https://github.com/NVIDIA/NeMo
 ARG NEMO_TAG=19668e5320a2e2af0199b6d5e0b841993be3a634  # On: main
+ARG MLM_REPO=https://github.com/NVIDIA/Megatron-LM
 ARG MLM_TAG=25059d3bbf68be0751800f3644731df12a88f3f3   # On: main
+ARG ALIGNER_REPO=https://github.com/NVIDIA/NeMo-Aligner
 ARG ALIGNER_COMMIT=main
+ARG TE_REPO=https://github.com/NVIDIA/TransformerEngine
+ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
+ARG TRTLLM_REPO=https://github.com/NVIDIA/TensorRT-LLM.git
 ARG TRTLLM_VERSION=v0.13.0
 ARG PROTOBUF_VERSION=4.24.4
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.07-py3
+ARG PYTRITON_VERSION=0.5.10
+
 
 FROM ${BASE_IMAGE} AS aligner-bump
 ARG ALIGNER_COMMIT

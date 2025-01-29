@@ -1,19 +1,6 @@
 #!/usr/bin/env bash
 set -ex
-
-export MAX_JOBS=8
-export TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
-export PYTRITON_VERSION=0.5.10
-export NEMO_TAG=ko3n1g/build/improve-installer # On: main
-export MLM_TAG=                                # On: main
-export ALIGNER_COMMIT=${ALIGNER_COMMIT:-main}
-export APEX_TAG=main
-export TRTLLM_VERSION=v0.13.0
-export PROTOBUF_VERSION=4.24.4
-
 cd /opt
-
-#!/bin/bash
 
 # List of all supported libraries (update this list when adding new libraries)
 ALL_LIBRARIES=(
@@ -59,6 +46,33 @@ trtllm() {
             python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt --python_bindings --benchmarks
     else
         pip install /tmp/trtllm/tensorrt_llm*.whl
+    fi
+}
+
+te() {
+    local mode="$1"
+    cd /opt
+
+    cd /opt && \
+    git clone https://github.com/NVIDIA/TransformerEngine.git && \
+    cd TransformerEngine && \
+    if [ ! -z $TE_TAG ]; then \
+        git fetch origin $TE_TAG && \
+        git checkout FETCH_HEAD; \
+    fi && \
+    
+    
+    (rm -rf TransformerEngine || true) &&
+        git clone https://github.com/NVIDIA/TransformerEngine.git &&
+        pushd TransformerEngine &&
+        git checkout ${TE_TAG}
+
+    if [[ "$mode" == "build" ]]; then
+        git submodule init && git submodule update && \
+        NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel . && \
+        ls -al
+    else
+        pip install /tmp/te/transformerengine*.whl
     fi
 }
 
