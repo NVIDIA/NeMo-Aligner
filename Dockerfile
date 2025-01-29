@@ -65,8 +65,9 @@ RUN pip uninstall -y apex && \
 # TRTLLM
 ARG TRTLLM_VERSION
 COPY --from=trtllm-wheel /opt/TensorRT-LLM/build/ /tmp/trtllm
-RUN bash reinstall.sh --library trtllm --mode install 
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
+COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
+# RUN bash /opt/NeMo-Aligner/reinstall.sh --library trtllm --mode install 
+# ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TODO: This pinning of pynvml is only needed while on TRTLLM v13 since pynvml>=11.5.0 but pynvml==12.0.0 contains a
 #   breaking change. The last known working verison is 11.5.3
