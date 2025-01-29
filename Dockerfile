@@ -102,16 +102,8 @@ RUN pip install --upgrade-strategy only-if-needed jsonlines
 
 # NeMo
 ARG NEMO_TAG
-RUN git clone https://github.com/NVIDIA/NeMo.git && \
-    cd NeMo && \
-    git pull && \
-    if [ ! -z $NEMO_TAG ]; then \
-        git fetch origin $NEMO_TAG && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    pip uninstall -y nemo_toolkit sacrebleu && \
-    pip install -e ".[nlp]" && \
-    cd nemo/collections/nlp/data/language_modeling/megatron && make
+COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
+RUN bash /opt/NeMo-Aligner/reinstall.sh --library nemo --mode install
 
 # TODO: While we are on Pytorch 24.07, we need to downgrade triton since 3.2.0 introduced a breaking change
 #   This un-pinned requirement comes from mamba-ssm, and this pin can be removed once Pytorch base image is
@@ -132,7 +124,7 @@ RUN pip uninstall -y megatron-core && \
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
-    bash reinstall.sh --install aligner
+    bash reinstall.sh --library aligner --mode install
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
