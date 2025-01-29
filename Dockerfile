@@ -48,44 +48,43 @@ EOF
 FROM ${BASE_IMAGE} as trtllm-wheel
 ARG TRTLLM_VERSION
 COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh 
-RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
-    cd /opt/NeMo-Aligner && \
+RUN cd /opt/NeMo-Aligner && \
     bash reinstall.sh --library trtllm --mode build && \
     ls -al /opt/TensorRT-LLM
 
-# install TransformerEngine
 FROM ${BASE_IMAGE} as te-wheel
 ARG MAX_JOBS
 ARG TE_TAG
 COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh 
-RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
-    cd /opt/NeMo-Aligner && \
+RUN cd /opt/NeMo-Aligner && \
     bash reinstall.sh --library te --mode build && \
     ls -al /opt/TransformerEngine
+
+FROM ${BASE_IMAGE} as apex-wheel
+ARG APEX_TAG
+ARG MAX_JOBS
+COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh 
+RUN cd /opt/NeMo-Aligner && \
+    bash reinstall.sh --library apex --mode build && \
+    ls -al /opt/Apex
 
 FROM ${BASE_IMAGE} AS final
 LABEL "nemo.library"="nemo-aligner"
 WORKDIR /opt
 # needed in case git complains that it can't detect a valid email, this email is fake but works
 RUN git config --global user.email "worker@nvidia.com"
-# install latest apex
-ARG APEX_TAG
-RUN pip uninstall -y apex && \
-    git clone https://github.com/NVIDIA/apex && \
-    cd apex && \
-    if [ ! -z $APEX_TAG ]; then \
-        git fetch origin $APEX_TAG && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    pip install -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./
+
+# Apex
+COPY --from=apex-wheel /opt/Apex /tmp/apex
+COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
+RUN bash /opt/NeMo-Aligner/reinstall.sh --library apex --mode install
 
 # TRTLLM
-ARG TRTLLM_VERSION
 ARG PYNVML_VERSION
 COPY --from=trtllm-wheel /opt/TensorRT-LLM/build/ /tmp/trtllm
 COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
 RUN bash /opt/NeMo-Aligner/reinstall.sh --library trtllm --mode install && \
-pip install --no-cache-dir pynvml==${PYNVML_VERSION}
+    pip install --no-cache-dir pynvml==${PYNVML_VERSION}
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TransformerEngine
@@ -97,17 +96,11 @@ ARG NEMO_TAG
 COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
 RUN bash /opt/NeMo-Aligner/reinstall.sh --library nemo --mode install
 
-# TODO: While we are on Pytorch 24.07, we need to downgrade triton since 3.2.0 introduced a breaking change
-#   This un-pinned requirement comes from mamba-ssm, and this pin can be removed once Pytorch base image is
-#   updated.
-RUN pip install triton==3.1.0
-
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 ARG ALIGNER_COMMIT
 ARG PYTRITON_VERSION
 ARG PROTOBUF_VERSION
 RUN cd /opt/NeMo-Aligner && \
-    export ALIGNER_COMMIT=$ALIGNER_COMMIT && \
     bash reinstall.sh --library aligner --mode install
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch

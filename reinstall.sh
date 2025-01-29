@@ -6,6 +6,8 @@ cd /opt
 ALL_LIBRARIES=(
     "nemo"
     "trtllm"
+    "te"
+    "apex"
     "aligner"
 )
 
@@ -52,15 +54,6 @@ trtllm() {
 te() {
     local mode="$1"
     cd /opt
-
-    cd /opt && \
-    git clone https://github.com/NVIDIA/TransformerEngine.git && \
-    cd TransformerEngine && \
-    if [ ! -z $TE_TAG ]; then \
-        git fetch origin $TE_TAG && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    
     
     (rm -rf TransformerEngine || true) &&
         git clone https://github.com/NVIDIA/TransformerEngine.git &&
@@ -75,6 +68,24 @@ te() {
         pip install /tmp/te/transformerengine*.whl
     fi
 }
+
+apex() {
+    local mode="$1"
+    cd /opt
+    
+    (rm -rf Apex || true) &&
+        git clone https://github.com/NVIDIA/Apex.git &&
+        pushd Apex &&
+        git checkout ${APEX_TAG}
+
+    if [[ "$mode" == "build" ]]; then
+        pip wheel -v --no-build-isolation --disable-pip-version-check --no-cache-dir --config-settings "--build-option=--cpp_ext --cuda_ext --fast_layer_norm --distributed_adam --deprecated_fused_adam" ./ && \
+        ls -al
+    else
+        pip install /tmp/apex/apex*.whl
+    fi
+}
+
 
 aligner() {
     local mode="$1"
