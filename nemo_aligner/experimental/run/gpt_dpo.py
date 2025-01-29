@@ -76,7 +76,7 @@ def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
         config=run.Config(
             OptimizerConfig,
             optimizer="adam",
-            lr=1,
+            lr=9e-6,
             weight_decay=0.1,
             bf16=True,
             adam_beta1=0.9,
@@ -89,7 +89,7 @@ def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
             warmup_steps=10,
             constant_steps=1000,
             max_steps=10000, ## TODO: make this match trainer.max_steps
-            min_lr=0.9,
+            min_lr=9e-7,
         ),
     )
 
