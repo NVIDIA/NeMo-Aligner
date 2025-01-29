@@ -114,7 +114,7 @@ def default_dpo_trainer():
         val_check_interval=10000,
         gradient_clip_val=1.0,
         max_epochs=3,
-        save_interval=100,
+        save_interval=10000,
         limit_train_batches=1.0,
         max_steps=-1,
         #precision=run.Config(
