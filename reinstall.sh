@@ -3,6 +3,7 @@ set -ex
 cd /opt
 
 # List of all supported libraries (update this list when adding new libraries)
+# This also defines the order in which they will be installed by --libraries "all"
 ALL_LIBRARIES=(
     "nemo"
     "trtllm"
@@ -47,7 +48,8 @@ trtllm() {
         . docker/common/install_tensorrt.sh &&
             python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt --python_bindings --benchmarks
     else
-        pip install /tmp/trtllm/tensorrt_llm*.whl
+        pip install --no-cache-dir /tmp/trtllm/tensorrt_llm*.whl 
+        pip install --no-cache-dir pynvml==${PYNVML_VERSION}
     fi
 }
 
@@ -89,6 +91,7 @@ apex() {
 
 aligner() {
     local mode="$1"
+    cd /opt
 
     (rm -rf NeMo-Aligner || true) &&
         git clone https://github.com/NVIDIA/NeMo-Aligner.git &&

@@ -77,33 +77,25 @@ RUN git config --global user.email "worker@nvidia.com"
 # Apex
 COPY --from=apex-wheel /opt/Apex /tmp/apex
 COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
-RUN bash /opt/NeMo-Aligner/reinstall.sh --library apex --mode install
 
 # TRTLLM
 ARG PYNVML_VERSION
 COPY --from=trtllm-wheel /opt/TensorRT-LLM/build/ /tmp/trtllm
 COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
-RUN bash /opt/NeMo-Aligner/reinstall.sh --library trtllm --mode install && \
-    pip install --no-cache-dir pynvml==${PYNVML_VERSION}
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TransformerEngine
 COPY --from=te-wheel /opt/TransformerEngine /opt/TransformerEngine
-RUN pip install /opt/TransformerEngine/*.whl
-
-# NeMo
-ARG NEMO_TAG
-COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
-RUN bash /opt/NeMo-Aligner/reinstall.sh --library nemo --mode install
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
-ARG ALIGNER_COMMIT
-ARG PYTRITON_VERSION
+ARG NEMO_REPO
+ARG NEMO_TAG
 ARG PROTOBUF_VERSION
+ARG PYTRITON_VERSION
+ARG PYNVML_VERSION
 RUN cd /opt/NeMo-Aligner && \
-    bash reinstall.sh --library aligner --mode install
-
-RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
+    bash reinstall.sh --library all --mode install && \
+    cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
 # TODO(terryk): This layer should be deleted ASAP after NeMo is bumped to include all of these PRs
 RUN <<"EOF" bash -exu
