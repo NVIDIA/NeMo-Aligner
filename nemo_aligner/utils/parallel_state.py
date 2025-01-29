@@ -105,6 +105,9 @@ parallism sharding for the training context.
 def get_training_pipeline_model_parallel_group():
     return mcore_parallel_state.get_pipeline_model_parallel_group()
 
+def get_training_data_parallel_rank():
+    return mcore_parallel_state.get_data_parallel_rank()
+
 def get_training_data_parallel_group():
     return mcore_parallel_state.get_data_parallel_group()
 

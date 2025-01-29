@@ -125,7 +125,7 @@ class GRPOTrainer:
         # this timer checks if we should stop training
         self.run_timer = run_timer
 
-        self.trtllm_reshard = "trt_llm" in cfg and cfg.trt_llm.enable and cfg.trt_llm.reshard
+        self.reshard_weights_for_trtllm_inference = "trt_llm" in cfg and cfg.trt_llm.enable and cfg.trt_llm.reshard
 
         self.consumed_samples = 0
         # the step here is GRPO step (num sampling rounds)
@@ -294,7 +294,7 @@ class GRPOTrainer:
             self.model.prepare_for_inference()
 
         # initialize prompt dataloader
-        inference_reshard_context = trt_llm_reshard_region if self.trtllm_reshard else nullcontext
+        inference_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_inference else nullcontext
         with inference_reshard_context():
             # dataloader must be built within the inference context because it uses DP rank and size
             dataloader = self.train_dataloader_builder(consumed_samples=self.consumed_samples)

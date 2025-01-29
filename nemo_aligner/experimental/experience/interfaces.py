@@ -50,10 +50,10 @@ class EnvironmentInterface(abc.ABC):
         return self.finish_step(self.start_step(interactions, metadata, *args, **kwargs))
     
     @abc.abstractmethod
-    def global_post_process_and_metrics(self, rollout_batch):
+    def global_post_process_and_metrics(self, batch) -> Tuple[GPTRolloutBatch, dict]:
         """
         Post processing function after all rollouts are done for the batch.
-        Also returns any metrics.
+        Also returns metrics.
         """
 
 

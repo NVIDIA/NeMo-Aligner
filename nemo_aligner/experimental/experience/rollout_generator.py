@@ -8,11 +8,21 @@ from omegaconf import DictConfig
 import torch
 
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.utils import batch_repeat, batch_index_select, cpu_dict
+from nemo_aligner.utils.utils import batch_repeat, batch_index_select, reconstruct_split_batch, cpu_dict
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.experimental.experience.interfaces import RolloutGeneratorInterface, EnvironmentInterface
 from nemo_aligner.experimental.experience.rollout_batch import GPTRolloutBatch
+
+class SuperSimpleRolloutGenerator(RolloutGeneratorInterface):
+    def __init__(self, cfg: DictConfig, tasks_to_environments: Dict[str, EnvironmentInterface]):
+        self.tasks_to_environments = tasks_to_environments
+        self.samples_per_prompt = cfg.samples_per_prompt
+        self.prompt_batch_size = cfg.prompt_batch_size
+        self.rollout_batch_seq_length = cfg.rollout_batch_seq_length
+    
+    # TODO @sahil have a basic example 
+    
 
 class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
     def __init__(self, cfg: DictConfig, tasks_to_environments: Dict[str, EnvironmentInterface]):
@@ -28,10 +38,11 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         self.tasks_to_environments = tasks_to_environments
         self.samples_per_prompt = cfg.samples_per_prompt
         self.prompt_batch_size = cfg.prompt_batch_size
-        self.rollout_mbs = cfg.rollout_mbs
+        self.rollout_mbs = cfg.generation_rollout_mbs
         self.val_samples_per_prompt = cfg.val_samples_per_prompt
         self.val_prompt_batch_size = cfg.val_prompt_batch_size
         self.rollout_batch_seq_length = cfg.rollout_batch_seq_length
+        self.reshard_weights_for_trtllm_inference = cfg.trtllm_reshard
         
         assert self.rollout_mbs % self.prompt_batch_size == 0, \
             (f"The inference microbatch size of the model ({self.rollout_mbs}) must be a ",
@@ -111,13 +122,40 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                 json.dump(record, f)
                 f.write("\n")
 
+    def detokenize(self, policy_model, rollout_batch):
+        response_tokens = rollout_batch["response_tokens"]
+        response_lengths = rollout_batch["response_lengths"]
+        prompt_tokens = rollout_batch["text"]
+        prompt_lengths = rollout_batch["prompt_lengths"]
+
+        prompt_sentences = [
+            policy_model.tokenizer.ids_to_text(prompt_tokens[i][:prompt_lengths[i]].tolist())
+            for i in range(prompt_lengths.shape[0])
+        ]
+        response_sentences = [
+            policy_model.tokenizer.ids_to_text(response_tokens[i][prompt_lengths[i] : response_lengths[i]].tolist())
+            for i in range(response_lengths.shape[0])
+        ]
+        #interactions = [[p, r] for p, r in zip(prompt_sentences, response_sentences)]
+        #metadata = rollout_batch["extra_verifier_info"]
+        
+        rollout_batch["prompt_sentences"] = prompt_sentences
+        rollout_batch["response_sentences"] = response_sentences
+        return rollout_batch
+    
+    def prepare_env_state(self, rollout_batch):
+        interactions = [[p, r] for p, r in zip(rollout_batch["prompt_sentences"], rollout_batch["response_sentences"])]
+        metadata = rollout_batch["extra_verifier_info"]
+        return interactions, metadata
+        
+
     def generate_rollouts(self, batch_iterator, policy_model, timer, is_validation=False):
         """
         Generate experience rollouts using the policy model and environments.
         Currently only supports single-turn (no feedback)
         """
         # Set up an inference environment with less sharding/parallelism to accelerate inference
-        inference_reshard_context = trt_llm_reshard_region if self.trtllm_reshard else nullcontext
+        inference_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_inference else nullcontext
 
         rollout_batches, futures = [], []
         with inference_reshard_context():
@@ -130,24 +168,27 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                         num_repetitions = self.rollout_mbs // self.prompt_batch_size
                         num_rollout_batches_per_data_batch = self.samples_per_prompt // num_repetitions
 
-                    print(batch["problem"].shape)
+                    print(batch["text"].shape)
                     batch = batch_repeat(batch, num_repetitions=num_repetitions)
                     for _ in range(num_rollout_batches_per_data_batch):
                         rollout_batch = policy_model.infer(batch)
-                        rollout_batch["prompt_tokens"] = batch["prompt"]
+                        rollout_batch = batch | rollout_batch
                         rollout_batch["generator_rank"] = (
                             torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
                         )
+                        rollout_batch = self.detokenize(rollout_batch)
 
                         # iterate over tasks and call the environments to get rewards
                         microbatch_futures = []
                         for task in self.tasks_to_environments.keys():
                             indices = []
-                            for idx, t in enumerate(rollout_batch["tasks"]):
+                            for idx, t in enumerate(rollout_batch["task_name"]):
                                 if t == task:
                                     indices.append(idx)
-                            task_batch = batch_index_select(rollout_batch, indices)
-                            microbatch_futures.append((task, indices, self.tasks_to_environments[task].start_step(task_batch, None)))
+                            if len(indices) > 0:
+                                task_batch = batch_index_select(rollout_batch, indices)
+                                interactions, metadata = self.prepare_state(policy_model, task_batch)
+                                microbatch_futures.append((task, indices, self.tasks_to_environments[task].start_step(interactions, metadata)))
 
                         rollout_batches.append(rollout_batch)
                         futures.append(microbatch_futures)
@@ -171,6 +212,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         )
 
         # since we compute the logprobs in nemo we need to be outside the inference resharding context
+        # we also do the logprob and init_logprob calculations here to overlap with async environment compute
         batched_response_tokens = balanced_local_batch["response_tokens"]
 
         with timer("logprobs"):
@@ -187,37 +229,54 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         # we send environment step requests in the sharded context, so we need to keep this sharding and then undo it
         with inference_reshard_context():
             with timer("environment_wait"):
-                # TODO reassemble environment futures
-                rm_rollout_batches = []
-                for future in futures:
-                    rewards = future.result().squeeze(1)
-                    rm_rollout_batches.append({"rewards": rewards})
+                env_rollout_batches = []
+                for batch_futures in futures:
+                    all_task_indices, all_task_results = [], []
+                    for task, batch_indices, task_future in batch_futures:
+                        all_task_indices.append(batch_indices)
+                        _, _, rewards, episode_complete = self.tasks_to_environments[task].finish_step(task_future)
+                        # not touching episode_complete for now since this loop only supports single-turn
+                        all_task_results.append({"rewards": rewards})
+                    batch_rewards = reconstruct_split_batch(all_task_results, all_task_indices)
+                    env_rollout_batches.append(batch_rewards)
 
-            unbalanced_rm_batch = GPTRolloutBatch.from_rollout_batches(
-                rm_rollout_batches,
+            unbalanced_env_batch = GPTRolloutBatch.from_rollout_batches(
+                env_rollout_batches,
                 eos_id=self.model.tokenizer.eos_id,
                 rollout_batch_seq_length=padded_rollout_sequence_length,
             )
-            global_rm_batch = unbalanced_rm_batch.gather_and_balance_globally()
+            global_env_batch = unbalanced_env_batch.gather_and_balance_globally()
 
-            g_prompt_tokens = global_rollout_batch["prompt_tokens"]
-            g_response_lengths = global_rollout_batch["response_lengths"]
-            g_rewards = global_rm_batch["rewards"]
-            g_is_end = global_rollout_batch["is_end"]
-            global_rm_batch["accuracy"] = g_rewards
-
-        # chunking needs to be outside of reshard region
-        balanced_rm_batch = global_rm_batch.chunk(
-            rank=parallel_state.get_data_parallel_rank(),
-            split_size=parallel_state.get_data_parallel_world_size(),
+        # chunking needs to be done with training sharding
+        balanced_env_batch = global_env_batch.chunk(
+            rank=parallel_state.get_training_data_parallel_rank(),
+            split_size=parallel_state.get_training_data_parallel_world_size(),
         )
-        balanced_local_batch.update(balanced_rm_batch)
+        balanced_local_batch.update(balanced_env_batch)
 
         global_rollout_batch["mask"] = create_mask(values=global_rollout_batch["logprobs"], prompt_lengths=global_rollout_batch["prompt_lengths"], response_lengths=global_rollout_batch["response_lengths"])
 
-        global_rollout_batch.update(global_rm_batch)
+        global_rollout_batch.update(global_env_batch)
         rank = torch.distributed.get_rank()
         savefile = f"train_{rank}.jsonl" if not is_validation else f"validation_{rank}.jsonl"
         self.generation_log(global_rollout_batch, os.path.join(self.cfg.generation_save_dir, savefile))
 
         return balanced_local_batch, cpu_dict(self.compute_rollout_metrics(global_rollout_batch))
+    
+    def post_process_and_compute_rollout_metrics(self, global_rollout_batch):
+        # iterate over tasks and call the environments to get metrics and finalized batches
+        split_idxs, split_batches, metrics = [], [], {}
+        for task in self.tasks_to_environments.keys():
+            indices = []
+            for idx, t in enumerate(global_rollout_batch["task_name"]):
+                if t == task:
+                    indices.append(idx)
+            task_batch = batch_index_select(global_rollout_batch, indices)
+            task_batch, task_metrics = \
+                self.tasks_to_environments[task].global_post_process_and_metrics(task_batch)
+            split_idxs.append(indices)
+            split_batches.append(task_batch)
+            metrics[task] = task_metrics
+        
+        # recompose batches
+        return reconstruct_split_batch(split_idxs, split_batches), metrics
