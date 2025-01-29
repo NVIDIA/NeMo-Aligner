@@ -196,7 +196,7 @@ def gather_jagged_object_lists(local_objects: list, group=None):
         Flattened list of all objects from all ranks in order [rank0, rank1, ...]
     """
     # Gather all lists across ranks
-    world_size = torch.distributed.get_world_size()
+    world_size = torch.distributed.get_world_size(group=group)
     gathered_lists = [None] * world_size
     torch.distributed.all_gather_object(gathered_lists, local_objects, group=group)
     

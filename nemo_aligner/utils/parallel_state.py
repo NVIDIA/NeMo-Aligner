@@ -114,7 +114,7 @@ def get_training_data_parallel_group():
     return mcore_parallel_state.get_data_parallel_group()
 
 def get_training_data_parallel_world_size():
-    return mcore_parallel_state.get_data_parallel_size()
+    return mcore_parallel_state.get_data_parallel_world_size()
 
 @contextmanager
 def trt_llm_reshard_region():

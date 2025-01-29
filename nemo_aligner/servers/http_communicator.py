@@ -14,7 +14,7 @@
 
 from pytriton.client import FuturesModelClient
 from concurrent import futures
-from typing import Dict, Tuple, List, Optional
+from typing import Dict, Tuple, List, Optional, Union
 import requests
 import torch
 
@@ -49,7 +49,7 @@ class FlaskCommunicator:
     """
     Communicator class for async requests to flask servers
     """
-    def __init__(self, servers: Dict[str, Tuple[str, int]]):
+    def __init__(self, servers: Dict[str, Dict[str, Union[str, int]]]):
         """
         servers: A dictionary of server names to server ips + ports
                  requests will be sent to {ip}:{port}/{name}
@@ -58,14 +58,15 @@ class FlaskCommunicator:
         self.servers = servers
 
     def send_data_to_server(self, name: str, data: List[Dict]) -> Optional[FutureResult]:
-        ip, port = self.servers[name]
+        ip = self.servers[name]["ip"]
+        port = self.servers[name]["port"]
         url = f"http://{ip}:{port}/{name}"
 
         future = self.executor.submit(lambda: requests.post(url, json=data))
         return future
 
-    def get_result(self, future: futures.future, keys):
-        return get_mp_future_result(future)
+    def get_result(self, future: futures.Future, keys):
+        return get_mp_future_result(future, *keys)
 
 class HTTPCommunicator:
     """Communicator class for the actor to send async requests to the remote servers

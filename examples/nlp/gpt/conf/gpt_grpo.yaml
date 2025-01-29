@@ -14,6 +14,8 @@ trainer:
     val_check_interval: 10
     save_interval: ${.val_check_interval}
     gradient_clip_val: 1.0
+    run_validation_step_0: True
+    greedy_on_validation: True
 
     # GRPO args to generate the data for training
     initial_policy_kl_penalty: 0.01
@@ -36,9 +38,9 @@ trainer:
     environments:
       math:
         servers:
-          ip: localhost
-          port: 3141
-          name: math_grader
+          math_grader:
+            ip: localhost
+            port: 3141
 
     # the sequence length to pad the rollout batch for training to
     # reduce fragmentation at the cost of using more
@@ -152,6 +154,10 @@ model:
       min_length: 1
 
     trt_llm: ${trainer.grpo.trt_llm}
+    # pull from trainer, do not change here. Change at trainer.grpo.generation_rollout_mbs
+    generation_rollout_mbs: ${trainer.grpo.generation_rollout_mbs}
+    # pull from trainer, do not change here. Change at trainer.grpo.trt_model_dir
+    trt_model_dir: ${trainer.grpo.trt_model_dir}
 
   peft:
     peft_scheme: "none"  # ["lora", "none"]
@@ -218,6 +224,7 @@ model:
     apply_chat_template: True
     prompt_file: null
     system_prompt_file: null
+    shuffle_train_data: True
 
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:

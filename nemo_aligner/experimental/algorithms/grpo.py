@@ -34,9 +34,10 @@ from nemo_aligner.utils.distributed import (
     masked_global_mean_var,
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
-from nemo_aligner.utils.ppo_utils import (
+from nemo_aligner.utils.ppo_utils import create_mask
+from nemo_aligner.experimental.utils.rl_utils import (
     calculate_kl_penalty_joschu2020,
-    create_mask,
+    calculate_baseline_and_std_per_prompt,
 )
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
@@ -49,56 +50,6 @@ def compute_num_rollout_microbatches_per_dp_group(dataloader):
         divide(dataloader.batch_sampler.global_batch_size, dataloader.batch_sampler.micro_batch_size),
         parallel_state.get_data_parallel_world_size(),
     )
-
-# TODO @sahilj add unit test and normalization
-def calculate_baseline_and_std_per_prompt(prompts, rewards, valid_mask, leave_one_out_baseline=True):
-    """
-    Function to compute a baseline for each (prompt, response) pair in the batch. 
-    The same baseline is calculated for each prompt. Samples set to 0 in 'valid_mask' 
-    are not included in the baseline calculation. 
-
-    prompts:    tensor (b, s)     Tensor of prompts the model used. May be on any device
-    rewards:    tensor (b,)       Float-valued rewards. May be on any device
-    valid_mask: tensor (b,)       Vector of 0/1, where 0 is to ignore and 1 is to keep
-    leave_one_out_baseline: bool  Compute baseline by leaving out the sample that the baseline is for (from RLOO)
-    
-    returns
-    tensor (b,) of baselines on the same device as 'rewards'
-    """
-    unique_prompts = torch.unique(prompts, dim=0)
-
-    baseline = torch.zeros_like(rewards)
-    sq_baseline = torch.zeros_like(rewards)
-    reward_device = rewards.get_device()
-    if reward_device == -1:
-        reward_device = "cpu"
-
-    for i in range(len(unique_prompts)):
-        is_matching_prompt = (prompts == unique_prompts[i]).all(1)
-        prompt_idx = torch.arange(len(prompts), device=reward_device)[is_matching_prompt]
-
-        if leave_one_out_baseline:
-            baseline_mask_matrix = (1 - torch.eye(len(prompt_idx))).to(reward_device)
-        else:
-            baseline_mask_matrix = torch.ones((len(prompt_idx), len(prompt_idx))).to(reward_device)
-
-        if valid_mask[prompt_idx].sum() <= 1:
-            # Ignore sample: there are no valid responses, so set baseline equal to reward
-            # to ignore it in the loss computation
-            baseline[prompt_idx] = rewards[prompt_idx]
-        else:
-            num_valid = valid_mask[prompt_idx].sum() - leave_one_out_baseline
-            prompt_baseline = torch.matmul(baseline_mask_matrix, 
-                                           rewards[prompt_idx] * valid_mask[prompt_idx]) / num_valid
-            prompt_baseline_square = torch.matmul(baseline_mask_matrix, 
-                                           (rewards[prompt_idx] ** 2) * valid_mask[prompt_idx]) / num_valid
-
-            baseline[prompt_idx] = prompt_baseline
-            sq_baseline[prompt_idx] = prompt_baseline_square
-
-    std = (sq_baseline - baseline.square()).sqrt().nan_to_num(0)
-    return baseline, std
-
 
 class GRPOTrainer:
     """Trainer to coordinate GRPO training
@@ -137,7 +88,7 @@ class GRPOTrainer:
         self.reshard_weights_for_trtllm_generation = "trt_llm" in cfg and cfg.trt_llm.enable and cfg.trt_llm.reshard
 
         # Tracked by state dict and checkpointed
-        self.consumed_samples = 0       # consumed prompts
+        self.consumed_samples = 0       # consumed prompts (for the dataloader to keep track)
         self.step = 0                   # GRPO step (num sampling rounds)
         self.grpo_optimization_step = 0 # number of times we optimized the actor (num calls to optimizer step)
 
@@ -157,7 +108,7 @@ class GRPOTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(train_dataloader.batch_sampler)
         self.set_max_steps()
 
-        # size to pad our rollout batch to
+        # size to pad our rollout batch to. If configured to None, we'll just use max-sequence padding
         self.rollout_batch_seq_length = self.cfg.rollout_batch_seq_length
 
         # TODO @sahilj move this to rollout generator or environments
@@ -167,9 +118,11 @@ class GRPOTrainer:
 
         self.timer = ScopedTimer(reduction="mean", sync_cuda=True, buffer_size=1)
 
-    def create_grpo_training_data_and_metrics_from_rollouts(self, rollout_batch):
+    def create_grpo_training_data_from_inferences(self, rollout_batch: GPTRolloutBatch):
         """
         Generate grpo specific loss terms for training and metrics. 
+        
+        rollout_batch: GPTRolloutBatch      
         The input rollout batch is global and the output is dp sharded
         """
         grpo_train_data = GPTRolloutBatch() # using this class for easy chunking/sharding
@@ -228,7 +181,7 @@ class GRPOTrainer:
         generation_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_generation else nullcontext
         with generation_reshard_context():
             # dataloader must be built within the generation context because it uses DP rank and size
-            dataloader = dataloader_builder(consumed_samples=self.consumed_samples)
+            dataloader = dataloader_builder(consumed_samples=consumed_samples)
             sampler_iter = iter(dataloader.batch_sampler)
 
             # must compute the number of microbatches in the generation context for correct DP groups
@@ -240,8 +193,8 @@ class GRPOTrainer:
                 )
 
         # the rollout_generator handles experience generation and returns a global batch
-        rollout_data, rollout_metrics, rollout_timing = self.rollout_generator.generate(
-            batch_iterator, self.model, self.timer, is_validation=False
+        rollout_data, rollout_metrics, rollout_timing = self.rollout_generator.generate_rollouts(
+            batch_iterator, self.model, is_validation=False, greedy=is_validation and self.cfg.greedy_on_validation
         )
         return rollout_data, rollout_metrics, rollout_timing
 
@@ -262,11 +215,11 @@ class GRPOTrainer:
 
         rollout_data, rollout_metrics, rollout_timing = self._run_inference(self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False)       
         
-        train_data, grpo_metrics = self.create_grpo_training_data_and_metrics_from_rollouts(
+        train_data, grpo_metrics = self.create_grpo_training_data_from_inferences(
             rollout_data, calculate_kl_penalty=True
         )
 
-        self.consumed_samples += rollout_metrics["rollout_size"]
+        self.consumed_samples += self.cfg.num_prompts_per_grpo_step
 
         with self.timer("finish_inference"):
             # Timing includes engine unloading if enabled
@@ -329,7 +282,7 @@ class GRPOTrainer:
             if not loop_iter:
                 return  # training ended
 
-            global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="PPO Global Step")
+            global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="GRPO Global Step")
 
             dp_size = parallel_state.get_training_data_parallel_world_size()
             num_samples_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
@@ -360,18 +313,13 @@ class GRPOTrainer:
                     # table_metrics["reward"],
                 # ]
                 metrics["epoch"] = self.epoch + 1
-                self.logger.log_metrics(
-                    metrics, step=self.step, prefix="train_rollouts/",
-                )
+                self.logger.log_metrics(metrics, step=self.step, prefix="train_rollouts/")
                 # self.logger.log_table(
                     # key="table/train_rollouts", dataframe=self.train_df, step=self.step,
                 # )
 
-                if self.step == 0:
-                    self.consumed_samples = metrics["rollout_size"]
-
+                if self.step == 0 and self.cfg.run_validation_step_0:
                     # TODO @sahilj flag doing a validation run at step 0
-
                     with self.timer("validation_time"):
                         val_metrics = self.run_validation()
                     timing_metrics.update(self.timer.consume_durations())

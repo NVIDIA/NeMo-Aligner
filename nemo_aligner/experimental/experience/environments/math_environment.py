@@ -23,8 +23,8 @@ class MathEnvironment(EnvironmentInterface):
         """
         if parallel_state.is_model_parallel_src_rank():
             # fold all interactions after the prompt together
-            responses = [''.join(interactions[1:]) for interaction in interactions]
-            ground_truths = metadata["ground_truths"]
+            responses = [''.join(interaction[1:]) for interaction in interactions]
+            ground_truths = [g["ground_truth"] for g in metadata]
             data = {
                 "pred_responses": responses,
                 "ground_truths": ground_truths,
@@ -33,8 +33,11 @@ class MathEnvironment(EnvironmentInterface):
         return None
 
     def finish_step(self, future):
+        # gets the future result and also broadcasts within the current MP group
         results = self.communicator.get_result(future, "rewards")
-        return None, None, results["rewards"], torch.ones(results.shape[0],)
+
+        th_rewards = torch.tensor(results)
+        return None, None, th_rewards, torch.ones(th_rewards.shape[0],)
     
     def global_post_process_and_metrics(self, batch):
         """

@@ -82,14 +82,6 @@ def calculate_kl_penalty(log_probs_a, log_probs_b, use_absolute_kl=True):
     return init_policy_kl
 
 
-def calculate_kl_penalty_joschu2020(log_probs_policy, log_probs_reference):
-    """Calculates a per-token estimate of the KL Divergence between two log_probs.
-    From Schulman 2020, always positive.
-    """
-    r = log_probs_reference - log_probs_policy
-    return torch.exp(r) - r - 1
-
-
 def create_mask(values, prompt_lengths, response_lengths):
     """Creates a mask to only keep the values in the sequence that are between prompt_lengths and sentence_lengths.
     This results in removing the prompt tokens, and removing the padding at the end of the sequence.

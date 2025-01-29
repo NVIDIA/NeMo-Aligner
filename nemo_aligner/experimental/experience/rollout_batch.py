@@ -66,18 +66,17 @@ class GPTRolloutBatch(UserDict):
 
                 value = rebalance_nd_tensor(value, group=parallel_state.get_training_data_parallel_group())
                 global_rollout_batch[k] = value
-            # TODO @sahilj convert from string lists to generic objects with the distributed functions for objects
-            elif isinstance(val, list) and all(isinstance(x, str) for x in val):
+            elif isinstance(value, list):
                 # same infernence reshard logic described above, but now using object gathers.
                 if parallel_state.is_trt_llm_reshard():
-                    val = gather_jagged_object_lists(val, group=parallel_state.get_training_pipeline_model_parallel_group())
-                val = gather_jagged_object_lists(val, parallel_state.get_training_data_parallel_group())
-                global_rollout_batch[k] = val
+                    value = gather_jagged_object_lists(value, group=parallel_state.get_training_pipeline_model_parallel_group())
+                value = gather_jagged_object_lists(value, parallel_state.get_training_data_parallel_group())
+                global_rollout_batch[k] = value
             else:
                 raise NotImplementedError(
                     (
-                        f"Attempted to gather_and_balance_globally for unsupported type {type(val)} with key {k}."
-                        "Please provide either a tensor or a string list."
+                        f"Attempted to gather_and_balance_globally for unsupported type {type(value)} with key {k}."
+                        "Please provide either a tensor or a list of picklable objects."
                     )
                 )
 
@@ -93,7 +92,13 @@ class GPTRolloutBatch(UserDict):
         """
         chunked_rollout_batch = type(self)()
 
-        batch_set = set(tensor.size(0) for tensor in self.data.values())
+        batch_set = set()
+        for val in self.data.values():
+            if isinstance(val, torch.Tensor):
+                batch_set.add(val.size(0))
+            else:
+                batch_set.add(len(val))
+
         assert len(batch_set) == 1, "batch sizes are not the same across the rollout batch"
         B = batch_set.pop()
         assert B % split_size == 0, f"batch size ({B}) is not a multiple of split_size ({split_size})"
@@ -103,6 +108,9 @@ class GPTRolloutBatch(UserDict):
         indices = torch.arange(B).tensor_split(split_size)[rank]
 
         for k in self.data:
-            chunked_rollout_batch[k] = self.data[k][indices].clone()
+            if torch.is_tensor(self.data[k]):
+                chunked_rollout_batch[k] = self.data[k][indices].clone()
+            else:
+                chunked_rollout_batch[k] = [self.data[k][i] for i in indices]
 
         return chunked_rollout_batch

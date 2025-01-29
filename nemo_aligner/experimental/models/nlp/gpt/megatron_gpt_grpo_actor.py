@@ -38,7 +38,7 @@ from nemo_aligner.utils.distributed import (
     broadcast_2d_tensor_within_pp,
     from_parallel_logits_to_logprobs,
 )
-from nemo_aligner.utils.ppo_utils import calculate_kl_penalty_joschu2020
+from nemo_aligner.experimental.utils.rl_utils import calculate_kl_penalty_joschu2020
 from nemo_aligner.utils.text_generation_utils import (
     TrackLengthGPTModelTextGenerationStrategy,
     verify_is_valid_and_clamp_range_,
@@ -70,34 +70,33 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self.distributed_adam_offload_manager = None
 
         # length parameters for generation
-        self._length_params = OmegaConf.to_container(self.cfg.ppo.length_params, resolve=True)
+        self._length_params = OmegaConf.to_container(self.cfg.grpo.length_params, resolve=True)
         # sampling parameters for generation
-        self._sampling_params = OmegaConf.to_container(self.cfg.ppo.sampling_params, resolve=True)
+        self._sampling_params = OmegaConf.to_container(self.cfg.grpo.sampling_params, resolve=True)
 
-        self.to_offload_adam_states = self.cfg.ppo.offload_adam_states and self.with_distributed_adam
-        self.entropy_bonus = self.cfg.ppo.entropy_bonus
-        self.ratio_eps = self.cfg.ppo.ratio_eps
-        self.forward_micro_batch_size = self.cfg.ppo.forward_micro_batch_size
+        self.to_offload_adam_states = self.cfg.grpo.offload_adam_states and self.with_distributed_adam
+        self.ratio_eps = self.cfg.grpo.ratio_eps
+        self.forward_micro_batch_size = self.cfg.grpo.forward_micro_batch_size
 
-        self.use_trtllm_generation = "trt_llm" in self.cfg.ppo and self.cfg.ppo.trt_llm.enable
+        self.use_trtllm_generation = "trt_llm" in self.cfg.grpo and self.cfg.grpo.trt_llm.enable
         if self.use_trtllm_generation:
             self.trtllm_generate = GPTGenerateTRTLLM(
                 model_cfg=self.cfg,
-                max_generation_length=self.cfg.ppo.length_params.get("max_length", 1024),
-                max_input_len=self.cfg.ppo.trt_llm.get("max_input_len", 1024),
-                generation_batch_size=self.cfg.ppo.get("rollout_micro_batch_size", 4),
-                unload_engine_train=self.cfg.ppo.trt_llm.get("unload_engine_train", False),
-                trt_model_type=self.cfg.ppo.trt_llm.get("model_type", "llama"),
-                end_strings=self.cfg.ppo.sampling_params["end_strings"],
-                reshard_model=self.cfg.ppo.trt_llm.get("reshard", False),
-                sample_temperature=self.cfg.ppo.sampling_params["temperature"],
-                sample_top_k=self.cfg.ppo.sampling_params["top_k"],
-                sample_top_p=self.cfg.ppo.sampling_params["top_p"],
-                repetition_penalty=self.cfg.ppo.sampling_params["repetition_penalty"],
-                use_greedy=self.cfg.ppo.sampling_params.get("use_greedy", False),
+                max_generation_length=self.cfg.grpo.length_params.get("max_length", 1024),
+                max_input_len=self.cfg.grpo.trt_llm.get("max_input_len", 1024),
+                generation_batch_size=self.cfg.grpo.get("generation_rollout_mbs", 4),
+                unload_engine_train=self.cfg.grpo.trt_llm.get("unload_engine_train", False),
+                trt_model_type=self.cfg.grpo.trt_llm.get("model_type", "llama"),
+                end_strings=self.cfg.grpo.sampling_params["end_strings"],
+                reshard_model=self.cfg.grpo.trt_llm.get("reshard", False),
+                sample_temperature=self.cfg.grpo.sampling_params["temperature"],
+                sample_top_k=self.cfg.grpo.sampling_params["top_k"],
+                sample_top_p=self.cfg.grpo.sampling_params["top_p"],
+                repetition_penalty=self.cfg.grpo.sampling_params["repetition_penalty"],
+                use_greedy=self.cfg.grpo.sampling_params.get("use_greedy", False),
                 tokenizer=self.tokenizer,
-                seed=self.cfg.ppo.trt_llm.get("seed", self.cfg.seed),
-                trt_model_dir=self.cfg.ppo.get("trt_model_dir", "/tmp/trt_llm_model"),
+                seed=self.cfg.grpo.trt_llm.get("seed", self.cfg.seed),
+                trt_model_dir=self.cfg.grpo.get("trt_model_dir", "/tmp/trt_llm_model"),
             )
 
     # training calls
@@ -155,20 +154,20 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     loss = loss1.view(-1)[0] * 0
 
                 with torch.no_grad():
-                    ppo_ratio = masked_mean(ratios.detach(), mask)
-                    ppo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
+                    grpo_ratio = masked_mean(ratios.detach(), mask)
+                    grpo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
 
                 (
                     reduced_actor_loss,
-                    ppo_ratio,
-                    ppo_ratio_clamped,
-                ) = average_losses_across_data_parallel_group([loss, ppo_ratio, ppo_ratio_clamped])
+                    grpo_ratio,
+                    grpo_ratio_clamped,
+                ) = average_losses_across_data_parallel_group([loss, grpo_ratio, grpo_ratio_clamped])
                 return (
                     loss,
                     {
                         "loss": reduced_actor_loss,
-                        "ppo_ratio": ppo_ratio,
-                        "ppo_ratio_clamped": ppo_ratio_clamped,
+                        "grpo_ratio": grpo_ratio,
+                        "grpo_ratio_clamped": grpo_ratio_clamped,
                     },
                 )
 
@@ -211,7 +210,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         metrics = {}
 
-        for key in ["loss", "ppo_ratio", "ppo_ratio_clamped"]:
+        for key in ["loss", "grpo_ratio", "grpo_ratio_clamped"]:
             if losses_reduced_per_micro_batch:
                 metric_mean = torch.stack(
                     [loss_reduced[key] for loss_reduced in losses_reduced_per_micro_batch]
@@ -300,7 +299,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             clear_memory()
 
     @torch.no_grad()
-    def infer(self, inference_batch):
+    def infer(self, inference_batch, use_greedy=False):
         prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
@@ -310,7 +309,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         )
 
         if self.use_trtllm_generation:
-            actor_output = self.trtllm_generate.generate(inputs)
+            actor_output = self.trtllm_generate.generate(inputs, use_greedy=use_greedy)
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
         else:
@@ -344,7 +343,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         # sometimes backends like TRT-LLM will generate invalid tokens
         # so we need to also inplace mutate the response_tokens to be within the tokenizer range
         is_valid = verify_is_valid_and_clamp_range_(
-            response_tokens, response_lengths, strategy, self.tokenizer, self.cfg.ppo.sampling_params["end_strings"]
+            response_tokens, response_lengths, strategy, self.tokenizer, self.cfg.grpo.sampling_params["end_strings"]
         )
 
         rollout_batch = {

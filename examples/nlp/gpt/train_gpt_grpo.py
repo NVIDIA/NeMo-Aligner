@@ -26,8 +26,8 @@ from nemo_aligner.data.nlp.builders import (
     build_dataloader,
     collate_with_pad_to_max_batch,
 )
-from nemo_aligner.experimental.data.builders import build_train_valid_test_task_datasets
-from nemo_aligner.experimental.data.datasets import AllTaskDataset, environments_collate_with_batch_max_sequence_length
+from nemo_aligner.experimental.data.builders import build_train_valid_test_task_datasets, environment_collate_with_pad_to_max_batch
+from nemo_aligner.experimental.data.datasets import AllTaskDataset
 from nemo_aligner.experimental.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
 from nemo_aligner.experimental.experience.environments.math_environment import MathEnvironment
 from nemo_aligner.experimental.experience.rollout_generator import SequenceRewardRolloutGenerator
@@ -117,24 +117,25 @@ def main(cfg) -> None:
     eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    collate_fn = environments_collate_with_batch_max_sequence_length(max_seqlen, eos_id, cfg, generate_masks_and_position_ids=False)
+    collate_fn = environment_collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg, generate_masks_and_position_ids=False)
 
     train_dataloader_builder = partial(
         build_dataloader,
         cfg=cfg,
         dataset=train_ds,
-        mbs=cfg.model.grpo.prompt_micro_batch_size,
-        gbs=cfg.model.grpo.num_prompts_per_grpo_step,
+        mbs=cfg.trainer.grpo.prompt_micro_batch_size,
+        gbs=cfg.trainer.grpo.num_prompts_per_grpo_step,
         collate_fn=collate_fn,
         load_gbs=False,
+        use_random_sampler=cfg.model.data.shuffle_train_data,
     )
 
     val_dataloader_builder = partial(
         build_dataloader,
         cfg=cfg,
         dataset=validation_ds,
-        mbs=cfg.model.grpo.val_prompt_micro_batch_size,
-        gbs=cfg.model.grpo.val_num_prompts_per_grpo_step,
+        mbs=cfg.trainer.grpo.val_prompt_micro_batch_size,
+        gbs=cfg.trainer.grpo.val_num_prompts_per_grpo_step,
         collate_fn=collate_fn,
         load_gbs=False,
         use_random_sampler=False,
@@ -162,13 +163,13 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     # init environments and rollout generator
-    math_environment = MathEnvironment(cfg.environments.math)
+    math_environment = MathEnvironment(cfg.trainer.grpo.environments.math)
     # your_environment = Environment(cfg)
     tasks_to_environments = {
         "math": math_environment,
         # "your_task": your_environment,
     }
-    rollout_generator = SequenceRewardRolloutGenerator(cfg.grpo, tasks_to_environments)
+    rollout_generator = SequenceRewardRolloutGenerator(cfg.trainer.grpo, tasks_to_environments)
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
 

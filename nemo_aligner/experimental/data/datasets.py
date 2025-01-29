@@ -6,6 +6,7 @@ import torch
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.utils import batch_pad_to_fixed_len
 
+#TODO @sahilj handle too-long prompts and masking them out throughout the whole process and renormalizing on loss
 class AllTaskDataset:
     def __init__(self, data_path, tokenizer, apply_chat_template: bool = True, system_prompt_file: str = None, prompt_file: str = None, seq_length=None):
         super().__init__()
@@ -50,7 +51,7 @@ class AllTaskDataset:
         extra_verifier_info = None
         if task_name == "math":
             text_str = self.data[idx]["problem"]
-            extra_verifier_info = {"ground_truth": self.data[idx]["ground_truth"]}
+            extra_verifier_info = {"ground_truth": self.data[idx]["expected_answer"]}
         else:
             raise NotImplementedError(f"task name {task_name} in your dataset doesn't have a handler yet!")
 
@@ -76,7 +77,7 @@ class AllTaskDataset:
         }
         return output  
     
-def environments_collate_with_batch_max_sequence_length(
+def environment_collate_with_batch_max_sequence_length(
     data_batch,
     response_token_length,
     eos_id,

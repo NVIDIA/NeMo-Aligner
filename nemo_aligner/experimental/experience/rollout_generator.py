@@ -119,12 +119,12 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                     print(batch["text"].shape)
                     batch = batch_repeat(batch, num_repetitions=num_repetitions)
                     for _ in range(num_rollout_batches_per_data_batch):
-                        rollout_batch = policy_model.infer(batch, greedy=greedy)
+                        rollout_batch = policy_model.infer(batch, use_greedy=greedy)
                         rollout_batch = batch | rollout_batch
                         rollout_batch["generator_rank"] = (
-                            torch.ones(batch["problem"].shape[0]) * parallel_state.get_model_parallel_src_rank()
+                            torch.ones(batch["text"].shape[0]) * parallel_state.get_model_parallel_src_rank()
                         )
-                        rollout_batch = self.detokenize(rollout_batch)
+                        rollout_batch = self.detokenize(policy_model, rollout_batch)
 
                         # iterate over tasks and call the environments to get rewards
                         microbatch_futures = []
@@ -135,7 +135,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                                     indices.append(idx)
                             if len(indices) > 0:
                                 task_batch = batch_index_select(rollout_batch, indices)
-                                interactions, metadata = self.prepare_state(policy_model, task_batch)
+                                interactions, metadata = self.prepare_env_state(task_batch)
                                 microbatch_futures.append((task, indices, self.tasks_to_environments[task].start_step(interactions, metadata)))
 
                         rollout_batches.append(rollout_batch)
@@ -146,7 +146,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             unbalanced_local_batch = GPTRolloutBatch.from_rollout_batches(
                 rollout_batches,
                 eos_id=policy_model.tokenizer.eos_id,
-                rollout_batch_seq_length=self.cfg.rollout_batch_seq_length,
+                rollout_batch_seq_length=self.rollout_batch_seq_length,
             )
             global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()
 
@@ -190,7 +190,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
 
             unbalanced_env_batch = GPTRolloutBatch.from_rollout_batches(
                 env_rollout_batches,
-                eos_id=self.model.tokenizer.eos_id,
+                eos_id=policy_model.tokenizer.eos_id,
                 rollout_batch_seq_length=padded_rollout_sequence_length,
             )
             global_env_batch = unbalanced_env_batch.gather_and_balance_globally()
@@ -275,13 +275,12 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             record = {
                 "prompt_hash": prompt_hash,
                 "idx_in_batch": idx,
-                "problem": instance["prompt_sentences"],
+                "prompt": instance["prompt_sentences"],
                 "response": instance["response_sentences"],
                 "response_length": response_length,
                 "extra_verifier_info": instance.get("extra_verifier_info", None),
                 "rank": instance["generator_rank"].item(),
                 "ended_correctly": instance["is_end"].item(),
-                "step": self.grpo_optimization_step,
                 "reward": instance["rewards"].item(),
                 "logprobs": lps,
                 "init_logprobs": init_lps,

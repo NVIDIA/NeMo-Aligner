@@ -175,7 +175,7 @@ class GPTGenerateTRTLLM:
             self.trt_llm_exporter.refit(model, self.model_cfg)
             log_memory("After TRT-LLM engine refit")
 
-    def _generate(self, inputs: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+    def _generate(self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy:bool=False) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Internal API to make it easier to validate raw TRT-LLM outputs
         """
@@ -189,10 +189,14 @@ class GPTGenerateTRTLLM:
             0, 2 ** 32, size=(prompt_tokens.shape[0],), dtype=torch.long, generator=self.rng_generator
         )
         self.sampling_config.update(random_seed=random_seeds)
+        prev_config_topk = self.sampling_config.top_k
+        self.sampling_config.update(top_k=prev_config_topk if not use_greedy else 1)
 
         output_dict = tensorrt_llm_run.tensorrt_llm_worker_context.decoder.generate(
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
         )
+
+        self.sampling_config.update(top_k=prev_config_topk)
 
         # TRTLLM returns the output_ids and sequence_lengths only on the first PP rank, and None otherwise, so we need to broadcast
         output_ids = broadcast_tensor_within_pp(output_dict["output_ids"] if output_dict else None, from_last=False)
@@ -205,9 +209,9 @@ class GPTGenerateTRTLLM:
         response_lengths = torch.squeeze(response_lengths, dim=1).long()
         return output_ids, response_lengths
 
-    def generate(self, inputs: tuple[torch.Tensor, torch.Tensor]):
+    def generate(self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy:bool=False):
 
-        output_ids, response_lengths = self._generate(inputs)
+        output_ids, response_lengths = self._generate(inputs, use_greedy=use_greedy)
         max_length = response_lengths.max().item()
 
         # Map pad_id to eos_id in case tokenizer does not have a pad_id
