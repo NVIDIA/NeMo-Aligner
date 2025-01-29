@@ -62,7 +62,7 @@ RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
     bash reinstall.sh --library trtllm --mode build && \
     ls -al /opt/TensorRT-LLM && \
     mkdir -p /tmp/build && \
-    cp /opt/TensorRT-LLM/build/trtllm*.whl /tmp/build/trtllm*.whl && \
+    cp /opt/TensorRT-LLM/build/tensorrt_llm*.whl /tmp/build/tensorrt_llm*.whl && \
     bash reinstall.sh --library trtllm --mode install 
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
