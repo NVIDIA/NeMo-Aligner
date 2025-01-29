@@ -115,6 +115,7 @@ def main(cfg) -> None:
         pad_samples_to_global_batch_size=False,
         load_gbs=True,
         use_random_sampler=False,
+        limit_train_batches=cfg.trainer.generation.limit_train_batches,
     )
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)

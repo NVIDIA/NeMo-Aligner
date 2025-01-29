@@ -97,17 +97,7 @@ class GenerationTrainer:
         assert self.cfg.max_epochs == 1, "`generation.max_epochs` must be equal to 1 for generation"
 
         # compute `max_steps`
-        self.num_steps_per_epoch = compute_num_steps_per_epoch(
-            self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
-        )
-
-        if isinstance(self.cfg.get("limit_train_batches", 1.0), int):
-            self.train_dataloader.batch_sampler.total_samples = min(
-                self.train_dataloader.batch_sampler.total_samples,
-                self.cfg.limit_train_batches * self.train_dataloader.batch_sampler.global_batch_size,
-            )
-            if hasattr(self.train_dataloader.batch_sampler, "last_batch_size"):
-                self.train_dataloader.batch_sampler.last_batch_size = 0
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
 
         self.set_max_steps()
 
