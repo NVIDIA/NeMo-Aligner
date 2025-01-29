@@ -9,7 +9,6 @@ import torch
 
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import batch_repeat, batch_index_select, reconstruct_split_batch, cpu_dict
-from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.utils.distributed import ScopedTimer
 from nemo_aligner.experimental.experience.interfaces import RolloutGeneratorInterface, EnvironmentInterface
@@ -38,13 +37,13 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         """
         self.tasks_to_environments = tasks_to_environments
         self.samples_per_prompt = cfg.samples_per_prompt
-        self.prompt_batch_size = cfg.prompt_batch_size
+        self.prompt_batch_size = cfg.prompt_micro_batch_size
         self.rollout_mbs = cfg.generation_rollout_mbs
         self.val_samples_per_prompt = cfg.val_samples_per_prompt
-        self.val_prompt_batch_size = cfg.val_prompt_batch_size
-        self.rollout_batch_seq_length = cfg.rollout_batch_seq_length
-        self.reshard_weights_for_trtllm_generation = cfg.trtllm_reshard
+        self.val_prompt_batch_size = cfg.val_prompt_micro_batch_size
+        self.reshard_weights_for_trtllm_generation = cfg.trt_llm.enable and cfg.trt_llm.reshard
         self.generation_save_dir = cfg.generation_save_dir
+        self.rollout_batch_seq_length = cfg.rollout_batch_seq_length
         self.timer = ScopedTimer()
         
         assert self.rollout_mbs % self.prompt_batch_size == 0, \

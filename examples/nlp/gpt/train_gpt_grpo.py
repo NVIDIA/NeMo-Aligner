@@ -124,7 +124,7 @@ def main(cfg) -> None:
         cfg=cfg,
         dataset=train_ds,
         mbs=cfg.model.grpo.prompt_micro_batch_size,
-        gbs=cfg.model.grpo.num_prompts_per_batch,
+        gbs=cfg.model.grpo.num_prompts_per_grpo_step,
         collate_fn=collate_fn,
         load_gbs=False,
     )
@@ -134,7 +134,7 @@ def main(cfg) -> None:
         cfg=cfg,
         dataset=validation_ds,
         mbs=cfg.model.grpo.val_prompt_micro_batch_size,
-        gbs=cfg.model.grpo.val_num_prompts_per_batch,
+        gbs=cfg.model.grpo.val_num_prompts_per_grpo_step,
         collate_fn=collate_fn,
         load_gbs=False,
         use_random_sampler=False,
@@ -148,7 +148,7 @@ def main(cfg) -> None:
     # nemo treats batch size of normal dataloader as GBS/DP
     # so we need to offset it by DP
     dummy_train_dataloader = torch.utils.data.DataLoader(
-        dataset=train_ds, batch_size=divide(cfg.model.global_batch_size, parallel_state.get_data_parallel_world_size())
+        dataset=train_ds, batch_size=divide(cfg.trainer.grpo.num_prompts_per_grpo_step, parallel_state.get_data_parallel_world_size())
     )
 
     init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_ds)
@@ -163,14 +163,16 @@ def main(cfg) -> None:
 
     # init environments and rollout generator
     math_environment = MathEnvironment(cfg.environments.math)
+    # your_environment = Environment(cfg)
     tasks_to_environments = {
-        "math": math_environment
+        "math": math_environment,
+        # "your_task": your_environment,
     }
     rollout_generator = SequenceRewardRolloutGenerator(cfg.grpo, tasks_to_environments)
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
 
-    batch_iterator_cfg = cfg.trainer.ppo.get("batch_iterator", {})
+    batch_iterator_cfg = cfg.trainer.grpo.get("batch_iterator", {})
     batch_iterator_cls = get_batch_iterator_cls(batch_iterator_cfg)
 
     grpo_trainer = GRPOTrainer(
@@ -192,6 +194,8 @@ def main(cfg) -> None:
         grpo_trainer.load_state_dict(custom_trainer_state_dict)
 
     grpo_trainer.fit()
+    
+    # do any environment cleanup here
 
 if __name__ == "__main__":
     main()

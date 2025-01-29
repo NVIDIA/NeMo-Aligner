@@ -8,28 +8,37 @@ trainer:
   accelerator: gpu
   precision: bf16
 
-  ppo:
-    # How many steps we train warmup the critic for (without training the policy)
-    # this may help prevent the critic loss from hockey sticking since
-    # the critic is initialized from the reward model and may not be initially
-    # good at estimating the returns of the policy.
-    # NOTE: setting this to N means the critic will be trained N + 1 times on the first
-    # iteration.
-    critic_warmup_steps: 0
-
+  grpo:
     max_epochs: 1
     max_steps: -1  # max PPO steps (-1 to go through the whole train set)
     val_check_interval: 10
     save_interval: ${.val_check_interval}
     gradient_clip_val: 1.0
 
-    # PPO args to generate the data for training
+    # GRPO args to generate the data for training
     initial_policy_kl_penalty: 0.01
-    use_absolute_kl: True
-    discount_factor: 1.0
-    gae_lambda: 0.95
-    normalize_advantages: True
+    use_leave_one_out_baseline: True
+    normalize_rewards: True
+    
+    # rollout arguments
+    generation_rollout_mbs: 8
 
+    prompt_micro_batch_size: 1
+    num_prompts_per_grpo_step: 64
+    samples_per_prompt: 32
+
+    val_prompt_micro_batch_size: 8
+    val_num_prompts_per_grpo_step: 512 
+    val_samples_per_prompt: 1 
+    
+    generation_save_dir: null
+    
+    environments:
+      math:
+        servers:
+          ip: localhost
+          port: 3141
+          name: math_grader
 
     # the sequence length to pad the rollout batch for training to
     # reduce fragmentation at the cost of using more
@@ -46,7 +55,7 @@ trainer:
       reshard: False # if True then reshard the model into TP only for inference
 
       # By default, assume the max input length is the difference between the model sequence length and the max number of tokens to generate
-      max_input_len: ${subtract:${model.encoder_seq_length}, ${model.ppo.length_params.max_length}}
+      max_input_len: ${subtract:${model.encoder_seq_length}, ${model.grpo.length_params.max_length}}
 
       # the seed to use for trt-llm generation
       seed: ${model.seed}
@@ -79,41 +88,17 @@ trainer:
   enable_checkpointing: False
   use_distributed_sampler: False
   max_time: null
-  max_epochs: ${.ppo.max_epochs}
-  max_steps: ${.ppo.max_steps}
-
-remote_critic_rm:
-  # what to batch the inputs to
-  # set to None if no batching when sending inference to the critic
-  pad_to_length: ${model.encoder_seq_length}
-
-  # must match the same flag in the critic config
-  combine_rm_and_critic_server: True
-
-  # reward model server, specify if
-  # combine_rm_and_critic server is False
-  reward_model:
-    name: reward_model
-    ip: localhost
-    port: 5555
-
-  critic:
-    name:
-      train: critic_train
-      infer: critic_infer
-      save: critic_save
-    ip: localhost
-    port: 5556
-
+  max_epochs: ${.grpo.max_epochs}
+  max_steps: ${.grpo.max_steps}
 
 exp_manager:
   explicit_log_dir: /results
   exp_dir: null
-  name: megatron_gpt_ppo_actor
+  name: megatron_gpt_grpo_actor
   create_wandb_logger: False
   wandb_logger_kwargs:
-    project: nemo_aligner_ppo
-    name: gpt3_ppo_2b
+    project: nemo_aligner_grpo
+    name: gpt3_grpo_2b
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   resume_if_exists: True
   resume_ignore_no_checkpoint: True
@@ -124,7 +109,7 @@ exp_manager:
     mode: max
     always_save_nemo: False # saves nemo file during validation, not implemented for model parallel
     save_nemo_on_train_end: True # not recommended when training large models on clusters with short time limits
-    filename: 'megatron_gpt-{step}-{consumed_samples}-{ppo_optimization_step}-{epoch}-{val_rewards:.3f}'
+    filename: 'megatron_gpt-{step}-{consumed_samples}-{grpo_optimization_step}-{epoch}-{val_rewards:.3f}'
     model_parallel_size: ${multiply:${model.tensor_model_parallel_size}, ${model.pipeline_model_parallel_size}}
 
 pretrained_checkpoint:
@@ -134,25 +119,16 @@ model:
   # TODO: document perf implications
   # use_tp_pp_dp_mapping: true
 
-  ppo:
-    # training generation mbs
-    rollout_micro_batch_size: 8
-    num_rollout_samples: 512
-
+  grpo:
     # mbs to do log prob inference, can be set to
     # lower than rollout_micro_batch_size to reduce
     # memory usage
-    forward_micro_batch_size: ${.rollout_micro_batch_size}
-
-    # val generation mbs
-    val_rollout_micro_batch_size: ${.rollout_micro_batch_size}
-    num_val_samples: ${.num_rollout_samples}
+    forward_micro_batch_size: ${trainer.grpo.generation_rollout_mbs}
 
     # to offload during generation or not
     offload_adam_states: True
 
-    # PPO loss params
-    entropy_bonus: 0.0
+    # GRPO loss params
     ratio_eps: 0.2
 
     # params for generation
@@ -175,7 +151,7 @@ model:
       max_length: ${int_div:${model.encoder_seq_length}, 2}
       min_length: 1
 
-    trt_llm: ${trainer.ppo.trt_llm}
+    trt_llm: ${trainer.grpo.trt_llm}
 
   peft:
     peft_scheme: "none"  # ["lora", "none"]
@@ -195,7 +171,7 @@ model:
       position_embedding_strategy: null # used only when weight_tying is True
 
   mcore_gpt: True
-  # these control the mbs/gbs during PPO training
+  # these control the mbs/gbs during GRPO training (optimization)
   micro_batch_size: 1
   global_batch_size: 64
   megatron_amp_O2: True
@@ -239,6 +215,9 @@ model:
     eod_mask_loss: False # Mask loss for the end of document tokens
     index_mapping_dir: null # path to save index mapping .npy files, by default will save in the same location as data_prefix
     data_prefix: null
+    apply_chat_template: True
+    prompt_file: null
+    system_prompt_file: null
 
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
