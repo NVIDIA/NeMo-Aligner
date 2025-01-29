@@ -46,6 +46,22 @@ RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
     bash reinstall.sh --library trtllm --mode build && \
     ls -al /opt/TensorRT-LLM
 
+# install TransformerEngine
+FROM ${BASE_IMAGE} as te-wheel
+ARG MAX_JOBS
+ARG TE_TAG
+RUN cd /opt && \
+    git clone https://github.com/NVIDIA/TransformerEngine.git && \
+    cd TransformerEngine && \
+    if [ ! -z $TE_TAG ]; then \
+        git fetch origin $TE_TAG && \
+        git checkout FETCH_HEAD; \
+    fi && \
+    git submodule init && git submodule update && \
+    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel . && \
+    ls -al
+
+
 FROM ${BASE_IMAGE} AS final
 LABEL "nemo.library"="nemo-aligner"
 WORKDIR /opt
@@ -74,17 +90,8 @@ ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 RUN pip install pynvml==11.5.3
 
 # install TransformerEngine
-ARG MAX_JOBS
-ARG TE_TAG
-RUN pip uninstall -y transformer-engine && \
-    git clone https://github.com/NVIDIA/TransformerEngine.git && \
-    cd TransformerEngine && \
-    if [ ! -z $TE_TAG ]; then \
-        git fetch origin $TE_TAG && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    git submodule init && git submodule update && \
-    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip install .
+COPY --from=te-wheel /opt/TransformerEngine /opt/TransformerEngine
+RUN pip install /opt/TransformerEngine/*.whl
 
 # place any util pkgs here
 ARG PYTRITON_VERSION
