@@ -46,7 +46,10 @@ def default_dpo_config() -> run.Config[DPOConfig]:
 ## GPTConfig (https://github.com/NVIDIA/NeMo/blob/eb892ae14e204fda269c9a37c6d78578ffd9a0df/nemo/collections/llm/gpt/model/base.py#L162)
 ## to overwrite
 def gpt_config_overrides():
-    return GPTConfigOverrides(hidden_dropout=0.5,)  ## test overriding the config
+    return GPTConfigOverrides(
+        hidden_dropout=0,
+        attention_dropout=0,
+    )  ## test overriding the config
 
 
 def default_dpo_parallelism():
