@@ -114,9 +114,7 @@ class SPINTrainer:
         self.ckpt_callback = ckpt_callback
 
         # compute `max_steps`
-        self.num_steps_per_epoch = compute_num_steps_per_epoch(
-            self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
-        )
+        self.num_steps_per_epoch = compute_num_steps_per_epoch(self.train_dataloader.batch_sampler)
         """
         if isinstance(self.cfg.get("limit_train_batches", 1.0), int):
             self.train_dataloader.batch_sampler.total_samples = min(
