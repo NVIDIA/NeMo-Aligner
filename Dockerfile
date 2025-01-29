@@ -60,6 +60,7 @@ COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinst
 RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
     cd /opt/NeMo-Aligner && \
     bash reinstall.sh --library trtllm --mode build && \
+    cp /opt/TensorRT-LLM/build/trtllm*.whl /tmp/build/trtllm*.whl && \
     bash reinstall.sh --library trtllm --mode install 
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
