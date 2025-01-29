@@ -25,7 +25,7 @@ ARG TRTLLM_REPO=https://github.com/NVIDIA/TensorRT-LLM.git
 ARG TRTLLM_VERSION=v0.13.0
 ARG PROTOBUF_VERSION=4.24.4
 ARG PYTRITON_VERSION=0.5.10
-
+ARG PYNVML_VERSION=11.5.3
 
 FROM ${BASE_IMAGE} AS aligner-bump
 ARG ALIGNER_COMMIT
@@ -81,25 +81,16 @@ RUN pip uninstall -y apex && \
 
 # TRTLLM
 ARG TRTLLM_VERSION
+ARG PYNVML_VERSION
 COPY --from=trtllm-wheel /opt/TensorRT-LLM/build/ /tmp/trtllm
 COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
-RUN bash /opt/NeMo-Aligner/reinstall.sh --library trtllm --mode install 
+RUN bash /opt/NeMo-Aligner/reinstall.sh --library trtllm --mode install && \
+pip install --no-cache-dir pynvml==${PYNVML_VERSION}
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
-# TODO: This pinning of pynvml is only needed while on TRTLLM v13 since pynvml>=11.5.0 but pynvml==12.0.0 contains a
-#   breaking change. The last known working verison is 11.5.3
-RUN pip install pynvml==11.5.3
-
-# install TransformerEngine
+# TransformerEngine
 COPY --from=te-wheel /opt/TransformerEngine /opt/TransformerEngine
 RUN pip install /opt/TransformerEngine/*.whl
-
-# place any util pkgs here
-ARG PYTRITON_VERSION
-RUN pip install --upgrade-strategy only-if-needed nvidia-pytriton==$PYTRITON_VERSION
-ARG PROTOBUF_VERSION
-RUN pip install -U --no-deps protobuf==$PROTOBUF_VERSION
-RUN pip install --upgrade-strategy only-if-needed jsonlines
 
 # NeMo
 ARG NEMO_TAG
@@ -113,6 +104,8 @@ RUN pip install triton==3.1.0
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 ARG ALIGNER_COMMIT
+ARG PYTRITON_VERSION
+ARG PROTOBUF_VERSION
 RUN cd /opt/NeMo-Aligner && \
     export ALIGNER_COMMIT=$ALIGNER_COMMIT && \
     bash reinstall.sh --library aligner --mode install

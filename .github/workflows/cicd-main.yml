@@ -100,7 +100,7 @@ jobs:
         id: manifest
         run: |
           cd ${{ github.run_id }}
-          
+
           BUILD_ARGS=$(cat << EOF
           BASE_IMAGE=$(cat setup/manifest.json | jq -r '."ngc-pytorch"')
           NEMO_REPO=$(cat setup/manifest.json | jq -r '."vcs-dependencies".nemo.repo')
@@ -113,6 +113,7 @@ jobs:
           TRTLLM_TAG=$(cat setup/manifest.json | jq -r '."vcs-dependencies".trtllm.ref')
           PROTOBUF_VERSION=$(cat setup/manifest.json | jq -r '."pypi-dependencies".protobuf')
           PYTRITON_VERSION=$(cat setup/manifest.json | jq -r '."pypi-dependencies".pytriton')
+          PYNVML_VERSION=$(cat setup/manifest.json | jq -r '."pypi-dependencies".pynvml')
           EOF
           )
 
