@@ -58,7 +58,7 @@ trtllm() {
         . docker/common/install_tensorrt.sh &&
             python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt --python_bindings --benchmarks
     else
-        pip install /tmp/build/tensorrt_llm*.whl
+        pip install /tmp/trtllm/tensorrt_llm*.whl
     fi
 }
 

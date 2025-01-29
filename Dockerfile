@@ -38,6 +38,14 @@ git pull --rebase || true
 pip install --no-cache-dir --no-deps -e .
 EOF
 
+FROM ${BASE_IMAGE} as trtllm-wheel
+ARG TRTLLM_VERSION
+COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh 
+RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
+    cd /opt/NeMo-Aligner && \
+    bash reinstall.sh --library trtllm --mode build && \
+    ls -al /opt/TensorRT-LLM
+
 FROM ${BASE_IMAGE} AS final
 LABEL "nemo.library"="nemo-aligner"
 WORKDIR /opt
@@ -56,14 +64,8 @@ RUN pip uninstall -y apex && \
 
 # TRTLLM
 ARG TRTLLM_VERSION
-COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh 
-RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
-    cd /opt/NeMo-Aligner && \
-    bash reinstall.sh --library trtllm --mode build && \
-    ls -al /opt/TensorRT-LLM && \
-    mkdir -p /tmp/build && \
-    cp /opt/TensorRT-LLM/build/tensorrt_llm*.whl /tmp/build/tensorrt_llm*.whl && \
-    bash reinstall.sh --library trtllm --mode install 
+COPY --from=trtllm-wheel /opt/TensorRT-LLM/build/ /tmp/trtllm
+RUN bash reinstall.sh --library trtllm --mode install 
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TODO: This pinning of pynvml is only needed while on TRTLLM v13 since pynvml>=11.5.0 but pynvml==12.0.0 contains a
