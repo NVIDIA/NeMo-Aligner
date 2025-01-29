@@ -110,5 +110,5 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_se
     ++model.dist_ckpt_load_strictness=log_all
 }
 
-log_file=$(mktemp /tmp/spin-log-XXXXXX)
+log_file=$(mktemp /tmp/self-rewarding-log-XXXXXX)
 self_rewarding | tee $log_file

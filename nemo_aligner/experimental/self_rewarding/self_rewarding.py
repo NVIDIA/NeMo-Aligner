@@ -54,6 +54,7 @@ from nemo_aligner.utils.utils import (
     cpu_weight_swap,
     retrieve_model_state_dict_in_cpu,
 )
+from nemo_aligner.utils.verifiers.instruction_following.instructions_registry import INSTRUCTION_DICT
 
 """
 GPTSFTChatDataset output is dict with keys: ['input_ids', 'mask', 'context_ids', 'answer_ids', 'metadata']
@@ -87,6 +88,7 @@ def self_rewarding_custom_collate(batch, eos_id):
         "prompt_lengths": context_lengths,
         "combined_lengths": combined_lengths,
         "dataset_mask": batch[0]["metadata"]["mask"] if "metadata" in batch[0] else "",
+        "verifier_args": [(x["metadata"]["verifier_args"] if "verifier_args" in x["metadata"] else None) for x in batch],
     }
 
     return output
@@ -275,8 +277,8 @@ class SelfRewardingTrainer:
         else:
             self.tokenizer = self.model.tokenizer
 
-        self.prompt_template = self.model.cfg.spin.get("llm_judge_prompt").strip()
-        self.meta_judge_template = self.model.cfg.spin.get("llm_meta_judge_prompt").strip()
+        self.prompt_template = self.model.cfg.spin.get("llm_judge_prompt")
+        self.meta_judge_template = self.model.cfg.spin.get("llm_meta_judge_prompt")
         self.reward_regex_template = self.model.cfg.spin.get("judge_reward_regex")
         self.meta_judge_reward_regex_template = self.model.cfg.spin.get("meta_judge_reward_regex")
         self.judge_score_low = self.model.cfg.spin.get("judge_score_low", 0)
@@ -543,17 +545,73 @@ class SelfRewardingTrainer:
                 self.trtllm_generate.free()
 
         return response_tokens.cpu(), prompt_lengths.cpu(), response_lengths.cpu(), is_valid.cpu()
+    
+    def instruction_following_rewards(self, prompt, response, args):
+        """Tests response to see if instrutions are followed."""
+        try:
+            task_args = args
+            instruction_list = task_args["instruction_id_list"]
+            is_following_list = []
+    
+            for index, instruction_id in enumerate(instruction_list):
+                try:
+                    instruction_cls = INSTRUCTION_DICT[instruction_id]
+                    instruction = instruction_cls(instruction_id)
+    
+                    kwargs = (
+                        task_args["instruction_kwargs"][index]
+                        if task_args["instruction_kwargs"][index] is not None
+                        else {}
+                    )
+                    instruction.build_description(**kwargs)
+                    instruction_args = instruction.get_instruction_args()
+                    if instruction_args and "prompt" in instruction_args:
+                        instruction.build_description(prompt=prompt)
+    
+                    if response.strip() and instruction.check_following(response):
+                        is_following_list.append(True)
+                    else:
+                        is_following_list.append(False)
+                except Exception as e:
+                    print(f"Error in instruction_following_rewards: {e}, task: {args}")
+    
+            low, high = 0, 5
+            correctness = sum(is_following_list) / len(is_following_list)
+            score = low + (high - low) * correctness
+            return score, True
+        except Exception as e:
+            print(f"Error in instruction_following_rewards: {e}")
+            return 0, False
 
     def get_rewards(self, list_of_batches):
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
         judge_responses = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
+        verifier_args = [b['verifier_args'] for b in list_of_batches]
+        orig_last_prompts = [b['orig_last_prompt'] for b in list_of_batches]
+        orig_responses = [b['orig_response'] for b in list_of_batches]
         for _ in range(self.num_evals_to_average):
             reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
-            batch_responses_str = []
+            batch_prompts_str, batch_responses_str = [], []
             for t, s, e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
+                prompt = self.tokenizer.ids_to_text(t[:s].tolist())
                 response = self.tokenizer.ids_to_text(t[s:e].tolist())
+                batch_prompts_str.append(prompt)
                 batch_responses_str.append(response)
-            rewards = [self.parse_reward_fn(resp_str) for resp_str in batch_responses_str]
+            #rewards = [self.parse_reward_fn(resp_str) for resp_str in batch_responses_str]
+            rewards = []
+            for prompt_str, resp_str, vargs, orig_last_prompt, orig_response in zip(batch_prompts_str, batch_responses_str, verifier_args, orig_last_prompts, orig_responses):
+                if vargs is None:
+                    rewards.append(self.parse_reward_fn(resp_str))
+                else:
+                    #_, resp_norm, last_prompt = self.normalise_prompt(prompt_str, resp_str, list_of_batches[0]["dataset_mask"])
+                    print("*** LAST_PROMPT: ", orig_last_prompt)
+                    #print(f"USER_TEXT [ {last_prompt} ]  RESP_TEXT [ {resp_norm} ]")
+                    new_reward, v_chk = self.instruction_following_rewards(orig_last_prompt, orig_response, vargs)
+                    if v_chk:
+                        print(f"**** NEW_REWARD: {new_reward}")
+                        rewards.append(new_reward)
+                    else:
+                        rewards.append(self.parse_reward_fn(resp_str))
             for idx, (r, t, s, e, end) in enumerate(
                 zip(rewards, reward_responses, prompt_lengths.tolist(), resp_lengths.tolist(), is_end.tolist())
             ):
@@ -590,11 +648,11 @@ class SelfRewardingTrainer:
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
         reward_scores = []
         reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
-        if (
-            torch.distributed.get_rank() == 0
-            and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank()
-        ):
-            print(f"*** META_PROMPT_AND_RESP  [ {self.tokenizer.ids_to_text(reward_responses[0].tolist())} ]")
+        #if (
+        #    torch.distributed.get_rank() == 0
+        #    and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank()
+        #):
+        #    print(f"*** META_PROMPT_AND_RESP  [ {self.tokenizer.ids_to_text(reward_responses[0].tolist())} ]")
         batch_responses_str = []
         for t, s, e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
             response = self.tokenizer.ids_to_text(t[s:e].tolist())
@@ -811,11 +869,11 @@ class SelfRewardingTrainer:
     def normalise_prompt(self, prompt, response, dataset_mask):
         if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
             p_list = re.findall(
-                rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
+                rf"(?s)(?<={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn + dataset_mask)}\n\n).*?(?={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn)})",
                 prompt,
             )
             r_list = re.findall(
-                rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask.replace('user', 'assistant')}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
+                rf"(?s)(?<={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn + dataset_mask.replace('user', 'assistant'))}\n\n).*?(?={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn)})",
                 prompt,
             )
             resp_raw = response.replace(self.model.cfg.data.chat_prompt_tokens.end_of_turn, "").strip()
@@ -830,15 +888,15 @@ class SelfRewardingTrainer:
             )
             resp_raw = response.replace(f"\n{self.model.cfg.data.chat_prompt_tokens.turn_start}", "")
         if len(p_list) == 1 and len(r_list) == 0:
-            return "User: " + p_list[0], resp_raw
+            return "User: " + p_list[0], resp_raw, p_list[-1]
         elif len(p_list) == len(r_list) + 1:
             comp = "User: " + p_list[0]
             for p, r in zip(p_list[1:], r_list):
                 comp += "\n\nAssistant: " + r
                 comp += "\n\nUser: " + p
-            return comp, resp_raw
+            return comp, resp_raw, p_list[-1]
         else:
-            raise RuntimeError(f"Received strange normalise payload PROMPT [ {prompt} ]  RESP [ {response} ]")
+            raise RuntimeError(f"Received strange normalise payload PROMPT [ {prompt} ]  P_LIST [ {p_list} ]  R_LIST [ {r_list} ]")
 
     def augment_dataloader(self, dataloader):
         """Augment dataloader with generations and ref policy log probs"""
@@ -880,13 +938,14 @@ class SelfRewardingTrainer:
                     candidate_responses_with_rewards = [
                         [] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))
                     ]
+                    verifier_args = [x for b in buffer for x in b['verifier_args']]
                     for _ in range(self.num_responses_to_gen):
                         # Generation happens on GPU but returned tensors are on CPU so as not to blow up VRAM due to self.num_responses_to_gen
                         gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end = self.get_generations(buffer)
 
                         # Transform into batch of LLM-as-judge template samples for reward scoring
                         reward_buffer = []
-                        for t, s, e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
+                        for t, s, e, vargs in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist(), verifier_args):
                             """
                             if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
                                 prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
@@ -901,13 +960,13 @@ class SelfRewardingTrainer:
                                 )
                                 response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
                             """
-                            prompt, response = self.normalise_prompt(
+                            prompt, response, last_prompt = self.normalise_prompt(
                                 self.tokenizer.ids_to_text(t[:s].tolist()),
                                 self.tokenizer.ids_to_text(t[s:e].tolist()),
                                 buffer[0]["dataset_mask"],
                             )
                             reward_prompt_str = self.template_fn(prompt=prompt, response=response)
-                            reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                            reward_prompt = self.tokenizer.text_to_ids(reward_prompt_str)
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
                                 prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
                                 dataset_mask = buffer[0]["dataset_mask"]
@@ -941,7 +1000,7 @@ class SelfRewardingTrainer:
                                     ):
                                         overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
                                         if overage > len(self.model.tokenizer.text_to_ids(response_ft)):
-                                            print(f"*** OVERAGE_NOT_FIT_RESPONSE: {reward_prompt_str}")
+                                            #print(f"*** OVERAGE_NOT_FIT_RESPONSE: {reward_prompt_str}")
                                             reward_prompt_str = self.template_fn(
                                                 prompt="How does one make tea?", response="I have no answer at all."
                                             )
@@ -952,8 +1011,10 @@ class SelfRewardingTrainer:
                                         )
                                         reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
                                         reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                    #prompt = prompt_ft
+                                    response = response_ft
                                 except:
-                                    print(f"*** TOO_LONG: {prompt_and_response}")
+                                    #print(f"*** TOO_LONG: {prompt_and_response}")
                                     # overage = len(reward_prompt) - (self.model.cfg.encoder_seq_length - self.max_gen_seq_len)
                                     while len(reward_prompt) > (
                                         self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
@@ -982,6 +1043,10 @@ class SelfRewardingTrainer:
                                 {
                                     "prompt_lengths": torch.LongTensor([len(reward_prompt)]),
                                     "prompts_only": torch.LongTensor(reward_prompt).unsqueeze(0),
+                                    "verifier_args": vargs,
+                                    "dataset_mask": buffer[0]["dataset_mask"],
+                                    "orig_last_prompt": last_prompt,
+                                    "orig_response": response,
                                 }
                             )
 
@@ -1084,7 +1149,7 @@ class SelfRewardingTrainer:
                             orig_response_str = self.tokenizer.ids_to_text(
                                 cand_for_meta[1][cand_for_meta[2] : cand_for_meta[3]].tolist()
                             )
-                            norm_prompt_str, norm_response_str = self.normalise_prompt(
+                            norm_prompt_str, norm_response_str, _ = self.normalise_prompt(
                                 orig_prompt_str, orig_response_str, buffer[0]["dataset_mask"]
                             )
                             meta_batch = []

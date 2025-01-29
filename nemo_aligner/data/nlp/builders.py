@@ -399,10 +399,10 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
             data_cfg.get("hf_dataset", False)
             and data_cfg.max_seq_length is not None
             and (
-                (isinstance(data_cfg.max_seq_length, int) and data_cfg.max_seq_length > 1)
+                (isinstance(data_cfg.max_seq_length, int) and data_cfg.max_seq_length > 0)
                 or (
                     isinstance(data_cfg.max_seq_length, (list, ListConfig))
-                    and all([x > 1 for x in data_cfg.max_seq_length])
+                    and all([x > 0 for x in data_cfg.max_seq_length])
                 )
             )
             and num_samples is None
@@ -503,6 +503,9 @@ def build_dataloader(
         "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
 
+    if (isinstance(limit_train_batches, float) and limit_train_batches > 1.0):
+        raise RuntimeError("`limit_train_batches` cannot be a float value > 1.0")
+
     if (
         limit_train_batches is None
         or (isinstance(limit_train_batches, float) and limit_train_batches > 1.0)
@@ -513,6 +516,8 @@ def build_dataloader(
         common_params["total_samples"] = int(limit_train_batches * len(dataset))
     elif isinstance(limit_train_batches, int):
         common_params["total_samples"] = min(limit_train_batches * gbs, len(dataset))
+    else:
+        raise TypeError(type(limit_train_batches))
 
     if use_random_sampler:
         cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler

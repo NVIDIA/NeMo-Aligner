@@ -108,8 +108,7 @@ Finally, we have the TRT parameters, which allows for faster TRTLLM-based respon
 
       model_type: gptnext # can be gptj, gptnext, llama, gemma, falcon
 
-      # Save GPU memory by unloading and reloading the TRTLLM engine before and after the training stage
-      # Reloading the engine incurs a constant time overhead
+      # Generation does not have a training stage, so there is no need to unload the engine.
       unload_engine_train: False
 
 
