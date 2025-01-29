@@ -1,11 +1,30 @@
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Callable, Optional, Protocol
+
+import torch
+from torch.utils.data import DataLoader
+
+from nemo_aligner.algorithms.dpo import DPOTrainer, dpo_custom_collate
+from nemo_aligner.data.nlp.builders import (
+    build_dataloader,
+    build_train_valid_test_dpo_datasets,
+    build_train_valid_test_dpo_packed_datasets,
+    build_train_valid_test_rlhf_datasets,
+    identity_collate,
+)
+
+
+class GlobalCollateProtocol(Protocol):
+    def __call__(self, *args: Any, **kwargs: Any) -> dict[str, torch.Tensor]:
+        ...
 
 
 @dataclass
-class DataConfig:
+class DataConfig(ABC):
     micro_batch_size: int
     global_batch_size: int
+    seq_length: int
 
     data_impl: str = "jsonl"
     splits_string: Optional[str] = None
@@ -47,6 +66,10 @@ class DataConfig:
     truncation_method: str = "right"
     output_original_text: bool = False
 
+    @abstractmethod
+    def build_dataloaders(self) -> tuple[DataLoader, DataLoader, GlobalCollateProtocol]:
+        """subclass should implement this"""
+
 
 @dataclass
 class DPODataConfig(DataConfig):
@@ -58,3 +81,52 @@ class DPODataConfig(DataConfig):
     default_chosen_reward: float = 1.0  # the default reward for the chosen response in RPO
     default_rejected_reward: float = 0.0  # the default reward for the rejected response in RPO
     apply_ftfy: bool = False
+
+    def build_dataloaders(self, tokenizer) -> tuple[DataLoader, DataLoader, GlobalCollateProtocol]:
+        # use the entire dataset
+        train_valid_test_num_samples = [-1 * self.global_batch_size] * 3
+        ## build the dataset (should be mostly unchanged from before, except the config)
+        if self.data_impl == "packed_jsonl":
+            build_fn = build_train_valid_test_dpo_packed_datasets
+        else:
+            build_fn = build_train_valid_test_dpo_datasets
+        train_ds, validation_ds, _ = build_fn(
+            cfg=self,
+            data_prefix=self.data_prefix,
+            data_impl=self.data_impl,
+            splits_string=self.splits_string,
+            train_valid_test_num_samples=train_valid_test_num_samples,
+            seq_length=self.seq_length,  ## TODO: check
+            seed=self.seed,  ## TODO: check
+            tokenizer=tokenizer,  ## TODO: tokenizer
+        )
+
+        global_collate_fn = train_ds.global_collate_fn if self.data_impl == "packed_jsonl" else dpo_custom_collate
+        train_dataloader = build_dataloader(
+            cfg=self,
+            dataset=train_ds,
+            consumed_samples=0,  # consumed_samples, ## TODO: UPDATE
+            mbs=self.micro_batch_size,
+            gbs=self.global_batch_size,
+            load_gbs=True,
+            pad_samples_to_global_batch_size=False,
+            collate_fn=identity_collate,
+        )
+
+        val_dataloader = build_dataloader(
+            cfg=self,
+            dataset=validation_ds,
+            consumed_samples=0,
+            mbs=self.micro_batch_size,
+            gbs=self.global_batch_size,
+            load_gbs=True,
+            pad_samples_to_global_batch_size=False,
+            collate_fn=identity_collate,
+            use_random_sampler=False,
+        )
+        return train_dataloader, val_dataloader, global_collate_fn
+
+
+@dataclass
+class RLHFDataConfig(DataConfig):
+    pass

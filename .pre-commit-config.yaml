@@ -57,3 +57,5 @@ repos:
         entry: bash tests/functional/nemo2/test_dpo.sh
         language: system
         stages: [pre-commit]
+        always_run: true
+        pass_filenames: false

@@ -13,6 +13,7 @@
 # limitations under the License.
 from functools import partial
 from threading import local
+from typing import Any
 
 import nemo_run as run
 import torch.multiprocessing as mp
@@ -30,6 +31,7 @@ from nemo_aligner.data.nlp.builders import (
     identity_collate,
 )
 from nemo_aligner.data.nlp.config import DPODataConfig
+from nemo_aligner.experimental.run.configs.validate import _validate_config
 
 ### nemo2 things
 ## TODO: move these elsewhere?
@@ -62,9 +64,10 @@ from nemo_aligner.utils.utils import load_and_override_model_config, load_from_n
 def dpo_loop(
     #
     restore_from_path: str,
-    model_cls: type[GPTModel],
+    model_cls: type[GPTModel],  # TODO more precise typing since unexected args in __init__
     data_config: DPODataConfig,
     optimizer: MegatronOptimizer,
+    # trainer_cls: type,  # TODO placeholder
     tp: int = 1,
     pp: int = 1,
     vp: int | None = None,
@@ -163,47 +166,7 @@ def dpo_loop(
     ####################
     # INIT DATALOADERS #
     ####################
-    # use the entire dataset
-    train_valid_test_num_samples = [-1 * data_config.global_batch_size] * 3
-    ## build the dataset (should be mostly unchanged from before, except the config)
-    if data_config.data_impl == "packed_jsonl":
-        build_fn = build_train_valid_test_dpo_packed_datasets
-    else:
-        build_fn = build_train_valid_test_dpo_datasets
-    train_ds, validation_ds, _ = build_fn(
-        cfg=data_config,
-        data_prefix=data_config.data_prefix,
-        data_impl=data_config.data_impl,
-        splits_string=data_config.splits_string,
-        train_valid_test_num_samples=train_valid_test_num_samples,
-        seq_length=gpt_config.seq_length,  ## TODO: check
-        seed=data_config.seed,  ## TODO: check
-        tokenizer=model.tokenizer,  ## TODO: tokenizer
-    )
-
-    collate = train_ds.global_collate_fn if data_config.data_impl == "packed_jsonl" else dpo_custom_collate
-    train_dataloader = build_dataloader(
-        cfg=data_config,
-        dataset=train_ds,
-        consumed_samples=0,  # consumed_samples, ## TODO: UPDATE
-        mbs=data_config.micro_batch_size,
-        gbs=data_config.global_batch_size,
-        load_gbs=True,
-        pad_samples_to_global_batch_size=False,
-        collate_fn=identity_collate,
-    )
-
-    val_dataloader = build_dataloader(
-        cfg=data_config,
-        dataset=validation_ds,
-        consumed_samples=0,
-        mbs=data_config.micro_batch_size,
-        gbs=data_config.global_batch_size,
-        load_gbs=True,
-        pad_samples_to_global_batch_size=False,
-        collate_fn=identity_collate,
-        use_random_sampler=False,
-    )
+    train_dataloader, val_dataloader, global_collate_fn = data_config.build_dataloaders(model.tokenizer)
 
     ## initialize PTL-related things, call train start hooks
     # init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
@@ -215,6 +178,11 @@ def dpo_loop(
     # timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
     timer = None
 
+    ####################
+    # VALIDATE CONFIGS #
+    ####################
+    _validate_config(model=model, data=data_config)
+
     ################
     # INIT TRAINER #
     ################
@@ -225,7 +193,7 @@ def dpo_loop(
         val_dataloader=val_dataloader,
         test_dataloader=None,
         collate_fn=partial(
-            collate,
+            global_collate_fn,
             eos_id=model.tokenizer.eos_id,
             reset_position_ids=data_config.reset_position_ids,
             reset_attention_mask=data_config.reset_attention_mask,
