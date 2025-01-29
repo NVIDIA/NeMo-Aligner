@@ -28,6 +28,7 @@ ALL_LIBRARIES=(
 
 nemo() {
     local mode="$1"
+    cd /opt
 
     (rm -rf NeMo || true) &&
         git clone https://github.com/NVIDIA/NeMo.git &&
@@ -40,7 +41,8 @@ nemo() {
 
 trtllm() {
     local mode="$1"
-
+    cd /opt
+    
     (rm -rf TensorRT-LLM || true) &&
         git clone https://github.com/NVIDIA/TensorRT-LLM.git &&
         pushd TensorRT-LLM &&
