@@ -57,17 +57,10 @@ RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
 FROM ${BASE_IMAGE} as te-wheel
 ARG MAX_JOBS
 ARG TE_TAG
-RUN cd /opt && \
-    git clone https://github.com/NVIDIA/TransformerEngine.git && \
-    cd TransformerEngine && \
-    if [ ! -z $TE_TAG ]; then \
-        git fetch origin $TE_TAG && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    git submodule init && git submodule update && \
-    NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel . && \
-    ls -al
-
+RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
+    cd /opt/NeMo-Aligner && \
+    bash reinstall.sh --library te --mode build && \
+    ls -al /opt/TransformerEngine
 
 FROM ${BASE_IMAGE} AS final
 LABEL "nemo.library"="nemo-aligner"
