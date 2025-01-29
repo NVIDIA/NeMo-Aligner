@@ -110,18 +110,6 @@ RUN bash /opt/NeMo-Aligner/reinstall.sh --library nemo --mode install
 #   updated.
 RUN pip install triton==3.1.0
 
-# MLM
-ARG MLM_TAG
-RUN pip uninstall -y megatron-core && \
-    git clone https://github.com/NVIDIA/Megatron-LM.git && \
-    cd Megatron-LM && \
-    git pull && \
-    if [ ! -z $MLM_TAG ]; then \
-        git fetch origin $MLM_TAG && \
-        git checkout FETCH_HEAD; \
-    fi && \
-    pip install -e .
-
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
     bash reinstall.sh --library aligner --mode install
