@@ -111,7 +111,9 @@ RUN bash /opt/NeMo-Aligner/reinstall.sh --library nemo --mode install
 RUN pip install triton==3.1.0
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
+ARG ALIGNER_COMMIT
 RUN cd /opt/NeMo-Aligner && \
+    export ALIGNER_COMMIT=$ALIGNER_COMMIT && \
     bash reinstall.sh --library aligner --mode install
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
