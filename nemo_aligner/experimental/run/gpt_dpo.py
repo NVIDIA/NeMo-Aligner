@@ -82,6 +82,7 @@ def megatron_adam_optimizer() -> run.Config[MegatronOptimizer]:
             adam_beta1=0.9,
             adam_beta2=0.98,
             use_distributed_optimizer=True,
+            clip_grad=1.0,
         ),
         ## TODO: bucket_cap_mb
         lr_scheduler=run.Config(
