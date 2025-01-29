@@ -34,7 +34,8 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, gather_tensor, run_if_model_parallel_src
 from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.verifiers.code_verifier_unsafe import CodeVerifier
-from nemo_aligner.utils.verifiers.instruction_following.instructions_registry import INSTRUCTION_DICT
+
+# from nemo_aligner.utils.verifiers.instruction_following.instructions_registry import INSTRUCTION_DICT
 from nemo_aligner.utils.verifiers.math_grader import extract_answer, math_equal
 
 """A remote client that acts like a real Reward Model and Critic forwards all requests from the actor
@@ -137,42 +138,42 @@ def MATH_rewards(response, args):
     return correctness, prediction, ans
 
 
-def instruction_following_rewards(prompt, response, args):
-    """Tests response to see if instrutions are followed."""
-    try:
-        task_args = args
-        instruction_list = task_args["instruction_id_list"]
-        is_following_list = []
+# def instruction_following_rewards(prompt, response, args):
+#     """Tests response to see if instrutions are followed."""
+#     try:
+#         task_args = args
+#         instruction_list = task_args["instruction_id_list"]
+#         is_following_list = []
 
-        for index, instruction_id in enumerate(instruction_list):
-            try:
-                instruction_cls = INSTRUCTION_DICT[instruction_id]
-                instruction = instruction_cls(instruction_id)
+#         for index, instruction_id in enumerate(instruction_list):
+#             try:
+#                 instruction_cls = INSTRUCTION_DICT[instruction_id]
+#                 instruction = instruction_cls(instruction_id)
 
-                kwargs = (
-                    task_args["instruction_kwargs"][index]
-                    if task_args["instruction_kwargs"][index] is not None
-                    else {}
-                )
-                instruction.build_description(**kwargs)
-                instruction_args = instruction.get_instruction_args()
-                if instruction_args and "prompt" in instruction_args:
-                    instruction.build_description(prompt=prompt)
+#                 kwargs = (
+#                     task_args["instruction_kwargs"][index]
+#                     if task_args["instruction_kwargs"][index] is not None
+#                     else {}
+#                 )
+#                 instruction.build_description(**kwargs)
+#                 instruction_args = instruction.get_instruction_args()
+#                 if instruction_args and "prompt" in instruction_args:
+#                     instruction.build_description(prompt=prompt)
 
-                if response.strip() and instruction.check_following(response):
-                    is_following_list.append(True)
-                else:
-                    is_following_list.append(False)
-            except Exception as e:
-                print(f"Error in instruction_following_rewards: {e}, task: {args}")
+#                 if response.strip() and instruction.check_following(response):
+#                     is_following_list.append(True)
+#                 else:
+#                     is_following_list.append(False)
+#             except Exception as e:
+#                 print(f"Error in instruction_following_rewards: {e}, task: {args}")
 
-        low, high = -10, 5
-        correctness = sum(is_following_list) / len(is_following_list)
-        score = low + (high - low) * correctness
-        return score, True
-    except Exception as e:
-        print(f"Error in instruction_following_rewards: {e}")
-        return 0, False
+#         low, high = -10, 5
+#         correctness = sum(is_following_list) / len(is_following_list)
+#         score = low + (high - low) * correctness
+#         return score, True
+#     except Exception as e:
+#         print(f"Error in instruction_following_rewards: {e}")
+#         return 0, False
 
 
 def game24_rewards(response, args):
@@ -432,15 +433,15 @@ class RemoteGPTRMClient:
                 if "code" in args[i]["task"]:
                     score, success = code_rewards(assistant_text[-1], args[i])
                     print(f"check done: {success}, score: {score}, args: {args[i]}")
-                elif args[i]["task"] == "instruction_following":
-                    score, success = instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
-                    print(f"check done: {success}, score: {score}, args: {args[i]}")
-                elif args[i]["task"] == "reasoning_game24":
-                    score, success = game24_rewards(assistant_text[-1], args[i])
-                    print(f"check done: {success}, score: {score}, args: {args[i]}")
-                elif args[i]["task"] == "reasoning_parentheses":
-                    score, success = parentheses_rewards(assistant_text[-1], args[i])
-                    print(f"check done: {success}, score: {score}, args: {args[i]}")
+                # elif args[i]["task"] == "instruction_following":
+                #     score, success = instruction_following_rewards(user_text[-1], assistant_text[-1], args[i])
+                #     print(f"check done: {success}, score: {score}, args: {args[i]}")
+                # elif args[i]["task"] == "reasoning_game24":
+                #     score, success = game24_rewards(assistant_text[-1], args[i])
+                #     print(f"check done: {success}, score: {score}, args: {args[i]}")
+                # elif args[i]["task"] == "reasoning_parentheses":
+                #     score, success = parentheses_rewards(assistant_text[-1], args[i])
+                #     print(f"check done: {success}, score: {score}, args: {args[i]}")
                 else:
                     score, prediction, answer = MATH_rewards(assistant_text[-1], args[i])
                     print(f"prediction: {prediction}, answer: {answer}, score: {score}")
