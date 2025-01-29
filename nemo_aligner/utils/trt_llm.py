@@ -167,7 +167,7 @@ class GPTGenerateTRTLLM:
                 max_batch_size=self.generation_batch_size,
                 use_refit=True,
                 reshard_model=self.reshard_model,
-                vocab_size=model.module.vocab_size,
+                vocab_size=self.model_cfg.get('override_vocab_size', None),
             )
             self._trtllm_model_compiled = True
             log_memory("After TRT-LLM engine build")
