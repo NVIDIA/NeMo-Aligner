@@ -57,6 +57,7 @@ RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
 FROM ${BASE_IMAGE} as te-wheel
 ARG MAX_JOBS
 ARG TE_TAG
+COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh 
 RUN export TRTLLM_VERSION=$TRTLLM_VERSION && \
     cd /opt/NeMo-Aligner && \
     bash reinstall.sh --library te --mode build && \
