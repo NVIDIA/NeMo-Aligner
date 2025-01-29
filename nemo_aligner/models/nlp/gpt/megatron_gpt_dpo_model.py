@@ -20,8 +20,8 @@ from typing import Any, Callable, Dict, List, Optional
 import torch
 from torch import nn
 from lightning.pytorch.trainer.trainer import Trainer
-#from megatron.core.distributed import DistributedDataParallel as McoreDDP
-from nemo.lightning.megatron_parallel import DDP
+from megatron.core.distributed import DistributedDataParallel as McoreDDP
+#from nemo.lightning.megatron_parallel import DDP
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.num_microbatches_calculator import get_num_microbatches
@@ -56,6 +56,39 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
 
 from nemo_aligner.models.nlp.gpt.nemo2.megatron_gpt_dpo_head import MegatronDPOHead
+
+import inspect
+from nemo.lightning.megatron_parallel import getattr_proxy
+from megatron.core.transformer.transformer_config import TransformerConfig
+
+class DDP(McoreDDP):
+    def __init__(
+        self,
+        config: TransformerConfig,
+        ddp_config: DistributedDataParallelConfig,
+        module: torch.nn.Module,
+        disable_bucketing: bool = False,
+        **kwargs,
+    ):
+        init_parameters = inspect.signature(McoreDDP.__init__).parameters
+        # Updates to the McoreDDP class have removed some parameters, so we need to
+        #  filter out any kwargs that are not part of the updated signature, if a new
+        #  version of mcore is being used.
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k in init_parameters}
+        super().__init__(
+            config=config,
+            ddp_config=ddp_config,
+            module=module,
+            disable_bucketing=disable_bucketing,
+            **filtered_kwargs,
+        )
+
+    ## TODO: push this fix into nemo
+    def state_dict(self, prefix='', keep_vars=False, **kwargs):
+        return self.module.state_dict(prefix=prefix, keep_vars=keep_vars, **kwargs)
+
+    def __getattr__(self, item: Any) -> Any:
+        return getattr_proxy(self, item)
 
 @dataclass
 class DPOConfig:
