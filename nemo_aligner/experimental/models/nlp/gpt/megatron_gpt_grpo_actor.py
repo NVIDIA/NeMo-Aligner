@@ -129,7 +129,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 tokens = batch["response_tokens"]
                 is_end = batch["valid_mask"]
 
-                is_end_mask = mask * is_end.view(-1, 1)
+                #is_end_mask = mask * is_end.view(-1, 1)
+                is_end_mask = mask
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from contextlib import nullcontext
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 import hashlib
 import json
 
@@ -121,9 +121,13 @@ class GRPOTrainer:
     def create_grpo_training_data_from_inferences(self, rollout_batch: GPTRolloutBatch):
         """
         Generate grpo specific loss terms for training and metrics. 
+        Runs on every rank.
         
-        rollout_batch: GPTRolloutBatch      
-        The input rollout batch is global and the output is dp sharded
+        rollout_batch: GPTRolloutBatch.  A **global** rollout batch
+        
+        Returns:
+        **sharded** output training data dictionary and global metrics.
+        The output training data dictionary should be sharded among DP groups.
         """
         grpo_train_data = GPTRolloutBatch() # using this class for easy chunking/sharding
         grpo_rollout_metrics = {}
@@ -177,7 +181,20 @@ class GRPOTrainer:
 
         return local_grpo_train_data.get_dict(), cpu_dict(grpo_rollout_metrics)
 
-    def _run_inference(self, dataloader_builder, consumed_samples, is_validation=False):
+    def _run_inference(self, dataloader_builder: Callable[[int], Any], consumed_samples: int, is_validation: bool=False):
+        """
+        Helper function that runs rollout generation for both training and validation. Runs on all ranks.
+
+        dataloader_builder: Callable    constructor for a dataloader that accepts a 'consumed_samples' argument 
+                                        to start the dataloader in the right place.
+        consumed_samples:   int         number of prompts consumed in training so far. Used to initialize the dataloader
+        is_validation:      bool        is sampling for validation (vs training when False)
+        
+        Returns:
+        rollout_data:    GPTRolloutBatch   A **global** rollout batch
+        rollout_metrics: dict              **global** rollout metrics from each environment + some general ones
+        rollout_timing:  dict              **dp local** timing metrics (will be reduced later)
+        """
         # initialize prompt dataloader
         generation_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_generation else nullcontext
         with generation_reshard_context():
@@ -210,6 +227,14 @@ class GRPOTrainer:
 
     @torch.no_grad()
     def generate_rollouts(self):
+        """
+        Generates rollouts for training. Also collects and returns metrics and timing. Runs on every rank.
+        
+        Returns:
+        train_data: dict    A dictionary of all data required to train the model
+        metrics: dict       Collected metrics from environments and GRPO stats
+        timing: dict
+        """
         with self.timer("prepare_for_inference"):
             # Timing includes build if first step and refit if step > 1
             self.model.prepare_for_inference()

@@ -191,6 +191,7 @@ class GPTGenerateTRTLLM:
         self.sampling_config.update(random_seed=random_seeds)
         prev_config_topk = self.sampling_config.top_k
         self.sampling_config.update(top_k=prev_config_topk if not use_greedy else 1)
+        print("in trtllm generation, use greedy ", use_greedy, " topk ", self.sampling_config.top_k)
 
         output_dict = tensorrt_llm_run.tensorrt_llm_worker_context.decoder.generate(
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
