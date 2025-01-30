@@ -184,6 +184,45 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
 
     return np.array(combined_dataset)
 
+""" modified version of https://github.com/NVIDIA/NeMo/blob/ea5ed67f7edc22c0f936d99a91e39a7c7f3860b3/nemo/utils/sequence_packing_utils.py#L100 
+which accounts for the fact that every example consists of a chosen and rejected response. """
+def create_hist(dataset: np.array, truncate_seq_len: int):
+    """
+    Creates a histogram of sequence lengths from a tokenized dataset.
+
+    This function analyzes the tokenized dataset and creates a histogram showing the distribution of sequence lengths.
+
+    Args:
+      dataset: A NumPy array containing the tokenized sequences. Each element is a dictionary that contains at minimum
+               the key `input_ids`.
+      truncate_seq_len: The maximum sequence length to consider in the histogram.
+
+    Returns:
+      sequences: A dictionary where keys are sequence lengths and values are lists of corresponding sequences from the dataset.
+      histogram: A list representing the histogram data (number of sequences for each length).
+    """
+    logging.info("Creating histogram from tokenized dataset...")
+
+    sequences = collections.defaultdict(list)
+    counts = [0] * (truncate_seq_len + 1)
+
+    for item_dict in dataset:
+        # Minus 2 here to account for the fact that transformer input and label have one less token than the full sequence
+        # Input is missing the last token and label is missing the first token (this way the tokens are aligned for next token prediction).
+        # We want pack size to be the length of the actual input and label.
+        # This is true of both the chosen and rejected sequences, which are packed into a single input, hence -2.
+        seq_len = len(item_dict['input_ids']) - 2
+        sequences[seq_len].append(item_dict)
+        counts[seq_len] += 1
+
+    logging.debug("Histogram of sequence lengths")
+    logging.debug(counts)
+
+    histogram = []
+    for seq_len in range(truncate_seq_len + 1):
+        histogram.append(len(sequences[seq_len]))
+
+    return sequences, histogram
 
 ## modified version of https://github.com/NVIDIA/NeMo/blob/main/nemo/utils/sequence_packing_utils.py#L178 for DPO
 ## pack size should be at least 2*encoder_seq_length since the packed sequences include both the chosen and rejected sequences
