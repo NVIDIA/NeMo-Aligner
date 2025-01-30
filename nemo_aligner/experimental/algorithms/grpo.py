@@ -164,7 +164,7 @@ class GRPOTrainer:
                 log_probs_reference=rollout_batch["init_logprobs"],
             )
         grpo_rollout_metrics["init_policy_kl"] = (
-            masked_mean(init_policy_kl, mask, dim=-1).sum().item()
+            masked_mean(init_policy_kl, mask).item()
         )
         grpo_rollout_metrics["nonzero_advantages"] = (advantages != 0).float().mean()
         grpo_rollout_metrics["logprobs_mean"] = masked_mean(rollout_batch["logprobs"], mask).item()
@@ -260,6 +260,7 @@ class GRPOTrainer:
             )
 
             self.grpo_optimization_step += 1
+        print("grpo optimization step", self.grpo_optimization_step)
 
         self.model.finish_training()
 
