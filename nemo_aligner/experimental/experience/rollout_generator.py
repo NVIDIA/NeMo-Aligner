@@ -185,7 +185,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                         _, _, rewards, episode_complete = self.tasks_to_environments[task].finish_step(task_future)
                         # not touching episode_complete for now since this loop only supports single-turn
                         all_task_results.append({"rewards": rewards})
-                    batch_rewards = reconstruct_split_batch(all_task_results, all_task_indices)
+                    batch_rewards = reconstruct_split_batch(all_task_indices, all_task_results)
                     env_rollout_batches.append(batch_rewards)
 
             unbalanced_env_batch = GPTRolloutBatch.from_rollout_batches(
@@ -208,9 +208,6 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         return global_rollout_batch, cpu_dict(metrics), self.timer.consume_durations()
     
     def post_process_and_compute_rollout_metrics(self, global_rollout_batch):
-        def add_prefix(dict, prefix):
-            return {f"{prefix}/{k}": v for k, v in dict.items()}
-
         # iterate over tasks and call the environments to get metrics and finalized batches
         split_idxs, split_batches, metrics = [], [], {}
         for task in self.tasks_to_environments.keys():
@@ -224,10 +221,11 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                     self.tasks_to_environments[task].global_post_process_and_metrics(task_batch)
                 split_idxs.append(indices)
                 split_batches.append(task_batch)
-                metrics[task] = add_prefix(task_metrics, task)
+                metrics[task] = task_metrics#add_prefix(task_metrics, task)
         
         # recompose batches
-        return reconstruct_split_batch(split_idxs, split_batches), {metrics | self.compute_overall_metrics(global_rollout_batch)}
+        recomposed_batch = reconstruct_split_batch(split_idxs, split_batches)
+        return recomposed_batch, {**metrics, **self.compute_overall_metrics(global_rollout_batch)}
 
     def compute_overall_metrics(self, rollout_batch):
         prompt_lengths = rollout_batch["prompt_lengths"]
@@ -257,7 +255,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                 inst[k] = batch[k][idx]
             return inst
 
-        batch_size = rollout_batch["prompt_tokens"].shape[0]
+        batch_size = rollout_batch["text"].shape[0]
         per_rank_batch = batch_size // torch.distributed.get_world_size()
         rank = torch.distributed.get_rank()
         end_idx = (rank + 1) * per_rank_batch if rank < torch.distributed.get_world_size() - 1 else batch_size
@@ -270,7 +268,10 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             prompt_str = instance["prompt_sentences"]
             prompt_hash = hashlib.sha256(prompt_str.encode("utf-8")).hexdigest()
             lps = instance["logprobs"][prompt_length:response_length].cpu().tolist()
-            init_lps = instance["init_logprobs"][prompt_length:response_length].cpu().tolist()
+            if "init_logprobs" in instance.keys():
+                init_lps = instance["init_logprobs"][prompt_length:response_length].cpu().tolist()
+            else:
+                init_lps = None
 
             record = {
                 "prompt_hash": prompt_hash,

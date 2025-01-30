@@ -158,6 +158,8 @@ model:
     generation_rollout_mbs: ${trainer.grpo.generation_rollout_mbs}
     # pull from trainer, do not change here. Change at trainer.grpo.trt_model_dir
     trt_model_dir: ${trainer.grpo.trt_model_dir}
+    # pull from trainer, do not change here. Change at trainer.grpo.initial_policy_kl_penalty
+    initial_policy_kl_penalty: ${trainer.grpo.initial_policy_kl_penalty}
 
   peft:
     peft_scheme: "none"  # ["lora", "none"]

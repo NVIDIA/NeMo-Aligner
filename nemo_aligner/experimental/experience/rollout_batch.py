@@ -26,6 +26,7 @@ class GPTRolloutBatch(UserDict):
             elif all(x.ndim == 1 for x in list_of_tensors):
                 tensor = torch.cat(list_of_tensors)
             else:
+                print(k, flush=True)
                 pad_value = eos_id if k == "response_tokens" else 0
 
                 list_of_tensors = [row.flatten() for tensor in list_of_tensors for row in tensor]
@@ -114,3 +115,6 @@ class GPTRolloutBatch(UserDict):
                 chunked_rollout_batch[k] = [self.data[k][i] for i in indices]
 
         return chunked_rollout_batch
+
+    def get_dict(self):
+        return self.data

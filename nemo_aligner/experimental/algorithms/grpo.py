@@ -131,8 +131,8 @@ class GRPOTrainer:
         rewards = rollout_batch["rewards"]
 
         baseline, reward_std = calculate_baseline_and_std_per_prompt(
-                prompts=rollout_batch["prompts"],
-                reward=rollout_batch["rewards"],
+                prompts=rollout_batch["text"],
+                rewards=rollout_batch["rewards"],
                 valid_mask=rollout_batch["is_end"],
                 leave_one_out_baseline=self.cfg.use_leave_one_out_baseline
             )
@@ -142,7 +142,7 @@ class GRPOTrainer:
         if self.cfg.normalize_rewards:
             # don't sharpen the ones with no variation
             zero_std_mask = reward_std > 0
-            advantages[zero_std_mask] = advantages[zero_std_mask] / reward_std[zero_std_mask]
+            advantages[zero_std_mask] = advantages[zero_std_mask] / reward_std.unsqueeze(-1)[zero_std_mask]
 
         mask = create_mask(
             values=rollout_batch["logprobs"],
@@ -156,6 +156,7 @@ class GRPOTrainer:
         grpo_train_data["valid_mask"] = rollout_batch["is_end"]
         grpo_train_data["mask"] = mask
         grpo_train_data["init_logprobs"] = rollout_batch["init_logprobs"]
+        grpo_train_data["advantages"] = advantages
 
         # compute metrics
         init_policy_kl = calculate_kl_penalty_joschu2020(
@@ -165,16 +166,16 @@ class GRPOTrainer:
         grpo_rollout_metrics["init_policy_kl"] = (
             masked_mean(init_policy_kl, mask, dim=-1).sum().item()
         )
-        grpo_rollout_metrics["nonzero_advantages"] = (advantages != 0).mean()
+        grpo_rollout_metrics["nonzero_advantages"] = (advantages != 0).float().mean()
         grpo_rollout_metrics["logprobs_mean"] = masked_mean(rollout_batch["logprobs"], mask).item()
-        grpo_rollout_metrics["init_logprobs_mean"] = masked_mean(rollout_batch["init_logprobs"], mask, dim=-1).item()
+        grpo_rollout_metrics["init_logprobs_mean"] = masked_mean(rollout_batch["init_logprobs"], mask).item()
         
         local_grpo_train_data = grpo_train_data.chunk(
             rank=parallel_state.get_training_data_parallel_rank(),
             split_size=parallel_state.get_training_data_parallel_world_size()
         )
 
-        return local_grpo_train_data, cpu_dict(grpo_rollout_metrics)
+        return local_grpo_train_data.get_dict(), cpu_dict(grpo_rollout_metrics)
 
     def _run_inference(self, dataloader_builder, consumed_samples, is_validation=False):
         # initialize prompt dataloader
@@ -194,7 +195,7 @@ class GRPOTrainer:
 
         # the rollout_generator handles experience generation and returns a global batch
         rollout_data, rollout_metrics, rollout_timing = self.rollout_generator.generate_rollouts(
-            batch_iterator, self.model, is_validation=False, greedy=is_validation and self.cfg.greedy_on_validation
+            batch_iterator, self.model, is_validation=is_validation, greedy=is_validation and self.cfg.greedy_on_validation
         )
         return rollout_data, rollout_metrics, rollout_timing
 
@@ -215,9 +216,7 @@ class GRPOTrainer:
 
         rollout_data, rollout_metrics, rollout_timing = self._run_inference(self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False)       
         
-        train_data, grpo_metrics = self.create_grpo_training_data_from_inferences(
-            rollout_data, calculate_kl_penalty=True
-        )
+        train_data, grpo_metrics = self.create_grpo_training_data_from_inferences(rollout_data)
 
         self.consumed_samples += self.cfg.num_prompts_per_grpo_step
 
@@ -286,6 +285,7 @@ class GRPOTrainer:
 
             dp_size = parallel_state.get_training_data_parallel_world_size()
             num_samples_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
+            print('dp, num samples', dp_size, num_samples_to_load_on_each_dp, flush=True)
 
             self.run_timer.start_time()
             for _ in global_pbar:
@@ -387,7 +387,7 @@ class GRPOTrainer:
                 global_pbar.set_postfix(step_metrics)
 
                 if save_model:
-                    step_metrics = {k: torch.as_tensor(v) for k, v in step_metrics.items()}
+                    step_metrics = {k: torch.as_tensor(v) for k, v in filter(lambda i: not isinstance(i[1], dict), step_metrics.items())}
                     self.save(step_metrics, is_train_end=is_train_end)
 
                 if run_time_exceeded:

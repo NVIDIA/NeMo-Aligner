@@ -65,8 +65,25 @@ class FlaskCommunicator:
         future = self.executor.submit(lambda: requests.post(url, json=data))
         return future
 
-    def get_result(self, future: futures.Future, keys):
-        return get_mp_future_result(future, *keys)
+    def get_result(self, future: futures.Future, *keys):
+        resp = None if future is None else future.result()
+        output = None
+        if resp is not None:
+            output = resp.json()
+
+        results = []
+        for key in keys:
+            result = None
+            if output is not None:
+                result = torch.tensor(output[key], device=torch.cuda.current_device())
+
+            ten = broadcast_2d_tensor_within_mp(result)
+            results.append(ten)
+
+        if len(results) == 1:
+            return results[0]
+
+        return results
 
 class HTTPCommunicator:
     """Communicator class for the actor to send async requests to the remote servers

@@ -718,8 +718,8 @@ def batch_index_select(batch: dict, indices) -> dict:
     return result
 
 def reconstruct_split_batch(
-    split_batches: List[dict],
     indices_list: List[Union[torch.Tensor, List[int]]],
+    split_batches: List[dict],
 ) -> dict:
     """
     Reconstructs the original batch from split batches with external indices/task lists.

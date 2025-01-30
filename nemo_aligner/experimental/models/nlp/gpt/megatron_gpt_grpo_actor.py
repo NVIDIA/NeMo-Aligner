@@ -113,7 +113,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     required_keys.update(("response_tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("response_tokens", "advantages", "mask", "logprobs", "is_end", "init_logprobs"))
+                    required_keys.update(("response_tokens", "advantages", "mask", "logprobs", "valid_mask", "init_logprobs"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
@@ -127,7 +127,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 prev_log_probs = batch["logprobs"]
                 init_log_probs = batch["init_logprobs"]
                 tokens = batch["response_tokens"]
-                is_end = batch["is_end"]
+                is_end = batch["valid_mask"]
 
                 is_end_mask = mask * is_end.view(-1, 1)
 
@@ -135,16 +135,17 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
                 )
 
-                kl = self.cfg.reinforce.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(
+                kl = self.cfg.grpo.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(
                     log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs
                 )
+                kl = masked_mean(kl, is_end_mask)
 
                 # Calculate clipped GRPO surrogate loss function.
                 ratios = (curr_log_probs - prev_log_probs).exp()
                 ratios_clamped = ratios.clamp(1.0 - self.ratio_eps, 1.0 + self.ratio_eps)
 
-                loss1 = -1 * advantages * ratios
-                loss2 = -1 * advantages * ratios_clamped
+                loss1 = -advantages * ratios
+                loss2 = -advantages * ratios_clamped
 
                 if is_end_mask.sum() > 0:
                     actor_loss = masked_mean(torch.max(loss1, loss2), is_end_mask)
@@ -156,6 +157,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 with torch.no_grad():
                     grpo_ratio = masked_mean(ratios.detach(), mask)
                     grpo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
+                    print(loss.shape, grpo_ratio.shape, grpo_ratio_clamped.shape, "loss shapes", flush=True)
 
                 (
                     reduced_actor_loss,

@@ -36,7 +36,8 @@ class MathEnvironment(EnvironmentInterface):
         # gets the future result and also broadcasts within the current MP group
         results = self.communicator.get_result(future, "rewards")
 
-        th_rewards = torch.tensor(results)
+        th_rewards = torch.tensor(results).squeeze(1)
+        print('th rewards shape', th_rewards.shape)
         return None, None, th_rewards, torch.ones(th_rewards.shape[0],)
     
     def global_post_process_and_metrics(self, batch):
@@ -50,11 +51,14 @@ class MathEnvironment(EnvironmentInterface):
             "reward": batch["rewards"][0].item(),
             "prompt_sentence": batch["prompt_sentences"][0],
             "response_sentence": batch["response_sentences"][0],
-            "expected_answer": batch["ground_truths"][0],
+            "expected_answer": batch["extra_verifier_info"][0]["ground_truth"],
         }
-        correct_solution_generation_lengths = (
-            (batch["response_lengths"] - batch["prompt_lengths"])[batch["rewards"] == 1].float().mean().item()
-        )
+        if (batch["rewards"] == 1).float().sum() > 0:
+            correct_solution_generation_lengths = (
+                (batch["response_lengths"] - batch["prompt_lengths"])[batch["rewards"] == 1].float().mean().item()
+            )
+        else:
+            correct_solution_generation_lengths = 0
         
         metrics = {
             #"table": table, TODO @sahilj WIP
@@ -64,7 +68,7 @@ class MathEnvironment(EnvironmentInterface):
             "num_problems_in_batch": batch["is_end"].shape[0],
             "response_lengths": batch["response_lengths"].float().mean().item(),
             "prompt_lengths": batch["prompt_lengths"].float().mean().item(),
-            "generation_lengths": (batch["response_lengths"] - batch["prompt_lengths"]).float.mean.item(),
+            "generation_lengths": (batch["response_lengths"] - batch["prompt_lengths"]).float().mean().item(),
             "correct_solution_generation_lengths": correct_solution_generation_lengths,
         }
         
