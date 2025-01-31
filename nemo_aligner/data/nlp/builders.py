@@ -506,11 +506,7 @@ def build_dataloader(
     if isinstance(limit_batches, float) and limit_batches > 1.0:
         raise RuntimeError("`limit_batches` cannot be a float value > 1.0")
 
-    if (
-        limit_batches is None
-        or (isinstance(limit_batches, float) and limit_batches > 1.0)
-        or (limit_batches <= 0)
-    ):
+    if limit_batches is None or (isinstance(limit_batches, float) and limit_batches > 1.0) or (limit_batches <= 0):
         limit_batches = 1.0
     if isinstance(limit_batches, float):
         common_params["total_samples"] = int(limit_batches * len(dataset))

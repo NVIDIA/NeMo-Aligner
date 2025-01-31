@@ -605,7 +605,7 @@ class SelfRewardingTrainer:
                     rewards.append(self.parse_reward_fn(resp_str))
                 else:
                     # _, resp_norm, last_prompt = self.normalise_prompt(prompt_str, resp_str, list_of_batches[0]["dataset_mask"])
-                    #print("*** LAST_PROMPT: ", orig_last_prompt)
+                    # print("*** LAST_PROMPT: ", orig_last_prompt)
                     # print(f"USER_TEXT [ {last_prompt} ]  RESP_TEXT [ {resp_norm} ]")
                     new_reward, v_chk = self.instruction_following_rewards(orig_last_prompt, orig_response, vargs)
                     if v_chk:
@@ -866,7 +866,7 @@ class SelfRewardingTrainer:
         assert loaded_values == to_broadcast.tolist()
         # restore max steps we need to run for
         self.set_max_steps()
-    
+
     def extract_prompt_elements(self, prompt, response, dataset_mask):
         if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
             p_list = re.findall(
@@ -888,7 +888,7 @@ class SelfRewardingTrainer:
                 prompt,
             )
             resp_raw = response.replace(f"\n{self.model.cfg.data.chat_prompt_tokens.turn_start}", "")
-        
+
         return p_list, r_list, resp_raw
 
     def normalise_prompt(self, prompt, response, dataset_mask):
@@ -980,7 +980,7 @@ class SelfRewardingTrainer:
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
                                 prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
                                 try:
-                                    '''
+                                    """
                                     if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
                                         prompt_ft = re.findall(
                                             rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
@@ -999,8 +999,10 @@ class SelfRewardingTrainer:
                                             rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
                                             prompt_and_response,
                                         )[0]
-                                    '''
-                                    p_list, r_list, _ = self.extract_prompt_elements(prompt_and_response, response, buffer[0]["dataset_mask"])
+                                    """
+                                    p_list, r_list, _ = self.extract_prompt_elements(
+                                        prompt_and_response, response, buffer[0]["dataset_mask"]
+                                    )
                                     prompt_ft = p_list[0]
                                     response_ft = r_list[0]
                                     reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
