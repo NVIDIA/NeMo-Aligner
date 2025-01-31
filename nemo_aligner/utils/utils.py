@@ -40,6 +40,8 @@ from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
 
+from megatron.core.distributed import DistributedDataParallel
+
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     """A save connector that will ask the Reward model to not try to load
@@ -500,7 +502,19 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
     """
     cpu_dict = {}
 
-    for name, item in model.state_dict().items():
+    if hasattr(model, "model"):
+        model = model.model
+    if not isinstance(model, list):
+        model = [model]
+
+    model_copy = []
+    for i, m in enumerate(model):
+        if isinstance(m, DistributedDataParallel):
+            model_copy.append(m.module)
+        else:
+            model_copy.append(m)
+
+    for name, item in torch.nn.ModuleList(model_copy).state_dict().items():
         if isinstance(item, torch.Tensor):
             item = item.detach().to(device="cpu", non_blocking=True, copy=True)
 
@@ -509,8 +523,12 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
     if megatron_amp_O2:
         cpu_dict = convert_to_amp_o2_format(cpu_dict)
 
+    updated_cpu_dict = {}
+    for k in cpu_dict:
+        updated_cpu_dict[k.replace("0.", "", 1)] = cpu_dict[k]
+
     torch.cuda.synchronize()
-    return cpu_dict
+    return updated_cpu_dict
 
 
 @torch.no_grad()
@@ -552,7 +570,11 @@ def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O
     if offload_onto_cpu:
         offloaded_weights = retrieve_model_state_dict_in_cpu(resident_model, megatron_amp_O2=megatron_amp_O2)
 
-    resident_model.load_state_dict(cpu_weights)
+    load_to = resident_model.model
+    if isinstance(load_to, list):
+        load_to = load_to[0]
+
+    load_to.load_state_dict(cpu_weights)
     return offloaded_weights
 
 
@@ -560,6 +582,7 @@ def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O
 def cpu_weight_swap(resident_model, cpu_weights, megatron_amp_O2=True):
     """swap the weights into GPU, and then swap it out once return
     """
+
     cpu_dict = swap_dict(resident_model, cpu_weights, megatron_amp_O2=megatron_amp_O2)
     try:
         yield
