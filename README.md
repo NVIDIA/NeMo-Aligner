@@ -11,7 +11,7 @@ NeMo-Aligner is a scalable toolkit for efficient model alignment. The toolkit ha
 
 The NeMo-Aligner toolkit is built using the NeMo Framework, which enables scalable training across thousands of GPUs using tensor, data, and pipeline parallelism for all alignment components. Additionally, our checkpoints are cross-compatible with the NeMo ecosystem, facilitating inference deployment and further customization (https://github.com/NVIDIA/NeMo-Aligner).
 
-The toolkit is currently in it's early stages. We are committed to improving the toolkit to make it easier for developers to pick and choose different alignment algorithms to build safe, helpful, and reliable models.
+The toolkit is currently in its early stages. We are committed to improving the toolkit to make it easier for developers to pick and choose different alignment algorithms to build safe, helpful, and reliable models.
 
 ## Key Features
 
