@@ -112,6 +112,7 @@ def main(cfg) -> None:
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
         ),
         use_random_sampler=True,
+        limit_batches=cfg.trainer.kto.limit_train_batches,
     )
 
     val_dataloader = build_dataloader(

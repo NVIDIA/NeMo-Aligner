@@ -54,7 +54,13 @@ from nemo_aligner.utils.utils import (
     cpu_weight_swap,
     retrieve_model_state_dict_in_cpu,
 )
-from nemo_aligner.utils.verifiers.instruction_following.instructions_registry import INSTRUCTION_DICT
+
+try:
+    from nemo_aligner.utils.verifiers.instruction_following.instructions_registry import INSTRUCTION_DICT
+    HAVE_VERIFIER = True
+except (ImportError, ModuleNotFoundError) as e:
+    logging.info(f"got error message {e} when importing aligner verifier, disabling")
+    HAVE_VERIFIER = False
 
 """
 GPTSFTChatDataset output is dict with keys: ['input_ids', 'mask', 'context_ids', 'answer_ids', 'metadata']
@@ -601,7 +607,7 @@ class SelfRewardingTrainer:
             for prompt_str, resp_str, vargs, orig_last_prompt, orig_response in zip(
                 batch_prompts_str, batch_responses_str, verifier_args, orig_last_prompts, orig_responses
             ):
-                if vargs is None:
+                if (vargs is None) or (not HAVE_VERIFIER):
                     rewards.append(self.parse_reward_fn(resp_str))
                 else:
                     # _, resp_norm, last_prompt = self.normalise_prompt(prompt_str, resp_str, list_of_batches[0]["dataset_mask"])
