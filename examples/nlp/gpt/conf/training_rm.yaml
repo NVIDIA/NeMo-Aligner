@@ -13,6 +13,7 @@ trainer:
     max_steps: -1
     val_check_interval: 100
     save_interval: 100
+    limit_train_batches: 1.0
     train_random_sampler: True # whether you want to randomly shuffle train set
     val_random_sampler: False # whether you want to randomly shuffle val set
 

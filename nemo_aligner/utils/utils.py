@@ -28,8 +28,14 @@ from typing import Iterator, List
 from unittest.mock import patch
 
 import torch
-from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
-from megatron.core.num_microbatches_calculator import reconfigure_num_microbatches_calculator
+from megatron.core.dist_checkpointing.mapping import LocalNonpersistentObject, ShardedObject, ShardedTensorFactory
+
+try:
+    from megatron.core.num_microbatches_calculator import reconfigure_num_microbatches_calculator
+except:
+    from megatron.core.num_microbatches_calculator import (
+        reconfigure_microbatch_calculator as reconfigure_num_microbatches_calculator,
+    )
 from omegaconf import DictConfig, OmegaConf
 from torch.masked import as_masked_tensor
 
@@ -62,7 +68,7 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
 
 def custom_save_ckpt_func(self, trainer, pl_module, monitor_candidates, is_train_end=False, save_top_only=False):
     """work around used so we can save models manually"""
-    super(NeMoModelCheckpoint, self)._save_topk_checkpoint(trainer, monitor_candidates)
+    self._save_topk_checkpoint(trainer, monitor_candidates)
 
     if save_top_only:
         return
@@ -512,6 +518,8 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
         return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param)
     if isinstance(reference_param, ShardedObject):
         return replace(reference_param, key=f"{prefix}.{reference_param.key}", data=model_param)
+    if isinstance(reference_param, LocalNonpersistentObject):
+        return LocalNonpersistentObject(model_param)
 
     assert (
         tuple(model_param.shape) == reference_param.local_shape

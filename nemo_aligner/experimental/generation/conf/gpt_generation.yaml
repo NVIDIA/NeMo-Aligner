@@ -7,31 +7,23 @@ trainer:
   accelerator: gpu
   precision: bf16
   
-  # spin specific args
-  spin:
-    max_iterations: 3   # the number of iterations (rounds) for which the SPIN "game" is played. This is T in the original paper
-    max_epochs: 1       # the number of epochs to use per iteration. In the paper, they do 3 iterations with 2 epochs per iteration
+  # generation specific args
+  generation:
+    max_epochs: 1
     max_steps: -1
-    val_check_interval: 0.1
-    save_interval: 100
     limit_train_batches: 1.0
-
-    # how many GBS we loop over
-    limit_val_batches: 1.0
-    gradient_clip_val: 1.0
 
     # Speed-up training by accelerating inference stage using TRTLLM
     trt_llm:
       enable: False
-      # reshard: False # reshard is not supported in SPIN
+      # reshard: False # reshard is not supported in generation
 
       # TRTLLM preallocates activation memory according to the number of input tokens
-      max_input_len: ${subtract:${model.encoder_seq_length}, ${model.spin.length_params.max_length}}
+      max_input_len: ${subtract:${model.encoder_seq_length}, ${model.generation.length_params.max_length}}
 
       model_type: gptnext # can be gptj, gptnext, llama, gemma, falcon
 
-      # Save GPU memory by unloading and reloading the TRTLLM engine before and after the training stage
-      # Reloading the engine incurs a constant time overhead
+      # Generation does not have a training stage, so there is no need to unload the engine.
       unload_engine_train: False
 
   # do not change these
@@ -39,8 +31,8 @@ trainer:
   enable_checkpointing: False
   use_distributed_sampler: False
   max_time: null
-  max_epochs: ${.spin.max_epochs}
-  max_steps: ${.spin.max_steps}
+  max_epochs: ${.generation.max_epochs}
+  max_steps: ${.generation.max_steps}
 
 exp_manager:
   explicit_log_dir: /results
@@ -49,12 +41,12 @@ exp_manager:
   max_time_per_run: null
   create_wandb_logger: False
   wandb_logger_kwargs:
-    project: nemo_aligner_spin
-    name: rlhf_gpt3_spin
+    project: nemo_aligner_generation
+    name: rlhf_gpt3_generation
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   resume_if_exists: True
   resume_ignore_no_checkpoint: True
-  create_checkpoint_callback: True
+  create_checkpoint_callback: False
   checkpoint_callback_params:
     monitor: val_loss
     save_top_k: 3
@@ -72,17 +64,9 @@ model:
   micro_batch_size: 1
   global_batch_size: 64
   megatron_amp_O2: True
-  preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
-  sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
-  preference_loss: dpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
-  preference_loss_weight: 1 # the coefficient of the preference loss
-  sft_loss_weight: 0 # the coefficient of the SFT loss
 
-  spin:
-    log_prob_forward_micro_batch_size: ${divide:${.rollout_micro_batch_size}, 2}  # divide by 2 here because we have chosen/rejected per sample
-    rollout_micro_batch_size: 32
-    ref_policy_kl_penalty: 0.2   # Can also be a list of elements == max_iterations, where each element will be the KL penalty used for that iteration
-    offload_adam_states: True
+  generation:
+    num_responses_to_gen: 4
 
     # params for generation
     sampling_params:
@@ -94,7 +78,7 @@ model:
       add_BOS: False
       all_probs: False
       compute_logprob: False
-      end_strings: ["<|endoftext|>", "<extra_id_1>"]
+      end_strings: ["<|endoftext|>", "<extra_id_1>", "<|eot_id|>"]
 
     # length argument for autoregressive sampling
     # max length means max amount of tokens to generate
@@ -113,21 +97,11 @@ model:
     bucket_cap_mb: 200
     overlap_grad_sync: False
     contiguous_grad_buffer: True
-    lr: 9e-6
-    weight_decay: 0.1 
-    betas: 
-    - 0.9
-    - 0.98
-    sched:
-      name: CosineAnnealing
-      warmup_steps: 10
-      constant_steps: 1000
-      min_lr: 9e-7
 
   precision: ${trainer.precision}
 
   data:
-    chat: True # whether to use chatbot data or not
+    chat: True # whether use chatbot data or not
     chat_prompt_tokens:  # special tokens for the chat prompts, a dictionary of {token_type: token}. note that some tokenizer may combine the characters at the junction between {end_of_turn}{turn_start}. e.g. '<im end><im start>', the '><' sometimes is merged to be a single token. This is not supported, try to avoid
       system_turn_start: "<extra_id_0>"
       turn_start: "<extra_id_1>"
@@ -150,11 +124,11 @@ model:
       # Example of how each dataset is formatted
       # {'input': 'John von Neumann\nVon Neumann made fundamental contributions .... Q: What did the math of artificial viscosity do?', 'output': 'smoothed the shock transition without sacrificing basic physics'}
       file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
-      shuffle: True
+      shuffle: False
       memmap_workers: null
       max_seq_length: ${model.encoder_seq_length}
       min_seq_length: 1
-      drop_last: True
+      drop_last: True  # ideally we should use False but trainer_utils.compute_num_steps_per_epoch doesn't support it
       # Example of how to specify concat_sampling_probabilities
       # concat_sampling_probabilities:
       #   - 0.5
@@ -164,36 +138,15 @@ model:
       add_eos: False
       add_sep: False
       add_bos: False
-      truncation_field: "context_ids,input_ids" # # Can be multiple keys separated with ',' Options: keys in prompt_template
+      truncation_field: "context_ids" # # Can be multiple keys separated with ',' Options: keys in prompt_template
       index_mapping_dir: null # Path to a directory to write index mapping files.
       prompt_template: null # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
       hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
       truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
-
-    validation_ds:
-      file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
-      global_batch_size: ${model.global_batch_size}
-      micro_batch_size: ${model.micro_batch_size}
-      shuffle: False
-      memmap_workers: ${model.data.train_ds.memmap_workers}
-      max_seq_length: ${model.data.train_ds.max_seq_length}
-      min_seq_length: 1
-      drop_last: True
-      label_key: ${model.data.train_ds.label_key}
-      add_eos: ${model.data.train_ds.add_eos}
-      add_sep: ${model.data.train_ds.add_sep}
-      add_bos: ${model.data.train_ds.add_bos}
-      truncation_field: ${model.data.train_ds.truncation_field} # Options: keys in prompt_template
-      index_mapping_dir: null # Path to a directory to write index mapping files.
-      prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
-      hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
-      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
-      output_original_text: True  # needed for the proper metrics support
+      output_original_text: False  # since we don't calculate any metrics, we don't need this enabled
 
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
     data:
       train_ds:
-        file_path: True
-      validation_ds:
         file_path: True

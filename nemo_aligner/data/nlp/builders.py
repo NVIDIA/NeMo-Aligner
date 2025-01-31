@@ -23,7 +23,7 @@ from functools import partial
 import numpy as np
 import torch
 import torch.utils.data
-from omegaconf.dictconfig import DictConfig
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from nemo.collections.nlp.data.language_modeling.megatron.base_dataset_utils import (
     get_datasets_weights_and_num_samples,
@@ -50,6 +50,7 @@ from nemo_aligner.data.nlp.datasets import (
     RegressionRewardModelDataset,
     RewardModelDataset,
     RLHFDataset,
+    TruncatedGPTSFTChatDataset,
 )
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import collate_with_batch_max_sequence_length
@@ -394,6 +395,19 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
     if is_chat:
         assert not packed_sequence, "Sequence packing is currently not supported with chat datasets."
         dataset_cls = GPTSFTChatDataset
+        if (
+            data_cfg.get("hf_dataset", False)
+            and data_cfg.max_seq_length is not None
+            and (
+                (isinstance(data_cfg.max_seq_length, int) and data_cfg.max_seq_length > 0)
+                or (
+                    isinstance(data_cfg.max_seq_length, (list, ListConfig))
+                    and all([x > 0 for x in data_cfg.max_seq_length])
+                )
+            )
+            and num_samples is None
+        ):
+            dataset_cls = TruncatedGPTSFTChatDataset
     elif packed_sequence:
         dataset_cls = GPTSFTPackedDataset
         # Whether to return `cu_seqlen` to pass to the model. Having `cu_seqlen` in the model input
@@ -407,7 +421,9 @@ def build_sft_dataset(data_cfg, tokenizer, num_samples, answer_only_loss=True, i
     dataset = dataset_cls(
         file_path=data_cfg.file_path,
         tokenizer=tokenizer,
-        max_seq_length=data_cfg.max_seq_length,
+        max_seq_length=OmegaConf.to_object(data_cfg.max_seq_length)
+        if isinstance(data_cfg.max_seq_length, ListConfig)
+        else data_cfg.max_seq_length,
         min_seq_length=data_cfg.min_seq_length,
         add_bos=data_cfg.get("add_bos", False),
         add_eos=data_cfg.get("add_eos", True),
@@ -470,6 +486,7 @@ def build_dataloader(
     collate_fn=None,
     load_gbs=True,
     use_random_sampler=True,
+    limit_batches=None,
 ):
     """Buld dataloader given an input dataset."""
 
@@ -485,6 +502,18 @@ def build_dataloader(
         "global_batch_size": gbs,
         "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
+
+    if isinstance(limit_batches, float) and limit_batches > 1.0:
+        raise RuntimeError("`limit_batches` cannot be a float value > 1.0")
+
+    if limit_batches is None or (isinstance(limit_batches, float) and limit_batches > 1.0) or (limit_batches <= 0):
+        limit_batches = 1.0
+    if isinstance(limit_batches, float):
+        common_params["total_samples"] = int(limit_batches * len(dataset))
+    elif isinstance(limit_batches, int):
+        common_params["total_samples"] = min(limit_batches * gbs, len(dataset))
+    else:
+        raise TypeError(type(limit_batches))
 
     if use_random_sampler:
         cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
