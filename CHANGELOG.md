@@ -58,7 +58,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 
 ### New Features and Optimizations
 - Implement Kahneman-Tversky Optimization (KTO).
-- Sequence packing is now supported when running SFT with SFTChatDataset.
 - Sequence packing is now supported when running SFT with prompt-response datasets.
 - [EXPERIMENTAL] Implement the [Self-Rewarding](https://arxiv.org/abs/2401.10020) and [Meta-Rewarding](https://arxiv.org/abs/2407.19594) algorithms.
 

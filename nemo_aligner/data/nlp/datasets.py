@@ -1010,7 +1010,7 @@ class TruncatedGPTSFTChatDataset(GPTSFTChatDataset):
             self.indexed_dataset = [x for i, x in enumerate(self.indexed_dataset) if i in good_idxes]
 
         if isinstance(self.max_seq_length, list):
-            self.max_seq_length = min(self.max_seq_length)
+            self.max_seq_length = max(self.max_seq_length)
 
         logging.info(
             f"TruncatedSFTChatDataset has {len(good_idxes)} total samples. Dropped {N - len(good_idxes)} samples."

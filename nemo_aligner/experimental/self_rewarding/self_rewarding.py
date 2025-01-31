@@ -575,13 +575,12 @@ class SelfRewardingTrainer:
                 except Exception as e:
                     print(f"Error in instruction_following_rewards: {e}, task: {args}")
 
-            low, high = 0, 5
             correctness = sum(is_following_list) / len(is_following_list)
-            score = low + (high - low) * correctness
+            score = self.judge_score_low + (self.judge_score_high - self.judge_score_low) * correctness
             return score, True
         except Exception as e:
             print(f"Error in instruction_following_rewards: {e}")
-            return 0, False
+            return self.judge_score_low, False
 
     def get_rewards(self, list_of_batches):
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
@@ -606,7 +605,7 @@ class SelfRewardingTrainer:
                     rewards.append(self.parse_reward_fn(resp_str))
                 else:
                     # _, resp_norm, last_prompt = self.normalise_prompt(prompt_str, resp_str, list_of_batches[0]["dataset_mask"])
-                    print("*** LAST_PROMPT: ", orig_last_prompt)
+                    #print("*** LAST_PROMPT: ", orig_last_prompt)
                     # print(f"USER_TEXT [ {last_prompt} ]  RESP_TEXT [ {resp_norm} ]")
                     new_reward, v_chk = self.instruction_following_rewards(orig_last_prompt, orig_response, vargs)
                     if v_chk:
@@ -867,8 +866,8 @@ class SelfRewardingTrainer:
         assert loaded_values == to_broadcast.tolist()
         # restore max steps we need to run for
         self.set_max_steps()
-
-    def normalise_prompt(self, prompt, response, dataset_mask):
+    
+    def extract_prompt_elements(self, prompt, response, dataset_mask):
         if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
             p_list = re.findall(
                 rf"(?s)(?<={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn + dataset_mask)}\n\n).*?(?={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn)})",
@@ -889,6 +888,11 @@ class SelfRewardingTrainer:
                 prompt,
             )
             resp_raw = response.replace(f"\n{self.model.cfg.data.chat_prompt_tokens.turn_start}", "")
+        
+        return p_list, r_list, resp_raw
+
+    def normalise_prompt(self, prompt, response, dataset_mask):
+        p_list, r_list, resp_raw = self.extract_prompt_elements(prompt, response, dataset_mask)
         if len(p_list) == 1 and len(r_list) == 0:
             return "User: " + p_list[0], resp_raw, p_list[-1]
         elif len(p_list) == len(r_list) + 1:
@@ -975,8 +979,8 @@ class SelfRewardingTrainer:
                             reward_prompt = self.tokenizer.text_to_ids(reward_prompt_str)
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
                                 prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
-                                dataset_mask = buffer[0]["dataset_mask"]
                                 try:
+                                    '''
                                     if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
                                         prompt_ft = re.findall(
                                             rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
@@ -995,9 +999,10 @@ class SelfRewardingTrainer:
                                             rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
                                             prompt_and_response,
                                         )[0]
-                                    # llama3
-                                    # prompt_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
-                                    # response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
+                                    '''
+                                    p_list, r_list, _ = self.extract_prompt_elements(prompt_and_response, response, buffer[0]["dataset_mask"])
+                                    prompt_ft = p_list[0]
+                                    response_ft = r_list[0]
                                     reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
                                     reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
 
@@ -1058,7 +1063,7 @@ class SelfRewardingTrainer:
 
                         # list of floats, same length as gen_tokens_buf
                         reward_scores, reward_variances, judge_responses = self.get_rewards(reward_buffer)
-                        for idx, (t, s, e, r, v, j, end) in enumerate(
+                        for idx, (t, s, e, r, v, j, end, vargs) in enumerate(
                             zip(
                                 gen_tokens_buf,
                                 gen_prompt_lengths_buf.tolist(),
@@ -1067,9 +1072,10 @@ class SelfRewardingTrainer:
                                 reward_variances,
                                 judge_responses,
                                 is_end.tolist(),
+                                verifier_args,
                             )
                         ):
-                            candidate_responses_with_rewards[idx].append((r, t, s, e, v, j, end))
+                            candidate_responses_with_rewards[idx].append((r, t, s, e, v, j, vargs, end))
 
                     final_buffer = []
                     # now we need to pick the chosen/rejected
@@ -1077,8 +1083,9 @@ class SelfRewardingTrainer:
                         scores = [b[0] for b in cand_list]
                         ends = [b[-1] for b in cand_list]
                         resp_lengths = [len(b[1][b[2] : b[3]]) for b in cand_list]
-                        variances = [b[-3] for b in cand_list]
-                        j_responses = [b[-2] for b in cand_list]
+                        variances = [b[-4] for b in cand_list]
+                        j_responses = [b[-3] for b in cand_list]
+                        vargs = [b[-2] for b in cand_list]
                         filtered_scores = [
                             (s, r, v, idx)
                             for idx, (s, r, v, e) in enumerate(zip(scores, resp_lengths, variances, ends))
@@ -1086,8 +1093,8 @@ class SelfRewardingTrainer:
                         ]
                         filtered_variances = [
                             (v, j, idx)
-                            for idx, (v, j, e) in enumerate(zip(variances, j_responses, ends))
-                            if (v is not None) and (v > 0) and (len(j) > 1) and e
+                            for idx, (v, j, e, varg) in enumerate(zip(variances, j_responses, ends, vargs))
+                            if (v is not None) and (varg is None) and (v > 0) and (len(j) > 1) and e
                         ]
                         bad_sample = False
 

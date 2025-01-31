@@ -238,6 +238,7 @@ def main(cfg) -> None:
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=not train_data_cfg.drop_last,
         load_gbs=True,
+        limit_batches=cfg.trainer.sft.limit_train_batches,
     )
 
     val_dataloader = build_dataloader(

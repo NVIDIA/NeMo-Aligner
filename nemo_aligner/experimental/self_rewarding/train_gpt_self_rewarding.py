@@ -155,7 +155,7 @@ def main(cfg) -> None:
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=False,
         load_gbs=True,
-        limit_train_batches=cfg.trainer.self_rewarding.limit_train_batches,
+        limit_batches=cfg.trainer.self_rewarding.limit_train_batches,
     )
 
     val_dataloader = build_dataloader(
