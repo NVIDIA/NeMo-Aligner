@@ -57,6 +57,7 @@ from nemo_aligner.utils.utils import (
 
 try:
     from nemo_aligner.utils.verifiers.instruction_following.instructions_registry import INSTRUCTION_DICT
+
     HAVE_VERIFIER = True
 except (ImportError, ModuleNotFoundError) as e:
     logging.info(f"got error message {e} when importing aligner verifier, disabling")
