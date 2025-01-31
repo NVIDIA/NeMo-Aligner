@@ -26,7 +26,7 @@ from tqdm import tqdm
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingRandomSampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
-from nemo_aligner.experimental.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
+from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     ScopedTimer,
@@ -35,15 +35,15 @@ from nemo_aligner.utils.distributed import (
 )
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.utils.ppo_utils import create_mask
-from nemo_aligner.experimental.utils.rl_utils import (
+from nemo_aligner.experimental.grpo.utils.rl_utils import (
     calculate_kl_penalty_joschu2020,
     calculate_baseline_and_std_per_prompt,
 )
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
-from nemo_aligner.experimental.experience.interfaces import RolloutGeneratorInterface
-from nemo_aligner.experimental.experience.rollout_batch import GPTRolloutBatch
+from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface
+from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
 
 def compute_num_rollout_microbatches_per_dp_group(dataloader):
     return divide(

@@ -11,8 +11,8 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import batch_repeat, batch_index_select, reconstruct_split_batch, cpu_dict
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.utils.distributed import ScopedTimer
-from nemo_aligner.experimental.experience.interfaces import RolloutGeneratorInterface, EnvironmentInterface
-from nemo_aligner.experimental.experience.rollout_batch import GPTRolloutBatch
+from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface, EnvironmentInterface
+from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
 
 class SuperSimpleRolloutGenerator(RolloutGeneratorInterface):
     def __init__(self, cfg: DictConfig, tasks_to_environments: Dict[str, EnvironmentInterface]):

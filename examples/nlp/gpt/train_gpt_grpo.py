@@ -21,16 +21,16 @@ from omegaconf.omegaconf import OmegaConf
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
-from nemo_aligner.experimental.algorithms.grpo import GRPOTrainer
+from nemo_aligner.experimental.grpo.algorithms.grpo import GRPOTrainer
 from nemo_aligner.data.nlp.builders import (
     build_dataloader,
     collate_with_pad_to_max_batch,
 )
-from nemo_aligner.experimental.data.builders import build_train_valid_test_task_datasets, environment_collate_with_pad_to_max_batch
-from nemo_aligner.experimental.data.datasets import AllTaskDataset
-from nemo_aligner.experimental.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
-from nemo_aligner.experimental.experience.environments.math_environment import MathEnvironment
-from nemo_aligner.experimental.experience.rollout_generator import SequenceRewardRolloutGenerator
+from nemo_aligner.experimental.grpo.data.builders import build_train_valid_test_task_datasets, environment_collate_with_pad_to_max_batch
+from nemo_aligner.experimental.grpo.data.datasets import AllTaskDataset
+from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
+from nemo_aligner.experimental.grpo.experience.environments.math_environment import MathEnvironment
+from nemo_aligner.experimental.grpo.experience.rollout_generator import SequenceRewardRolloutGenerator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
 from nemo_aligner.utils.distributed import Timer

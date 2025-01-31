@@ -3,7 +3,7 @@ from typing import Dict, List, Tuple, Optional
 
 from torch import Tensor
 from nemo_aligner.utils.server_utils import FutureResult
-from nemo_aligner.experimental.experience.rollout_batch import GPTRolloutBatch
+from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
 
 EnvironmentReturn = Tuple[Optional[List[List[str]]], Optional[List[Dict]], Tensor, Tensor]
 

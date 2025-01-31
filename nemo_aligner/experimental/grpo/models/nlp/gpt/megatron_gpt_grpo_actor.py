@@ -38,7 +38,7 @@ from nemo_aligner.utils.distributed import (
     broadcast_2d_tensor_within_pp,
     from_parallel_logits_to_logprobs,
 )
-from nemo_aligner.experimental.utils.rl_utils import calculate_kl_penalty_joschu2020
+from nemo_aligner.experimental.grpo.utils.rl_utils import calculate_kl_penalty_joschu2020
 from nemo_aligner.utils.text_generation_utils import (
     TrackLengthGPTModelTextGenerationStrategy,
     verify_is_valid_and_clamp_range_,
