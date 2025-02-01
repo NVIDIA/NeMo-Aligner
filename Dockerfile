@@ -91,9 +91,11 @@ ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 COPY --from=te-wheel /opt/TransformerEngine /tmp/te
 RUN bash /opt/NeMo-Aligner/reinstall.sh --mode install --library te
 
-COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 ARG NEMO_REPO
 ARG NEMO_TAG
+RUN bash /opt/NeMo-Aligner/reinstall.sh --mode install --library nemo
+
+COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 ARG ALIGNER_COMMIT
 ARG PROTOBUF_VERSION
 ARG PYTRITON_VERSION
