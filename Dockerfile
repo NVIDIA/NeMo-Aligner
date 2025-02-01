@@ -94,6 +94,7 @@ RUN bash /opt/NeMo-Aligner/reinstall.sh --mode install --library te
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 ARG NEMO_REPO
 ARG NEMO_TAG
+ARG ALIGNER_COMMIT
 ARG PROTOBUF_VERSION
 ARG PYTRITON_VERSION
 ARG PYNVML_VERSION
