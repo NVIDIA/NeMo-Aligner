@@ -97,6 +97,7 @@ aligner() {
         git clone https://github.com/NVIDIA/NeMo-Aligner.git &&
         pushd NeMo-Aligner &&
         git fetch origin '+refs/pull/*/merge:refs/remotes/pull/*/merge' &&
+        git fetch origin $ALIGNER_COMMIT && 
         git checkout -f $ALIGNER_COMMIT &&
         # case 1: ALIGNER_COMMIT is a local branch so we have to apply remote changes to it
         # case 2: ALIGNER_COMMIT is a commit, so git-pull is expected to fail
