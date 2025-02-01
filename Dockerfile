@@ -79,17 +79,17 @@ COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinst
 
 # Apex
 COPY --from=apex-wheel /opt/Apex /tmp/apex
-RUN /opt/NeMo-Aligner/reinstall.sh --mode install --library apex
+RUN bash /opt/NeMo-Aligner/reinstall.sh --mode install --library apex
 
 # TRTLLM
 ARG PYNVML_VERSION
 COPY --from=trtllm-wheel /opt/TensorRT-LLM/build/ /tmp/trtllm
-RUN /opt/NeMo-Aligner/reinstall.sh --mode install --library trtllm
+RUN bash reinstall.sh /opt/NeMo-Aligner/reinstall.sh --mode install --library trtllm
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TransformerEngine
 COPY --from=te-wheel /opt/TransformerEngine /tmp/te
-RUN /opt/NeMo-Aligner/reinstall.sh --mode install --library te
+RUN bash reinstall.sh /opt/NeMo-Aligner/reinstall.sh --mode install --library te
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 ARG NEMO_REPO
@@ -97,8 +97,7 @@ ARG NEMO_TAG
 ARG PROTOBUF_VERSION
 ARG PYTRITON_VERSION
 ARG PYNVML_VERSION
-RUN cd /opt/NeMo-Aligner && \
-    bash reinstall.sh --library all --mode install && \
+RUN bash /opt/NeMo-Aligner/reinstall.sh --library all --mode install && \
     cd /opt/TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
 # TODO(terryk): This layer should be deleted ASAP after NeMo is bumped to include all of these PRs
