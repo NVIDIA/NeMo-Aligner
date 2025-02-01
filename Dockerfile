@@ -59,7 +59,6 @@ COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinst
 RUN cd /opt/NeMo-Aligner && \
     bash reinstall.sh --library te --mode build && \
     ls -al /opt/TransformerEngine
-RUN ls -al /opt/TransformerEngine
 
 FROM ${BASE_IMAGE} as apex-wheel
 ARG APEX_TAG

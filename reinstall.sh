@@ -67,7 +67,7 @@ te() {
         NVTE_FRAMEWORK=pytorch NVTE_WITH_USERBUFFERS=1 MPI_HOME=/usr/local/mpi pip wheel . && \
         ls -al
     else
-        pip install /tmp/te/transformerengine*.whl
+        pip install /tmp/te/transformer_engine*.whl
     fi
 }
 
