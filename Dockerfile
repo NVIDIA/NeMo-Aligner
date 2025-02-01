@@ -97,9 +97,9 @@ ARG NEMO_TAG
 ARG PROTOBUF_VERSION
 ARG PYTRITON_VERSION
 ARG PYNVML_VERSION
-RUN /opt/NeMo-Aligner/reinstall.sh --library all --mode install 
-    #&& \
-    #cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
+RUN cd /opt/NeMo-Aligner && \
+    bash reinstall.sh --library all --mode install && \
+    cd /opt/TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
 # TODO(terryk): This layer should be deleted ASAP after NeMo is bumped to include all of these PRs
 RUN <<"EOF" bash -exu
