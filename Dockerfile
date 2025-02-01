@@ -85,7 +85,7 @@ COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinst
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TransformerEngine
-COPY --from=te-wheel /opt/TransformerEngine /opt/TransformerEngine
+COPY --from=te-wheel /opt/TransformerEngine /tmp/te
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 ARG NEMO_REPO
