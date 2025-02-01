@@ -84,12 +84,12 @@ RUN bash /opt/NeMo-Aligner/reinstall.sh --mode install --library apex
 # TRTLLM
 ARG PYNVML_VERSION
 COPY --from=trtllm-wheel /opt/TensorRT-LLM/build/ /tmp/trtllm
-RUN bash /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh --mode install --library trtllm
+RUN bash /opt/NeMo-Aligner/reinstall.sh --mode install --library trtllm
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TransformerEngine
 COPY --from=te-wheel /opt/TransformerEngine /tmp/te
-RUN bash reinstall.sh /opt/NeMo-Aligner/reinstall.sh --mode install --library te
+RUN bash /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh --mode install --library te
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 ARG NEMO_REPO
