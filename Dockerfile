@@ -59,6 +59,7 @@ COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinst
 RUN cd /opt/NeMo-Aligner && \
     bash reinstall.sh --library te --mode build && \
     ls -al /opt/TransformerEngine
+RUN ls -al /opt/TransformerEngine
 
 FROM ${BASE_IMAGE} as apex-wheel
 ARG APEX_TAG
@@ -74,18 +75,22 @@ WORKDIR /opt
 # needed in case git complains that it can't detect a valid email, this email is fake but works
 RUN git config --global user.email "worker@nvidia.com"
 
+# Copy installer script
+COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
+
 # Apex
 COPY --from=apex-wheel /opt/Apex /tmp/apex
-COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
+RUN /opt/NeMo-Aligner/reinstall.sh --mode install --library apex
 
 # TRTLLM
 ARG PYNVML_VERSION
 COPY --from=trtllm-wheel /opt/TensorRT-LLM/build/ /tmp/trtllm
-COPY --from=aligner-bump /opt/NeMo-Aligner/reinstall.sh /opt/NeMo-Aligner/reinstall.sh
+RUN /opt/NeMo-Aligner/reinstall.sh --mode install --library trtllm
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
 
 # TransformerEngine
 COPY --from=te-wheel /opt/TransformerEngine /tmp/te
+RUN /opt/NeMo-Aligner/reinstall.sh --mode install --library te
 
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 ARG NEMO_REPO
