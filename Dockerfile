@@ -97,8 +97,7 @@ ARG NEMO_TAG
 ARG PROTOBUF_VERSION
 ARG PYTRITON_VERSION
 ARG PYNVML_VERSION
-RUN cd /opt/NeMo-Aligner && \
-    bash reinstall.sh --library all --mode install 
+RUN /opt/NeMo-Aligner/reinstall.sh --library all --mode install 
     #&& \
     #cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
