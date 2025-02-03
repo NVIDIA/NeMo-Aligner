@@ -50,7 +50,6 @@ from nemo_aligner.utils.train_utils import (
     set_sync_funcs,
     set_train,
 )
-from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
 from nemo_aligner.utils.utils import (
     adapter_control,
     clear_memory,
@@ -59,7 +58,7 @@ from nemo_aligner.utils.utils import (
     masked_mean,
     offload_distributed_adam,
 )
-
+from nemo_aligner.experimental.grpo.inference.registry import get_backend, list_available_backends
 
 class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
@@ -78,26 +77,57 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self.ratio_eps = self.cfg.grpo.ratio_eps
         self.forward_micro_batch_size = self.cfg.grpo.forward_micro_batch_size
 
-        self.use_trtllm_generation = "trt_llm" in self.cfg.grpo and self.cfg.grpo.trt_llm.enable
-        if self.use_trtllm_generation:
-            self.trtllm_generate = GPTGenerateTRTLLM(
+        # Initialize the inference backend
+        self.inference_backend = None
+        # Collect backends from the configuration and check which ones are enabled
+        enabled_backends = [
+            name for name in cfg.grpo.inference_backend.config.keys() 
+            if cfg.grpo.inference_backend.config.get(name, {}).get("enable", False)
+        ]
+        if len(enabled_backends) > 1:
+            raise ValueError(
+                f"Multiple inference backends enabled ({', '.join(enabled_backends)}). "
+                f"Please enable only one inference backend. Available backends: {', '.join(list_available_backends())}."
+            )
+
+        if len(enabled_backends) == 0:
+            raise ValueError(
+                f"No inference backend is enabled. Please enable one backend in the configuration. "
+                f"Available backends: {', '.join(list_available_backends())}."
+            )
+        
+        if self.cfg.grpo.inference_backend.enable:
+            self.inference_backend = self._initialize_inference_backend(self.cfg.grpo.inference_backend.get("type"))
+
+    def _initialize_inference_backend(self, backend_type):
+        """
+        Dynamically initialize the appropriate inference backend based on the backend type.
+        """
+        if backend_type == "trt_llm":
+            from nemo_aligner.utils.trt_llm import GPTGenerateTRTLLM
+
+            backend = GPTGenerateTRTLLM(
                 model_cfg=self.cfg,
                 max_generation_length=self.cfg.grpo.length_params.get("max_length", 1024),
-                max_input_len=self.cfg.grpo.trt_llm.get("max_input_len", 1024),
+                max_input_len=self.cfg.grpo.inference_backend.get("max_input_len", 1024),
                 generation_batch_size=self.cfg.grpo.get("generation_rollout_mbs", 4),
-                unload_engine_train=self.cfg.grpo.trt_llm.get("unload_engine_train", False),
-                trt_model_type=self.cfg.grpo.trt_llm.get("model_type", "llama"),
+                unload_engine_train=self.cfg.grpo.inference_backend.config.trt_llm.get("unload_engine_train", False),
+                trt_model_type=self.cfg.grpo.inference_backend.config.trt_llm.get("model_type", "llama"),
                 end_strings=self.cfg.grpo.sampling_params["end_strings"],
-                reshard_model=self.cfg.grpo.trt_llm.get("reshard", False),
+                reshard_model=self.cfg.grpo.inference_backend.get("reshard", False),
                 sample_temperature=self.cfg.grpo.sampling_params["temperature"],
                 sample_top_k=self.cfg.grpo.sampling_params["top_k"],
                 sample_top_p=self.cfg.grpo.sampling_params["top_p"],
                 repetition_penalty=self.cfg.grpo.sampling_params["repetition_penalty"],
                 use_greedy=self.cfg.grpo.sampling_params.get("use_greedy", False),
                 tokenizer=self.tokenizer,
-                seed=self.cfg.grpo.trt_llm.get("seed", self.cfg.seed),
+                seed=self.cfg.grpo.inference_backend.get("seed", self.cfg.seed),
                 trt_model_dir=self.cfg.grpo.get("trt_model_dir", "/tmp/trt_llm_model"),
             )
+        else:
+            raise ValueError(f"Unsupported inference backend: {backend_type}")
+
+        return backend
 
     # training calls
     def get_actor_forward_output_and_loss_func(self):
@@ -296,13 +326,19 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         set_eval(self)
         self.offload_adam_states()
 
-        if self.use_trtllm_generation:
-            # TODO this might be optimized to avoid calling `refit()` twice in a row after a validation step
-            self.trtllm_generate.refit(self.model)
+        if self.inference_backend:
+            # Refitting or recompiling the inference model for generation
+            self.inference_backend.refit(self.model)
             clear_memory()
 
     @torch.no_grad()
     def infer(self, inference_batch, use_greedy=False):
+        """
+        Perform text generation for a batch using the selected inference backend.
+        """
+        if not self.inference_backend:
+            raise ValueError("Inference backend is not initialized or enabled!")
+
         prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
         prompt_lengths = inference_batch["length"].cuda(non_blocking=True)
         inputs = (prompt_tokens, prompt_lengths)
@@ -311,8 +347,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             model=self, context_lengths=prompt_lengths, max_length=self._length_params["max_length"]
         )
 
-        if self.use_trtllm_generation:
-            actor_output = self.trtllm_generate.generate(inputs, use_greedy=use_greedy)
+        if self.inference_backend:
+            actor_output = self.inference_backend.generate(inputs, use_greedy=use_greedy)
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
         else:
@@ -377,8 +413,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
 
-        if self.use_trtllm_generation:
-            self.trtllm_generate.free()
+        if self.inference_backend:
+            self.inference_backend.free()
+
 
         set_train(self)
 

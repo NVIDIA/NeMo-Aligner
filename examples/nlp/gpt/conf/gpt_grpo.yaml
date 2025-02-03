@@ -51,23 +51,26 @@ trainer:
     # sequence length
     rollout_batch_seq_length: null
 
-    # Speed-up training by accelerating inference stage using TRTLLM
-    trt_llm:
-      enable: False
-      reshard: False # if True then reshard the model into TP only for inference
+    # Speed-up training by accelerating inference stage using backends like TRT-LLM, vLLM
+    inference_backend:
+      type: trt_llm  # Can be 'trt_llm', 'trt_llm_pytorch', 'sglang', 'vllm'.
+      
+      # Common settings for all backends
+      enable: True
+      seed: ${model.seed}
 
       # By default, assume the max input length is the difference between the model sequence length and the max number of tokens to generate
       max_input_len: ${subtract:${model.encoder_seq_length}, ${model.grpo.length_params.max_length}}
-
-      # the seed to use for trt-llm generation
-      seed: ${model.seed}
-
-      # for supported values see: https://github.com/NVIDIA/NeMo/blob/db6244857af3b012f645c7f4672522978bb608b1/nemo/export/trt_llm/converter/utils.py#L26
-      model_type: llama # can be gptj, gptnext, llama, gemma, falcon
-
-      # Save GPU memory by unloading and reloading the TRTLLM engine before and after the training stage
-      # Reloading the engine incurs a constant time overhead
-      unload_engine_train: False
+      reshard: False # if True then reshard the model into TP only for inference
+      
+      # Backend-specific configurations
+      config:
+        # TRTLLM-specific options
+        trt_llm:
+          # for supported values see: https://github.com/NVIDIA/NeMo/blob/db6244857af3b012f645c7f4672522978bb608b1/nemo/export/trt_llm/converter/utils.py#L26
+          enable: True
+          model_type: llama  # Can be gptj, gptnext, llama, gemma, falcon
+          unload_engine_train: False
 
     batch_iterator:
       # When use_flask is True, we will spawn a flask server on rank 0 to balance the work of policy rollouts.
@@ -153,13 +156,13 @@ model:
       max_length: ${int_div:${model.encoder_seq_length}, 2}
       min_length: 1
 
-    trt_llm: ${trainer.grpo.trt_llm}
     # pull from trainer, do not change here. Change at trainer.grpo.generation_rollout_mbs
     generation_rollout_mbs: ${trainer.grpo.generation_rollout_mbs}
     # pull from trainer, do not change here. Change at trainer.grpo.trt_model_dir
     trt_model_dir: ${trainer.grpo.trt_model_dir}
     # pull from trainer, do not change here. Change at trainer.grpo.initial_policy_kl_penalty
     initial_policy_kl_penalty: ${trainer.grpo.initial_policy_kl_penalty}
+    inference_backend: ${trainer.grpo.inference_backend}
 
   peft:
     peft_scheme: "none"  # ["lora", "none"]

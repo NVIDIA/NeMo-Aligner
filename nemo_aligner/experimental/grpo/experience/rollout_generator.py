@@ -7,9 +7,9 @@ from omegaconf import DictConfig
 
 import torch
 
-from nemo_aligner.utils import parallel_state
+from nemo_aligner.experimental.grpo.utils import parallel_state
 from nemo_aligner.utils.utils import batch_repeat, batch_index_select, reconstruct_split_batch, cpu_dict
-from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
+from ..utils.parallel_state import is_inference_reshard, inference_reshard_region
 from nemo_aligner.utils.distributed import ScopedTimer
 from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface, EnvironmentInterface
 from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
@@ -41,7 +41,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         self.rollout_mbs = cfg.generation_rollout_mbs
         self.val_samples_per_prompt = cfg.val_samples_per_prompt
         self.val_prompt_batch_size = cfg.val_prompt_micro_batch_size
-        self.reshard_weights_for_trtllm_generation = cfg.trt_llm.enable and cfg.trt_llm.reshard
+        self.reshard_weights_for_generation = cfg.inference_backend.enable and cfg.inference_backend.reshard
         self.generation_save_dir = cfg.generation_save_dir
         self.rollout_batch_seq_length = cfg.rollout_batch_seq_length
         self.timer = ScopedTimer()
@@ -102,7 +102,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         Returns a global rollout batch (sharded out later by the GRPO trainer)
         """
         # Set up a generation environment with less sharding/parallelism to accelerate it
-        generation_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_generation else nullcontext
+        generation_reshard_context = inference_reshard_region if self.reshard_weights_for_generation else nullcontext
 
         # policy generation
         rollout_batches, futures = [], []

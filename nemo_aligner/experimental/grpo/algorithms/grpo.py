@@ -27,13 +27,13 @@ from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import M
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
 from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
-from nemo_aligner.utils import parallel_state
+from ..utils import parallel_state
 from nemo_aligner.utils.distributed import (
     ScopedTimer,
     all_reduce_dict,
     masked_global_mean_var,
 )
-from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
+from ..utils.parallel_state import is_inference_reshard, inference_reshard_region
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.experimental.grpo.utils.rl_utils import (
     calculate_kl_penalty_joschu2020,
@@ -85,7 +85,8 @@ class GRPOTrainer:
         # this timer checks if we should stop training
         self.run_timer = run_timer
 
-        self.reshard_weights_for_trtllm_generation = "trt_llm" in cfg and cfg.trt_llm.enable and cfg.trt_llm.reshard
+        self.reshard_weights_for_generation = cfg.inference_backend.enable and cfg.inference_backend.reshard
+        
 
         # Tracked by state dict and checkpointed
         self.consumed_samples = 0       # consumed prompts (for the dataloader to keep track)
@@ -196,7 +197,7 @@ class GRPOTrainer:
         rollout_timing:  dict              **dp local** timing metrics (will be reduced later)
         """
         # initialize prompt dataloader
-        generation_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_generation else nullcontext
+        generation_reshard_context = inference_reshard_region if self.reshard_weights_for_generation else nullcontext
         with generation_reshard_context():
             # dataloader must be built within the generation context because it uses DP rank and size
             dataloader = dataloader_builder(consumed_samples=consumed_samples)
