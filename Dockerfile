@@ -13,8 +13,8 @@ ARG MAX_JOBS=8
 # Git refs for dependencies
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
 ARG PYTRITON_VERSION=0.5.10
-ARG NEMO_TAG=19668e5320a2e2af0199b6d5e0b841993be3a634  # On: main
-ARG MLM_TAG=25059d3bbf68be0751800f3644731df12a88f3f3   # On: main
+ARG NEMO_TAG=633cb602777bffefbe12066b0c915c87e7b469e9 # On: v2.1.0
+ARG MLM_TAG=d15cec53beb283e7127b7d594e1c46b8a0719b6d  # On: core_r0.10.0
 ARG ALIGNER_COMMIT=main
 ARG TRTLLM_VERSION=v0.13.0
 ARG PROTOBUF_VERSION=4.24.4
@@ -107,6 +107,10 @@ RUN git clone https://github.com/NVIDIA/NeMo.git && \
     pip install -e ".[nlp]" && \
     cd nemo/collections/nlp/data/language_modeling/megatron && make
 
+# TODO: Allow installing from the default branch, but introduce a build
+#  arg if compatibility starts breaking
+RUN pip install --no-cache-dir git+https://github.com/NVIDIA/NeMo-Run.git
+    
 # TODO: While we are on Pytorch 24.07, we need to downgrade triton since 3.2.0 introduced a breaking change
 #   This un-pinned requirement comes from mamba-ssm, and this pin can be removed once Pytorch base image is
 #   updated.
@@ -124,25 +128,29 @@ RUN pip uninstall -y megatron-core && \
     fi && \
     pip install -e .
 
+# TODO: This is redundant since NeMo installs this as of 24.12, but keep
+#  it until 25.03 to give folks enough time to transition.
+RUN pip install --no-cache-dir lightning
+
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
     pip install --no-deps -e .
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
-# TODO(terryk): This layer should be deleted ASAP after NeMo is bumped to include all of these PRs
+# NOTE: Comment this layer out if it is not needed
+# NOTE: This section exists to allow cherry-picking PRs in cases where
+#  we do not wish to simply update to the top-of-tree. Sometimes PRs
+#  cannot be cherry-picked cleanly if rebased a few times to top-of-tree
+#  so this logic also requires you to select a SHA (can be dangling) from
+#  the PR.
 RUN <<"EOF" bash -exu
 cd NeMo
 # Ensures we don't cherry-pick "future" origin/main commits
 git fetch -a
-# 0c92fe17df4642ffc33d5d8c0c83fda729e3910c: [fix] Ensures disabling exp_manager with exp_manager=null does not error NeMo#10651
-# 60e677423667c029dd05875da72bf0719774f844: [feat] Update get_model_parallel_src_rank to support tp-pp-dp ordering NeMo#10652
-# 0deaf6716cb4f20766c995ce25d129795f1ae200: fix[export]: update API for disabling device reassignment in TRTLLM for Aligner NeMo#10863
-# (superceded by 10863) 148543d6e9c66ff1f8562e84484448202249811d: feat: Migrate GPTSession refit path in Nemo export to ModelRunner for Aligner NeMo#10654
+# d27dd28b4186f6ecd9f46f1c5679a5eef9bad14e: fix: export weight name mapping if model is nemo model#11497
 for pr_and_commit in \
-  "10651 0c92fe17df4642ffc33d5d8c0c83fda729e3910c" \
-  "10652 60e677423667c029dd05875da72bf0719774f844" \
-  "10863 0deaf6716cb4f20766c995ce25d129795f1ae200" \
+  "11497 d27dd28b4186f6ecd9f46f1c5679a5eef9bad14e" \
 ; do
   pr=$(cut -f1 -d' ' <<<"$pr_and_commit")
   head_pr_commit=$(cut -f2 -d' ' <<<"$pr_and_commit")

@@ -5,6 +5,7 @@ trainer:
   devices: 1
   accelerator: gpu
   precision: bf16
+  gradient_clip_val: ${trainer.sft.gradient_clip_val}  # No need to change. Megatron Core optimizer uses this value
 
   sft:
     max_epochs: 1
@@ -15,6 +16,7 @@ trainer:
     limit_train_batches: 1.0
 
     limit_val_batches: 1.0
+    # TODO: delete once Megatron Core optimizer becomes default
     gradient_clip_val: 1.0
 
     # can be used to register any custom metrics that require token-by-token generation
@@ -57,6 +59,7 @@ model:
   seed: 1234
   tensor_model_parallel_size: 1 # intra-layer model parallelism
   pipeline_model_parallel_size: 1 # inter-layer model parallelism
+  context_parallel_size: 1 # parallelism along sequence length
   restore_from_path: ??? # Path to an existing p-tuned/prompt tuned .nemo model you wish to add new tasks to or run inference with
   resume_from_checkpoint: null # The path to a checkpoint file to continue the training, restores the whole state including the epoch, step, LR schedulers, apex, etc.
   save_nemo_on_validation_end: True # Saves an inference ready .nemo file every time a checkpoint is saved during training.

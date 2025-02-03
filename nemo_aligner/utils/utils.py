@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 from functools import partial, wraps
-from typing import Iterator, List
+from typing import Any, Iterator, List, Optional
 from unittest.mock import patch
 
 import torch
@@ -46,16 +46,19 @@ class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
         the rm head if load_base_model_only is True
     """
 
-    def __init__(self, *args, load_base_model_only=False, **kwargs):
+    def __init__(self, *args, load_base_model_only=False, replace_sharded_tensor_key: Optional[str] = None, **kwargs):
         super().__init__(*args, **kwargs)
         self.__load_base_model_only = load_base_model_only
+        self.__replace_sharded_tensor_key = replace_sharded_tensor_key
 
     def restore_from(self, *args, **kwargs):
         if not self.__load_base_model_only:
-            return super().restore_from(*args, **kwargs)
+            return super().restore_from(*args, replace_sharded_tensor_key=self.__replace_sharded_tensor_key, **kwargs)
 
         with patch.object(GPTRewardModel, "return_rm_head_in_state_dict", False):
-            output = super().restore_from(*args, **kwargs)
+            output = super().restore_from(
+                *args, replace_sharded_tensor_key=self.__replace_sharded_tensor_key, **kwargs
+            )
 
         return output
 
@@ -87,8 +90,20 @@ def load_from_nemo(
 ):
     """load a model using nemo checkpoint
     """
-    connector = CustomSaveRestoreConnector(load_base_model_only=load_base_model_only)
     assert os.path.exists(restore_path), f"tried to load from {restore_path=} but it does not exist"
+
+    is_2_0_ckpt = load_2_0_checkpoint_model_config(restore_path) is not None
+    if is_2_0_ckpt:
+        replace_sharded_tensor_key = "module"
+    else:
+        replace_sharded_tensor_key = None
+
+    connector = CustomSaveRestoreConnector(
+        load_base_model_only=load_base_model_only, replace_sharded_tensor_key=replace_sharded_tensor_key
+    )
+
+    if is_2_0_ckpt:
+        connector.model_weights_ckpt = "weights"
 
     # if we gave it a directory, then load as if it was extracted already
     if os.path.isdir(restore_path):
@@ -107,6 +122,10 @@ def load_from_nemo(
         save_restore_connector=connector,
         strict=strict,
     )
+
+    if is_2_0_ckpt:
+        connector.model_weights_ckpt = "model_weights.ckpt"
+
     return (model, model_cfg) if return_updated_cfg else model
 
 
@@ -131,11 +150,121 @@ def load_checkpoint_model_config(restore_path):
     return cfg
 
 
+def load_2_0_checkpoint_model_config(restore_path: str):
+    try:
+        from nemo.lightning import io
+        from nemo.lightning.ckpt_utils import ckpt_to_context_subdir
+        from nemo.lightning.io.pl import ckpt_to_weights_subdir
+
+        if (
+            os.path.isdir(ckpt_to_context_subdir(restore_path))
+            and os.path.isdir(ckpt_to_weights_subdir(restore_path, is_saving=False))
+            and os.path.isfile(os.path.join(ckpt_to_context_subdir(restore_path), "io.json"))
+        ):
+            config = io.load_context(restore_path, subpath="model.config")
+            tokenizer_cfg = OmegaConf.load(os.path.join(ckpt_to_context_subdir(restore_path), "model.yaml")).tokenizer
+
+            def get_tokenizer_args(tokenizer_cfg):
+                if "AutoTokenizer" in tokenizer_cfg._target_:
+                    tokenizer_type = "huggingface"
+                    tokenizer_name = (
+                        tokenizer_cfg.pretrained_model_name
+                        if isinstance(tokenizer_cfg.pretrained_model_name, str)
+                        else tokenizer_cfg.pretrained_model_name.attr
+                    )
+                    if os.path.isfile(
+                        os.path.join(ckpt_to_context_subdir(restore_path), tokenizer_name)
+                    ) or os.path.isdir(os.path.join(ckpt_to_context_subdir(restore_path), tokenizer_name)):
+                        tokenizer_name = os.path.join(ckpt_to_context_subdir(restore_path), tokenizer_name)
+
+                    args = {
+                        "library": tokenizer_type,
+                        "type": tokenizer_name,
+                        "use_fast": True,
+                    }
+                    if tokenizer_cfg.get("vocab_file", None):
+                        args["vocab_file"] = os.path.join(
+                            ckpt_to_context_subdir(restore_path), tokenizer_cfg.vocab_file
+                        )
+                    if tokenizer_cfg.get("merges_file", None):
+                        args["merges_file"] = os.path.join(
+                            ckpt_to_context_subdir(restore_path), tokenizer_cfg.merges_file
+                        )
+
+                    return args
+                elif "SentencePieceTokenizer" in tokenizer_cfg._target_:
+                    tokenizer_type = "sentencepiece"
+                    tokenizer_name = tokenizer_cfg.model_path
+                    if os.path.isfile(
+                        os.path.join(ckpt_to_context_subdir(restore_path), tokenizer_name)
+                    ) or os.path.isdir(os.path.join(ckpt_to_context_subdir(restore_path), tokenizer_name)):
+                        tokenizer_name = os.path.join(ckpt_to_context_subdir(restore_path), tokenizer_name)
+                    elif not os.path.isfile(tokenizer_name):
+                        raise FileNotFoundError(f"Tokenizer file {tokenizer_name} not found")
+
+                    return {"library": tokenizer_type, "type": None, "model": tokenizer_name}
+                else:
+                    raise ValueError(f"Unknown tokenizer type: {tokenizer_cfg}")
+
+            tokenizer_args = get_tokenizer_args(tokenizer_cfg)
+
+            config_dict = {}
+            for k, v in config.__dict__.items():
+                if isinstance(v, (float, int, str, bool)):
+                    config_dict[k] = v
+                elif k == "activation_func":
+                    config_dict["activation"] = v.__name__
+
+            if config_dict["activation"] == "silu":
+                config_dict["activation"] = "fast-swiglu"
+
+            config_dict["encoder_seq_length"] = config_dict["seq_length"]
+
+            config_dict["mcore_gpt"] = True
+            config_dict["max_position_embeddings"] = config_dict.get("seq_length")
+            config_dict["tokenizer"] = tokenizer_args
+            config_dict["bias"] = config_dict.get("add_bias_linear", True)
+            config_dict["qkv_bias"] = config_dict.get("add_qkv_bias", False)
+
+            try:
+                strategy: dict[str, Any] = io.load_context(restore_path, subpath="trainer.strategy").__dict__
+                config_dict["gradient_as_bucket_view"] = strategy.get("gradient_as_bucket_view", True)
+                # TODO: Add any other parameters required from strategy here
+            except Exception:
+                # Default to True based on default values in https://github.com/NVIDIA/NeMo/tree/main/nemo/collections/llm/recipes
+                config_dict["gradient_as_bucket_view"] = True
+
+            try:
+                precision_plugin: dict[str, Any] = io.load_context(restore_path, subpath="trainer.plugins").__dict__
+                config_dict["fp16"] = precision_plugin.get("fp16", False)
+                config_dict["bf16"] = precision_plugin.get("bf16", True)
+                # TODO: Add any other parameters required from precision plugin here
+            except Exception:
+                # Default to True based on default values in https://github.com/NVIDIA/NeMo/tree/main/nemo/collections/llm/recipes
+                config_dict["fp16"] = False
+                config_dict["bf16"] = True
+
+            if not os.path.isfile(os.path.join(restore_path, "model_config.yaml")):
+                OmegaConf.save(config=OmegaConf.create(config_dict), f=os.path.join(restore_path, "model_config.yaml"))
+
+            return config_dict
+    except Exception:
+        # If there's a failure loading the path as a NeMo 2.0 checkpoint,
+        # return None and continue loading NeMo 1.0 checkpoint.
+        return None
+
+    return None
+
+
 def load_and_override_model_config(restore_path, model_cfg_to_overwrite, remove_meta_info=True):
     """load the config in the model checkpoint and then overwrite it
         with whatever is provided
     """
-    checkpoint_cfg = load_checkpoint_model_config(restore_path)
+    checkpoint_cfg_2_0 = load_2_0_checkpoint_model_config(restore_path)
+    if checkpoint_cfg_2_0 is not None:
+        checkpoint_cfg = checkpoint_cfg_2_0
+    else:
+        checkpoint_cfg = load_checkpoint_model_config(restore_path)
 
     if remove_meta_info:
         checkpoint_cfg.pop("target", None)
@@ -473,11 +602,11 @@ def convert_to_amp_o2_format(state_dict):
 def get_iterator_k_split_list(batch: List[str], num_microbatches: int) -> Iterator:
     """
     Generate an iterator to split a list into microbatches of equal size.
-    
+
     Args:
         batch (List[str]): The list to be split into microbatches.
         num_microbatches (int): The number of microbatches to split the list into.
-        
+
     Returns:
         Iterator: An iterator that yields the microbatches.
     """

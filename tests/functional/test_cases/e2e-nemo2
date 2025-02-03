@@ -1,0 +1,73 @@
+#!/bin/bash
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+cd $SCRIPT_DIR
+
+set -eoux pipefail
+
+# This is an e2e test testing the following workflow:
+#
+#  1. train a dummy llama3 nemo 2.0 checkpoint
+#  2. perform dpo on it and save nemo 1.0 checkpoint
+#  3. convert nemo 1.0 checkpoint to 2.0
+#  4. perform eval on this newly convert 2.0 checkpoint
+
+PRETRAINING_PATH=/tmp/$(basename $0)-ckpt-dir
+PRETRAINING_CHECKPOINT_PATH=/tmp/$(basename $0)-ckpt-path
+CONVERTED_PATH=/tmp/$(basename $0)-convert-dir
+rm -rf $PRETRAINING_PATH $PRETRAINING_CHECKPOINT_PATH $CONVERTED_PATH
+
+if ! pip show nemo-run &>/dev/null; then
+  echo "[ERROR] nemo-run is needed for this test. Please visit installation instructions: https://github.com/NVIDIA/NeMo-Run?tab=readme-ov-file#install-nemo-run"
+  exit 1
+fi
+
+
+####################
+# Step 1: Pretrain #
+####################
+python /opt/NeMo/tests/collections/llm/megatron_gpt_pretraining.py \
+  --devices=1 \
+  --max-steps=3 \
+  --experiment-dir=${PRETRAINING_PATH} \
+  --vocab-path=${ALIGNER_CI_DIR}/nlp-copy/megatron_gpt/data/gpt/vocab.json \
+  --merges-path=${ALIGNER_CI_DIR}/nlp-copy/megatron_gpt/data/gpt/merges.txt \
+  --data-path=${ALIGNER_CI_DIR}/nlp-copy/megatron_gpt/data/gpt/simple_wiki_gpt_preproc_text_document \
+  --index-mapping-dir=tests/collections/llm/gpt_index_mappings \
+  --no-masked-softmax-fusion
+
+
+#################
+# Step 2: Align #
+#################
+NEMO2_CHECKPOINT=$(find $PRETRAINING_PATH/default/checkpoints -maxdepth 1 -type d -name '*-last' | head -n 1)
+mv $NEMO2_CHECKPOINT $PRETRAINING_CHECKPOINT_PATH
+export PRETRAINED_CHECKPOINT_NEMO_FILE=$PRETRAINING_CHECKPOINT_PATH
+CREATE_CHECKPOINT_CALLBACK=True SAVE_INTERVAL=3 \
+  bash ../dpo.sh
+
+###################
+# Step 3: Convert #
+###################
+export DPO_CHECKPOINT="/tmp/dpo_test/checkpoints/megatron_gpt.nemo"
+python /opt/NeMo/scripts/checkpoint_converters/convert_nemo1_to_nemo2.py --input_path $DPO_CHECKPOINT --output_path $CONVERTED_PATH --model_id ${PRETRAINED_CHECKPOINT_NEMO_FILE}
+
+################
+# Step 4: Eval #
+################
+python /opt/NeMo/scripts/llm/generate.py  --model_path $CONVERTED_PATH
+
+echo "[Finished] $0"

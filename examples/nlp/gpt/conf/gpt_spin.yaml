@@ -6,6 +6,7 @@ trainer:
   devices: 8
   accelerator: gpu
   precision: bf16-mixed
+  gradient_clip_val: ${trainer.spin.gradient_clip_val}  # No need to change. Megatron Core optimizer uses this value
   
   # spin specific args
   spin:
@@ -18,6 +19,7 @@ trainer:
 
     # how many GBS we loop over
     limit_val_batches: 1.0
+    # TODO: delete once Megatron Core optimizer becomes default
     gradient_clip_val: 1.0
 
   # do not change these
@@ -93,6 +95,7 @@ model:
     name: distributed_fused_adam
     bucket_cap_mb: 200
     overlap_grad_sync: False
+    overlap_param_sync: False
     contiguous_grad_buffer: True
     lr: 9e-6
     weight_decay: 0.1 

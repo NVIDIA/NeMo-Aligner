@@ -5,6 +5,7 @@ trainer:
   devices: 1
   accelerator: gpu
   precision: bf16
+  gradient_clip_val: ${trainer.knowledge_distillation.gradient_clip_val}  # No need to change. Megatron Core optimizer uses this value
 
   knowledge_distillation:
     max_epochs: 1

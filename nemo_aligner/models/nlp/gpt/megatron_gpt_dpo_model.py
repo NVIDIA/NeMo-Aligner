@@ -16,11 +16,11 @@ import warnings
 from functools import partial
 
 import torch
+from lightning.pytorch.trainer.trainer import Trainer
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
-from pytorch_lightning.trainer.trainer import Trainer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
@@ -111,6 +111,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 required_keys.add("attention_mask")
                 if "cu_seqlens" in batch:
                     required_keys.add("cu_seqlens")
+                    required_keys.add("max_seqlen")
+                    required_keys.add("cu_seqlens_argmin")
 
                 if parallel_state.is_pipeline_first_stage():
                     if packed:

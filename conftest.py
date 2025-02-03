@@ -15,8 +15,8 @@
 import os
 
 import pytest
+from lightning.pytorch import Trainer
 from omegaconf import DictConfig
-from pytorch_lightning import Trainer
 
 from nemo.collections.common.tokenizers.huggingface.auto_tokenizer import AutoTokenizer
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
@@ -415,6 +415,8 @@ def pytest_sessionfinish(session, exitstatus):
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
 
-    if exitstatus == 0:
+    if exitstatus == 0 and (
+        os.environ.get("LOCAL_RANK", None) == "0" or os.environ.get("OMPI_COMM_WORLD_LOCAL_RANK", None) == "0"
+    ):
         with open(SUCCESS_FILE, "w") as f:
             ...

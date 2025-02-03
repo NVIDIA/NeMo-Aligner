@@ -1,0 +1,41 @@
+#!/bin/bash
+
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+cd $SCRIPT_DIR
+
+set -eoux pipefail
+
+args=(
+  model.peft.peft_scheme=lora
+  # MoE needs mcore dist opt
+  ++model.optim.name=mcore_distributed_optim
+  ++model.tensor_model_parallel_size=2
+  ++model.expert_model_parallel_size=1
+  # SP needed for TP>1
+  ++model.sequence_parallel=True
+  # Seqlen % TP_SIZE when SP=True
+  model.data.pad_length_to_multiple_of=2
+  ++model.tp_comm_overlap_disable_qkv=True
+  ++model.moe_token_dispatcher_type=alltoall
+  # TODO: Activation checkpointing is not currently functional with peft
+  ~model.activations_checkpoint_granularity
+  ~model.activations_checkpoint_method
+  ~model.activations_checkpoint_num_layers
+)
+
+PRETRAINED_CHECKPOINT_NEMO_FILE=$ALIGNER_CI_DIR/checkpoints/tiny-mixtral-nlayers2-hidden128-ffn448-nhead4-qgroup2.nemo \
+bash ../dpo.sh "${args[@]}" 2>&1 | tee $(basename $0).log
