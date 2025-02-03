@@ -241,10 +241,27 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         return recomposed_batch, {**metrics, **self.compute_overall_metrics(global_rollout_batch)}
 
     def compute_overall_metrics(self, rollout_batch):
+        def dict_get(batch, idx):
+            inst = {}
+            for k in batch.keys():
+                inst[k] = batch[k][idx]
+            return inst
+
         prompt_lengths = rollout_batch["prompt_lengths"]
         response_lengths = rollout_batch["response_lengths"]
         rewards = rollout_batch["rewards"]
         is_end = rollout_batch["is_end"]
+        sum_trt_error = 0
+        num_toks = 0
+        for i in range(prompt_lengths.size(0)):
+            instance = dict_get(rollout_batch, i)
+            response_length = instance["response_lengths"].item()
+            prompt_length = instance["prompt_lengths"].item()
+            logprobs = instance["logprobs"][prompt_length-1:response_length-1]
+            trt_lps = instance["response_trt_lps"][prompt_length:response_length]
+            error = torch.sum(torch.exp(torch.abs(logprobs - trt_lps)))
+            sum_trt_error += error.item()
+            num_toks += response_length - prompt_length
 
         metrics = {
             "rollout_size": prompt_lengths.size(0),
@@ -252,6 +269,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             "generation_length": (response_lengths - prompt_lengths).float().mean().item(),
             "rewards": rewards.mean().item(),
             "fraction_of_samples_properly_ended": is_end.float().mean().item(),
+            "trt_logprob_error": sum_trt_error / num_toks,
         }
 
         return metrics
@@ -280,11 +298,12 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             prompt_length = instance["prompt_lengths"].item()
             prompt_str = instance["prompt_sentences"]
             prompt_hash = hashlib.sha256(prompt_str.encode("utf-8")).hexdigest()
-            lps = instance["logprobs"][prompt_length:response_length].cpu().tolist()
+            lps = instance["logprobs"][prompt_length-1:response_length-1].cpu().tolist()
             if "init_logprobs" in instance.keys():
-                init_lps = instance["init_logprobs"][prompt_length:response_length].cpu().tolist()
+                init_lps = instance["init_logprobs"][prompt_length-1:response_length-1].cpu().tolist()
             else:
                 init_lps = None
+            generation_tokens = instance["response_tokens"][prompt_length:response_length].cpu().tolist()
 
             record = {
                 "prompt_hash": prompt_hash,
@@ -297,7 +316,9 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                 "ended_correctly": instance["is_end"].item(),
                 "reward": instance["rewards"].item(),
                 "logprobs": lps,
+                "trt_lps": instance["response_trt_lps"][prompt_length:response_length].cpu().tolist(),
                 "init_logprobs": init_lps,
+                "generation_tokens": generation_tokens,
             }
             records.append(record)
 

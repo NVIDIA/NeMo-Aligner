@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import os
+import shutil
 import secrets
 import tensorrt_llm
 import torch
@@ -83,6 +85,7 @@ class GPTGenerateTRTLLM:
             logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
             sample_top_k = 1
 
+        self.trt_model_dir = trt_model_dir
         self.model_cfg = model_cfg
         self.tokenizer = tokenizer
         self.max_generation_length = max_generation_length
@@ -148,8 +151,22 @@ class GPTGenerateTRTLLM:
             return_dict=True,
             output_sequence_lengths=True,
         )
+        self.sampling_config.update(output_log_probs=True)
 
     def refit(self, model):
+        del self.trt_llm_exporter
+        clear_memory()
+        if torch.cuda.current_device() == 0:
+            directory = self.trt_model_dir
+            if os.path.exists(directory) and os.path.isdir(directory):
+                print(f"Directory {directory} exists. Deleting it...")
+                shutil.rmtree(directory)
+                print("Directory deleted.")
+            else:
+                print(f"Directory {directory} does not exist.")
+        torch.distributed.barrier()
+        self.trt_llm_exporter = TensorRTLLM(self.trt_model_dir, load_model=False)
+        self._trtllm_model_compiled = False
         if not self._trtllm_model_compiled:
             log_memory("Before TRT-LLM engine build")
             global_devices = [None for _ in range(torch.distributed.get_world_size())]
@@ -208,11 +225,13 @@ class GPTGenerateTRTLLM:
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
         output_ids = torch.squeeze(output_ids, dim=1).long()
         response_lengths = torch.squeeze(response_lengths, dim=1).long()
-        return output_ids, response_lengths
+        output_lps = output_dict.get("log_probs", None)
+        print('output_lps', output_lps)
+        return output_ids, response_lengths, output_lps
 
     def generate(self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy:bool=False):
 
-        output_ids, response_lengths = self._generate(inputs, use_greedy=use_greedy)
+        output_ids, response_lengths, output_lps = self._generate(inputs, use_greedy=use_greedy)
         max_length = response_lengths.max().item()
 
         # Map pad_id to eos_id in case tokenizer does not have a pad_id
@@ -223,13 +242,14 @@ class GPTGenerateTRTLLM:
         output = {
             "response_tokens": output_ids,
             "response_lengths": response_lengths,
+            "response_logprobs_trt": output_lps
         }
 
         return output
 
     def free(self):
-        if not self.unload_engine_train:
-            return
+        #if not self.unload_engine_train:
+         #   return
         log_memory("Before TRT-LLM engine unload")
         self.trt_llm_exporter.unload_engine()
         clear_memory()

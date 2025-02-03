@@ -66,6 +66,7 @@ class MathEnvironment(EnvironmentInterface):
             "response_sentence": batch["response_sentences"][0],
             "expected_answer": batch["extra_verifier_info"][0]["ground_truth"],
         }
+        batch["rewards"] = batch["rewards"] * batch["is_end"] # set a reward of 0 for any incorrectly ended sequences
         if (batch["rewards"] == 1).float().sum() > 0:
             correct_solution_generation_lengths = (
                 (batch["response_lengths"] - batch["prompt_lengths"])[batch["rewards"] == 1].float().mean().item()

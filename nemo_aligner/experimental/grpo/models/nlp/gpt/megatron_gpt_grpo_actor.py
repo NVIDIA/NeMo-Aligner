@@ -351,6 +351,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             actor_output = self.inference_backend.generate(inputs, use_greedy=use_greedy)
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
+            response_trt_lps = actor_output["response_logprobs_trt"]
+            print(response_trt_lps.shape, flush=True)
         else:
             actor_output = self.generate(
                 inputs=inputs,
@@ -388,6 +390,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         rollout_batch = {
             "response_tokens": response_tokens,
             "response_lengths": response_lengths,
+            "response_trt_lps": response_trt_lps,
             "prompt_lengths": prompt_lengths,
             "is_end": is_valid,
         }
