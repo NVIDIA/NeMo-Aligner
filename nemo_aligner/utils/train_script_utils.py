@@ -56,12 +56,14 @@ def retrieve_custom_trainer_state_dict(ptl_trainer):
         reinforce_optimization_step = extract_value_from_ckpt(
             key="reinforce_optimization_step", ckpt_path=trainer_restore_path
         )
+        grpo_optimization_step = extract_value_from_ckpt(key="grpo_optimization_step", ckpt_path=trainer_restore_path)
         trainer_state_dict = {
             "step": step,
             "consumed_samples": consumed_samples,
             "epoch": epoch,
             "ppo_optimization_step": ppo_optimization_step,
             "reinforce_optimization_step": reinforce_optimization_step,
+            "grpo_optimization_step": grpo_optimization_step,
         }
 
     return trainer_state_dict

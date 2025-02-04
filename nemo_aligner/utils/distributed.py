@@ -184,6 +184,27 @@ def gather_tensor(tensor, dst, group, dtype=None):
     return gather_list
 
 
+def gather_jagged_object_lists(local_objects: list, group=None):
+    """
+    Gathers jagged lists of picklable objects from all ranks.
+    WARNING: synchronous
+    
+    Args:
+        local_objects: List of objects to gather from current rank
+        group: Optional process group
+        
+    Returns:
+        Flattened list of all objects from all ranks in order [rank0, rank1, ...]
+    """
+    # Gather all lists across ranks
+    world_size = torch.distributed.get_world_size(group=group)
+    gathered_lists = [None] * world_size
+    torch.distributed.all_gather_object(gathered_lists, local_objects, group=group)
+
+    # Flatten into single list while preserving order
+    return [obj for sublist in gathered_lists for obj in sublist]
+
+
 def run_if_model_parallel_src(fn, *fn_args, **fn_kwargs):
     """This function is meant to wrap an arbitary function to only call the function
     if it's the model parallel src. So if we have DP=2, this function will be called

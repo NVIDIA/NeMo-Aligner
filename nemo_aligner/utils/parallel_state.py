@@ -16,6 +16,8 @@
 
 from contextlib import contextmanager
 
+import torch
+
 from megatron.core import parallel_state as mcore_parallel_state
 
 from nemo.collections.nlp.modules.common.text_generation_utils import (
@@ -37,6 +39,12 @@ def disable_trt_llm_reshard_calls():
 
 def is_trt_llm_reshard():
     return _TRT_LLM_RESHARD
+
+
+"""
+The following functions check if you are in an infernece resharding context
+and return the 'current' sharding. 
+"""
 
 
 def get_model_parallel_src_rank():
@@ -82,6 +90,41 @@ def get_data_parallel_rank():
 
 def get_pipeline_model_parallel_world_size():
     return 1 if is_trt_llm_reshard() else mcore_parallel_state.get_pipeline_model_parallel_world_size()
+
+
+def get_pipeline_model_parallel_group():
+    group = (
+        mcore_parallel_state.get_pipeline_model_parallel_group()
+        if is_trt_llm_reshard()
+        else mcore_parallel_state.get_pipeline_model_parallel_group()
+    )
+    return group
+
+
+def is_model_parallel_src_rank():
+    return torch.distributed.get_rank() == get_model_parallel_src_rank()
+
+
+"""
+These functions will ignore your current 'resharded' context and return 
+parallism sharding for the training context.
+"""
+
+
+def get_training_pipeline_model_parallel_group():
+    return mcore_parallel_state.get_pipeline_model_parallel_group()
+
+
+def get_training_data_parallel_rank():
+    return mcore_parallel_state.get_data_parallel_rank()
+
+
+def get_training_data_parallel_group():
+    return mcore_parallel_state.get_data_parallel_group()
+
+
+def get_training_data_parallel_world_size():
+    return mcore_parallel_state.get_data_parallel_world_size()
 
 
 @contextmanager

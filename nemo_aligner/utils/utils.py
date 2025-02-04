@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import replace
 from functools import partial, wraps
-from typing import Any, Iterator, List, Optional
+from typing import Any, Iterator, List, Optional, Union
 from unittest.mock import patch
 
 import torch
@@ -670,3 +670,116 @@ def deprecated_in_version(version: str, message: str | None = None):
         return wrapper
 
     return decorator
+
+
+def batch_repeat(batch, num_repetitions=1):
+    output = {}
+    special_keys = ["attention_mask"]
+    for k in batch.keys():
+        if k in special_keys:
+            continue
+        if isinstance(batch[k], torch.Tensor):
+            output[k] = torch.cat([batch[k] for _ in range(num_repetitions)])
+        else:
+            output[k] = [item for _ in range(num_repetitions) for item in batch[k]]
+
+    other = {}
+    for k in special_keys:
+        if k in batch.keys():
+            other[k] = batch[k]
+
+    return output | other
+
+
+def batch_index_select(batch: dict, indices) -> dict:
+    """
+    Selects specified indices from each value in a dictionary of tensors/lists.
+    
+    Args:
+        batch: A dictionary where values are tensors or lists.
+        indices: Indices to select (list or tensor of integers).
+    
+    Returns:
+        A new dictionary with values sliced at the specified indices.
+    """
+    result = {}
+    for key, value in batch.items():
+        if isinstance(value, torch.Tensor):
+            # Handle tensor indexing
+            result[key] = value[indices]
+        elif isinstance(value, list):
+            # Convert tensor indices to list if needed
+            if isinstance(indices, torch.Tensor):
+                idx = indices.tolist()
+            else:
+                idx = indices
+            # Handle list indexing
+            result[key] = [value[i] for i in idx]
+        else:
+            raise TypeError(f"Unsupported type {type(value)} for key '{key}'")
+    return result
+
+
+def reconstruct_split_batch(indices_list: List[Union[torch.Tensor, List[int]]], split_batches: List[dict],) -> dict:
+    """
+    Reconstructs the original batch from split batches with external indices/task lists.
+    
+    Args:
+        split_batches: List of data dictionaries (without indices/task keys)
+        indices_list: Parallel list containing indices for each split batch
+        tasks: Parallel list of task identifiers (same length as split_batches)
+    
+    Returns:
+        Dictionary reconstructing the original batch with correct ordering
+    """
+    # Determine original batch size from all indices
+    all_indices = []
+    for indices in indices_list:
+        if isinstance(indices, torch.Tensor):
+            indices = indices.tolist()
+        all_indices.extend(indices)
+    n = max(all_indices) + 1 if all_indices else 0
+
+    if not split_batches:
+        return {}
+
+    original_batch = {}
+
+    # Process each key present in the split batches
+    for key in split_batches[0].keys():
+        sample_value = split_batches[0][key]
+
+        if isinstance(sample_value, torch.Tensor):
+            # Tensor reconstruction with device preservation
+            device = sample_value.device
+            dtype = sample_value.dtype
+            shape = (n,) + sample_value.shape[1:]
+            reconstructed = torch.zeros(shape, dtype=dtype, device=device)
+
+            for batch, indices in zip(split_batches, indices_list):
+                data = batch[key].to(device)
+                if isinstance(indices, torch.Tensor):
+                    indices = indices.to(device)
+                else:
+                    indices = torch.tensor(indices, device=device)
+                reconstructed[indices] = data
+
+            original_batch[key] = reconstructed
+
+        elif isinstance(sample_value, list):
+            # List reconstruction with ordering preservation
+            reconstructed = [None] * n
+
+            for batch, indices in zip(split_batches, indices_list):
+                if isinstance(indices, torch.Tensor):
+                    indices = indices.tolist()
+
+                for data_idx, original_idx in enumerate(indices):
+                    reconstructed[original_idx] = batch[key][data_idx]
+
+            original_batch[key] = reconstructed
+
+        else:
+            raise TypeError(f"Unsupported type {type(sample_value)} for key '{key}'")
+
+    return original_batch
