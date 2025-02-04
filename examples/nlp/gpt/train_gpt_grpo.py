@@ -21,16 +21,16 @@ from omegaconf.omegaconf import OmegaConf
 from nemo.core.config import hydra_runner
 from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
+from nemo_aligner.data.nlp.builders import build_dataloader, collate_with_pad_to_max_batch
 from nemo_aligner.experimental.grpo.algorithms.grpo import GRPOTrainer
-from nemo_aligner.data.nlp.builders import (
-    build_dataloader,
-    collate_with_pad_to_max_batch,
+from nemo_aligner.experimental.grpo.data.builders import (
+    build_train_valid_test_task_datasets,
+    environment_collate_with_pad_to_max_batch,
 )
-from nemo_aligner.experimental.grpo.data.builders import build_train_valid_test_task_datasets, environment_collate_with_pad_to_max_batch
 from nemo_aligner.experimental.grpo.data.datasets import AllTaskDataset
-from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
 from nemo_aligner.experimental.grpo.experience.environments.math_environment import MathEnvironment
 from nemo_aligner.experimental.grpo.experience.rollout_generator import SequenceRewardRolloutGenerator
+from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
 from nemo_aligner.utils.distributed import Timer
@@ -117,7 +117,9 @@ def main(cfg) -> None:
     eos_id = ptl_model.tokenizer.eos_id
 
     # collate fn to pad to the max seq length in the batch
-    collate_fn = environment_collate_with_pad_to_max_batch(max_seqlen, eos_id, cfg, generate_masks_and_position_ids=False)
+    collate_fn = environment_collate_with_pad_to_max_batch(
+        max_seqlen, eos_id, cfg, generate_masks_and_position_ids=False
+    )
 
     train_dataloader_builder = partial(
         build_dataloader,
@@ -149,7 +151,8 @@ def main(cfg) -> None:
     # nemo treats batch size of normal dataloader as GBS/DP
     # so we need to offset it by DP
     dummy_train_dataloader = torch.utils.data.DataLoader(
-        dataset=train_ds, batch_size=divide(cfg.trainer.grpo.num_prompts_per_grpo_step, parallel_state.get_data_parallel_world_size())
+        dataset=train_ds,
+        batch_size=divide(cfg.trainer.grpo.num_prompts_per_grpo_step, parallel_state.get_data_parallel_world_size()),
     )
 
     init_using_ptl(trainer, ptl_model, dummy_train_dataloader, train_ds)
@@ -195,8 +198,9 @@ def main(cfg) -> None:
         grpo_trainer.load_state_dict(custom_trainer_state_dict)
 
     grpo_trainer.fit()
-    
+
     # do any environment cleanup here
+
 
 if __name__ == "__main__":
     main()

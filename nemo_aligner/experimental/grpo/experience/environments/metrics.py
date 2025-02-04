@@ -1,5 +1,6 @@
 import torch
 
+
 def calculate_pass_rate_per_prompt(prompts, is_correct):
     """
     Function to compute fraction of prompts that have at least one correct answer

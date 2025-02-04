@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import nullcontext
-from typing import Any, Dict, List, Optional, Callable
 import hashlib
 import json
+from contextlib import nullcontext
+from typing import Any, Callable, Dict, List, Optional
 
 import pandas as pd
 import torch
@@ -26,30 +26,28 @@ from tqdm import tqdm
 from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import MegatronPretrainingRandomSampler
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.utils import logging
+from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface
+from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
 from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
-from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import (
-    ScopedTimer,
-    all_reduce_dict,
-    masked_global_mean_var,
+from nemo_aligner.experimental.grpo.utils.rl_utils import (
+    calculate_baseline_and_std_per_prompt,
+    calculate_kl_penalty_joschu2020,
 )
+from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.distributed import ScopedTimer, all_reduce_dict, masked_global_mean_var
 from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
 from nemo_aligner.utils.ppo_utils import create_mask
-from nemo_aligner.experimental.grpo.utils.rl_utils import (
-    calculate_kl_penalty_joschu2020,
-    calculate_baseline_and_std_per_prompt,
-)
 from nemo_aligner.utils.train_utils import clip_gradients
 from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_per_epoch
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
-from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface
-from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
+
 
 def compute_num_rollout_microbatches_per_dp_group(dataloader):
     return divide(
         divide(dataloader.batch_sampler.global_batch_size, dataloader.batch_sampler.micro_batch_size),
         parallel_state.get_data_parallel_world_size(),
     )
+
 
 class GRPOTrainer:
     """Trainer to coordinate GRPO training
@@ -88,9 +86,9 @@ class GRPOTrainer:
         self.reshard_weights_for_trtllm_generation = "trt_llm" in cfg and cfg.trt_llm.enable and cfg.trt_llm.reshard
 
         # Tracked by state dict and checkpointed
-        self.consumed_samples = 0       # consumed prompts (for the dataloader to keep track)
-        self.step = 0                   # GRPO step (num sampling rounds)
-        self.grpo_optimization_step = 0 # number of times we optimized the actor (num calls to optimizer step)
+        self.consumed_samples = 0  # consumed prompts (for the dataloader to keep track)
+        self.step = 0  # GRPO step (num sampling rounds)
+        self.grpo_optimization_step = 0  # number of times we optimized the actor (num calls to optimizer step)
 
         # compute `max_steps`
         train_dataloader = self.train_dataloader_builder(consumed_samples=0)
@@ -129,17 +127,17 @@ class GRPOTrainer:
         **sharded** output training data dictionary and global metrics.
         The output training data dictionary should be sharded among DP groups.
         """
-        grpo_train_data = GPTRolloutBatch() # using this class for easy chunking/sharding
+        grpo_train_data = GPTRolloutBatch()  # using this class for easy chunking/sharding
         grpo_rollout_metrics = {}
 
         rewards = rollout_batch["rewards"]
 
         baseline, reward_std = calculate_baseline_and_std_per_prompt(
-                prompts=rollout_batch["text"],
-                rewards=rollout_batch["rewards"],
-                valid_mask=rollout_batch["is_end"],
-                leave_one_out_baseline=self.cfg.use_leave_one_out_baseline
-            )
+            prompts=rollout_batch["text"],
+            rewards=rollout_batch["rewards"],
+            valid_mask=rollout_batch["is_end"],
+            leave_one_out_baseline=self.cfg.use_leave_one_out_baseline,
+        )
         advantages = rewards.unsqueeze(-1) - baseline.unsqueeze(-1)
         pre_norm_advantages = advantages.clone()
 
@@ -164,24 +162,23 @@ class GRPOTrainer:
 
         # compute metrics
         init_policy_kl = calculate_kl_penalty_joschu2020(
-                log_probs_policy=rollout_batch["logprobs"],
-                log_probs_reference=rollout_batch["init_logprobs"],
-            )
-        grpo_rollout_metrics["init_policy_kl"] = (
-            masked_mean(init_policy_kl, mask).item()
+            log_probs_policy=rollout_batch["logprobs"], log_probs_reference=rollout_batch["init_logprobs"],
         )
+        grpo_rollout_metrics["init_policy_kl"] = masked_mean(init_policy_kl, mask).item()
         grpo_rollout_metrics["nonzero_advantages"] = (advantages != 0).float().mean()
         grpo_rollout_metrics["logprobs_mean"] = masked_mean(rollout_batch["logprobs"], mask).item()
         grpo_rollout_metrics["init_logprobs_mean"] = masked_mean(rollout_batch["init_logprobs"], mask).item()
-        
+
         local_grpo_train_data = grpo_train_data.chunk(
             rank=parallel_state.get_training_data_parallel_rank(),
-            split_size=parallel_state.get_training_data_parallel_world_size()
+            split_size=parallel_state.get_training_data_parallel_world_size(),
         )
 
         return local_grpo_train_data.get_dict(), cpu_dict(grpo_rollout_metrics)
 
-    def _run_inference(self, dataloader_builder: Callable[[int], Any], consumed_samples: int, is_validation: bool=False):
+    def _run_inference(
+        self, dataloader_builder: Callable[[int], Any], consumed_samples: int, is_validation: bool = False
+    ):
         """
         Helper function that runs rollout generation for both training and validation. Runs on all ranks.
 
@@ -196,7 +193,9 @@ class GRPOTrainer:
         rollout_timing:  dict              **dp local** timing metrics (will be reduced later)
         """
         # initialize prompt dataloader
-        generation_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_generation else nullcontext
+        generation_reshard_context = (
+            trt_llm_reshard_region if self.reshard_weights_for_trtllm_generation else nullcontext
+        )
         with generation_reshard_context():
             # dataloader must be built within the generation context because it uses DP rank and size
             dataloader = dataloader_builder(consumed_samples=consumed_samples)
@@ -212,7 +211,10 @@ class GRPOTrainer:
 
         # the rollout_generator handles experience generation and returns a global batch
         rollout_data, rollout_metrics, rollout_timing = self.rollout_generator.generate_rollouts(
-            batch_iterator, self.model, is_validation=is_validation, greedy=is_validation and self.cfg.greedy_on_validation
+            batch_iterator,
+            self.model,
+            is_validation=is_validation,
+            greedy=is_validation and self.cfg.greedy_on_validation,
         )
         return rollout_data, rollout_metrics, rollout_timing
 
@@ -220,7 +222,9 @@ class GRPOTrainer:
     def run_validation(self):
         self.model.prepare_for_inference()
 
-        _, rollout_metrics, rollout_timing = self._run_inference(self.val_dataloader_builder, consumed_samples=0, is_validation=True)
+        _, rollout_metrics, rollout_timing = self._run_inference(
+            self.val_dataloader_builder, consumed_samples=0, is_validation=True
+        )
 
         self.model.finish_inference()
         return rollout_metrics
@@ -239,8 +243,10 @@ class GRPOTrainer:
             # Timing includes build if first step and refit if step > 1
             self.model.prepare_for_inference()
 
-        rollout_data, rollout_metrics, rollout_timing = self._run_inference(self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False)       
-        
+        rollout_data, rollout_metrics, rollout_timing = self._run_inference(
+            self.train_dataloader_builder, consumed_samples=self.consumed_samples, is_validation=False
+        )
+
         train_data, grpo_metrics = self.create_grpo_training_data_from_inferences(rollout_data)
 
         self.consumed_samples += self.cfg.num_prompts_per_grpo_step
@@ -311,7 +317,7 @@ class GRPOTrainer:
 
             dp_size = parallel_state.get_training_data_parallel_world_size()
             num_samples_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
-            print('dp, num samples', dp_size, num_samples_to_load_on_each_dp, flush=True)
+            print("dp, num samples", dp_size, num_samples_to_load_on_each_dp, flush=True)
 
             self.run_timer.start_time()
             for _ in global_pbar:
@@ -333,15 +339,15 @@ class GRPOTrainer:
                 # logging
                 # table_metrics = metrics.pop("table")
                 # self.train_df.loc[len(self.train_df)] = [
-                    # self.step,
-                    # table_metrics["prompt"],
-                    # table_metrics["response"],
-                    # table_metrics["reward"],
+                # self.step,
+                # table_metrics["prompt"],
+                # table_metrics["response"],
+                # table_metrics["reward"],
                 # ]
                 metrics["epoch"] = self.epoch + 1
                 self.logger.log_metrics(metrics, step=self.step, prefix="train_rollouts/")
                 # self.logger.log_table(
-                    # key="table/train_rollouts", dataframe=self.train_df, step=self.step,
+                # key="table/train_rollouts", dataframe=self.train_df, step=self.step,
                 # )
 
                 if self.step == 0 and self.cfg.run_validation_step_0:
@@ -353,10 +359,10 @@ class GRPOTrainer:
                     # val_table_metrics = val_metrics.pop("table")
 
                     # self.val_df.loc[len(self.val_df)] = [
-                        # self.step,
-                        # val_table_metrics["prompt"],
-                        # val_table_metrics["response"],
-                        # val_table_metrics["reward"],
+                    # self.step,
+                    # val_table_metrics["prompt"],
+                    # val_table_metrics["response"],
+                    # val_table_metrics["reward"],
                     # ]
                     self.logger.log_metrics(val_metrics, step=self.step, prefix="val_rollouts/")
                     # self.logger.log_table("table/val_rollouts", dataframe=self.val_df, step=self.step)
@@ -398,10 +404,10 @@ class GRPOTrainer:
                     # val_table_metrics = val_metrics.pop("table")
 
                     # self.val_df.loc[len(self.val_df)] = [
-                        # self.step,
-                        # val_table_metrics["prompt"],
-                        # val_table_metrics["response"],
-                        # val_table_metrics["reward"],
+                    # self.step,
+                    # val_table_metrics["prompt"],
+                    # val_table_metrics["response"],
+                    # val_table_metrics["reward"],
                     # ]
                     self.logger.log_metrics(val_metrics, step=self.step, prefix="val_rollouts/")
                     # self.logger.log_table("table/val_rollouts", dataframe=self.val_df, step=self.step)
@@ -413,7 +419,10 @@ class GRPOTrainer:
                 global_pbar.set_postfix(step_metrics)
 
                 if save_model:
-                    step_metrics = {k: torch.as_tensor(v) for k, v in filter(lambda i: not isinstance(i[1], dict), step_metrics.items())}
+                    step_metrics = {
+                        k: torch.as_tensor(v)
+                        for k, v in filter(lambda i: not isinstance(i[1], dict), step_metrics.items())
+                    }
                     self.save(step_metrics, is_train_end=is_train_end)
 
                 if run_time_exceeded:

@@ -1,21 +1,22 @@
-from omegaconf import DictConfig
 from concurrent import futures
 
 import torch
+from omegaconf import DictConfig
 
+from nemo_aligner.experimental.grpo.experience.environments.metrics import calculate_pass_rate_per_prompt
+from nemo_aligner.experimental.grpo.experience.interfaces import EnvironmentInterface
+from nemo_aligner.servers.http_communicator import FlaskCommunicator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import masked_mean
-from nemo_aligner.experimental.grpo.experience.interfaces import EnvironmentInterface
-from nemo_aligner.experimental.grpo.experience.environments.metrics import calculate_pass_rate_per_prompt
-from nemo_aligner.servers.http_communicator import FlaskCommunicator
+
 
 class MathEnvironment(EnvironmentInterface):
     def __init__(self, cfg: DictConfig):
         self.executor = futures.ThreadPoolExecutor()
         self.communicator = FlaskCommunicator(cfg.servers)
-        
+
         print(f"Started MathEnvironment client with {cfg.servers}")
-        
+
     def start_step(self, interactions, metadata):
         """
         metadata: List[Dict]. Needs to contain a "ground_truth" key, which is what
@@ -23,7 +24,7 @@ class MathEnvironment(EnvironmentInterface):
         """
         if parallel_state.is_model_parallel_src_rank():
             # fold all interactions after the prompt together
-            responses = [''.join(interaction[1:]) for interaction in interactions]
+            responses = ["".join(interaction[1:]) for interaction in interactions]
             ground_truths = [g["ground_truth"] for g in metadata]
             data = {
                 "pred_responses": responses,
@@ -37,9 +38,9 @@ class MathEnvironment(EnvironmentInterface):
         results = self.communicator.get_result(future, "rewards")
 
         th_rewards = torch.tensor(results).squeeze(1)
-        print('th rewards shape', th_rewards.shape)
+        print("th rewards shape", th_rewards.shape)
         return None, None, th_rewards, torch.ones(th_rewards.shape[0],)
-    
+
     def global_post_process_and_metrics(self, batch):
         """
         Computes metrics for this environment given a global rollout batch.
@@ -59,9 +60,9 @@ class MathEnvironment(EnvironmentInterface):
             )
         else:
             correct_solution_generation_lengths = 0
-        
+
         metrics = {
-            #"table": table, TODO @sahilj WIP
+            # "table": table, TODO @sahilj WIP
             "accuracy": batch["rewards"].mean().item(),
             "pass@samples_per_prompt": calculate_pass_rate_per_prompt(batch["text"], batch["rewards"]),
             "fraction_of_samples_properly_ended": batch["is_end"].float().mean().item(),
@@ -71,5 +72,5 @@ class MathEnvironment(EnvironmentInterface):
             "generation_lengths": (batch["response_lengths"] - batch["prompt_lengths"]).float().mean().item(),
             "correct_solution_generation_lengths": correct_solution_generation_lengths,
         }
-        
+
         return batch, metrics

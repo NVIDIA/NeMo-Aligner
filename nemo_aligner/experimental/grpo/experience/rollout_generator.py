@@ -1,18 +1,19 @@
-import os
-import json
 import hashlib
-from typing import Dict
+import json
+import os
 from contextlib import nullcontext
-from omegaconf import DictConfig
+from typing import Dict
 
 import torch
+from omegaconf import DictConfig
 
-from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.utils import batch_repeat, batch_index_select, reconstruct_split_batch, cpu_dict
-from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
-from nemo_aligner.utils.distributed import ScopedTimer
-from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface, EnvironmentInterface
+from nemo_aligner.experimental.grpo.experience.interfaces import EnvironmentInterface, RolloutGeneratorInterface
 from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
+from nemo_aligner.utils import parallel_state
+from nemo_aligner.utils.distributed import ScopedTimer
+from nemo_aligner.utils.parallel_state import is_trt_llm_reshard, trt_llm_reshard_region
+from nemo_aligner.utils.utils import batch_index_select, batch_repeat, cpu_dict, reconstruct_split_batch
+
 
 class SuperSimpleRolloutGenerator(RolloutGeneratorInterface):
     def __init__(self, cfg: DictConfig, tasks_to_environments: Dict[str, EnvironmentInterface]):
@@ -20,9 +21,9 @@ class SuperSimpleRolloutGenerator(RolloutGeneratorInterface):
         self.samples_per_prompt = cfg.samples_per_prompt
         self.prompt_batch_size = cfg.prompt_batch_size
         self.rollout_batch_seq_length = cfg.rollout_batch_seq_length
-    
-    # TODO @sahil have a basic example 
-    
+
+    # TODO @sahil have a basic example
+
 
 class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
     def __init__(self, cfg: DictConfig, tasks_to_environments: Dict[str, EnvironmentInterface]):
@@ -45,26 +46,30 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         self.generation_save_dir = cfg.generation_save_dir
         self.rollout_batch_seq_length = cfg.rollout_batch_seq_length
         self.timer = ScopedTimer()
-        
-        assert self.rollout_mbs % self.prompt_batch_size == 0, \
-            (f"The generation microbatch size of the model ({self.rollout_mbs}) must be a ",
-             f"multiple of the prompt_batch_size ({self.prompt_batch_size}) from the dataloader.")
-        assert self.rollout_mbs % self.val_prompt_batch_size == 0, \
-            (f"The generation microbatch size of the model ({self.rollout_mbs}) must be a ",
-             f"multiple of the val_prompt_batch_size ({self.val_prompt_batch_size}) from the dataloader.")
 
-        assert self.samples_per_prompt % (self.rollout_mbs // self.prompt_batch_size) == 0, \
-            (f"The number of total samples per prompt ({self.samples_per_prompt}) must be a ",
-             f"multiple of the number of samples per prompt in each microbatch \n\n",
-             f"Samples per prompt per microbatch = rollout_mbs / prompt_batch_size\n",
-             f"{self.rollout_mbs} / {self.prompt_batch_size} = {self.rollout_mbs / self.prompt_batch_size}\n",
-             f"{self.samples_per_prompt} % {self.rollout_mbs // self.prompt_batch_size} != 0.")
-        assert self.val_samples_per_prompt % (self.rollout_mbs // self.val_prompt_batch_size) == 0, \
-            (f"The number of total val samples per prompt ({self.val_samples_per_prompt}) must be a",
-             f" multiple of the number of val samples per prompt in each microbatch \n\n",
-             f"val samples per prompt per microbatch = rollout_mbs / val_prompt_batch_size\n",
-             f"{self.rollout_mbs} / {self.val_prompt_batch_size} = {self.rollout_mbs / self.val_prompt_batch_size}\n",
-             f"{self.val_samples_per_prompt} % {self.rollout_mbs // self.val_prompt_batch_size} != 0.")
+        assert self.rollout_mbs % self.prompt_batch_size == 0, (
+            f"The generation microbatch size of the model ({self.rollout_mbs}) must be a ",
+            f"multiple of the prompt_batch_size ({self.prompt_batch_size}) from the dataloader.",
+        )
+        assert self.rollout_mbs % self.val_prompt_batch_size == 0, (
+            f"The generation microbatch size of the model ({self.rollout_mbs}) must be a ",
+            f"multiple of the val_prompt_batch_size ({self.val_prompt_batch_size}) from the dataloader.",
+        )
+
+        assert self.samples_per_prompt % (self.rollout_mbs // self.prompt_batch_size) == 0, (
+            f"The number of total samples per prompt ({self.samples_per_prompt}) must be a ",
+            f"multiple of the number of samples per prompt in each microbatch \n\n",
+            f"Samples per prompt per microbatch = rollout_mbs / prompt_batch_size\n",
+            f"{self.rollout_mbs} / {self.prompt_batch_size} = {self.rollout_mbs / self.prompt_batch_size}\n",
+            f"{self.samples_per_prompt} % {self.rollout_mbs // self.prompt_batch_size} != 0.",
+        )
+        assert self.val_samples_per_prompt % (self.rollout_mbs // self.val_prompt_batch_size) == 0, (
+            f"The number of total val samples per prompt ({self.val_samples_per_prompt}) must be a",
+            f" multiple of the number of val samples per prompt in each microbatch \n\n",
+            f"val samples per prompt per microbatch = rollout_mbs / val_prompt_batch_size\n",
+            f"{self.rollout_mbs} / {self.val_prompt_batch_size} = {self.rollout_mbs / self.val_prompt_batch_size}\n",
+            f"{self.val_samples_per_prompt} % {self.rollout_mbs // self.val_prompt_batch_size} != 0.",
+        )
 
     def detokenize(self, policy_model, rollout_batch):
         response_tokens = rollout_batch["response_tokens"]
@@ -73,28 +78,24 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         prompt_lengths = rollout_batch["prompt_lengths"]
 
         prompt_sentences = [
-            policy_model.tokenizer.ids_to_text(prompt_tokens[i][:prompt_lengths[i]].tolist())
+            policy_model.tokenizer.ids_to_text(prompt_tokens[i][: prompt_lengths[i]].tolist())
             for i in range(prompt_lengths.shape[0])
         ]
         response_sentences = [
             policy_model.tokenizer.ids_to_text(response_tokens[i][prompt_lengths[i] : response_lengths[i]].tolist())
             for i in range(response_lengths.shape[0])
         ]
-        
+
         rollout_batch["prompt_sentences"] = prompt_sentences
         rollout_batch["response_sentences"] = response_sentences
         return rollout_batch
-    
+
     def prepare_env_state(self, rollout_batch):
         interactions = [[p, r] for p, r in zip(rollout_batch["prompt_sentences"], rollout_batch["response_sentences"])]
         metadata = rollout_batch["extra_verifier_info"]
         return interactions, metadata
-        
-    def generate_rollouts(self,
-                          batch_iterator,
-                          policy_model,
-                          is_validation=False,
-                          greedy=False):
+
+    def generate_rollouts(self, batch_iterator, policy_model, is_validation=False, greedy=False):
         """
         Generate experience rollouts using the policy model and environments.
         Currently only supports single-turn (no environment feedback).
@@ -102,7 +103,9 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         Returns a global rollout batch (sharded out later by the GRPO trainer)
         """
         # Set up a generation environment with less sharding/parallelism to accelerate it
-        generation_reshard_context = trt_llm_reshard_region if self.reshard_weights_for_trtllm_generation else nullcontext
+        generation_reshard_context = (
+            trt_llm_reshard_region if self.reshard_weights_for_trtllm_generation else nullcontext
+        )
 
         # policy generation
         rollout_batches, futures = [], []
@@ -136,7 +139,13 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                             if len(indices) > 0:
                                 task_batch = batch_index_select(rollout_batch, indices)
                                 interactions, metadata = self.prepare_env_state(task_batch)
-                                microbatch_futures.append((task, indices, self.tasks_to_environments[task].start_step(interactions, metadata)))
+                                microbatch_futures.append(
+                                    (
+                                        task,
+                                        indices,
+                                        self.tasks_to_environments[task].start_step(interactions, metadata),
+                                    )
+                                )
 
                         rollout_batches.append(rollout_batch)
                         futures.append(microbatch_futures)
@@ -204,9 +213,9 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             rank = torch.distributed.get_rank()
             savefile = f"train_{rank}.jsonl" if not is_validation else f"validation_{rank}.jsonl"
             self.generation_log(global_rollout_batch, os.path.join(self.generation_save_dir, savefile))
-        
+
         return global_rollout_batch, cpu_dict(metrics), self.timer.consume_durations()
-    
+
     def post_process_and_compute_rollout_metrics(self, global_rollout_batch):
         # iterate over tasks and call the environments to get metrics and finalized batches
         split_idxs, split_batches, metrics = [], [], {}
@@ -217,12 +226,11 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                     indices.append(idx)
             if len(indices) > 0:
                 task_batch = batch_index_select(global_rollout_batch, indices)
-                task_batch, task_metrics = \
-                    self.tasks_to_environments[task].global_post_process_and_metrics(task_batch)
+                task_batch, task_metrics = self.tasks_to_environments[task].global_post_process_and_metrics(task_batch)
                 split_idxs.append(indices)
                 split_batches.append(task_batch)
-                metrics[task] = task_metrics#add_prefix(task_metrics, task)
-        
+                metrics[task] = task_metrics  # add_prefix(task_metrics, task)
+
         # recompose batches
         recomposed_batch = reconstruct_split_batch(split_idxs, split_batches)
         return recomposed_batch, {**metrics, **self.compute_overall_metrics(global_rollout_batch)}
@@ -292,4 +300,3 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             for record in records:
                 json.dump(record, f)
                 f.write("\n")
-

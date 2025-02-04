@@ -32,13 +32,10 @@ from nemo.collections.nlp.modules.common.megatron.utils import (
 from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModelMixin
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.utils import logging
+from nemo_aligner.experimental.grpo.utils.rl_utils import calculate_kl_penalty_joschu2020
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
 from nemo_aligner.utils import parallel_state
-from nemo_aligner.utils.distributed import (
-    broadcast_2d_tensor_within_pp,
-    from_parallel_logits_to_logprobs,
-)
-from nemo_aligner.experimental.grpo.utils.rl_utils import calculate_kl_penalty_joschu2020
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_pp, from_parallel_logits_to_logprobs
 from nemo_aligner.utils.text_generation_utils import (
     TrackLengthGPTModelTextGenerationStrategy,
     verify_is_valid_and_clamp_range_,
@@ -113,7 +110,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     required_keys.update(("response_tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("response_tokens", "advantages", "mask", "logprobs", "valid_mask", "init_logprobs"))
+                    required_keys.update(
+                        ("response_tokens", "advantages", "mask", "logprobs", "valid_mask", "init_logprobs")
+                    )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
@@ -129,7 +128,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 tokens = batch["response_tokens"]
                 is_end = batch["valid_mask"]
 
-                #is_end_mask = mask * is_end.view(-1, 1)
+                # is_end_mask = mask * is_end.view(-1, 1)
                 is_end_mask = mask
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
@@ -160,18 +159,12 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     grpo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
                     print(loss.shape, grpo_ratio.shape, grpo_ratio_clamped.shape, "loss shapes", flush=True)
 
-                (
-                    reduced_actor_loss,
-                    grpo_ratio,
-                    grpo_ratio_clamped,
-                ) = average_losses_across_data_parallel_group([loss, grpo_ratio, grpo_ratio_clamped])
+                (reduced_actor_loss, grpo_ratio, grpo_ratio_clamped,) = average_losses_across_data_parallel_group(
+                    [loss, grpo_ratio, grpo_ratio_clamped]
+                )
                 return (
                     loss,
-                    {
-                        "loss": reduced_actor_loss,
-                        "grpo_ratio": grpo_ratio,
-                        "grpo_ratio_clamped": grpo_ratio_clamped,
-                    },
+                    {"loss": reduced_actor_loss, "grpo_ratio": grpo_ratio, "grpo_ratio_clamped": grpo_ratio_clamped,},
                 )
 
             return parallel_logits, loss_func

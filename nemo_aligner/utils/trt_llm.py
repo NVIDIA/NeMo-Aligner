@@ -175,7 +175,9 @@ class GPTGenerateTRTLLM:
             self.trt_llm_exporter.refit(model, self.model_cfg)
             log_memory("After TRT-LLM engine refit")
 
-    def _generate(self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy:bool=False) -> tuple[torch.Tensor, torch.Tensor]:
+    def _generate(
+        self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy: bool = False
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Internal API to make it easier to validate raw TRT-LLM outputs
         """
@@ -210,7 +212,7 @@ class GPTGenerateTRTLLM:
         response_lengths = torch.squeeze(response_lengths, dim=1).long()
         return output_ids, response_lengths
 
-    def generate(self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy:bool=False):
+    def generate(self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy: bool = False):
 
         output_ids, response_lengths = self._generate(inputs, use_greedy=use_greedy)
         max_length = response_lengths.max().item()

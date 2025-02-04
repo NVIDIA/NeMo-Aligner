@@ -671,6 +671,7 @@ def deprecated_in_version(version: str, message: str | None = None):
 
     return decorator
 
+
 def batch_repeat(batch, num_repetitions=1):
     output = {}
     special_keys = ["attention_mask"]
@@ -685,9 +686,10 @@ def batch_repeat(batch, num_repetitions=1):
     other = {}
     for k in special_keys:
         if k in batch.keys():
-            other[k] = batch[k] 
+            other[k] = batch[k]
 
     return output | other
+
 
 def batch_index_select(batch: dict, indices) -> dict:
     """
@@ -717,10 +719,8 @@ def batch_index_select(batch: dict, indices) -> dict:
             raise TypeError(f"Unsupported type {type(value)} for key '{key}'")
     return result
 
-def reconstruct_split_batch(
-    indices_list: List[Union[torch.Tensor, List[int]]],
-    split_batches: List[dict],
-) -> dict:
+
+def reconstruct_split_batch(indices_list: List[Union[torch.Tensor, List[int]]], split_batches: List[dict],) -> dict:
     """
     Reconstructs the original batch from split batches with external indices/task lists.
     
@@ -769,11 +769,11 @@ def reconstruct_split_batch(
         elif isinstance(sample_value, list):
             # List reconstruction with ordering preservation
             reconstructed = [None] * n
-            
+
             for batch, indices in zip(split_batches, indices_list):
                 if isinstance(indices, torch.Tensor):
                     indices = indices.tolist()
-                
+
                 for data_idx, original_idx in enumerate(indices):
                     reconstructed[original_idx] = batch[key][data_idx]
 

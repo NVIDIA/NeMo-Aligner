@@ -1,5 +1,6 @@
 import torch
 
+
 def calculate_kl_penalty_joschu2020(log_probs_policy: torch.Tensor, log_probs_reference: torch.Tensor):
     """Calculates a per-token estimate of the KL Divergence between two log_probs.
     From Schulman 2020, always positive.
@@ -9,6 +10,7 @@ def calculate_kl_penalty_joschu2020(log_probs_policy: torch.Tensor, log_probs_re
     """
     r = log_probs_reference - log_probs_policy
     return torch.exp(r) - r - 1
+
 
 # TODO @sahilj add unit test and normalization
 def calculate_baseline_and_std_per_prompt(prompts, rewards, valid_mask, leave_one_out_baseline=True):
@@ -49,18 +51,18 @@ def calculate_baseline_and_std_per_prompt(prompts, rewards, valid_mask, leave_on
             baseline[prompt_idx] = rewards[prompt_idx]
         else:
             num_valid = valid_mask[prompt_idx].float().sum() - int(leave_one_out_baseline)
-            prompt_baseline = torch.matmul(baseline_mask_matrix, 
-                                           rewards[prompt_idx] * valid_mask[prompt_idx]) / num_valid
-            prompt_baseline_square = torch.matmul(baseline_mask_matrix, 
-                                           (rewards[prompt_idx] ** 2) * valid_mask[prompt_idx]) / num_valid
+            prompt_baseline = (
+                torch.matmul(baseline_mask_matrix, rewards[prompt_idx] * valid_mask[prompt_idx]) / num_valid
+            )
+            prompt_baseline_square = (
+                torch.matmul(baseline_mask_matrix, (rewards[prompt_idx] ** 2) * valid_mask[prompt_idx]) / num_valid
+            )
 
             baseline[prompt_idx] = prompt_baseline
             sq_baseline[prompt_idx] = prompt_baseline_square
-    
+
     print(baseline.shape)
     print(sq_baseline.shape)
 
     std = (sq_baseline - baseline.square()).sqrt().nan_to_num(0)
     return baseline, std
-
-

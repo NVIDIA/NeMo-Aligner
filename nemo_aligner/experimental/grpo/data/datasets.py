@@ -6,9 +6,17 @@ import torch
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.utils import batch_pad_to_fixed_len
 
-#TODO @sahilj handle too-long prompts and masking them out throughout the whole process and renormalizing on loss
+# TODO @sahilj handle too-long prompts and masking them out throughout the whole process and renormalizing on loss
 class AllTaskDataset:
-    def __init__(self, data_path, tokenizer, apply_chat_template: bool = True, system_prompt_file: str = None, prompt_file: str = None, seq_length=None):
+    def __init__(
+        self,
+        data_path,
+        tokenizer,
+        apply_chat_template: bool = True,
+        system_prompt_file: str = None,
+        prompt_file: str = None,
+        seq_length=None,
+    ):
         super().__init__()
         self.data_path = data_path
         self.tokenizer = tokenizer
@@ -23,19 +31,21 @@ class AllTaskDataset:
 
         if self.apply_chat_template:
             if system_prompt_file is not None:
-                assert os.path.exists(system_prompt_file), \
-                    f"Sys prompt file {system_prompt_file} was specified but does not exist"
+                assert os.path.exists(
+                    system_prompt_file
+                ), f"Sys prompt file {system_prompt_file} was specified but does not exist"
                 with open(system_prompt_file, "r", encoding="utf-8") as f:
                     self.system_prompt = f.read()
         elif system_prompt_file is not None:
-            print(f"WARNING: system_prompt_file specified for {type(self)} but apply_chat_template is false. Ignoring this prompt.")
+            print(
+                f"WARNING: system_prompt_file specified for {type(self)} but apply_chat_template is false. Ignoring this prompt."
+            )
 
         if prompt_file is not None:
-            assert os.path.exists(prompt_file), \
-                f"prompt file {prompt_file} was specified but does not exist"
+            assert os.path.exists(prompt_file), f"prompt file {prompt_file} was specified but does not exist"
             with open(prompt_file, "r", encoding="utf-8") as f:
                 self.prompt = f.read()
-        
+
     def __len__(self):
         return len(self.data)
 
@@ -66,7 +76,7 @@ class AllTaskDataset:
 
         sample, _ = self.encode(text)
         sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
-        
+
         output = {
             "text": sample_tensor,
             "length": sample_tensor.shape[0],
@@ -75,8 +85,9 @@ class AllTaskDataset:
             "idx": idx,
             "task_name": task_name,
         }
-        return output  
-    
+        return output
+
+
 def environment_collate_with_batch_max_sequence_length(
     data_batch,
     response_token_length,

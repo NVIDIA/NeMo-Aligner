@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pytriton.client import FuturesModelClient
 from concurrent import futures
-from typing import Dict, Tuple, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
+
 import requests
 import torch
+from pytriton.client import FuturesModelClient
 
 from nemo.utils import logging
-from nemo_aligner.utils.server_utils import FutureResult
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
+from nemo_aligner.utils.server_utils import FutureResult
+
 
 def get_mp_future_result(future, *keys):
     """It waits for the result of the future to be ready, gets the value with the given key,
@@ -45,10 +47,12 @@ def get_mp_future_result(future, *keys):
 
     return results
 
+
 class FlaskCommunicator:
     """
     Communicator class for async requests to flask servers
     """
+
     def __init__(self, servers: Dict[str, Dict[str, Union[str, int]]]):
         """
         servers: A dictionary of server names to server ips + ports
@@ -84,6 +88,7 @@ class FlaskCommunicator:
             return results[0]
 
         return results
+
 
 class HTTPCommunicator:
     """Communicator class for the actor to send async requests to the remote servers
