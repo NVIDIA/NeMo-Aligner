@@ -409,9 +409,9 @@ class ReinforceTrainer:
             prompt_to_rewards[prompt] = prompt_to_rewards.get(prompt, []) + [reward]
 
         reward_gaps = []
-        for prompt, rewards in prompt_to_rewards.items():
-            print(prompt, rewards)
-            reward_gap = max(rewards) - min(rewards)
+        for prompt, reward_all in prompt_to_rewards.items():
+            print(prompt, reward_all)
+            reward_gap = max(reward_all) - min(reward_all)
             reward_gaps.append(reward_gap)
         
         think_lens = []
