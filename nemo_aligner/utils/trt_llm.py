@@ -154,19 +154,19 @@ class GPTGenerateTRTLLM:
         self.sampling_config.update(output_log_probs=True)
 
     def refit(self, model):
-        del self.trt_llm_exporter
-        clear_memory()
-        if torch.cuda.current_device() == 0:
-            directory = self.trt_model_dir
-            if os.path.exists(directory) and os.path.isdir(directory):
-                print(f"Directory {directory} exists. Deleting it...")
-                shutil.rmtree(directory)
-                print("Directory deleted.")
-            else:
-                print(f"Directory {directory} does not exist.")
-        torch.distributed.barrier()
-        self.trt_llm_exporter = TensorRTLLM(self.trt_model_dir, load_model=False)
-        self._trtllm_model_compiled = False
+        # del self.trt_llm_exporter
+        # clear_memory()
+        # if torch.cuda.current_device() == 0:
+            # directory = self.trt_model_dir
+            # if os.path.exists(directory) and os.path.isdir(directory):
+                # print(f"Directory {directory} exists. Deleting it...")
+                # shutil.rmtree(directory)
+                # print("Directory deleted.")
+            # else:
+                # print(f"Directory {directory} does not exist.")
+        # torch.distributed.barrier()
+        # self.trt_llm_exporter = TensorRTLLM(self.trt_model_dir, load_model=False)
+        # self._trtllm_model_compiled = False
         if not self._trtllm_model_compiled:
             log_memory("Before TRT-LLM engine build")
             global_devices = [None for _ in range(torch.distributed.get_world_size())]
@@ -184,6 +184,7 @@ class GPTGenerateTRTLLM:
                 max_batch_size=self.generation_batch_size,
                 use_refit=True,
                 reshard_model=self.reshard_model,
+                #use_mcore_path=False
             )
             self._trtllm_model_compiled = True
             log_memory("After TRT-LLM engine build")
@@ -248,8 +249,8 @@ class GPTGenerateTRTLLM:
         return output
 
     def free(self):
-        #if not self.unload_engine_train:
-         #   return
+        if not self.unload_engine_train:
+            return
         log_memory("Before TRT-LLM engine unload")
         self.trt_llm_exporter.unload_engine()
         clear_memory()

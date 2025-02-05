@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from contextlib import nullcontext
+import os
+import time
 
 import torch
 import torch.distributed
@@ -59,6 +61,7 @@ from nemo_aligner.utils.utils import (
     offload_distributed_adam,
 )
 from nemo_aligner.experimental.grpo.inference.registry import get_backend, list_available_backends
+from nemo_aligner.experimental.grpo.models.nlp.gpt import conversion_dict as CONVERTER
 
 class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
@@ -325,6 +328,56 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self._reset_sequence_parallelism_args()
         set_eval(self)
         self.offload_adam_states()
+        
+        # testing sync and save to cpu ramdisk
+        start_time = time.time()
+        out_dir = "/dev/shm/checkpoint_hf"
+        os.makedirs(out_dir, exist_ok=True)
+        class SafeDict(dict):
+            def __missing__(self, key):
+                return '{' + key + '}'
+
+        with torch.no_grad():
+            for idx, (name, param) in enumerate(self.state_dict().items()):
+                layer_num = CONVERTER.get_layer_num(name)
+                format_dict = SafeDict(l=layer_num)
+                formatted_mapping = {k.format_map(format_dict): v for (k,v) in CONVERTER.mcore_te_to_hf_llama.items()}
+                recipe = formatted_mapping.get(name, None)
+                if recipe is None:
+                    print(f"WARNING: {name} has no recipe mapping for conversion", flush=True)
+                    continue
+                full_param = None
+                if recipe.get("tp", None) is not None:
+                    # gather TP weights
+                    group = parallel_state.get_training_tensor_model_parallel_group()
+                    world_size = torch.distributed.get_world_size(group)
+                    # Allocate a list to receive the slices from all ranks.
+                    # Each slice is expected to have the same shape as 'param'.
+                    gathered_slices = [torch.empty_like(param) for _ in range(world_size)]
+                    # Perform an all_gather so that every rank collects all slices.
+                    torch.distributed.all_gather(gathered_slices, param, group=group)
+                    
+                    # Only on the source rank do we concatenate the slices.
+                    full_param = torch.cat(gathered_slices, dim=recipe["tp"]).to(torch.bfloat16)
+                else:
+                    full_param = torch.clone(param)
+
+                if torch.distributed.get_rank() == parallel_state.get_training_tensor_model_parallel_src_rank():
+                    if recipe.get("hf_func", None) is not None:
+                        hf_name_param_mapping = recipe["hf_func"](full_param, self.cfg)
+                        hf_name_param_mapping = {k.format_map(format_dict): v for (k, v) in hf_name_param_mapping.items()}
+                    elif recipe.get("hf", None) is not None:
+                        hf_name_param_mapping = {recipe["hf"].format_map(format_dict): full_param}
+                    else:
+                        NotImplementedError(f"No conversion recipe found for {name}")
+                
+                # save param
+                if torch.cuda.current_device() == 0:
+                #if torch.distributed.get_rank() == 0:
+                    torch.save(hf_name_param_mapping, out_dir + f'{idx}.bin')
+                    print(f"CONVERTED {name} with out shape {[(n, v.shape) for n, v in hf_name_param_mapping.items()]}")
+        torch.distributed.barrier()
+        print(f'TIME TO SAVE {time.time() - start_time}')
 
         if self.inference_backend:
             # Refitting or recompiling the inference model for generation

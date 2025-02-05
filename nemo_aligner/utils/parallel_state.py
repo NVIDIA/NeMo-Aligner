@@ -116,6 +116,13 @@ def get_training_data_parallel_group():
 def get_training_data_parallel_world_size():
     return mcore_parallel_state.get_data_parallel_world_size()
 
+def get_training_tensor_model_parallel_group():
+    return mcore_parallel_state.get_tensor_model_parallel_group()
+
+def get_training_tensor_model_parallel_src_rank():
+    return mcore_parallel_state.get_tensor_model_parallel_src_rank()
+
+
 @contextmanager
 def trt_llm_reshard_region():
     """mutates global state so distributed call are aware of TRT-LLM resharding

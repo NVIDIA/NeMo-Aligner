@@ -175,6 +175,8 @@ def main(cfg) -> None:
 
     batch_iterator_cfg = cfg.trainer.grpo.get("batch_iterator", {})
     batch_iterator_cls = get_batch_iterator_cls(batch_iterator_cfg)
+    
+    print([(name, p.shape) for name, p in ptl_model.model.named_parameters()], flush=True)
 
     grpo_trainer = GRPOTrainer(
         cfg=cfg.trainer.grpo,
