@@ -116,7 +116,8 @@ def extract_dialogue_llama(text):
             assistant_text[-1] = "None"
         else:
             assistant_text[-1] = assistant_text[-1].split("</think>")[1].strip()
-
+    elif len(assistant_text[-1].split()) > 1200:
+        assistant_text[-1] = "None"
     else:
         assistant_text[-1] = assistant_text[-1]
     return user_text, assistant_text
