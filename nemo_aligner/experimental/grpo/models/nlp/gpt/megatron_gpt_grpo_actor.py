@@ -15,6 +15,7 @@
 from contextlib import nullcontext
 import os
 import time
+import shutil
 
 import torch
 import torch.distributed
@@ -126,6 +127,13 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 tokenizer=self.tokenizer,
                 seed=self.cfg.grpo.inference_backend.get("seed", self.cfg.seed),
                 trt_model_dir=self.cfg.grpo.get("trt_model_dir", "/tmp/trt_llm_model"),
+            )
+        elif backend_type == "vllm":
+            from nemo_aligner.experimental.grpo.inference.vllm.vllm_client import VLLMClient
+            backend = VLLMClient(
+                self.cfg.grpo.inference_backend.config.vllm,
+                tokenizer=self.tokenizer,
+                checkpoint_path='/dev/shm/checkpoint_hf',
             )
         else:
             raise ValueError(f"Unsupported inference backend: {backend_type}")
@@ -331,7 +339,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         
         # testing sync and save to cpu ramdisk
         start_time = time.time()
-        out_dir = "/dev/shm/checkpoint_hf"
+        out_dir = "/dev/shm/checkpoint_hf/"
+        source_hf_jsons_dir = "/opt/checkpoints/hf_jsons/"
         os.makedirs(out_dir, exist_ok=True)
         class SafeDict(dict):
             def __missing__(self, key):
@@ -374,10 +383,18 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 # save param
                 if torch.cuda.current_device() == 0:
                 #if torch.distributed.get_rank() == 0:
-                    torch.save(hf_name_param_mapping, out_dir + f'{idx}.bin')
+                    torch.save(hf_name_param_mapping, os.path.join(out_dir, f'{idx}.bin'))
                     print(f"CONVERTED {name} with out shape {[(n, v.shape) for n, v in hf_name_param_mapping.items()]}")
+            # rank 0 copy hf_jsons to cpu ramdisk
+            if torch.cuda.current_device() == 0:
+                for file in os.listdir(source_hf_jsons_dir):
+                    shutil.copy(os.path.join(source_hf_jsons_dir, file), os.path.join(out_dir, file))
+
         torch.distributed.barrier()
-        print(f'TIME TO SAVE {time.time() - start_time}')
+        print(f"MP group: {parallel_state.get_model_parallel_group()}", flush=True)
+        torch.distributed.barrier()
+        print(f'TIME TO SAVE {time.time() - start_time}', flush=True)
+        # time.sleep(10000) # everyone seems together here
 
         if self.inference_backend:
             # Refitting or recompiling the inference model for generation

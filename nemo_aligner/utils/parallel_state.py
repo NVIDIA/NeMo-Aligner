@@ -85,6 +85,8 @@ def get_data_parallel_rank():
 
     return data_parallel_rank
 
+def get_tensor_model_parallel_world_size():
+    return mcore_parallel_state.get_tensor_model_parallel_world_size()
 
 def get_pipeline_model_parallel_world_size():
     return 1 if is_trt_llm_reshard() else mcore_parallel_state.get_pipeline_model_parallel_world_size()

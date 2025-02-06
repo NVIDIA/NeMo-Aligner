@@ -71,6 +71,11 @@ trainer:
           enable: True
           model_type: llama  # Can be gptj, gptnext, llama, gemma, falcon
           unload_engine_train: False
+          
+        vllm:
+          enable: False
+          port: 4321
+          ip: localhost
 
     batch_iterator:
       # When use_flask is True, we will spawn a flask server on rank 0 to balance the work of policy rollouts.

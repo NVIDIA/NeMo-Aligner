@@ -103,22 +103,24 @@ def broadcast_tensor(tensor: torch.Tensor | None, src, group, dtype: torch.dtype
     Returns:
     - The broadcasted tensor.
     """
-
     if torch.distributed.get_rank() == src:
         tensor = tensor.cuda()
         if dtype:
             tensor = tensor.to(dtype)
 
-        metadata = [tensor.dtype, tensor.shape]
-
+       # Convert dtype and shape to plain Python types.
+        metadata = [str(tensor.dtype), list(tensor.size())]
+        print(f"Broadcasting metadata: {metadata}")
         torch.distributed.broadcast_object_list(metadata, src, group)
         torch.distributed.broadcast(tensor, src, group)
     else:
-        metadata = [None, None]
+        metadata = ["", []]
+        print(f"Pre-broadcast metadata: {metadata}", flush=True)
         torch.distributed.broadcast_object_list(metadata, src, group)
-
-        dtype, input_shape = metadata
-        tensor = torch.empty(input_shape, dtype=dtype, device="cuda")
+        print(f"Received metadata: {metadata}", flush=True)
+        dtype_str, input_shape = metadata
+        dtype = getattr(torch, dtype_str.split('.')[-1])
+        tensor = torch.empty(input_shape, dtype=dtype, device=torch.cuda.current_device())
         torch.distributed.broadcast(tensor, src, group)
     return tensor
 
