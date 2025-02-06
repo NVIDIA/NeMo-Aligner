@@ -403,7 +403,22 @@ class ReinforceTrainer:
         table["response"] = self.model.tokenizer.tokenizer.decode(
             response_token[prompt_length:response_length].tolist()
         )
+        # find the max-min reward for each prompt
+        prompt_to_rewards = {}
+        for response_token, prompt_length, reward in zip(response_tokens, prompt_lengths, rewards):
+            prompt = self.model.tokenizer.tokenizer.decode(response_token[:prompt_length].tolist())
+            prompt_to_rewards[prompt] = prompt_to_rewards.get(prompt, []) + [reward]
 
+        reward_gaps = []
+        reward_gaps_for_nonperfect_sample = []
+        for prompt, reward_all in prompt_to_rewards.items():
+            print(prompt, reward_all)
+            reward_gap = max(reward_all) - min(reward_all)
+            reward_gaps.append(reward_gap)
+            if max(reward_all) < 10:
+                reward_gaps_for_nonperfect_sample.append(reward_gap)
+
+        # get think len
         think_lens = []
         for response_token, prompt_length, response_length in zip(response_tokens, prompt_lengths, response_lengths):
             response_text = self.model.tokenizer.tokenizer.decode(
@@ -452,6 +467,17 @@ class ReinforceTrainer:
             "rewards": rewards.mean().item(),
             "fraction_of_samples_properly_ended": is_end.float().mean().item(),
             "think_len": sum(think_lens) / len(think_lens),
+            "mean_reward_gap": sum(reward_gaps) / len(reward_gaps),
+            "percentage_of_samples_with_reward_gap_gt_0": sum([1 for gap in reward_gaps if gap > 0])
+            / len(reward_gaps),
+            "percentage_of_samples_with_reward_gap_gt_0": sum([1 for gap in reward_gaps if gap > 0])
+            / len(reward_gaps),
+            "percentage_of_nonperfect_samples_with_reward_gap_gt_0": sum(
+                [1 for gap in reward_gaps_for_nonperfect_sample if gap > 0]
+            )
+            / len(reward_gaps_for_nonperfect_sample)
+            if len(reward_gaps_for_nonperfect_sample) > 0
+            else -100,
         }
 
         return metrics
