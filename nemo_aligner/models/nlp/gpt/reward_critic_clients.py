@@ -425,8 +425,8 @@ class RMFutureResult(FutureResult):
         # If verifier_rm_future exists, combine values based on conditions
         if self.verifier_rm_future is not None:
             verifier_rewards = self.verifier_rm_future.flatten()
-            out = out + verifier_rewards
-
+            # out = out + verifier_rewards
+            out = verifier_rewards
         return out
 
 
