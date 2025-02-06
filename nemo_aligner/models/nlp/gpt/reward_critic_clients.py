@@ -268,7 +268,7 @@ def code_rewards(response, args):
 
         pass_rate = num_pass / len(results)
         print(f"pass rate: {pass_rate}")
-        low, high = -10, 5
+        low, high = -10, 10
         score = low + (high - low) * pass_rate
         return score, True
     except Exception as e:
