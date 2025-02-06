@@ -454,9 +454,7 @@ class RemoteGPTRMClient:
             text = model.tokenizer.ids_to_text(
                 rollout_batch["response_tokens"][i, : rollout_batch["response_lengths"][i]].tolist()
             )
-            format_correct = True
-            if "<think>" not in text or not ("<ethink>" in text or "</think>" in text):
-                format_correct = False
+
             user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
 
             text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
@@ -480,11 +478,9 @@ class RemoteGPTRMClient:
                     score, prediction, answer = MATH_rewards(assistant_text[-1], args[i])
                     print(f"prediction: {prediction}, answer: {answer}, score: {score}")
 
-                score = score if format_correct else -100
                 verifier_rewards.append(score)
                 print("task: ", args[i]["task"], "score: ", score)
             else:
-                score = 0 if format_correct else -100
                 verifier_rewards.append(score)
 
         verifier_rewards = torch.tensor(verifier_rewards, device=rollout_batch["response_tokens"].device).float()
