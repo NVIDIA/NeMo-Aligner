@@ -94,6 +94,7 @@ model:
     judge_score_low: 0  # the lowest score which the LLM-as-a-judge can award, as per your llm_judge_prompt
     judge_score_high: 5  # the highest score which the LLM-as-a-judge can award, as per your llm_judge_prompt
     meta_max_relative_pcnt: 0.4  # the largest percentage that any one score category can be for the purposes of training (e.g. no score can be more than 40% of the total training data)
+    normalise_prompt: False   # For multi-turn prompts, setting this to True removes model-specific turn tags and replaces them with a simple, human-readable style instead. Has been shown to negatively impact model alignment though
 
     judge_reward_regex: "(?i)(?:Score|Points): {{ reward }}"
     meta_judge_reward_regex: "(?i)Winner: (?:Judgement|Judgment) {{ reward }}"
@@ -176,7 +177,7 @@ model:
       add_BOS: False
       all_probs: False
       compute_logprob: False
-      end_strings: ["<|endoftext|>", "<extra_id_1>", "<|eot_id|>"]
+      end_strings: ["<|endoftext|>", "<|eot_id|>"]
 
     # length argument for autoregressive sampling
     # max length means max amount of tokens to generate

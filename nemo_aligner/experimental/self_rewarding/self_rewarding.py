@@ -291,6 +291,7 @@ class SelfRewardingTrainer:
         self.judge_score_low = self.model.cfg.spin.get("judge_score_low", 0)
         self.judge_score_high = self.model.cfg.spin.get("judge_score_high", 5)
         self.meta_max_relative_pcnt = self.model.cfg.spin.get("meta_max_relative_pcnt", 0.4)
+        self.normalise_prompt = self.model.cfg.spin.get("normalise_prompt", False)
 
         assert find_variables_from_jinja_template(self.prompt_template) == {
             "prompt",
@@ -589,14 +590,14 @@ class SelfRewardingTrainer:
             print(f"Error in instruction_following_rewards: {e}")
             return self.judge_score_low, False
 
-    def get_rewards(self, list_of_batches):
+    def get_rewards(self, list_of_batches, prepare_for_inference=False):
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
         judge_responses = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
         verifier_args = [b["verifier_args"] for b in list_of_batches]
         orig_last_prompts = [b["orig_last_prompt"] for b in list_of_batches]
         orig_responses = [b["orig_response"] for b in list_of_batches]
         for _ in range(self.num_evals_to_average):
-            reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
+            reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches, prepare_for_inference=prepare_for_inference)
             batch_prompts_str, batch_responses_str = [], []
             for t, s, e in zip(reward_responses, prompt_lengths.tolist(), resp_lengths.tolist()):
                 prompt = self.tokenizer.ids_to_text(t[:s].tolist())
@@ -652,10 +653,10 @@ class SelfRewardingTrainer:
 
         return reward_means, reward_variance, judge_responses
 
-    def get_rewards_meta(self, list_of_batches):
+    def get_rewards_meta(self, list_of_batches, prepare_for_inference=False):
         reward_scores = [[] for _ in range(sum([len(b["prompt_lengths"]) for b in list_of_batches]))]
         reward_scores = []
-        reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches)
+        reward_responses, prompt_lengths, resp_lengths, is_end = self.get_generations(list_of_batches, prepare_for_inference=prepare_for_inference)
         # if (
         #    torch.distributed.get_rank() == 0
         #    and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank()
@@ -963,76 +964,81 @@ class SelfRewardingTrainer:
                         for t, s, e, vargs in zip(
                             gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist(), verifier_args
                         ):
-                            """
-                            if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
-                                prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
-                                    "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", ""
-                                )
-                                response = (
-                                    self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
+                            if self.normalise_prompt:
+                                prompt, response, _ = self.normalise_prompt(
+                                    self.tokenizer.ids_to_text(t[:s].tolist()),
+                                    self.tokenizer.ids_to_text(t[s:e].tolist()),
+                                    buffer[0]["dataset_mask"],
                                 )
                             else:
-                                prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
-                                    "<extra_id_0>System\n\n", ""
-                                )
-                                response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
-                            """
-                            prompt, response, last_prompt = self.normalise_prompt(
-                                self.tokenizer.ids_to_text(t[:s].tolist()),
-                                self.tokenizer.ids_to_text(t[s:e].tolist()),
-                                buffer[0]["dataset_mask"],
-                            )
+                                if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
+                                    prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
+                                        "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", ""
+                                    )
+                                    response = (
+                                        self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
+                                    )
+                                else:
+                                    prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
+                                        "<extra_id_0>System\n\n", ""
+                                    )
+                                    response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
+                            
                             reward_prompt_str = self.template_fn(prompt=prompt, response=response)
                             reward_prompt = self.tokenizer.text_to_ids(reward_prompt_str)
                             if len(reward_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-                                prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
-                                try:
-                                    """
-                                    if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
-                                        prompt_ft = re.findall(
-                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
-                                            prompt_and_response,
-                                        )[0]
-                                        response_ft = re.findall(
-                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask.replace('user', 'assistant')}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
-                                            prompt_and_response,
-                                        )[0]
-                                    else:
-                                        prompt_ft = re.findall(
-                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
-                                            prompt_and_response,
-                                        )[0]
-                                        response_ft = re.findall(
-                                            rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
-                                            prompt_and_response,
-                                        )[0]
-                                    """
-                                    p_list, r_list, _ = self.extract_prompt_elements(
-                                        prompt_and_response, response, buffer[0]["dataset_mask"]
+                                #prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
+                                #try:
+                                """
+                                if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
+                                    prompt_ft = re.findall(
+                                        rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
+                                        prompt_and_response,
+                                    )[0]
+                                    response_ft = re.findall(
+                                        rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.end_of_turn}{dataset_mask.replace('user', 'assistant')}\n\n).*?(?={self.model.cfg.data.chat_prompt_tokens.end_of_turn})",
+                                        prompt_and_response,
+                                    )[0]
+                                else:
+                                    prompt_ft = re.findall(
+                                        rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
+                                        prompt_and_response,
+                                    )[0]
+                                    response_ft = re.findall(
+                                        rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
+                                        prompt_and_response,
+                                    )[0]
+                                """
+                                p_list, _, _ = self.extract_prompt_elements(
+                                    prompt, response, buffer[0]["dataset_mask"]
+                                )
+                                if len(p_list) == 0:
+                                    prompt_ft = prompt
+                                else:
+                                    prompt_ft = p_list[-1]
+                                response_ft = response
+                                reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
+                                reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+
+                                while len(reward_prompt) > (
+                                    self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
+                                ):
+                                    overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
+                                    if overage > len(self.model.tokenizer.text_to_ids(response_ft)):
+                                        # print(f"*** OVERAGE_NOT_FIT_RESPONSE: {reward_prompt_str}")
+                                        reward_prompt_str = self.template_fn(
+                                            prompt="How does one make tea?", response="I have no answer at all."
+                                        )
+                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
+                                        break
+                                    response_ft = self.tokenizer.ids_to_text(
+                                        self.model.tokenizer.text_to_ids(response_ft)[:-overage]
                                     )
-                                    prompt_ft = p_list[0]
-                                    response_ft = r_list[0]
                                     reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
                                     reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-
-                                    while len(reward_prompt) > (
-                                        self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
-                                    ):
-                                        overage = len(reward_prompt) - self.model.cfg.data.train_ds.max_seq_length
-                                        if overage > len(self.model.tokenizer.text_to_ids(response_ft)):
-                                            # print(f"*** OVERAGE_NOT_FIT_RESPONSE: {reward_prompt_str}")
-                                            reward_prompt_str = self.template_fn(
-                                                prompt="How does one make tea?", response="I have no answer at all."
-                                            )
-                                            reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                            break
-                                        response_ft = self.tokenizer.ids_to_text(
-                                            self.model.tokenizer.text_to_ids(response_ft)[:-overage]
-                                        )
-                                        reward_prompt_str = self.template_fn(prompt=prompt_ft, response=response_ft)
-                                        reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
-                                    # prompt = prompt_ft
-                                    response = response_ft
+                                #prompt = prompt_ft
+                                #response = response_ft
+                                '''
                                 except:
                                     # print(f"*** TOO_LONG: {prompt_and_response}")
                                     # overage = len(reward_prompt) - (self.model.cfg.encoder_seq_length - self.max_gen_seq_len)
@@ -1055,6 +1061,7 @@ class SelfRewardingTrainer:
                                             )
                                             reward_prompt = self.model.tokenizer.text_to_ids(reward_prompt_str)
                                             break
+                                '''
                                 assert len(reward_prompt) <= (
                                     self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
                                 ), f"truncation of response only failed [ {len(reward_prompt)} ]: {reward_prompt_str}"
@@ -1065,7 +1072,7 @@ class SelfRewardingTrainer:
                                     "prompts_only": torch.LongTensor(reward_prompt).unsqueeze(0),
                                     "verifier_args": vargs,
                                     "dataset_mask": buffer[0]["dataset_mask"],
-                                    "orig_last_prompt": last_prompt,
+                                    "orig_last_prompt": prompt,
                                     "orig_response": response,
                                 }
                             )
@@ -1171,9 +1178,10 @@ class SelfRewardingTrainer:
                             orig_response_str = self.tokenizer.ids_to_text(
                                 cand_for_meta[1][cand_for_meta[2] : cand_for_meta[3]].tolist()
                             )
-                            norm_prompt_str, norm_response_str, _ = self.normalise_prompt(
-                                orig_prompt_str, orig_response_str, buffer[0]["dataset_mask"]
-                            )
+                            if self.normalise_prompt:
+                                orig_prompt_str, orig_response_str, _ = self.normalise_prompt(
+                                    orig_prompt_str, orig_response_str, buffer[0]["dataset_mask"]
+                                )
                             meta_batch = []
                             for a, b in itertools.combinations(
                                 [self.tokenizer.ids_to_text(s[0][s[1] : s[2]].tolist()) for s in reward_tokens_raw], 2
@@ -1187,10 +1195,10 @@ class SelfRewardingTrainer:
                                 a = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", a)
                                 b = re.sub("(?i)(?:Score|Points): ([0-9\.]+)", "", b)
                                 meta_str_ab = self.meta_judge_template_fn(
-                                    prompt=norm_prompt_str, response=norm_response_str, judgement_a=a, judgement_b=b
+                                    prompt=orig_prompt_str, response=orig_response_str, judgement_a=a, judgement_b=b
                                 )
                                 meta_str_ba = self.meta_judge_template_fn(
-                                    prompt=norm_prompt_str, response=norm_response_str, judgement_a=b, judgement_b=a
+                                    prompt=orig_prompt_str, response=orig_response_str, judgement_a=b, judgement_b=a
                                 )
                                 meta_tokens_ab = self.model.tokenizer.text_to_ids(meta_str_ab)
                                 meta_tokens_ba = self.model.tokenizer.text_to_ids(meta_str_ba)
@@ -1255,6 +1263,10 @@ class SelfRewardingTrainer:
                                     "bad_ends": bad_ends,
                                 }
                             )
+                
+                self.model.finish_inference()
+                if self.use_trtllm_generation:
+                    self.trtllm_generate.free()
 
                 original_gbs_size = len(buffer[0]["prompt_lengths"])
                 for batch in divide_chunks(final_buffer, original_gbs_size):
@@ -1351,10 +1363,6 @@ class SelfRewardingTrainer:
                     new_batch["ref_policy_log_probs_chosen"] = chosen_logps
                     new_batch["ref_policy_log_probs_rejected"] = reject_logps
 
-                    self.model.finish_inference()
-                    if self.use_trtllm_generation:
-                        self.trtllm_generate.free()
-
                     yield new_batch
                     del logprobs, chosen_logps, reject_logps, new_batch
 
@@ -1371,6 +1379,12 @@ class SelfRewardingTrainer:
                     and (rollout_len := sum([len(x[-1]) for x in meta_buffer_pending]))
                     >= self.rollout_micro_batch_size
                 ):
+                    self.model.prepare_for_inference()
+                    if self.use_trtllm_generation:
+                        # at this point self.model is the reference policy from cpu_weight_swap
+                        self.trtllm_generate.refit(self.model)
+                        clear_memory()
+                    
                     num_rollouts = rollout_len // self.rollout_micro_batch_size
                     meta_buffer_unroll_grp = [(idx, y) for idx, x in enumerate(meta_buffer_pending) for y in x[-1]]
                     for _ in range(num_rollouts):
@@ -1470,6 +1484,10 @@ class SelfRewardingTrainer:
 
                     del meta_buffer_unroll_grp
                     meta_buffer_pending = [x for x in meta_buffer_pending if len(x[-1]) > 0]
+                    
+                    self.model.finish_inference()
+                    if self.use_trtllm_generation:
+                        self.trtllm_generate.free()
 
     def set_rho_by_iteration(self, iteration):
         if isinstance(self.spin_config["length_control"], (float, int)):
