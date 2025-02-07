@@ -349,20 +349,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         start_time = time.time()
         out_dir = "/dev/shm/checkpoint_hf/"
         source_hf_jsons_dir = "/opt/checkpoints/hf_jsons/"
-        # Create directory with proper permissions
-        try:
-            if torch.cuda.current_device() == 0:
-                if os.path.exists(out_dir):
-                    shutil.rmtree(out_dir)
-                os.makedirs(out_dir, mode=0o777, exist_ok=True)
-                # Ensure directory has correct permissions after creation
-                os.chmod(out_dir, 0o777)
-        except Exception as e:
-            print(f"Error setting up output directory {out_dir}: {e}", flush=True)
-            raise
-
-        torch.distributed.barrier()
-
+        os.makedirs(out_dir, exist_ok=True)
+        os.chmod(out_dir, 0o777)
         class SafeDict(dict):
             def __missing__(self, key):
                 return '{' + key + '}'
