@@ -267,7 +267,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     target=labels,
                     inference_only=True,
                     higher_stability=True,
-                    ignore_last=not packed,
+                    ignore_last=False,
                 )
                 return {"logprobs": logprobs}
 
@@ -280,7 +280,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     target=labels,
                     inference_only=validation_step,
                     higher_stability=True,
-                    ignore_last=not packed,
+                    ignore_last=False,
                 )
 
                 if not packed:

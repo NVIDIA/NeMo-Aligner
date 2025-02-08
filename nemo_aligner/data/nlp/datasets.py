@@ -463,6 +463,13 @@ class DPOModelDataset(Dataset):
         chosen_labels = ([-100] * prompt_len) + chosen[prompt_len:]
         reject_labels = ([-100] * prompt_len) + reject[prompt_len:]
 
+        ## exclude the last token because we don't have a label for it
+        chosen = chosen[:-1]
+        reject = reject[:-1]
+        ## exclude the first label because we don't hav a corresponding input
+        chosen_labels = chosen_labels[1:]
+        reject_labels = reject_labels[1:]
+
         assert (
             chosen[0:prompt_len] == prompt
         ), f"The tokenizer for DPO has merged tokens between prompt and response for {idx=}:\n[[prompt]]={repr(payload['prompt'])}\n[[chosen_response]]={repr(payload['chosen_response'])}"
