@@ -23,6 +23,7 @@ def worker_process(in_queue, out_queue, load_path, tp):
     import gc
     from vllm import LLM, SamplingParams, TokensPrompt
     from vllm.distributed.parallel_state import destroy_model_parallel, destroy_distributed_environment
+    import time
 
     class VLLMInferenceServer:
         """
@@ -35,7 +36,7 @@ def worker_process(in_queue, out_queue, load_path, tp):
             self.llm = None
 
         def start(self, path, tp):
-            self.llm = LLM(model=path, tensor_parallel_size=tp, generation_config='auto', enforce_eager=True, gpu_memory_utilization=.62, max_num_batched_tokens=32768)
+            self.llm = LLM(model=path, device='cuda', tensor_parallel_size=tp, generation_config='auto', enforce_eager=True, gpu_memory_utilization=.62, max_model_len=4096)
             self.running = True
             print("vLLM Inference Server started.")
 
@@ -65,6 +66,7 @@ def worker_process(in_queue, out_queue, load_path, tp):
                 top_k=-1,
                 logprobs=0,
                 max_tokens=2048,
+                #ignore_eos=True,
             )
 
             # Generate texts from the prompts. The output is a list of RequestOutput objects
@@ -147,7 +149,11 @@ def generate():
     if inference_process is None:
         return jsonify({"error": "inference server not running"}), 400
 
+    import time
+    start_time = time.time()
     data = request.get_json()
+    end_time = time.time()
+    print(f"Request get_json time: {end_time - start_time} seconds")
     if not isinstance(data, list):
         return jsonify({"error": "Expected a list of lists of tokens"}), 400
 
@@ -162,7 +168,12 @@ def generate():
         "response_tokens": generations,
         "response_logprobs": logprobs
     }
-    return jsonify(response), 200
+    import time
+    start_time = time.time()
+    response = jsonify(response), 200
+    end_time = time.time()
+    print(f"Response jsonify time: {end_time - start_time} seconds")
+    return response
 
 
 if __name__ == '__main__':

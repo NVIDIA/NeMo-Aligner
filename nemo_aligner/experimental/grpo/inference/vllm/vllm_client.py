@@ -40,6 +40,47 @@ class VLLMClient:
         self.pad_id = VLLMClient.DEFAULT_PAD_ID
         self.eos_id = tokenizer.eos_id
         self.checkpoint_path = checkpoint_path
+        self.cpu_mp_gloo_group = None
+        
+    def build_cpu_mp_gloo_group(self):
+        if self.cpu_mp_gloo_group is not None:
+            return
+
+        # get ranks of all processes in the MP group
+        world_size = torch.distributed.get_world_size()
+        mp_world_size = parallel_state.get_tensor_model_parallel_world_size() * parallel_state.get_pipeline_model_parallel_world_size()
+        
+        # get ranks of all processes in the current MP group
+        local_mp_rank = torch.tensor([torch.distributed.get_rank()], device="cuda", dtype=torch.long)
+        gathered_mp_ranks = [torch.empty_like(local_mp_rank) for _ in range(mp_world_size)]
+        torch.distributed.all_gather(gathered_mp_ranks, local_mp_rank, group=parallel_state.get_model_parallel_group())
+
+        # Gather all MP groups globally
+        local_mp_ranks = torch.tensor(gathered_mp_ranks, device="cuda")
+        all_mp_ranks = [torch.empty_like(local_mp_ranks) for _ in range(world_size // mp_world_size)]
+
+        # All gather across data parallel groups to get all MP groups
+        torch.distributed.all_gather(
+            all_mp_ranks,
+            local_mp_ranks,
+            group=parallel_state.get_data_parallel_group()
+        )
+        
+        # Convert gathered tensors to lists and deduplicate
+        seen_groups = set()
+        for mp_group in all_mp_ranks:
+            group = tuple(mp_group.cpu().tolist())
+            if group not in seen_groups:
+                seen_groups.add(group)
+        rank_groups = sorted(list(seen_groups))  # Deduplicate and sort final list
+        
+        # build the Gloo groups
+        for rank_group in rank_groups:
+            print(f"Rank {torch.distributed.get_rank()} Building Gloo group with ranks: {rank_group}",flush=True)
+            group = torch.distributed.new_group(list(rank_group), backend="gloo")
+            if int(torch.distributed.get_rank()) in list(rank_group):
+                self.cpu_mp_gloo_group = group
+                print(f"Rank {torch.distributed.get_rank()} local Gloo group built successfully",flush=True)
 
     def refit(self, model):
         """
@@ -71,6 +112,7 @@ class VLLMClient:
         :param batch_tokens: List of lists of tokens (e.g., [[1,2,3], [4,5,6]])
         :return: A dictionary with generations and logprobs if successful.
         """
+        self.build_cpu_mp_gloo_group() # will become a no-op if already built
         if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
             prompt_tokens, prompt_lengths = batch_tokens
             batch_input_ids = []
@@ -118,7 +160,9 @@ class VLLMClient:
         src_rank = parallel_state.get_model_parallel_src_rank()
         mp_group = parallel_state.get_model_parallel_group()
         
-        torch.distributed.barrier(group=parallel_state.get_model_parallel_group()) # wait for src process to get generation results
+        # torch.distributed.barrier(group=parallel_state.get_model_parallel_group()) # wait for src process to get generation results
+        assert self.cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
+        torch.distributed.barrier(group=self.cpu_mp_gloo_group)
         print(f"Tensors: {tensors}", flush=True)
         for k in sorted(tensors.keys()):
             print(k, flush=True)
