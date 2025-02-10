@@ -135,6 +135,14 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 tokenizer=self.tokenizer,
                 checkpoint_path='/dev/shm/checkpoint_hf',
             )
+        elif backend_type == "trt_llm_pytorch":
+
+            from nemo_aligner.experimental.grpo.inference.trtllm_pytorch.trtllm_pytorch_client import TRTLLMPytorchClient 
+            backend = TRTLLMPytorchClient(
+                self.cfg.grpo.inference_backend.config.trt_llm_pytorch,
+                tokenizer=self.tokenizer,
+                checkpoint_path='/dev/shm/checkpoint_hf',
+            )
         else:
             raise ValueError(f"Unsupported inference backend: {backend_type}")
 
@@ -341,7 +349,20 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         start_time = time.time()
         out_dir = "/dev/shm/checkpoint_hf/"
         source_hf_jsons_dir = "/opt/checkpoints/hf_jsons/"
-        os.makedirs(out_dir, exist_ok=True)
+        # Create directory with proper permissions
+        try:
+            if torch.cuda.current_device() == 0:
+                if os.path.exists(out_dir):
+                    shutil.rmtree(out_dir)
+                os.makedirs(out_dir, mode=0o777, exist_ok=True)
+                # Ensure directory has correct permissions after creation
+                os.chmod(out_dir, 0o777)
+        except Exception as e:
+            print(f"Error setting up output directory {out_dir}: {e}", flush=True)
+            raise
+
+        torch.distributed.barrier()
+
         class SafeDict(dict):
             def __missing__(self, key):
                 return '{' + key + '}'
@@ -380,15 +401,36 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     else:
                         NotImplementedError(f"No conversion recipe found for {name}")
                 
-                # save param
+                # Save param with proper error handling and permissions
                 if torch.cuda.current_device() == 0:
-                #if torch.distributed.get_rank() == 0:
-                    torch.save(hf_name_param_mapping, os.path.join(out_dir, f'{idx}.bin'))
-                    print(f"CONVERTED {name} with out shape {[(n, v.shape) for n, v in hf_name_param_mapping.items()]}")
-            # rank 0 copy hf_jsons to cpu ramdisk
+                    try:
+                        save_path = os.path.join(out_dir, f'{idx}.bin')
+                        temp_path = save_path + '.tmp'
+                        torch.save(hf_name_param_mapping, temp_path)
+                        os.chmod(temp_path, 0o666)
+                        # Atomic rename
+                        os.rename(temp_path, save_path)
+                        print(f"CONVERTED {name} with out shape {[(n, v.shape) for n, v in hf_name_param_mapping.items()]}")
+                    except Exception as e:
+                        print(f"Error saving to {save_path}: {e}", flush=True)
+                        if os.path.exists(temp_path):
+                            try:
+                                os.remove(temp_path)
+                            except:
+                                pass
+                        raise
+
+            # Copy HF jsons to CPU ramdisk with proper permissions
             if torch.cuda.current_device() == 0:
-                for file in os.listdir(source_hf_jsons_dir):
-                    shutil.copy(os.path.join(source_hf_jsons_dir, file), os.path.join(out_dir, file))
+                try:
+                    for file in os.listdir(source_hf_jsons_dir):
+                        src = os.path.join(source_hf_jsons_dir, file)
+                        dst = os.path.join(out_dir, file)
+                        shutil.copy2(src, dst)  # Use copy2 to preserve metadata
+                        os.chmod(dst, 0o666)  # Make file readable/writable by all
+                except Exception as e:
+                    print(f"Error copying HF json files: {e}", flush=True)
+                    raise
 
         torch.distributed.barrier()
         print(f"MP group: {parallel_state.get_model_parallel_group()}", flush=True)
@@ -422,7 +464,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
             response_trt_lps = actor_output["response_logprobs_trt"]
-            print(response_trt_lps.shape, flush=True)
+            print(f"response_logprobs_trt: {response_trt_lps.shape}", flush=True)
         else:
             actor_output = self.generate(
                 inputs=inputs,
