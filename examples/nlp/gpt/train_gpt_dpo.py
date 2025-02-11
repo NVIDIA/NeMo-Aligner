@@ -138,20 +138,17 @@ def main(cfg) -> None:
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
 
-    ## TODO: make this more robust
+    ## TODO: should we put this elsewhere?
     # TE requires that the first input dim is divisible by 8 and the second by 16 for fp8
     # When using sequence parallel, sequence will further be split by TP size
     # When using context parallel, sequence is split by CP size as well
-    #pad_seq_length_to_mult = 16
-    #if model_cfg is not None:
-    #    pad_seq_length_to_mult = (
-    #        8 * model_cfg.get("tensor_model_parallel_size", 1) if model_cfg.get("sequence_parallel", False) else 16
-    #    )
-    #    pad_seq_length_to_mult *= model_cfg.get("context_parallel_size", 1)
+    pad_seq_length_to_mult = 16
+    pad_seq_length_to_mult = (
+        8 * cfg.model..get("tensor_model_parallel_size", 1) if cfg.model.get("sequence_parallel", False) else 16
+    )
+    pad_seq_length_to_mult *= cfg.model.get("context_parallel_size", 1)
 
-    ## 8 * tp * cp
-    pad_seq_length_to_mult = 8 * 4 * 4
-
+    pad_seq_length_to_mult = max(pad_seq_length_to_mult, cfg.model.data.get("pad_length_to_multiple_of", -1))
 
     dpo_trainer = DPOTrainer(
         cfg=cfg.trainer.dpo,
@@ -167,7 +164,7 @@ def main(cfg) -> None:
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-            pad_length_to_multiple_of=pad_seq_length_to_mult, #cfg.model.data.get("pad_length_to_multiple_of", None),
+            pad_length_to_multiple_of=pad_seq_length_to_mult,
         ),
         logger=logger,
         ckpt_callback=ckpt_callback,

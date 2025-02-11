@@ -100,6 +100,35 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
         return out_chosen.flatten(), out_rejected.flatten()
 
+    def get_batch_on_this_context_parallel_rank(self, batch):
+        num_valid_tokens_in_ub = None
+        if 'loss_mask' in batch and batch['loss_mask'] is not None:
+            num_valid_tokens_in_ub = batch['loss_mask'].sum()
+
+        cp_size = parallel_state.get_context_parallel_world_size()
+        if cp_size > 1:
+            cp_rank = parallel_state.get_context_parallel_rank()
+            # check if the batch is not in THD format
+            if 'cu_seqlens' not in batch:
+                for key, val in batch.items():
+                    if val is not None and key in ["chosen", "chosen_labels", "rejected", "rejected_labels", "attention_mask"]:
+                        seq_dim = 1 if key != 'attention_mask' else 2
+                        val = val.view(
+                            *val.shape[0:seq_dim],
+                            2 * cp_size,
+                            val.shape[seq_dim] // (2 * cp_size),
+                            *val.shape[(seq_dim + 1) :],
+                        )
+                        index = torch.tensor(
+                            [cp_rank, (2 * cp_size - cp_rank - 1)], device="cpu", pin_memory=True
+                        ).cuda(non_blocking=True)
+                        val = val.index_select(seq_dim, index)
+                        val = val.view(*val.shape[0:seq_dim], -1, *val.shape[(seq_dim + 2) :])
+                        batch[key] = val
+        batch['num_valid_tokens_in_ub'] = num_valid_tokens_in_ub
+
+        return batch
+
     def get_forward_output_and_loss_func(self, validation_step=False, logprobs_only=False):
         def fwd_output_and_loss_func(dataloader_iter, model, checkpoint_activations_all_layers=None):
             batch = next(dataloader_iter)
@@ -176,7 +205,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
 
             ## if using packing via TE, attention mask is generated in TE
             ## this is also not the problem
-            attention_mask = None #batch["attention_mask"][0:1] if not packed else None
+            attention_mask = batch["attention_mask"][0:1] if not packed else None
 
             # Model forward pass
             forward_args = {
@@ -233,15 +262,12 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                             raise e
                         cp_rank = parallel_state.get_context_parallel_rank()
 
-                        ## TODO: what about lengths and rewards?
-                        ## they are only needed to compute the loss at the end
                         for key in required_keys:
                             val = batch[key]
                             if key in {
                                 "input_ids",
                                 "labels",
                                 "position_ids",
-                                #"attention_mask",
                             }:
                                 index = tex.thd_get_partitioned_indices(cu_seqlens, val.size(1), cp_size, cp_rank)
                                 val = val.index_select(1, index)
@@ -366,9 +392,6 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         if cu_seqlens is not None:
 
             ## gets the sequence lengths on this context parallel rank
-            ## TODO!! we need both the chosen AND rejected sequences to have lengths divisible by cp_size * 2!!
-            ## in order to ensure each CP rank gets an even chunk of both sequences!!
-            ## make sure this is the case!
             cu_seqlens = cu_seqlens // parallel_state.get_context_parallel_world_size()
 
             ## cu_seqlens has an extra entry if the final example is padded.

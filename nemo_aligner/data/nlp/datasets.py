@@ -304,7 +304,6 @@ class RewardModelDataset(Dataset):
         return output
 
 
-## TODO: pad_seq_length_to_mult!
 class DPOModelDataset(Dataset):
     """This class works only with jsonl files. It assumes each line of the json file is a dictionary
     with the prompt, along with the chosen response (response only, no prompt), and the rejected response
@@ -618,10 +617,8 @@ class DPOPackedDataset(DPOModelDataset):
             for item in batch
         ]
 
-        ## TODO: add assert!
         if pad_length_to_multiple_of:
             max_seq_len = torch.tensor(max(ex.shape[0] for ex in input_ids), device=torch.cuda.current_device())
-            # max_seq_len = torch.tensor(input_ids.shape[1], device=torch.cuda.current_device())
             torch.distributed.all_reduce(
                 max_seq_len, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group()
             )
