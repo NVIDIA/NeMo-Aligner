@@ -144,6 +144,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                         )
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
+            # slice batch along sequence dimension for context parallelism
+            ## this is not the problem
+            batch = self.get_batch_on_this_context_parallel_rank(batch)
 
             tokens, labels, ref_logprobs, gt_rewards, cu_seqlens = None, None, None, None, None
             if packed:  ## packed sequence
@@ -172,10 +175,8 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             # position_ids = batch["position_ids"][0:1]
 
             ## if using packing via TE, attention mask is generated in TE
-            attention_mask = batch["attention_mask"][0:1] if not packed else None
-
-            # slice batch along sequence dimension for context parallelism
-            batch = self.get_batch_on_this_context_parallel_rank(batch)
+            ## this is also not the problem
+            attention_mask = None #batch["attention_mask"][0:1] if not packed else None
 
             # Model forward pass
             forward_args = {
@@ -278,7 +279,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     target=labels,
                     inference_only=True,
                     higher_stability=True,
-                    ignore_last=not packed,
+                    ignore_last=False, #not packed,
                 )
                 return {"logprobs": logprobs}
 
@@ -291,7 +292,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     target=labels,
                     inference_only=validation_step,
                     higher_stability=True,
-                    ignore_last=not packed,
+                    ignore_last=False, #not packed,
                 )
 
                 if not packed:
@@ -301,7 +302,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 preference_loss, acc_chosen = self.loss_func(
                     per_token_logps,
                     ref_logprobs,
-                    labels_for_loss,
+                    labels, #labels_for_loss,
                     gt_rewards,
                     cu_seqlens,
                     average_log_probs=self.preference_avg_log_probs,
@@ -310,7 +311,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 sft_loss = torch.zeros_like(preference_loss)
                 if self.sft_loss_weight != 0:
                     sft_loss = self.sft_loss_func(
-                        per_token_logps, labels_for_loss, cu_seqlens, average_log_probs=self.sft_avg_log_probs
+                        per_token_logps, labels, cu_seqlens, average_log_probs=self.sft_avg_log_probs
                     )
                 loss = self.preference_loss_weight * preference_loss + self.sft_loss_weight * sft_loss
 
@@ -326,7 +327,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 out_chosen, out_rejected = self.gather_and_split_rewards(
                     per_token_logps,
                     ref_logprobs,
-                    labels_for_loss,
+                    labels,
                     cu_seqlens,
                     average_log_probs=self.preference_avg_log_probs,
                 )
@@ -418,6 +419,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             return reduced_probs
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, cu_seqlens=None, average_log_probs=False):
+
         rewards = self.get_reduced_masked_logps(
             pi_logprobs - ref_logprobs, labels, cu_seqlens=cu_seqlens, average_log_probs=average_log_probs,
         )
