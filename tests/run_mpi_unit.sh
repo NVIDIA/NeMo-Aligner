@@ -23,6 +23,7 @@ if [[ $NUM_GPUS_AVAILABLE -lt 2 ]]; then
     exit 1
 fi
 
+# Unset SLURM MPI args in case script is run interactively on SLURM allocation with mpi
 for var in $(compgen -v | grep '^SLURM_'); do unset "$var"; done
 export PYTHONPATH=$(realpath ..):${PYTHONPATH:-}
 CUDA_VISIBLE_DEVICES=0,1 mpirun -np 2 --allow-run-as-root pytest ../nemo_aligner -rA -s -x -vv --mpi $@ || true
