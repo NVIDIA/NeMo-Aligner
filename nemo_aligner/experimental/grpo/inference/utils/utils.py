@@ -43,7 +43,16 @@ def append_and_repad_list(list_of_items: List, item_to_append, pad_id):
 def save_chunk(chunk, filename):
     save_file(chunk, filename)
 
-def parallel_save_cpu_state_dict(state_dict, path, num_chunks=4):
+def parallel_save_cpu_state_dict(state_dict, path, num_chunks=4, delete_existing=False):
+    if delete_existing:
+        if os.path.exists(path):
+            for filename in os.listdir(path):
+                if filename.endswith('.safetensors'):
+                    file_path = os.path.join(path, filename)
+                    if os.path.isfile(file_path):
+                        os.remove(file_path)
+                        print(f"Deleted {file_path}", flush=True)
+
     # Split the state dict into N chunks (here we choose 4)
     keys = list(state_dict.keys())
     chunk_size = (len(keys) + num_chunks - 1) // num_chunks

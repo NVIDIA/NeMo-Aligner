@@ -398,6 +398,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     print(f"CONVERTED {name} with out shape {[(n, v.shape) for n, v in hf_name_param_mapping.items()]}")
                     cpu_param_dict.update({k: v.cpu() for k, v in hf_name_param_mapping.items()})
                     print("Memory free before del", torch.cuda.mem_get_info()[0] / 1024**3, flush=True)
+                    torch.cuda.synchronize()
                     for k, v in hf_name_param_mapping.items():
                         del v
                     print("Memory free after del", torch.cuda.mem_get_info()[0] / 1024**3, flush=True)
@@ -423,7 +424,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 try:
                     # path = os.path.join(out_dir, "params.safetensors")
                     path = out_dir
-                    parallel_save_cpu_state_dict(cpu_param_dict, path, num_chunks=8)
+                    #parallel_save_cpu_state_dict(cpu_param_dict, path, num_chunks=8, delete_existing=True)
+                    save_file(cpu_param_dict, os.path.join(out_dir, "params.safetensors"))
                 except Exception as e:
                     print(f"Error saving params.safetensors: {e}", flush=True)
                     if os.path.exists(path):

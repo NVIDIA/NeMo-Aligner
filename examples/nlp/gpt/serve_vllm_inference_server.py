@@ -33,6 +33,7 @@ def worker_process(in_queue, out_queue, load_path, tp):
             torch.cuda.empty_cache()
             # Force garbage collection
             gc.collect()
+            torch.cuda.empty_cache()
 
         def reset(self):
             self.model_runner.builder.reset_cached_inter_data()
@@ -68,21 +69,23 @@ def worker_process(in_queue, out_queue, load_path, tp):
                 tensor_parallel_size=tp, 
                 generation_config='auto', 
                 enforce_eager=True, 
-                gpu_memory_utilization=.4, 
+                gpu_memory_utilization=.5, 
                 enable_sleep_mode=True,
             )
             self.running = True
             print("vLLM Inference Server started.")
 
         def sleep(self):
-            self.llm.llm_engine.reset_prefix_cache()
-            for worker in self.llm.llm_engine.model_executor.workers:
-                worker.execute_method("reset")
-            self.llm.llm_engine.model_executor.driver_worker.worker.reset()
-            self.llm.sleep(level=2)
+            #return
+            #self.llm.llm_engine.reset_prefix_cache()
+            #for worker in self.llm.llm_engine.model_executor.workers:
+            #    worker.execute_method("reset")
+            #self.llm.llm_engine.model_executor.driver_worker.worker.reset()
+            self.llm.sleep(level=1)
             self.asleep = True
 
         def wake_up(self):
+            #return
             self.llm.wake_up()
             self.asleep = False
 
