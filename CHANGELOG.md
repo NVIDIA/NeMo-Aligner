@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 -->
 
 ## [Next Version]
+- Added context parallel (CP) support for DPO and validated CP support without sequence packing for SFT. To enable context parallel without sequence packing, simply set `model.context_parallel_size` in your config.
+    - _Note_: Context parallel is also compatible with sequence packing for DPO, but divergence has been observed in some cases. If you try running DPO with both context parallelism and sequence packing and observe divergence, disable sequence packing. This issue is under active investigation. 
 
 ## NVIDIA NeMo-Aligner 0.6.0
 
