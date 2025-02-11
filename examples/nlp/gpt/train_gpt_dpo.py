@@ -144,11 +144,14 @@ def main(cfg) -> None:
     # When using context parallel, sequence is split by CP size as well
     pad_seq_length_to_mult = 16
     pad_seq_length_to_mult = (
-        8 * cfg.model..get("tensor_model_parallel_size", 1) if cfg.model.get("sequence_parallel", False) else 16
+        8 * cfg.model.get("tensor_model_parallel_size", 1) if cfg.model.get("sequence_parallel", False) else 16
     )
     pad_seq_length_to_mult *= cfg.model.get("context_parallel_size", 1)
 
-    pad_seq_length_to_mult = max(pad_seq_length_to_mult, cfg.model.data.get("pad_length_to_multiple_of", -1))
+    pad_sl_from_cfg = cfg.model.data.get("pad_length_to_multiple_of", None)
+    if pad_sl_from_cfg is None:
+        pad_sl_from_cfg = -1
+    pad_seq_length_to_mult = max(pad_seq_length_to_mult, pad_sl_from_cfg)
     
     dpo_trainer = DPOTrainer(
         cfg=cfg.trainer.dpo,
