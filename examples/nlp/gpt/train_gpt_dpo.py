@@ -137,8 +137,8 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
-    
-        ## TODO: should we put this elsewhere?
+
+    ## TODO: should we put this elsewhere?
     # TE requires that the first input dim is divisible by 8 and the second by 16 for fp8
     # When using sequence parallel, sequence will further be split by TP size
     # When using context parallel, sequence is split by CP size as well
@@ -152,7 +152,7 @@ def main(cfg) -> None:
     if pad_sl_from_cfg is None:
         pad_sl_from_cfg = -1
     pad_seq_length_to_mult = max(pad_seq_length_to_mult, pad_sl_from_cfg)
-    
+
     dpo_trainer = DPOTrainer(
         cfg=cfg.trainer.dpo,
         model=ptl_model,
