@@ -45,6 +45,7 @@ NeMo-Aligner also provides its own `dockerfile <https://github.com/NVIDIA/NeMo-A
 Run the following to build the image:
 
     .. code-block:: bash
+    
         git clone https://github.com/NVIDIA/NeMo-Aligner.git
         cd NeMo-Aligner
 
