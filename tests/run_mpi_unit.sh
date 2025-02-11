@@ -23,6 +23,7 @@ if [[ $NUM_GPUS_AVAILABLE -lt 2 ]]; then
     exit 1
 fi
 
+for var in $(compgen -v | grep '^SLURM_'); do unset "$var"; done
 export PYTHONPATH=$(realpath ..):${PYTHONPATH:-}
 CUDA_VISIBLE_DEVICES=0,1 mpirun -np 2 --allow-run-as-root pytest ../nemo_aligner -rA -s -x -vv --mpi $@ || true
 

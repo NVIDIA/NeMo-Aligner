@@ -18,7 +18,10 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 set -eoux pipefail
 
-export NCCL_ALGO=Tree
+# TODO: In newer PYT, setting NCCL_ALGO will cause errors. Need to check
+#  if setting it more granularly will help/be needed.
+#  https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html#nccl-algo
+#export NCCL_ALGO=Tree
 export NVTE_APPLY_QK_LAYER_SCALING=1
 
 KL=${KL:-0.03}
@@ -91,6 +94,7 @@ python -u ${GPFS}/examples/nlp/gpt/serve_ppo_critic.py \
     pretrained_checkpoint.restore_from_path=${RM_NEMO_FILE} \
     ++model.mcore_gpt=True \
     exp_manager.create_checkpoint_callback=False \
+    ++model.dist_ckpt_load_strictness=log_all \
     \
     exp_manager.create_wandb_logger=False \
     model.encoder_seq_length=$((1024+512)) # generation + input len
@@ -176,6 +180,7 @@ mpirun -np 2 --allow-run-as-root python -u ${GPFS}/examples/nlp/gpt/train_gpt_pp
     trainer.ppo.max_steps=3 \
     trainer.ppo.trt_llm.model_type=llama \
     ++exp_manager=null \
+    ++model.dist_ckpt_load_strictness=log_all \
     remote_critic_rm.pad_to_length=$((512+256)) $@ # (match critic) generation + prompt = model.ppo.length_params.max_length + model.ppo.trt_llm.max_input_len (512) = self.trtllm_generate.max_generation_length + self.trtllm_generate.max_input_len
 }
 
