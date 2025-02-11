@@ -67,6 +67,7 @@ torchrun --nproc_per_node=2 ${GPFS}/examples/nlp/gpt/train_gpt_dpo.py \
     ++model.data.seq_length=128 \
     ++model.tensor_model_parallel_size=1 \
     ++model.pipeline_model_parallel_size=1 \
+    ++model.context_parallel_size=2 \
     trainer.dpo.max_steps=${MAX_STEPS:-3} \
     trainer.dpo.val_check_interval=${MAX_STEPS:-3} \
     trainer.dpo.limit_val_batches=8 \
