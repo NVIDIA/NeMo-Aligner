@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from typing import List
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from safetensors.torch import save_file
+import os
 
 def append_and_repad_list(list_of_items: List, item_to_append, pad_id):
     """
@@ -36,3 +39,31 @@ def append_and_repad_list(list_of_items: List, item_to_append, pad_id):
         items += [pad_id] * (len(list_of_items) + 1 - len(items))
 
     return items
+
+def save_chunk(chunk, filename):
+    save_file(chunk, filename)
+
+def parallel_save_cpu_state_dict(state_dict, path, num_chunks=4):
+    # Split the state dict into N chunks (here we choose 4)
+    keys = list(state_dict.keys())
+    chunk_size = (len(keys) + num_chunks - 1) // num_chunks
+
+    chunks = []
+    for i in range(num_chunks):
+        chunk_keys = keys[i * chunk_size: (i + 1) * chunk_size]
+        chunk = {k: state_dict[k] for k in chunk_keys}
+        chunks.append(chunk)
+
+    filenames = [os.path.join(path, f"model_chunk_{i}.safetensors") for i in range(num_chunks)]
+
+    # Save each chunk concurrently
+    with ThreadPoolExecutor(max_workers=num_chunks) as executor:
+        futures = [executor.submit(save_chunk, chunks[i], filenames[i])
+                   for i in range(num_chunks)]
+        for future in as_completed(futures):
+            future.result()  # Ensure any exceptions are raised
+
+    print("State dict saved in chunks:", filenames)
+
+    for filename in filenames:
+        os.chmod(filename, 0o666)

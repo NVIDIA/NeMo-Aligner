@@ -16,6 +16,7 @@ from contextlib import nullcontext
 import os
 import time
 import shutil
+import gc
 
 import torch
 import torch.distributed
@@ -62,6 +63,8 @@ from nemo_aligner.utils.utils import (
     masked_mean,
     offload_distributed_adam,
 )
+from nemo_aligner.experimental.grpo.inference.utils.utils import parallel_save_cpu_state_dict
+
 from nemo_aligner.experimental.grpo.inference.registry import get_backend, list_available_backends
 from nemo_aligner.experimental.grpo.models.nlp.gpt import conversion_dict as CONVERTER
 
@@ -134,7 +137,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             backend = VLLMClient(
                 self.cfg.grpo.inference_backend.config.vllm,
                 tokenizer=self.tokenizer,
-                checkpoint_path='/dev/shm/checkpoint_hf',
+                checkpoint_path=self.cfg.grpo.share_dir,
             )
         elif backend_type == "trt_llm_pytorch":
 
@@ -142,7 +145,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             backend = TRTLLMPytorchClient(
                 self.cfg.grpo.inference_backend.config.trt_llm_pytorch,
                 tokenizer=self.tokenizer,
-                checkpoint_path='/dev/shm/checkpoint_hf',
+                checkpoint_path=self.cfg.grpo.share_dir,
             )
         else:
             raise ValueError(f"Unsupported inference backend: {backend_type}")
@@ -348,9 +351,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         
         # testing sync and save to cpu ramdisk
         start_time = time.time()
-        out_dir = "/dev/shm/checkpoint_hf/"
+        out_dir = self.cfg.grpo.share_dir #"/dev/shm/checkpoint_hf/"
         source_hf_jsons_dir = "/opt/checkpoints/hf_jsons/"
-        os.makedirs(out_dir, exist_ok=True)
         # os.chmod(out_dir, 0o777)
         class SafeDict(dict):
             def __missing__(self, key):
@@ -395,23 +397,33 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 if torch.cuda.current_device() == 0:
                     print(f"CONVERTED {name} with out shape {[(n, v.shape) for n, v in hf_name_param_mapping.items()]}")
                     cpu_param_dict.update({k: v.cpu() for k, v in hf_name_param_mapping.items()})
+                    print("Memory free before del", torch.cuda.mem_get_info()[0] / 1024**3, flush=True)
+                    for k, v in hf_name_param_mapping.items():
+                        del v
+                    print("Memory free after del", torch.cuda.mem_get_info()[0] / 1024**3, flush=True)
+                del full_param
+            gc.collect()
+            torch.cuda.empty_cache()
+            print("Memory free gc collect", torch.cuda.mem_get_info()[0] / 1024**3, flush=True)
 
             # Copy HF jsons to CPU ramdisk with proper permissions
             if torch.cuda.current_device() == 0:
                 try:
+                    os.makedirs(out_dir, exist_ok=True, mode=777)
+                    #os.chmod(out_dir, 0o777)  # Make dir readable/writable by all
                     for file in os.listdir(source_hf_jsons_dir):
                         src = os.path.join(source_hf_jsons_dir, file)
                         dst = os.path.join(out_dir, file)
-                        shutil.copy2(src, dst)  # Use copy2 to preserve metadata
-                        os.chmod(dst, 0o666)  # Make file readable/writable by all
+                        shutil.copy(src, dst)
+                        os.chmod(dst, 666)  # Make file readable/writable by all
                 except Exception as e:
                     print(f"Error copying HF json files: {e}", flush=True)
                     raise
 
                 try:
-                    path = os.path.join(out_dir, "params.safetensors")
-                    save_file(cpu_param_dict, path)
-                    os.chmod(path, 0o666)
+                    # path = os.path.join(out_dir, "params.safetensors")
+                    path = out_dir
+                    parallel_save_cpu_state_dict(cpu_param_dict, path, num_chunks=8)
                 except Exception as e:
                     print(f"Error saving params.safetensors: {e}", flush=True)
                     if os.path.exists(path):
@@ -428,8 +440,12 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         if self.inference_backend:
             # Refitting or recompiling the inference model for generation
+            print(f"Memory free before clear before refit {torch.cuda.mem_get_info()[0] / 1024**3:.2f} GB", flush=True)
+            clear_memory()
+            print(f"Memory free after clear before refit {torch.cuda.mem_get_info()[0] / 1024**3:.2f} GB", flush=True)  
             self.inference_backend.refit(self.model)
             clear_memory()
+            print(f"Memory free after clear after refit {torch.cuda.mem_get_info()[0] / 1024**3:.2f} GB", flush=True)
 
     @torch.no_grad()
     def infer(self, inference_batch, use_greedy=False):

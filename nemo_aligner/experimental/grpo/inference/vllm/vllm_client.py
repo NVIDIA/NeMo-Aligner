@@ -54,10 +54,13 @@ class VLLMClient:
         self.pad_id = VLLMClient.DEFAULT_PAD_ID
         self.eos_id = tokenizer.eos_id
         self.checkpoint_path = checkpoint_path
-        self.cpu_mp_gloo_group = None
+        self.refit_cpu_mp_gloo_group = None
+        self.generate_cpu_mp_gloo_group = None
+        self.free_cpu_mp_gloo_group = None
+        self.server_started = False
         
-    def build_cpu_mp_gloo_group(self):
-        if self.cpu_mp_gloo_group is not None:
+    def build_cpu_mp_gloo_group(self, cpu_group_name):
+        if getattr(self, f"{cpu_group_name}_cpu_mp_gloo_group") is not None:
             return
 
         # get ranks of all processes in the MP group
@@ -93,30 +96,48 @@ class VLLMClient:
             print(f"Rank {torch.distributed.get_rank()} Building Gloo group with ranks: {rank_group}",flush=True)
             group = torch.distributed.new_group(list(rank_group), backend="gloo")
             if int(torch.distributed.get_rank()) in list(rank_group):
-                self.cpu_mp_gloo_group = group
+                setattr(self, f"{cpu_group_name}_cpu_mp_gloo_group", group)
                 print(f"Rank {torch.distributed.get_rank()} local Gloo group built successfully",flush=True)
 
     def refit(self, model):
         """
         Start the remote vLLM inference server.
         """
+        self.build_cpu_mp_gloo_group("refit") # will become a no-op if already built
         ret_val = None
         if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
-            url = f"{self.base_url}/start"
-            try:
-                data = {
-                    "checkpoint_path": self.checkpoint_path,
-                    "tp": parallel_state.get_tensor_model_parallel_world_size(),
-                    "tp_src_gpu_idx": torch.cuda.current_device(),
-                }
-                response = requests.post(url, json=data)
-                response.raise_for_status()
-                data = response.json()
-                print(f"Start response: {data}")
-                ret_val = data
-            except requests.exceptions.RequestException as e:
-                print(f"Error starting the server: {e}")
-        torch.distributed.barrier(group=parallel_state.get_model_parallel_group())
+            if not self.server_started:
+                url = f"{self.base_url}/start"
+                try:
+                    data = {
+                        "checkpoint_path": self.checkpoint_path,
+                        "tp": parallel_state.get_tensor_model_parallel_world_size(),
+                        "tp_src_gpu_idx": torch.cuda.current_device(),
+                    }
+                    response = requests.post(url, json=data)
+                    response.raise_for_status()
+                    data = response.json()
+                    print(f"Start response: {data}")
+                    ret_val = data
+                except requests.exceptions.RequestException as e:
+                    print(f"Error starting the server: {e}")
+                self.server_started = True
+            else:
+                url = f"{self.base_url}/refit"
+                try:
+                    data = {
+                        "checkpoint_path": self.checkpoint_path,
+                    }
+                    response = requests.post(url, json=data)
+                    response.raise_for_status()
+                    data = response.json()
+                    print(f"Refit response: {data}")
+                    ret_val = data
+                except requests.exceptions.RequestException as e:
+                    print(f"Error refitting the server: {e}")
+
+        assert self.refit_cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
+        torch.distributed.barrier(group=self.refit_cpu_mp_gloo_group)
         return ret_val
 
     def generate(self, batch_tokens: tuple[torch.Tensor, torch.Tensor], use_greedy: bool = False):
@@ -126,7 +147,7 @@ class VLLMClient:
         :param batch_tokens: List of lists of tokens (e.g., [[1,2,3], [4,5,6]])
         :return: A dictionary with generations and logprobs if successful.
         """
-        self.build_cpu_mp_gloo_group() # will become a no-op if already built
+        self.build_cpu_mp_gloo_group("generate") # will become a no-op if already built
         if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
             prompt_tokens, prompt_lengths = batch_tokens
             batch_input_ids = []
@@ -175,8 +196,8 @@ class VLLMClient:
         mp_group = parallel_state.get_model_parallel_group()
         
         # torch.distributed.barrier(group=parallel_state.get_model_parallel_group()) # wait for src process to get generation results
-        assert self.cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
-        torch.distributed.barrier(group=self.cpu_mp_gloo_group)
+        assert self.generate_cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
+        torch.distributed.barrier(group=self.generate_cpu_mp_gloo_group)
         print(f"Tensors: {tensors}", flush=True)
         for k in sorted(tensors.keys()):
             print(k, flush=True)
@@ -187,6 +208,23 @@ class VLLMClient:
         return tensors
 
     def free(self):
+        """Put the vLLM inference server to sleep."""
+        self.build_cpu_mp_gloo_group("free") # will become a no-op if already built
+        data = None
+        if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
+            url = f"{self.base_url}/sleep"
+            try:
+                response = requests.post(url)
+                response.raise_for_status()
+                data = response.json()
+                print(f"Sleep response: {data}")
+            except requests.exceptions.RequestException as e:
+                print(f"Error sleeping the server: {e}")
+        assert self.free_cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
+        torch.distributed.barrier(group=self.free_cpu_mp_gloo_group)
+        return data
+    
+    def shutdown(self):
         """Shutdown the vLLM inference server."""
         data = None
         if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
@@ -199,4 +237,5 @@ class VLLMClient:
             except requests.exceptions.RequestException as e:
                 print(f"Error shutting down the server: {e}")
         torch.distributed.barrier(group=parallel_state.get_model_parallel_group())
+        self.server_started = False
         return data
