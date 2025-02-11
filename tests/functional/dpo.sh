@@ -18,7 +18,10 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 cd $SCRIPT_DIR
 set -eoux pipefail
 
-export NCCL_ALGO=Tree
+# TODO: In newer PYT, setting NCCL_ALGO will cause errors. Need to check
+#  if setting it more granularly will help/be needed.
+#  https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html#nccl-algo
+#export NCCL_ALGO=Tree
 export NVTE_APPLY_QK_LAYER_SCALING=${NVTE_APPLY_QK_LAYER_SCALING:-0}
 
 GBS=${GBS:-4}
@@ -33,6 +36,7 @@ NAME=${NAME:-"dpo_test"}
 
 # PARAMETERS
 RESULTS_DIR="/tmp/${NAME}"
+rm -rf $RESULTS_DIR
 mkdir -p $RESULTS_DIR
 
 GPFS=$(git rev-parse --show-toplevel)
