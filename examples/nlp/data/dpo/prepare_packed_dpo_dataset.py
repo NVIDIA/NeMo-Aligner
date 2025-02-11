@@ -133,9 +133,9 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
             pad_seq_length_to_mult = max(16, cp_size * 2)
 
             def pre_pad_dataset(data, max_seq_length, max_length_to_pad, key, pad_id):
-                '''
+                """
                 pad each individual data point to the length of max_length
-                '''
+                """
                 assert max_seq_length >= max_length_to_pad
                 val = data[key]
                 if len(val) <= max_length_to_pad:
@@ -155,8 +155,12 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
                 return
 
             ceil_to_nearest = lambda n, m: (n + m - 1) // m * m
-            max_length_to_pad_chosen = min(max_seq_length, ceil_to_nearest(len(item["chosen"]), pad_seq_length_to_mult))
-            max_length_to_pad_rejected = min(max_seq_length, ceil_to_nearest(len(item["rejected"]), pad_seq_length_to_mult))
+            max_length_to_pad_chosen = min(
+                max_seq_length, ceil_to_nearest(len(item["chosen"]), pad_seq_length_to_mult)
+            )
+            max_length_to_pad_rejected = min(
+                max_seq_length, ceil_to_nearest(len(item["rejected"]), pad_seq_length_to_mult)
+            )
             pre_pad_dataset(item, max_seq_length, max_length_to_pad_chosen, "chosen", tokenizer.eos_id)
             pre_pad_dataset(item, max_seq_length, max_length_to_pad_rejected, "rejected", tokenizer.eos_id)
 
@@ -179,8 +183,11 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
 
     return np.array(combined_dataset)
 
+
 """ modified version of https://github.com/NVIDIA/NeMo/blob/ea5ed67f7edc22c0f936d99a91e39a7c7f3860b3/nemo/utils/sequence_packing_utils.py#L100 
 which accounts for the fact that every example consists of a chosen and rejected response. """
+
+
 def create_hist(dataset: np.array, truncate_seq_len: int):
     """
     Creates a histogram of sequence lengths from a tokenized dataset.
@@ -203,7 +210,7 @@ def create_hist(dataset: np.array, truncate_seq_len: int):
         # Input is missing the last token and label is missing the first token (this way the tokens are aligned for next token prediction).
         # We want pack size to be the length of the actual input and label.
         # This is true of both the chosen and rejected sequences, which are packed into a single input, hence -2.
-        seq_len = len(item_dict['input_ids']) - 2
+        seq_len = len(item_dict["input_ids"]) - 2
         sequences[seq_len].append(item_dict)
         counts[seq_len] += 1
 
@@ -215,6 +222,7 @@ def create_hist(dataset: np.array, truncate_seq_len: int):
         histogram.append(len(sequences[seq_len]))
 
     return sequences, histogram
+
 
 ## modified version of https://github.com/NVIDIA/NeMo/blob/main/nemo/utils/sequence_packing_utils.py#L178 for DPO
 ## pack size should be at least 2*encoder_seq_length since the packed sequences include both the chosen and rejected sequences

@@ -640,8 +640,8 @@ class DPOPackedDataset(DPOModelDataset):
             if cu_seqlens[-1][-1] != max_length:
                 cu_seqlens[-1].append(max_length)
 
-            for i in range(len(item['seq_boundaries']) - 1):
-                current_seq = item['input_ids'][item['seq_boundaries'][i] : item['seq_boundaries'][i + 1] - 1]
+            for i in range(len(item["seq_boundaries"]) - 1):
+                current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
 
                 # since the data could be prepadded with tokenizer's eos_id, we can find out the index of all the eos_id
                 eos_idx = np.where(np.array(current_seq) == self.tokenizer.eos_id)

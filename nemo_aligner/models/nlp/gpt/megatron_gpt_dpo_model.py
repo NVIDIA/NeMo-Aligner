@@ -96,20 +96,26 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         out_chosen, out_rejected = map(torch.cat, zip(*split_iter))
 
         return out_chosen.flatten(), out_rejected.flatten()
-    
+
     def get_batch_on_this_context_parallel_rank(self, batch):
         num_valid_tokens_in_ub = None
-        if 'loss_mask' in batch and batch['loss_mask'] is not None:
-            num_valid_tokens_in_ub = batch['loss_mask'].sum()
+        if "loss_mask" in batch and batch["loss_mask"] is not None:
+            num_valid_tokens_in_ub = batch["loss_mask"].sum()
 
         cp_size = parallel_state.get_context_parallel_world_size()
         if cp_size > 1:
             cp_rank = parallel_state.get_context_parallel_rank()
             # check if the batch is not in THD format
-            if 'cu_seqlens' not in batch:
+            if "cu_seqlens" not in batch:
                 for key, val in batch.items():
-                    if val is not None and key in ["chosen", "chosen_labels", "rejected", "rejected_labels", "attention_mask"]:
-                        seq_dim = 1 if key != 'attention_mask' else 2
+                    if val is not None and key in [
+                        "chosen",
+                        "chosen_labels",
+                        "rejected",
+                        "rejected_labels",
+                        "attention_mask",
+                    ]:
+                        seq_dim = 1 if key != "attention_mask" else 2
                         val = val.view(
                             *val.shape[0:seq_dim],
                             2 * cp_size,
@@ -122,7 +128,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                         val = val.index_select(seq_dim, index)
                         val = val.view(*val.shape[0:seq_dim], -1, *val.shape[(seq_dim + 2) :])
                         batch[key] = val
-        batch['num_valid_tokens_in_ub'] = num_valid_tokens_in_ub
+        batch["num_valid_tokens_in_ub"] = num_valid_tokens_in_ub
 
         return batch
 
@@ -224,15 +230,19 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     cu_seqlens = batch["cu_seqlens"].squeeze()  # remove batch size dimension (mbs=1)
                     max_seqlen = batch["max_seqlen"].squeeze() if "max_seqlen" in batch else None
                     cu_seqlens_argmin = batch["cu_seqlens_argmin"] if "cu_seqlens_argmin" in batch else None
-                    cu_seqlens_unpadded = batch['cu_seqlens_unpadded'].squeeze() if "cu_seqlens_unpadded" in batch else None
-                    cu_seqlens_unpadded_argmin = batch['cu_seqlens_unpadded_argmin'] if "cu_seqlens_unpadded_argmin" in batch else None
+                    cu_seqlens_unpadded = (
+                        batch["cu_seqlens_unpadded"].squeeze() if "cu_seqlens_unpadded" in batch else None
+                    )
+                    cu_seqlens_unpadded_argmin = (
+                        batch["cu_seqlens_unpadded_argmin"] if "cu_seqlens_unpadded_argmin" in batch else None
+                    )
 
                     # remove -1 "paddings" added in collate_fn
                     if cu_seqlens_argmin is not None:
                         cu_seqlens = cu_seqlens[: cu_seqlens_argmin.item()]
                     else:
                         cu_seqlens = cu_seqlens[: torch.argmin(cu_seqlens)]
-                    
+
                     if cu_seqlens_unpadded_argmin is not None:
                         cu_seqlens_unpadded = cu_seqlens_unpadded[: cu_seqlens_unpadded_argmin.item()]
                     else:
@@ -268,7 +278,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                     forward_args["position_ids"] = batch["position_ids"]
                     labels = batch["labels"]
 
-                    forward_args['packed_seq_params'] = PackedSeqParams(
+                    forward_args["packed_seq_params"] = PackedSeqParams(
                         cu_seqlens_q=cu_seqlens_unpadded,
                         cu_seqlens_kv=cu_seqlens_unpadded,
                         cu_seqlens_q_padded=cu_seqlens,
@@ -335,11 +345,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
                 ) = average_losses_across_data_parallel_group([loss, preference_loss, sft_loss, acc_chosen])
 
                 out_chosen, out_rejected = self.gather_and_split_rewards(
-                    per_token_logps,
-                    ref_logprobs,
-                    labels,
-                    cu_seqlens,
-                    average_log_probs=self.preference_avg_log_probs,
+                    per_token_logps, ref_logprobs, labels, cu_seqlens, average_log_probs=self.preference_avg_log_probs,
                 )
 
                 cp_size = parallel_state.get_context_parallel_world_size()
@@ -416,9 +422,7 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             # need to guard against divide by zero in case labels are all -100
             num_tokens_for_loss = loss_mask.sum(-1)
             if parallel_state.get_context_parallel_world_size() > 1:
-                torch.distributed.all_reduce(
-                    num_tokens_for_loss, group=parallel_state.get_context_parallel_group()
-                )
+                torch.distributed.all_reduce(num_tokens_for_loss, group=parallel_state.get_context_parallel_group())
             ### at this point, all CP ranks should have the same value
             ### so no need for an all-reduce later
             return reduced_probs / num_tokens_for_loss.clamp(min=1)
