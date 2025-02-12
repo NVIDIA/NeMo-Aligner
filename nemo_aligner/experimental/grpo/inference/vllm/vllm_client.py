@@ -109,7 +109,8 @@ class VLLMClient:
         """
         Start the remote vLLM inference server.
         """
-        with self.reshard_context:
+        context = nullcontext() if not parallel_state.is_inference_reshard() else self.reshard_context
+        with context:
             self.build_cpu_mp_gloo_group("refit") # will become a no-op if already built
             ret_val = None
             if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
