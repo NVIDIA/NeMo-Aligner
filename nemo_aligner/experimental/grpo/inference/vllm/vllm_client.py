@@ -17,6 +17,7 @@ import torch
 import nemo_aligner.experimental.grpo.utils.parallel_state as parallel_state
 from nemo_aligner.utils.distributed import broadcast_tensor 
 import time
+from contextlib import nullcontext
 
 def print_group_ranks(group):
     """
@@ -48,7 +49,7 @@ def print_group_ranks(group):
 class VLLMClient:
     DEFAULT_PAD_ID = -42
 
-    def __init__(self, cfg, tokenizer, checkpoint_path):
+    def __init__(self, cfg, use_reshard, tokenizer, checkpoint_path):
         self.base_url = f"http://{cfg.ip}:{cfg.port}"
 
         self.pad_id = VLLMClient.DEFAULT_PAD_ID
@@ -58,6 +59,7 @@ class VLLMClient:
         self.generate_cpu_mp_gloo_group = None
         self.free_cpu_mp_gloo_group = None
         self.server_started = False
+        self.reshard_context = parallel_state.inference_reshard_region() if use_reshard else nullcontext()
         
     def build_cpu_mp_gloo_group(self, cpu_group_name):
         if getattr(self, f"{cpu_group_name}_cpu_mp_gloo_group") is not None:
@@ -66,15 +68,18 @@ class VLLMClient:
         # get ranks of all processes in the MP group
         world_size = torch.distributed.get_world_size()
         mp_world_size = parallel_state.get_tensor_model_parallel_world_size() * parallel_state.get_pipeline_model_parallel_world_size()
+        print(f"World size: {world_size}, MP world size: {mp_world_size}", flush=True)
         
         # get ranks of all processes in the current MP group
         local_mp_rank = torch.tensor([torch.distributed.get_rank()], device="cuda", dtype=torch.long)
         gathered_mp_ranks = [torch.empty_like(local_mp_rank) for _ in range(mp_world_size)]
         torch.distributed.all_gather(gathered_mp_ranks, local_mp_rank, group=parallel_state.get_model_parallel_group())
+        print(f"Local MP rank: {local_mp_rank}, Gathered MP ranks: {gathered_mp_ranks}", flush=True)
 
         # Gather all MP groups globally
-        local_mp_ranks = torch.tensor(gathered_mp_ranks, device="cuda")
+        local_mp_ranks = torch.tensor(gathered_mp_ranks, device="cuda", dtype=torch.long)
         all_mp_ranks = [torch.empty_like(local_mp_ranks) for _ in range(world_size // mp_world_size)]
+        print(f"Local MP ranks: {local_mp_ranks}, All MP ranks: {all_mp_ranks}", flush=True)
 
         # All gather across data parallel groups to get all MP groups
         torch.distributed.all_gather(
@@ -90,6 +95,7 @@ class VLLMClient:
             if group not in seen_groups:
                 seen_groups.add(group)
         rank_groups = sorted(list(seen_groups))  # Deduplicate and sort final list
+        print(f"Rank groups: {rank_groups}", flush=True)
         
         # build the Gloo groups
         for rank_group in rank_groups:
@@ -103,38 +109,39 @@ class VLLMClient:
         """
         Start the remote vLLM inference server.
         """
-        self.build_cpu_mp_gloo_group("refit") # will become a no-op if already built
-        ret_val = None
-        if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
-            if not self.server_started:
-                url = f"{self.base_url}/start"
-                try:
-                    data = {
-                        "checkpoint_path": self.checkpoint_path,
-                        "tp": parallel_state.get_tensor_model_parallel_world_size(),
-                        "tp_src_gpu_idx": torch.cuda.current_device(),
-                    }
-                    response = requests.post(url, json=data)
-                    response.raise_for_status()
-                    data = response.json()
-                    print(f"Start response: {data}")
-                    ret_val = data
-                except requests.exceptions.RequestException as e:
-                    print(f"Error starting the server: {e}")
-                self.server_started = True
-            else:
-                url = f"{self.base_url}/refit"
-                try:
-                    data = {
-                        "checkpoint_path": self.checkpoint_path,
-                    }
-                    response = requests.post(url, json=data)
-                    response.raise_for_status()
-                    data = response.json()
-                    print(f"Refit response: {data}")
-                    ret_val = data
-                except requests.exceptions.RequestException as e:
-                    print(f"Error refitting the server: {e}")
+        with self.reshard_context:
+            self.build_cpu_mp_gloo_group("refit") # will become a no-op if already built
+            ret_val = None
+            if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
+                if not self.server_started:
+                    url = f"{self.base_url}/start"
+                    try:
+                        data = {
+                            "checkpoint_path": self.checkpoint_path,
+                            "tp": parallel_state.get_tensor_model_parallel_world_size(),
+                            "tp_src_gpu_idx": torch.cuda.current_device(),
+                        }
+                        response = requests.post(url, json=data)
+                        response.raise_for_status()
+                        data = response.json()
+                        print(f"Start response: {data}")
+                        ret_val = data
+                    except requests.exceptions.RequestException as e:
+                        print(f"Error starting the server: {e}")
+                    self.server_started = True
+                else:
+                    url = f"{self.base_url}/refit"
+                    try:
+                        data = {
+                            "checkpoint_path": self.checkpoint_path,
+                        }
+                        response = requests.post(url, json=data)
+                        response.raise_for_status()
+                        data = response.json()
+                        print(f"Refit response: {data}")
+                        ret_val = data
+                    except requests.exceptions.RequestException as e:
+                        print(f"Error refitting the server: {e}")
 
         assert self.refit_cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
         torch.distributed.barrier(group=self.refit_cpu_mp_gloo_group)
@@ -209,33 +216,35 @@ class VLLMClient:
 
     def free(self):
         """Put the vLLM inference server to sleep."""
-        self.build_cpu_mp_gloo_group("free") # will become a no-op if already built
-        data = None
-        if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
-            url = f"{self.base_url}/sleep"
-            try:
-                response = requests.post(url)
-                response.raise_for_status()
-                data = response.json()
-                print(f"Sleep response: {data}")
-            except requests.exceptions.RequestException as e:
-                print(f"Error sleeping the server: {e}")
-        assert self.free_cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
-        torch.distributed.barrier(group=self.free_cpu_mp_gloo_group)
-        return data
+        with self.reshard_context:
+            self.build_cpu_mp_gloo_group("free") # will become a no-op if already built
+            data = None
+            if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
+                url = f"{self.base_url}/sleep"
+                try:
+                    response = requests.post(url)
+                    response.raise_for_status()
+                    data = response.json()
+                    print(f"Sleep response: {data}")
+                except requests.exceptions.RequestException as e:
+                    print(f"Error sleeping the server: {e}")
+            assert self.free_cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
+            torch.distributed.barrier(group=self.free_cpu_mp_gloo_group)
+            return data
     
     def shutdown(self):
         """Shutdown the vLLM inference server."""
-        data = None
-        if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
-            url = f"{self.base_url}/shutdown"
-            try:
-                response = requests.post(url)
-                response.raise_for_status()
-                data = response.json()
-                print(f"Shutdown response: {data}")
-            except requests.exceptions.RequestException as e:
-                print(f"Error shutting down the server: {e}")
-        torch.distributed.barrier(group=parallel_state.get_model_parallel_group())
-        self.server_started = False
-        return data
+        with self.reshard_context:
+            data = None
+            if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
+                url = f"{self.base_url}/shutdown"
+                try:
+                    response = requests.post(url)
+                    response.raise_for_status()
+                    data = response.json()
+                    print(f"Shutdown response: {data}")
+                except requests.exceptions.RequestException as e:
+                    print(f"Error shutting down the server: {e}")
+            torch.distributed.barrier(group=parallel_state.get_model_parallel_group())
+            self.server_started = False
+            return data

@@ -137,6 +137,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             from nemo_aligner.experimental.grpo.inference.vllm.vllm_client import VLLMClient
             backend = VLLMClient(
                 self.cfg.grpo.inference_backend.config.vllm,
+                use_reshard=self.cfg.grpo.inference_backend.get("reshard", False),
                 tokenizer=self.tokenizer,
                 checkpoint_path=self.cfg.grpo.share_dir,
             )

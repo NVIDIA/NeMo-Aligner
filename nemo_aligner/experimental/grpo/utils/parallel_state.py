@@ -27,6 +27,7 @@ from nemo.collections.nlp.modules.common.text_generation_utils import (
 _INFERENCE_RESHARD = False
 
 _GROUP_TO_RANKS_CACHE = {}
+_RESHARDED_DP_GROUP = None
 
 
 def enable_inference_reshard_calls():
@@ -86,6 +87,23 @@ def get_data_parallel_rank():
         )
 
     return data_parallel_rank
+
+def get_data_parallel_group():
+    if is_inference_reshard():
+        if _RESHARDED_DP_GROUP is None:
+            # iterate over all mp ranks and build a new group with all of them
+            num_mp_ranks = get_data_parallel_world_size()
+            for mp_rank in range(num_mp_ranks):
+                last_rank = (num_mp_ranks - 1) * get_tensor_model_parallel_world_size() + mp_rank
+                ranks = list(range(mp_rank, last_rank + 1, get_tensor_model_parallel_world_size()))
+                print(f"Constructing Reshared DP Group: Rank {torch.distributed.get_rank()} building group with ranks {ranks}")
+                group = torch.distributed.new_group(ranks)
+                if torch.distributed.get_rank() in ranks:
+                    _RESHARDED_DP_GROUP = group
+        return _RESHARDED_DP_GROUP
+    else:
+        return mcore_parallel_state.get_data_parallel_group()
+
 
 def get_tensor_model_parallel_world_size():
     return mcore_parallel_state.get_tensor_model_parallel_world_size()
