@@ -71,13 +71,13 @@ class VLLMClient:
         print(f"World size: {world_size}, MP world size: {mp_world_size}", flush=True)
         
         # get ranks of all processes in the current MP group
-        local_mp_rank = torch.tensor([torch.distributed.get_rank()], device="cuda", dtype=torch.long)
+        local_mp_rank = torch.tensor([torch.distributed.get_rank()], device="cuda", dtype=torch.int)
         gathered_mp_ranks = [torch.empty_like(local_mp_rank) for _ in range(mp_world_size)]
         torch.distributed.all_gather(gathered_mp_ranks, local_mp_rank, group=parallel_state.get_model_parallel_group())
         print(f"Local MP rank: {local_mp_rank}, Gathered MP ranks: {gathered_mp_ranks}", flush=True)
 
         # Gather all MP groups globally
-        local_mp_ranks = torch.tensor(gathered_mp_ranks, device="cuda", dtype=torch.long)
+        local_mp_ranks = torch.tensor(gathered_mp_ranks, device="cuda", dtype=torch.int)
         all_mp_ranks = [torch.empty_like(local_mp_ranks) for _ in range(world_size // mp_world_size)]
         print(f"Local MP ranks: {local_mp_ranks}, All MP ranks: {all_mp_ranks}", flush=True)
 

@@ -999,3 +999,14 @@ def pad_tensors_to_max_global_seq_len(list_of_tensors, pad_value, group, sequenc
         max_seq_length = max(sequence_length_to_pad_to, max_seq_length)
 
     return torch.nn.functional.pad(tensors_padded, (0, max_seq_length - tensors_padded.size(-1)), value=pad_value)
+
+def gather_and_sort_lists_of_lists(my_list_of_lists, group):
+    # gather the list across all ranks using object gather
+    gathered_lists = [None for _ in range(torch.distributed.get_world_size(group=group))]
+    torch.distributed.all_gather_object(gathered_lists, my_list_of_lists, group=group)
+    # Flatten the gathered lists (each from a different process) into a single list, then sort it.
+    flattened_list = []
+    for sublist in gathered_lists:
+        flattened_list.extend(sublist)
+    flattened_list.sort()
+    return flattened_list

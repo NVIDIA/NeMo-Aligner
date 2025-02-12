@@ -20,6 +20,7 @@ import torch
 
 from megatron.core import parallel_state as mcore_parallel_state
 
+from nemo_aligner.utils.distributed import gather_and_sort_lists_of_lists
 from nemo.collections.nlp.modules.common.text_generation_utils import (
     get_model_parallel_src_rank as nemo_get_model_parallel_src_rank,
 )
@@ -90,16 +91,26 @@ def get_data_parallel_rank():
 
 def get_data_parallel_group():
     if is_inference_reshard():
+        global _RESHARDED_DP_GROUP
         if _RESHARDED_DP_GROUP is None:
-            # iterate over all mp ranks and build a new group with all of them
-            num_mp_ranks = get_data_parallel_world_size()
-            for mp_rank in range(num_mp_ranks):
-                last_rank = (num_mp_ranks - 1) * get_tensor_model_parallel_world_size() + mp_rank
-                ranks = list(range(mp_rank, last_rank + 1, get_tensor_model_parallel_world_size()))
-                print(f"Constructing Reshared DP Group: Rank {torch.distributed.get_rank()} building group with ranks {ranks}")
-                group = torch.distributed.new_group(ranks)
-                if torch.distributed.get_rank() in ranks:
+            # gather all dp and pp ranks into one list
+            pp_ranks = torch.tensor(get_all_rank_ids_in_group(mcore_parallel_state.get_pipeline_model_parallel_group()), dtype=torch.int, device=torch.cuda.current_device())
+            # distributed all gather
+            ppdp = [torch.empty_like(pp_ranks) for _ in range(mcore_parallel_state.get_data_parallel_world_size())]
+            torch.distributed.all_gather(ppdp, pp_ranks, group=mcore_parallel_state.get_data_parallel_group())
+            # flatten the list of tensors
+            ppdp = torch.cat(ppdp).tolist()
+            print(f"my ppdp: {ppdp}", flush=True)
+
+            # gather over all tp ranks
+            all_ppdp = gather_and_sort_lists_of_lists([ppdp], mcore_parallel_state.get_tensor_model_parallel_group())
+            for rank_group in all_ppdp:
+                print(f"DP RESHARD Rank {torch.distributed.get_rank()} Building group with ranks: {rank_group}",flush=True)
+                group = torch.distributed.new_group(list(rank_group))
+                if int(torch.distributed.get_rank()) in list(rank_group):
                     _RESHARDED_DP_GROUP = group
+                    print(f"DP RESHARD Rank {torch.distributed.get_rank()} local Gloo group built successfully",flush=True)
+
         return _RESHARDED_DP_GROUP
     else:
         return mcore_parallel_state.get_data_parallel_group()
