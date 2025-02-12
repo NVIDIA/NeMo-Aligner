@@ -19,8 +19,22 @@ cd $SCRIPT_DIR
 
 set -eoux pipefail
 
-PRETRAINED_CHECKPOINT_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo \
+export PRETRAINED_CHECKPOINT_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo
+bash ../dpo.sh \
+  ++model.optim.name=mcore_distributed_optim \
+  ++model.context_parallel_size=1 \
+  2>&1 | tee $(basename $0)-cp1.log
+
 bash ../dpo.sh \
   ++model.optim.name=mcore_distributed_optim \
   ++model.context_parallel_size=2 \
-  2>&1 | tee $(basename $0).log
+  2>&1 | tee $(basename $0)-cp2.log
+
+final_cp1_loss=$( grep -o -P 'train_loss.{0,5}' $( basename $0 )-cp1.log | tail -n 1 | tail -c 4 )
+final_cp2_loss=$( grep -o -P 'train_loss.{0,5}' $( basename $0 )-cp2.log | tail -n 1 | tail -c 4 )
+
+if [ $final_cp1_loss != $final_cp2_loss ]; then
+    echo "Assertion failed: $final_cp1_loss does not equal $final_cp2_loss" >&2
+  exit 1
+fi
+exit 0
