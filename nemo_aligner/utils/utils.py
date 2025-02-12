@@ -18,6 +18,7 @@ import gc
 import itertools
 import os
 import re
+import time
 import tempfile
 import warnings
 from contextlib import contextmanager
@@ -402,6 +403,46 @@ def dist_adam_load_state_bucket_into_device(state_bucket, device):
         if tensor is not None:
             setattr(state_bucket, attr, tensor.to(device=device, non_blocking=True))
 
+
+@contextmanager
+def offload_distributed_parameters(model, force_clear_memory=True, verbose=True):
+    """context manager to offload distributed adam states
+    """
+    if verbose:
+        log_memory("before offload distributed parameters (gpu -> cpu)")
+        offload_start = time.time()
+    # off load onto cpu
+    for name, param in model.named_parameters():
+        param.data = param.data.to('cpu')
+
+    # make sure the offloading is finished before returning
+    torch.cuda.synchronize()
+
+    if force_clear_memory:
+        clear_memory()
+
+    if verbose:
+        log_memory("after offload distributed parameters (gpu -> cpu)")
+        elapsed_time = time.time() - offload_start
+        print(f"offload distributed parameters finished({elapsed_time:.2f} seconds elapsed)")
+
+    try:
+        yield
+
+    finally:
+        if verbose:
+            log_memory("before onload distributed parameters (cpu -> gpu)")
+            onload_start = time.time()
+        # onload back onto gpu
+        for name, param in model.named_parameters():
+            param.data = param.data.to(torch.cuda.current_device())
+
+        # make sure the onloading is finished before returning
+        torch.cuda.synchronize()
+        if verbose:
+            log_memory("after onload distributed parameters (cpu -> gpu)")
+            elapsed_time = time.time() - onload_start
+            print(f"onload distributed parameters finished({elapsed_time:.2f} seconds elapsed)")
 
 @contextmanager
 def offload_distributed_adam(state_dict, force_clear_memory=False):

@@ -63,6 +63,7 @@ from nemo_aligner.utils.utils import (
     cpu_weight_swap,
     masked_mean,
     offload_distributed_adam,
+    offload_distributed_parameters,
 )
 from nemo_aligner.experimental.grpo.inference.utils.utils import parallel_save_cpu_state_dict
 
@@ -76,6 +77,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         self.init_policy_state_dict = None
         self.distributed_adam_offload_manager = None
+        self.distributed_parameter_offload_manager = None
 
         # length parameters for generation
         self._length_params = OmegaConf.to_container(self.cfg.grpo.length_params, resolve=True)
@@ -313,6 +315,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
     @torch.no_grad()
     def get_inference_log_probs(self, response_tokens, forward_micro_batch_size=None):
+        # we need onload model parameter to calculate log_probs
+        self.maybe_onload_parameters()
         if forward_micro_batch_size is None:
             forward_micro_batch_size = self.forward_micro_batch_size
 
@@ -548,6 +552,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         )
 
         if self.inference_backend:
+            self.maybe_offload_parameters("Temporarily offload model weights for the shared inference backend to save memory")
             actor_output = self.inference_backend.generate(inputs, use_greedy=use_greedy)
             response_tokens = actor_output["response_tokens"]
             response_lengths = actor_output["response_lengths"]
@@ -621,6 +626,27 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
 
         set_train(self)
+
+    def maybe_offload_parameters(self, msg: str):
+        if self.distributed_parameter_offload_manager is None:
+            if msg:
+                print(msg)
+
+            self.distributed_parameter_offload_manager = (
+                offload_distributed_parameters(
+                    self.model
+                )
+            )
+
+            # offload onto cpu
+            self.distributed_parameter_offload_manager.__enter__()
+
+    def maybe_onload_parameters(self):
+        if self.distributed_parameter_offload_manager is not None:
+            # load back onto GPU
+            self.distributed_parameter_offload_manager.__exit__(None, None, None)
+
+        self.distributed_parameter_offload_manager = None
 
     def offload_adam_states(self):
         if self.distributed_adam_offload_manager is None:
