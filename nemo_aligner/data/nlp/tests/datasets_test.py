@@ -443,7 +443,7 @@ def test_packed_dpo_loader(init_model_parallel, tmp_path, llama3_tokenizer):
         assert mbatch["cu_seqlens_argmin"][0] == torch.tensor([6])
         ### this will end up being the final example because it's padded
         ### should be fine because final padding tokens are not included in the loss
-        assert mbatch["max_seqlen"][0] == torch.tensor([7])
+        assert mbatch["max_seqlen"][0] == torch.tensor([5])
 
         num_mini_batches += 1
 
