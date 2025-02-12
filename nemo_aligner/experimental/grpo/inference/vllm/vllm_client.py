@@ -216,7 +216,8 @@ class VLLMClient:
 
     def free(self):
         """Put the vLLM inference server to sleep."""
-        with self.reshard_context:
+        context = nullcontext() if not parallel_state.is_inference_reshard() else self.reshard_context
+        with context:
             self.build_cpu_mp_gloo_group("free") # will become a no-op if already built
             data = None
             if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
@@ -234,7 +235,8 @@ class VLLMClient:
     
     def shutdown(self):
         """Shutdown the vLLM inference server."""
-        with self.reshard_context:
+        context = nullcontext() if not parallel_state.is_inference_reshard() else self.reshard_context
+        with context:
             data = None
             if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
                 url = f"{self.base_url}/shutdown"
