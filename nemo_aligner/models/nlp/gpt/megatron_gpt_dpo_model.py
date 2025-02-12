@@ -22,7 +22,8 @@ from megatron.core.utils import divide
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+#from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo_aligner.models.nlp.gpt.gpt_inference_model import GPTInferenceModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
@@ -44,7 +45,7 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import adapter_control, cpu_weight_swap
 
 
-class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
+class MegatronGPTDPOModel(NLPAdapterModelMixin, GPTInferenceModel, SupervisedInterface):
     """
     Megatron GPT DPO Model Training.
     """
