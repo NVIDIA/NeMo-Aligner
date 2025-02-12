@@ -71,6 +71,7 @@ def worker_process(in_queue, out_queue, load_path, tp):
                 enforce_eager=True, 
                 gpu_memory_utilization=.5, 
                 enable_sleep_mode=True,
+                use_tqdm=True,
             )
             self.running = True
             print("vLLM Inference Server started.")
@@ -86,7 +87,9 @@ def worker_process(in_queue, out_queue, load_path, tp):
 
         def wake_up(self):
             #return
+            torch.cuda.synchronize()
             self.llm.wake_up()
+            torch.cuda.synchronize()
             self.asleep = False
 
         def refit(self, path, zero_init: bool = False):

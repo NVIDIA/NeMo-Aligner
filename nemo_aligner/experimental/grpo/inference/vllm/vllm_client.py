@@ -14,7 +14,7 @@
 
 import requests
 import torch
-import nemo_aligner.utils.parallel_state as parallel_state
+import nemo_aligner.experimental.grpo.utils.parallel_state as parallel_state
 from nemo_aligner.utils.distributed import broadcast_tensor 
 import time
 

@@ -26,6 +26,8 @@ from nemo.collections.nlp.modules.common.text_generation_utils import (
 
 _TRT_LLM_RESHARD = False
 
+_GROUP_TO_RANKS_CACHE = {}
+
 
 def enable_trt_llm_reshard_calls():
     global _TRT_LLM_RESHARD
@@ -106,6 +108,12 @@ def is_model_parallel_src_rank():
 These functions will ignore your current 'resharded' context and return 
 parallism sharding for the training context.
 """
+def get_training_pipeline_model_parallel_rank():
+    return mcore_parallel_state.get_pipeline_model_parallel_rank()
+
+def get_training_pipeline_model_parallel_world_size():
+    return mcore_parallel_state.get_pipeline_model_parallel_world_size()
+
 def get_training_pipeline_model_parallel_group():
     return mcore_parallel_state.get_pipeline_model_parallel_group()
 
@@ -123,6 +131,18 @@ def get_training_tensor_model_parallel_group():
 
 def get_training_tensor_model_parallel_src_rank():
     return mcore_parallel_state.get_tensor_model_parallel_src_rank()
+
+def get_all_rank_ids_in_group(group):
+    if group in _GROUP_TO_RANKS_CACHE:
+        return _GROUP_TO_RANKS_CACHE[group]
+
+    curr_global_rank = int(torch.distributed.get_rank())
+    group_size = torch.distributed.get_world_size(group=group)
+    global_rank_tensor = torch.tensor([curr_global_rank], dtype=torch.int, device=torch.cuda.current_device())
+    global_ranks = [torch.empty(1, dtype=torch.int, device=torch.cuda.current_device()) for _ in range(group_size)]
+    torch.distributed.all_gather(global_ranks, global_rank_tensor, group=group)
+    _GROUP_TO_RANKS_CACHE[group] = [int(global_ranks[i].item()) for i in range(group_size)]
+    return _GROUP_TO_RANKS_CACHE[group]
 
 
 @contextmanager

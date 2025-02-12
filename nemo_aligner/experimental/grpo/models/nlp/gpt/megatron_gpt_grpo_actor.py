@@ -27,6 +27,7 @@ from megatron.core.utils import divide
 from omegaconf import OmegaConf
 from omegaconf.dictconfig import DictConfig
 from safetensors.torch import save_file
+from huggingface_hub import snapshot_download
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
@@ -352,86 +353,166 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         # testing sync and save to cpu ramdisk
         start_time = time.time()
         out_dir = self.cfg.grpo.share_dir #"/dev/shm/checkpoint_hf/"
-        source_hf_jsons_dir = "/opt/checkpoints/hf_jsons/"
+
+        if torch.cuda.current_device() == 0:
+            if os.path.isdir(self.cfg.hf_model_name_or_configs_dir):
+                # If a directory is provided, use it directly to obtain all .json files.
+                source_hf_jsons_dir = self.cfg.hf_model_name_or_configs_dir
+            else:
+                # Otherwise, treat it as a HuggingFace model name and download all .json files from the repo.
+                source_hf_jsons_dir = snapshot_download(self.cfg.hf_model_name_or_configs_dir, allow_patterns=["*.json"], ignore_patterns=["*.index.json"])
         # os.chmod(out_dir, 0o777)
         class SafeDict(dict):
             def __missing__(self, key):
                 return '{' + key + '}'
-        cpu_param_dict = {}
 
         with torch.no_grad():
-            for idx, (name, param) in enumerate(self.state_dict().items()):
-                layer_num = CONVERTER.get_layer_num(name)
-                format_dict = SafeDict(l=layer_num)
-                formatted_mapping = {k.format_map(format_dict): v for (k,v) in CONVERTER.mcore_te_to_hf_llama.items()}
-                recipe = formatted_mapping.get(name, None)
-                if recipe is None:
-                    print(f"WARNING: {name} has no recipe mapping for conversion", flush=True)
-                    continue
-                full_param = None
-                if recipe.get("tp", None) is not None:
-                    # gather TP weights
-                    group = parallel_state.get_training_tensor_model_parallel_group()
-                    world_size = torch.distributed.get_world_size(group)
-                    # Allocate a list to receive the slices from all ranks.
-                    # Each slice is expected to have the same shape as 'param'.
-                    gathered_slices = [torch.empty_like(param) for _ in range(world_size)]
-                    # Perform an all_gather so that every rank collects all slices.
-                    torch.distributed.all_gather(gathered_slices, param, group=group)
-                    
-                    # Only on the source rank do we concatenate the slices.
-                    full_param = torch.cat(gathered_slices, dim=recipe["tp"]).to(torch.bfloat16)
+            import re  # For computing global keys from layer numbers
+            # Initialize pipeline parallel group information.
+            pp_group = parallel_state.get_training_pipeline_model_parallel_group()
+            pp_world_size = torch.distributed.get_world_size(pp_group)
+            my_pp_rank = parallel_state.get_training_pipeline_model_parallel_rank()
+            pp_global_rank_ids = parallel_state.get_all_rank_ids_in_group(pp_group)
+            
+            # Build a mapping on each PP rank from a computed global key to the raw state dict key.
+            # The global key is computed by replacing the local layer number (after "layers.")
+            # with its corresponding global layer number (if applicable).
+            local_map = {}
+            for key in self.state_dict().keys():
+                local_layer = CONVERTER.get_local_layer_num(key)
+                if local_layer is not None:
+                    global_layer = CONVERTER.get_global_layer_num(key, self.cfg)
+                    # Replace the first occurrence of the digits after "layers." with the global layer number.
+                    global_key = re.sub(r'(?<=layers\.)\d+', str(global_layer), key, count=1)
                 else:
-                    full_param = torch.clone(param)
+                    global_key = key
+                local_map[global_key] = key
 
-                if torch.distributed.get_rank() == parallel_state.get_training_tensor_model_parallel_src_rank():
-                    if recipe.get("hf_func", None) is not None:
-                        hf_name_param_mapping = recipe["hf_func"](full_param, self.cfg)
-                        hf_name_param_mapping = {k.format_map(format_dict): v for (k, v) in hf_name_param_mapping.items()}
-                    elif recipe.get("hf", None) is not None:
-                        hf_name_param_mapping = {recipe["hf"].format_map(format_dict): full_param}
+            # Gather the local maps from all PP ranks (only lightweight key info is gathered).
+            all_maps = [None] * pp_world_size
+            torch.distributed.all_gather_object(all_maps, local_map, group=pp_group)
+            
+            # Build the union over global keys and assign an owner (the rank with the smallest PP rank).
+            union_global_map = {}
+            for pp_rank, omap in enumerate(all_maps):
+                for gk, raw_key in omap.items():
+                    if gk not in union_global_map or pp_global_rank_ids[pp_rank] < union_global_map[gk][0]:
+                        union_global_map[gk] = (pp_global_rank_ids[pp_rank], raw_key)
                     else:
-                        NotImplementedError(f"No conversion recipe found for {name}")
+                        print(f"WARNING: {gk} already in union_global_map when gathering keys", flush=True)
+
+            merged_cpu_param_dict = {}
+   
+            # Process each parameter (by its unique global key) one at a time.
+            for gk in sorted(union_global_map.keys()):
+                ptime = time.time()
+                owner_pp_global_rank, owner_raw_key = union_global_map[gk]
+
+                # Only the owner PP rank has the parameter locally.
+                if torch.distributed.get_rank() == owner_pp_global_rank:
+                    param = self.state_dict()[owner_raw_key]
+                    
+                    # Retrieve layer identification info using the conversion helpers.
+                    local_layer = CONVERTER.get_local_layer_num(owner_raw_key)
+                    global_layer = CONVERTER.get_global_layer_num(owner_raw_key, self.cfg) if local_layer is not None else None
+                    format_dict = SafeDict(l=local_layer, gl=global_layer)
+                    
+                    # Use the conversion dict to get the appropriate recipe for this parameter.
+                    formatted_mapping = {k.format_map(format_dict): rec for k, rec in CONVERTER.mcore_te_to_hf_llama.items()}
+                    recipe = formatted_mapping.get(owner_raw_key, None)
+                    if recipe is None:
+                        print(f"WARNING: {owner_raw_key} has no recipe mapping for conversion", flush=True)
+                        hf_mapping = {'None': None}
+                    else:
+                        # If the parameter is TP-sharded, gather its slices on GPU.
+                        if recipe.get("tp", None) is not None:
+                            tp_group = parallel_state.get_training_tensor_model_parallel_group()
+                            tp_world_size = torch.distributed.get_world_size(tp_group)
+                            gathered_slices = [torch.empty_like(param) for _ in range(tp_world_size)]
+                            torch.distributed.all_gather(gathered_slices, param, group=tp_group)
+                            full_param = torch.cat(gathered_slices, dim=recipe["tp"]).to(torch.bfloat16)
+                        else:
+                            full_param = torch.clone(param).to(torch.bfloat16)
+                        
+                        # Convert the parameter using the provided function or mapping.
+                        if recipe.get("hf_func", None) is not None:
+                            hf_mapping = recipe["hf_func"](full_param, self.cfg)
+                            hf_mapping = {k.format_map(format_dict): v for k, v in hf_mapping.items()}
+                        elif recipe.get("hf", None) is not None:
+                            hf_mapping = {recipe["hf"].format_map(format_dict): full_param}
+                        else:
+                            raise NotImplementedError(f"No conversion recipe found for {owner_raw_key}")
+                else:
+                    hf_mapping = None  # Non-owner ranks will receive the converted tensors.
                 
-                # Save param with proper error handling and permissions
-                if torch.cuda.current_device() == 0:
-                    print(f"CONVERTED {name} with out shape {[(n, v.shape) for n, v in hf_name_param_mapping.items()]}")
-                    cpu_param_dict.update({k: v.cpu() for k, v in hf_name_param_mapping.items()})
-                    print("Memory free before del", torch.cuda.mem_get_info()[0] / 1024**3, flush=True)
-                    torch.cuda.synchronize()
-                    for k, v in hf_name_param_mapping.items():
-                        del v
-                    print("Memory free after del", torch.cuda.mem_get_info()[0] / 1024**3, flush=True)
-                del full_param
+                # Broadcast the list of target HF parameter keys from the owner.
+                if torch.distributed.get_rank() == owner_pp_global_rank:
+                    target_keys = [list(hf_mapping.keys())]
+                else:
+                    target_keys = [None]  # Placeholder to be filled by broadcast.
+                
+                torch.distributed.broadcast_object_list(target_keys, src=owner_pp_global_rank, group=pp_group)
+                if 'None' in target_keys[0]:
+                    continue
+                
+                # For each converted tensor (could be more than one per original parameter), broadcast it individually.
+                for target_key in target_keys[0]:
+                    if torch.distributed.get_rank() == owner_pp_global_rank:
+                        tensor_to_send = hf_mapping[target_key]
+                    else:
+                        tensor_to_send = None
+                    # Broadcast tensor metadata (shape and dtype) to allocate GPU buffer on receiving ranks.
+                    meta = [None]
+                    if torch.distributed.get_rank() == owner_pp_global_rank:
+                        meta[0] = (tensor_to_send.shape, str(tensor_to_send.dtype))
+                    torch.distributed.broadcast_object_list(meta, src=owner_pp_global_rank, group=pp_group)
+                    shape, dtype_str = meta[0]
+                    dtype = getattr(torch, dtype_str.split('.')[-1])
+                    if torch.distributed.get_rank() != owner_pp_global_rank:
+                        tensor_to_send = torch.empty(*shape, dtype=dtype, device=torch.cuda.current_device())
+                    torch.distributed.broadcast(tensor_to_send, src=owner_pp_global_rank, group=pp_group)
+                    merged_cpu_param_dict[target_key] = tensor_to_send.cpu()
+                    del tensor_to_send
+                
+                # Cleanup on the owner side.
+                if torch.distributed.get_rank() == owner_pp_global_rank:
+                    if 'full_param' in locals():
+                        del full_param
+                    if 'param' in locals():
+                        del param
+                    if 'hf_mapping' in locals():
+                        del hf_mapping
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print(f"Time taken to convert {gk} {time.time() - ptime}", flush=True)
             gc.collect()
             torch.cuda.empty_cache()
-            print("Memory free gc collect", torch.cuda.mem_get_info()[0] / 1024**3, flush=True)
-
-            # Copy HF jsons to CPU ramdisk with proper permissions
+            print("Finished parameter-by-parameter gathering over PP with conversion mapping.", flush=True)
+        
+            # Copy HF jsons to CPU ramdisk with proper permissions and save the gathered parameters.
             if torch.cuda.current_device() == 0:
                 try:
-                    os.makedirs(out_dir, exist_ok=True, mode=777)
-                    #os.chmod(out_dir, 0o777)  # Make dir readable/writable by all
+                    os.makedirs(out_dir, exist_ok=True, mode=0o777)
                     for file in os.listdir(source_hf_jsons_dir):
-                        src = os.path.join(source_hf_jsons_dir, file)
-                        dst = os.path.join(out_dir, file)
-                        shutil.copy(src, dst)
-                        os.chmod(dst, 666)  # Make file readable/writable by all
+                        if file.endswith('.json') and not file.endswith('.index.json'):
+                            src = os.path.join(source_hf_jsons_dir, file)
+                            dst = os.path.join(out_dir, file)
+                            shutil.copy(src, dst)
+                            os.chmod(dst, 0o666)
                 except Exception as e:
                     print(f"Error copying HF json files: {e}", flush=True)
                     raise
-
+        
                 try:
-                    # path = os.path.join(out_dir, "params.safetensors")
-                    path = out_dir
-                    #parallel_save_cpu_state_dict(cpu_param_dict, path, num_chunks=8, delete_existing=True)
-                    save_file(cpu_param_dict, os.path.join(out_dir, "params.safetensors"))
+                    ptime = time.time()
+                    save_file(merged_cpu_param_dict, os.path.join(out_dir, f"params.safetensors"))
+                    print(f"Saved to {out_dir} {list(os.listdir(out_dir))} {time.time() - ptime}", flush=True)
                 except Exception as e:
                     print(f"Error saving params.safetensors: {e}", flush=True)
-                    if os.path.exists(path):
+                    if os.path.exists(out_dir):
                         try:
-                            os.remove(path)
-                        except:
+                            os.remove(out_dir)
+                        except Exception:
                             pass
                     raise
 

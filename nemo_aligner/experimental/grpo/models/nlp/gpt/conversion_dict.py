@@ -15,7 +15,9 @@
 import torch 
 import einops
 
-def get_layer_num(s):
+from nemo_aligner.utils import parallel_state
+
+def get_local_layer_num(s):
     """Assumes layer number is preceeded by 'layers.'"""
     segments = s.split('.')
     number = None
@@ -25,6 +27,18 @@ def get_layer_num(s):
                 number = int(segments[i+1])
                 break
     return number
+
+def get_global_layer_num(s, cfg):
+    """
+    Assumes layer number is preceeded by 'layers.
+    Assumes pipeline model parallel size is set.
+    In the state dict, the layer number is the local layer number (PP local).
+    This function converts the local layer number to the global layer number.
+    """
+    local_layer_num = get_local_layer_num(s)
+    global_layer_num = parallel_state.get_training_pipeline_model_parallel_rank() * cfg.num_layers // parallel_state.get_training_pipeline_model_parallel_world_size() + local_layer_num
+    return global_layer_num
+
 
 def split_qkv_llama(gathered_mcore_qkv_layer, cfg):
     hidden_size = cfg.hidden_size
@@ -56,9 +70,9 @@ def split_qkv_llama(gathered_mcore_qkv_layer, cfg):
     ## k_slice = [8, 18, 28, ... 68, 78]
     ## v_slice = [9, 19, 29, ... 69, 79]
 
-    q_name = 'model.layers.{l}.self_attn.q_proj.weight'
-    k_name = 'model.layers.{l}.self_attn.k_proj.weight'
-    v_name = 'model.layers.{l}.self_attn.v_proj.weight'
+    q_name = 'model.layers.{gl}.self_attn.q_proj.weight'
+    k_name = 'model.layers.{gl}.self_attn.k_proj.weight'
+    v_name = 'model.layers.{gl}.self_attn.v_proj.weight'
     q = qkv_weights[q_slice].reshape(-1, hidden_size)
     k = qkv_weights[k_slice].reshape(-1, hidden_size)
     v = qkv_weights[v_slice].reshape(-1, hidden_size)
@@ -75,8 +89,8 @@ def split_fc1_gate_down_llama(gathered_mcore_fc1, cfg):
     gathered_mcore_fc1 = einops.rearrange(gathered_mcore_fc1, '(t c d) a1 ->  c (t d) a1', c=2, t=tp)
     mlp_gate_proj_weight = gathered_mcore_fc1[0]
     mlp_up_proj_weight = gathered_mcore_fc1[1]
-    mlp_gate_proj_base_name = 'model.layers.{l}.mlp.gate_proj.weight'
-    mlp_up_proj_base_name = 'model.layers.{l}.mlp.up_proj.weight'
+    mlp_gate_proj_base_name = 'model.layers.{gl}.mlp.gate_proj.weight'
+    mlp_up_proj_base_name = 'model.layers.{gl}.mlp.up_proj.weight'
     return {mlp_up_proj_base_name: mlp_up_proj_weight, mlp_gate_proj_base_name: mlp_gate_proj_weight}
 
 
@@ -84,11 +98,11 @@ mcore_te_to_hf_llama = {
     'model.embedding.word_embeddings.weight': {"tp": 0, "hf":"model.embed_tokens.weight"},
     'model.decoder.final_layernorm.weight': {"hf": "model.norm.weight"},
     'model.output_layer.weight': {"tp": 0, "hf":"lm_head.weight"},
-    'model.decoder.layers.{l}.self_attention.linear_proj.weight': {"tp":1, "hf":"model.layers.{l}.self_attn.o_proj.weight"},
+    'model.decoder.layers.{l}.self_attention.linear_proj.weight': {"tp":1, "hf":"model.layers.{gl}.self_attn.o_proj.weight"},
     'model.decoder.layers.{l}.self_attention.linear_qkv.weight': {"tp":0, "hf_func": split_qkv_llama},
-    'model.decoder.layers.{l}.self_attention.linear_qkv.layer_norm_weight': {"hf": "model.layers.{l}.input_layernorm.weight"},
+    'model.decoder.layers.{l}.self_attention.linear_qkv.layer_norm_weight': {"hf": "model.layers.{gl}.input_layernorm.weight"},
     'model.decoder.layers.{l}.mlp.linear_fc1.weight': {"tp": 0, "hf_func": split_fc1_gate_down_llama},
-    'model.decoder.layers.{l}.mlp.linear_fc1.layer_norm_weight': {"hf": "model.layers.{l}.post_attention_layernorm.weight"},
-    'model.decoder.layers.{l}.mlp.linear_fc2.weight': {"tp": 1, "hf": "model.layers.{l}.mlp.down_proj.weight"},
+    'model.decoder.layers.{l}.mlp.linear_fc1.layer_norm_weight': {"hf": "model.layers.{gl}.post_attention_layernorm.weight"},
+    'model.decoder.layers.{l}.mlp.linear_fc2.weight': {"tp": 1, "hf": "model.layers.{gl}.mlp.down_proj.weight"},
 }
 
