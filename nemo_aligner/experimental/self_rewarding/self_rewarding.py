@@ -1270,9 +1270,9 @@ class SelfRewardingTrainer:
                                 }
                             )
 
-                self.model.finish_inference()
-                if self.use_trtllm_generation:
-                    self.trtllm_generate.free()
+                    self.model.finish_inference()
+                    if self.use_trtllm_generation:
+                        self.trtllm_generate.free()
 
                 original_gbs_size = len(buffer[0]["prompt_lengths"])
                 for batch in divide_chunks(final_buffer, original_gbs_size):
@@ -1385,115 +1385,118 @@ class SelfRewardingTrainer:
                     and (rollout_len := sum([len(x[-1]) for x in meta_buffer_pending]))
                     >= self.rollout_micro_batch_size
                 ):
-                    self.model.prepare_for_inference()
-                    if self.use_trtllm_generation:
-                        # at this point self.model is the reference policy from cpu_weight_swap
-                        self.trtllm_generate.refit(self.model)
-                        clear_memory()
-
-                    num_rollouts = rollout_len // self.rollout_micro_batch_size
-                    meta_buffer_unroll_grp = [(idx, y) for idx, x in enumerate(meta_buffer_pending) for y in x[-1]]
-                    for _ in range(num_rollouts):
-                        meta_buffer_unroll = [
-                            meta_buffer_unroll_grp.pop(0) for _ in range(self.rollout_micro_batch_size)
-                        ]
-                        meta_reward_scores = self.get_rewards_meta([x[-1] for x in meta_buffer_unroll])
-                        meta_pairs = []
-                        reroll = [
-                            (grp, [y[-1] for y in x])
-                            for grp, x in itertools.groupby(meta_buffer_unroll, lambda kk: kk[0])
-                        ]
-                        for tup in reroll:
-                            N = len(tup[-1])
-                            bad_meta_sample = False
-                            # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
-                            # we need to find a chosen and reject index in this list
-                            reward_tokens_raw = meta_buffer_pending[tup[0]][0]
-                            p = len(reward_tokens_raw)
-
-                            elo_scores = self.get_elo_scores(p, N, meta_reward_scores)
-                            if len(np.unique(elo_scores)) < p:
-                                bad_meta_sample = True
-                                # print("BAD_META_SAMPLE_1")
-
-                            meta_chosen_idx = np.argmax(elo_scores)
-                            meta_reject_idx = np.argmin(elo_scores)
-
-                            chosen_prompt_len = reward_tokens_raw[meta_chosen_idx][1]
-                            chosen_gen_len = reward_tokens_raw[meta_chosen_idx][2]
-                            chosen_tokens = reward_tokens_raw[meta_chosen_idx][0][:chosen_gen_len]
-                            reject_prompt_len = reward_tokens_raw[meta_reject_idx][1]
-                            reject_gen_len = reward_tokens_raw[meta_reject_idx][2]
-                            reject_tokens = reward_tokens_raw[meta_reject_idx][0][:reject_gen_len]
-                            meta_bad_ends = sum(
-                                ~np.array(
-                                    [reward_tokens_raw[meta_chosen_idx][-1], reward_tokens_raw[meta_reject_idx][-1]]
-                                )
-                            )
-
-                            if torch.equal(chosen_tokens, reject_tokens):
-                                bad_meta_sample = True
-                                # print("BAD_META_SAMPLE_2")
-
-                            chosen_score = self.parse_reward_fn(
-                                self.tokenizer.ids_to_text(chosen_tokens[chosen_prompt_len:chosen_gen_len].tolist())
-                            )
-                            reject_score = self.parse_reward_fn(
-                                self.tokenizer.ids_to_text(reject_tokens[reject_prompt_len:reject_gen_len].tolist())
-                            )
-                            # print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_ACTUAL_REWARDS  CHOSEN[ {chosen_score} ]  REJECT[ {reject_score} ]")
-                            if chosen_score is None or reject_score is None or chosen_score == reject_score:
-                                bad_meta_sample = True
-                                # print("BAD_META_SAMPLE_3")
-
-                            if (
-                                meta_bad_ends == 0
-                                and not bad_meta_sample
-                                and (
-                                    (cnt_tracker / sum(cnt_tracker).clip(min=1.0))[int(chosen_score)]
-                                    < self.meta_max_relative_pcnt
-                                )
-                                and (
-                                    # we dedicate 20% of the available training steps to the meta-judge, and then dole
-                                    # that out per score class
-                                    cnt_tracker[int(chosen_score)]
-                                    < int(
-                                        (self.num_steps_per_epoch * original_gbs_size * 0.2)
-                                        / (self.judge_score_high - self.judge_score_low)
+                    with cpu_weight_swap(
+                        self.model, self.model.ref_policy_state_dict, megatron_amp_O2=self.model.megatron_amp_O2
+                    ):
+                        self.model.prepare_for_inference()
+                        if self.use_trtllm_generation:
+                            # at this point self.model is the reference policy from cpu_weight_swap
+                            self.trtllm_generate.refit(self.model)
+                            clear_memory()
+    
+                        num_rollouts = rollout_len // self.rollout_micro_batch_size
+                        meta_buffer_unroll_grp = [(idx, y) for idx, x in enumerate(meta_buffer_pending) for y in x[-1]]
+                        for _ in range(num_rollouts):
+                            meta_buffer_unroll = [
+                                meta_buffer_unroll_grp.pop(0) for _ in range(self.rollout_micro_batch_size)
+                            ]
+                            meta_reward_scores = self.get_rewards_meta([x[-1] for x in meta_buffer_unroll])
+                            meta_pairs = []
+                            reroll = [
+                                (grp, [y[-1] for y in x])
+                                for grp, x in itertools.groupby(meta_buffer_unroll, lambda kk: kk[0])
+                            ]
+                            for tup in reroll:
+                                N = len(tup[-1])
+                                bad_meta_sample = False
+                                # list of tuples of (t,s,e,end), one tuple per self.num_evals_to_average
+                                # we need to find a chosen and reject index in this list
+                                reward_tokens_raw = meta_buffer_pending[tup[0]][0]
+                                p = len(reward_tokens_raw)
+    
+                                elo_scores = self.get_elo_scores(p, N, meta_reward_scores)
+                                if len(np.unique(elo_scores)) < p:
+                                    bad_meta_sample = True
+                                    # print("BAD_META_SAMPLE_1")
+    
+                                meta_chosen_idx = np.argmax(elo_scores)
+                                meta_reject_idx = np.argmin(elo_scores)
+    
+                                chosen_prompt_len = reward_tokens_raw[meta_chosen_idx][1]
+                                chosen_gen_len = reward_tokens_raw[meta_chosen_idx][2]
+                                chosen_tokens = reward_tokens_raw[meta_chosen_idx][0][:chosen_gen_len]
+                                reject_prompt_len = reward_tokens_raw[meta_reject_idx][1]
+                                reject_gen_len = reward_tokens_raw[meta_reject_idx][2]
+                                reject_tokens = reward_tokens_raw[meta_reject_idx][0][:reject_gen_len]
+                                meta_bad_ends = sum(
+                                    ~np.array(
+                                        [reward_tokens_raw[meta_chosen_idx][-1], reward_tokens_raw[meta_reject_idx][-1]]
                                     )
                                 )
-                            ):
-                                meta_pairs.append(
-                                    {
-                                        "chosen_tokens": chosen_tokens,
-                                        "chosen_prompt_len": chosen_prompt_len,
-                                        "chosen_gen_len": chosen_gen_len,
-                                        "chosen_score": chosen_score,
-                                        "reject_tokens": reject_tokens,
-                                        "reject_prompt_len": reject_prompt_len,
-                                        "reject_gen_len": reject_gen_len,
-                                        "reject_score": reject_score,
-                                        "bad_sample": bad_meta_sample,
-                                        "bad_ends": meta_bad_ends,
-                                    }
+    
+                                if torch.equal(chosen_tokens, reject_tokens):
+                                    bad_meta_sample = True
+                                    # print("BAD_META_SAMPLE_2")
+    
+                                chosen_score = self.parse_reward_fn(
+                                    self.tokenizer.ids_to_text(chosen_tokens[chosen_prompt_len:chosen_gen_len].tolist())
                                 )
-                                cnt_tracker[int(chosen_score)] += 1
-
-                            if N <= len(meta_buffer_pending[tup[0]][-1]):
-                                [meta_buffer_pending[tup[0]][-1].pop(0) for _ in range(N)]
-                            else:
-                                raise RuntimeError(
-                                    f"{N=} should never be greater than buffer [ {meta_buffer_pending[tup[0]]} ]"
+                                reject_score = self.parse_reward_fn(
+                                    self.tokenizer.ids_to_text(reject_tokens[reject_prompt_len:reject_gen_len].tolist())
                                 )
-
-                        meta_buffer_done.extend(meta_pairs)
-
-                    del meta_buffer_unroll_grp
-                    meta_buffer_pending = [x for x in meta_buffer_pending if len(x[-1]) > 0]
-
-                    self.model.finish_inference()
-                    if self.use_trtllm_generation:
-                        self.trtllm_generate.free()
+                                # print(f"*** Iteration [ {self.iteration} ] Step [ {self.step} ] META_ACTUAL_REWARDS  CHOSEN[ {chosen_score} ]  REJECT[ {reject_score} ]")
+                                if chosen_score is None or reject_score is None or chosen_score == reject_score:
+                                    bad_meta_sample = True
+                                    # print("BAD_META_SAMPLE_3")
+    
+                                if (
+                                    meta_bad_ends == 0
+                                    and not bad_meta_sample
+                                    and (
+                                        (cnt_tracker / sum(cnt_tracker).clip(min=1.0))[int(chosen_score)]
+                                        < self.meta_max_relative_pcnt
+                                    )
+                                    and (
+                                        # we dedicate 20% of the available training steps to the meta-judge, and then dole
+                                        # that out per score class
+                                        cnt_tracker[int(chosen_score)]
+                                        < int(
+                                            (self.num_steps_per_epoch * original_gbs_size * 0.2)
+                                            / (self.judge_score_high - self.judge_score_low)
+                                        )
+                                    )
+                                ):
+                                    meta_pairs.append(
+                                        {
+                                            "chosen_tokens": chosen_tokens,
+                                            "chosen_prompt_len": chosen_prompt_len,
+                                            "chosen_gen_len": chosen_gen_len,
+                                            "chosen_score": chosen_score,
+                                            "reject_tokens": reject_tokens,
+                                            "reject_prompt_len": reject_prompt_len,
+                                            "reject_gen_len": reject_gen_len,
+                                            "reject_score": reject_score,
+                                            "bad_sample": bad_meta_sample,
+                                            "bad_ends": meta_bad_ends,
+                                        }
+                                    )
+                                    cnt_tracker[int(chosen_score)] += 1
+    
+                                if N <= len(meta_buffer_pending[tup[0]][-1]):
+                                    [meta_buffer_pending[tup[0]][-1].pop(0) for _ in range(N)]
+                                else:
+                                    raise RuntimeError(
+                                        f"{N=} should never be greater than buffer [ {meta_buffer_pending[tup[0]]} ]"
+                                    )
+    
+                            meta_buffer_done.extend(meta_pairs)
+    
+                        del meta_buffer_unroll_grp
+                        meta_buffer_pending = [x for x in meta_buffer_pending if len(x[-1]) > 0]
+    
+                        self.model.finish_inference()
+                        if self.use_trtllm_generation:
+                            self.trtllm_generate.free()
 
     def set_rho_by_iteration(self, iteration):
         if isinstance(self.spin_config["length_control"], (float, int)):
