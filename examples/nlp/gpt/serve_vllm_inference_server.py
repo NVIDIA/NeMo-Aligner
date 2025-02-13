@@ -71,6 +71,7 @@ def worker_process(in_queue, out_queue, load_path, tp):
                 enforce_eager=True, 
                 gpu_memory_utilization=.5, 
                 enable_sleep_mode=True,
+                trust_remote_code=True,
             )
             self.running = True
             print("vLLM Inference Server started.")
