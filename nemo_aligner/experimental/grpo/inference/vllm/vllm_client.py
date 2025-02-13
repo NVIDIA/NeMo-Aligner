@@ -59,7 +59,7 @@ class VLLMClient:
         self.generate_cpu_mp_gloo_group = None
         self.free_cpu_mp_gloo_group = None
         self.server_started = False
-        self.reshard_context = parallel_state.inference_reshard_region() if use_reshard else nullcontext()
+        self.reshard_context = lambda: parallel_state.inference_reshard_region() if use_reshard else nullcontext()
         
     def build_cpu_mp_gloo_group(self, cpu_group_name):
         if getattr(self, f"{cpu_group_name}_cpu_mp_gloo_group") is not None:
@@ -109,10 +109,11 @@ class VLLMClient:
         """
         Start the remote vLLM inference server.
         """
-        context = nullcontext() if not parallel_state.is_inference_reshard() else self.reshard_context
+        context = nullcontext() if parallel_state.is_inference_reshard() else self.reshard_context()
         with context:
             self.build_cpu_mp_gloo_group("refit") # will become a no-op if already built
             ret_val = None
+            print(f"MP source rank: {parallel_state.get_model_parallel_src_rank()}", flush=True)
             if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
                 if not self.server_started:
                     url = f"{self.base_url}/start"
@@ -217,7 +218,7 @@ class VLLMClient:
 
     def free(self):
         """Put the vLLM inference server to sleep."""
-        context = nullcontext() if not parallel_state.is_inference_reshard() else self.reshard_context
+        context = nullcontext() if parallel_state.is_inference_reshard() else self.reshard_context()
         with context:
             self.build_cpu_mp_gloo_group("free") # will become a no-op if already built
             data = None
@@ -236,7 +237,7 @@ class VLLMClient:
     
     def shutdown(self):
         """Shutdown the vLLM inference server."""
-        context = nullcontext() if not parallel_state.is_inference_reshard() else self.reshard_context
+        context = nullcontext() if parallel_state.is_inference_reshard() else self.reshard_context()
         with context:
             data = None
             if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():

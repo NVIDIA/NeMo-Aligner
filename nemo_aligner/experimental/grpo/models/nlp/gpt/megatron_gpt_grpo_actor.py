@@ -143,6 +143,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 tokenizer=self.tokenizer,
                 checkpoint_path=self.cfg.grpo.share_dir,
             )
+            self.pinned_cpu_state_dict = {}
         elif backend_type == "trt_llm_pytorch":
 
             from nemo_aligner.experimental.grpo.inference.trtllm_pytorch.trtllm_pytorch_client import TRTLLMPytorchClient 
@@ -406,7 +407,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     else:
                         print(f"WARNING: {gk} already in union_global_map when gathering keys", flush=True)
 
-            merged_cpu_param_dict = {}
+            #merged_cpu_param_dict = {}
    
             # Process each parameter (by its unique global key) one at a time.
             for gk in sorted(union_global_map.keys()):
@@ -476,7 +477,12 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     if torch.distributed.get_rank() != owner_pp_global_rank:
                         tensor_to_send = torch.empty(*shape, dtype=dtype, device=torch.cuda.current_device())
                     torch.distributed.broadcast(tensor_to_send, src=owner_pp_global_rank, group=pp_group)
-                    merged_cpu_param_dict[target_key] = tensor_to_send.cpu()
+                    # use pinned cpu memory
+                    if torch.cuda.current_device() == 0:
+                        if target_key not in self.pinned_cpu_state_dict:
+                            self.pinned_cpu_state_dict[target_key] = tensor_to_send.cpu().pin_memory()
+                        else:
+                            self.pinned_cpu_state_dict[target_key].copy_(tensor_to_send)
                     del tensor_to_send
                 
                 # Cleanup on the owner side.
@@ -510,7 +516,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         
                 try:
                     ptime = time.time()
-                    save_file(merged_cpu_param_dict, os.path.join(out_dir, f"params.safetensors"))
+                    save_file(self.pinned_cpu_state_dict, os.path.join(out_dir, f"params.safetensors"))
                     print(f"Saved to {out_dir} {list(os.listdir(out_dir))} {time.time() - ptime}", flush=True)
                 except Exception as e:
                     print(f"Error saving params.safetensors: {e}", flush=True)
