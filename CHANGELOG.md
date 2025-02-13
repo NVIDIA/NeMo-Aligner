@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 -->
 
 ## [Next Version]
+- Added context parallel (CP) support for DPO and validated CP support without sequence packing for SFT. To enable context parallel without sequence packing, simply set `model.context_parallel_size` in your config.
+    - _Note_: Context parallel is also compatible with sequence packing for DPO, but divergence has been observed in rare cases when using Transformer Engine version 1.13. This issue is under active investigation. If you try running DPO with both context parallelism and sequence packing and observe divergence, either:
+        1. disable sequence packing, or
+        2. if your model does not use grouped query attention (GQA), consider downgrading the Transformer Engine version in your container. Note that TE version 1.13 is required to support CP with GQA.
 
 ## NVIDIA NeMo-Aligner 0.6.0
 

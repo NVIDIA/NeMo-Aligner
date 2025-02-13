@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import collections
 import json
 import os
 from dataclasses import dataclass
@@ -118,10 +119,54 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
         pad_chosen_rejected_to_max=False,
     )
 
+    max_seq_length = dataset.seq_length
     combined_dataset = []
     for item in dataset:
         if item["ignore_example"]:
             continue
+
+        cp_size = cfg.model.get("context_parallel_size", 1)
+
+        # if context parallel is used, each individual data length in one packed dataset sample
+        # needs to be a multiple of (cp_size * 2): https://github.com/NVIDIA/TransformerEngine/pull/641
+        if cp_size > 1:
+            pad_seq_length_to_mult = max(16, cp_size * 2)
+
+            def pre_pad_dataset(data, max_seq_length, max_length_to_pad, key, pad_id):
+                """
+                pad each individual data point to the length of max_length
+                """
+                assert max_seq_length >= max_length_to_pad
+                val = data[key]
+                if len(val) <= max_length_to_pad:
+                    # because input_ids are truncated by 1 for inputs and labels,
+                    # we add 1 extra padding here to make sure padded inputs and labels
+                    # are a multiple of (cp_size * 2)
+                    val = torch.cat((val, torch.tensor([pad_id] * (max_length_to_pad - len(val) + 1))))
+                    data[key] = val
+                elif len(val) > max_seq_length:
+                    logging.info(
+                        f"""The current sequence length {len(val)} for packing is
+                            larger than the max_seq_length specified ({max_seq_length}).
+                            The current sequence length is truncated to the size of max_seq_length.
+                            Please consider increase the sequence packing size"""
+                    )
+                    data[key] = val[:max_seq_length]
+                return
+
+            ceil_to_nearest = lambda n, m: (n + m - 1) // m * m
+            max_length_to_pad_chosen = min(
+                max_seq_length, ceil_to_nearest(len(item["chosen"]), pad_seq_length_to_mult)
+            )
+            max_length_to_pad_rejected = min(
+                max_seq_length, ceil_to_nearest(len(item["rejected"]), pad_seq_length_to_mult)
+            )
+            pre_pad_dataset(item, max_seq_length, max_length_to_pad_chosen, "chosen", tokenizer.eos_id)
+            pre_pad_dataset(item, max_seq_length, max_length_to_pad_rejected, "rejected", tokenizer.eos_id)
+
+            pre_pad_dataset(item, max_seq_length, max_length_to_pad_chosen, "chosen_labels", -100)
+            pre_pad_dataset(item, max_seq_length, max_length_to_pad_rejected, "rejected_labels", -100)
+
         input_ids = torch.cat((item["chosen"], item["rejected"])).numpy()
         labels = torch.cat((item["chosen_labels"], item["rejected_labels"])).numpy()
         reward = torch.tensor([item["chosen_reward"], item["rejected_reward"]]).numpy()
@@ -137,6 +182,46 @@ def tokenize_dataset(cfg: "DictConfig", tokenizer_type):
         combined_dataset.append(new_item)
 
     return np.array(combined_dataset)
+
+
+""" modified version of https://github.com/NVIDIA/NeMo/blob/ea5ed67f7edc22c0f936d99a91e39a7c7f3860b3/nemo/utils/sequence_packing_utils.py#L100 
+which accounts for the fact that every example consists of a chosen and rejected response. """
+
+
+def create_hist(dataset: np.array, truncate_seq_len: int):
+    """
+    Creates a histogram of sequence lengths from a tokenized dataset.
+    This function analyzes the tokenized dataset and creates a histogram showing the distribution of sequence lengths.
+    Args:
+      dataset: A NumPy array containing the tokenized sequences. Each element is a dictionary that contains at minimum
+               the key `input_ids`.
+      truncate_seq_len: The maximum sequence length to consider in the histogram.
+    Returns:
+      sequences: A dictionary where keys are sequence lengths and values are lists of corresponding sequences from the dataset.
+      histogram: A list representing the histogram data (number of sequences for each length).
+    """
+    logging.info("Creating histogram from tokenized dataset...")
+
+    sequences = collections.defaultdict(list)
+    counts = [0] * (truncate_seq_len + 1)
+
+    for item_dict in dataset:
+        # Minus 2 here to account for the fact that transformer input and label have one less token than the full sequence
+        # Input is missing the last token and label is missing the first token (this way the tokens are aligned for next token prediction).
+        # We want pack size to be the length of the actual input and label.
+        # This is true of both the chosen and rejected sequences, which are packed into a single input, hence -2.
+        seq_len = len(item_dict["input_ids"]) - 2
+        sequences[seq_len].append(item_dict)
+        counts[seq_len] += 1
+
+    logging.debug("Histogram of sequence lengths")
+    logging.debug(counts)
+
+    histogram = []
+    for seq_len in range(truncate_seq_len + 1):
+        histogram.append(len(sequences[seq_len]))
+
+    return sequences, histogram
 
 
 ## modified version of https://github.com/NVIDIA/NeMo/blob/main/nemo/utils/sequence_packing_utils.py#L178 for DPO

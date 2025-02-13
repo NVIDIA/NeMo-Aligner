@@ -15,7 +15,7 @@
 import math
 from collections import defaultdict
 from statistics import mean
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 import torch
 import torch.distributed
@@ -132,6 +132,7 @@ class DPOTrainer:
         logger,
         ckpt_callback,
         run_timer,
+        pad_length_to_multiple_of: Optional[int] = None,
     ):
         self.model = model
         self.train_dataloader = train_dataloader
@@ -150,6 +151,19 @@ class DPOTrainer:
         self.consumed_samples = 0
 
         self.ckpt_callback = ckpt_callback
+
+        # TE requires that the first input dim is divisible by 8 and the second by 16 for fp8
+        # When using sequence parallel, sequence will further be split by TP size
+        # When using context parallel, sequence is split by CP size as well
+        min_pad_seq_length_to_mult = 16
+        min_pad_seq_length_to_mult = (
+            8 * model.cfg.get("tensor_model_parallel_size", 1) if model.cfg.get("sequence_parallel", False) else 16
+        )
+        min_pad_seq_length_to_mult *= model.cfg.get("context_parallel_size", 1)
+
+        if pad_length_to_multiple_of is None:
+            pad_length_to_multiple_of = -1
+        self.pad_seq_length_to_mult = max(pad_length_to_multiple_of, min_pad_seq_length_to_mult)
 
         # compute `max_steps`
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
@@ -365,7 +379,7 @@ class DPOTrainer:
         while True:
             try:
                 batch = next(iter_dataloader)
-                batch = self.collate_fn(batch)
+                batch = self.collate_fn(batch, pad_length_to_multiple_of=self.pad_seq_length_to_mult)
                 logprobs = self.model.get_ref_policy_logprobs(batch).cpu()
                 packed = "input_ids" in batch
                 if not packed:
