@@ -21,4 +21,7 @@ set -eoux pipefail
 
 PRETRAINED_CHECKPOINT_NEMO_FILE=${ALIGNER_CI_DIR}/checkpoints/tiny-llama3-results-nlayers2-hidden128-ffn448-nhead4-qgroup2-megatron_gpt.nemo \
 bash ../dpo.sh \
-    ++model.data.data_impl=jsonl \
+  ++model.data.data_impl=jsonl \
+  ++model.optim.name=mcore_distributed_optim \
+  ++model.context_parallel_size=2 \
+  2>&1 | tee $(basename $0).log

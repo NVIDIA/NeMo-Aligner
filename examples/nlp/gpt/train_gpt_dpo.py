@@ -139,6 +139,7 @@ def main(cfg) -> None:
     logger.log_hyperparams(OmegaConf.to_container(cfg))
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
+
     dpo_trainer = DPOTrainer(
         cfg=cfg.trainer.dpo,
         model=ptl_model,
@@ -153,11 +154,11 @@ def main(cfg) -> None:
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
-            pad_length_to_multiple_of=cfg.model.data.get("pad_length_to_multiple_of", None),
         ),
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
+        pad_length_to_multiple_of=cfg.model.data.get("pad_length_to_multiple_of", None),
     )
 
     if custom_trainer_state_dict is not None:
