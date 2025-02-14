@@ -486,7 +486,12 @@ def build_dataloader(
 ):
     """Buld dataloader given an input dataset."""
 
-    logging.info(f"Building dataloader with consumed samples: {consumed_samples}")
+    logging.info(
+        f"Building dataloader with consumed samples: {consumed_samples}, "
+        f"a DP rank of {parallel_state.get_data_parallel_rank()}, "
+        f"and a DP world size of {parallel_state.get_data_parallel_world_size()}"
+    )
+    
     # Common parameters for batch sampler creation
     common_params = {
         "total_samples": len(dataset),

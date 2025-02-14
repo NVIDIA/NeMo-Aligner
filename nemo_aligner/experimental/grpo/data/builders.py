@@ -13,8 +13,20 @@
 # limitations under the License.
 from functools import partial
 
+import torch
+
+from nemo.utils import logging
+from nemo.collections.nlp.data.language_modeling.megatron.megatron_batch_samplers import (
+    MegatronPretrainingBatchSampler,
+    MegatronPretrainingRandomBatchSampler,
+)
+from nemo.collections.nlp.data.language_modeling.megatron.data_samplers import (
+    MegatronPretrainingRandomSampler,
+    MegatronPretrainingSampler,
+)
 from nemo_aligner.data.nlp.builders import build_train_valid_test_datasets
 from nemo_aligner.experimental.grpo.data.datasets import AllTaskDataset, environment_collate_with_batch_max_sequence_length
+from nemo_aligner.experimental.grpo.utils import parallel_state
 
 build_train_valid_test_task_datasets = partial(build_train_valid_test_datasets, AllTaskDataset)
 
@@ -30,3 +42,50 @@ def environment_collate_with_pad_to_max_batch(max_seqlen, tokenizer_eos_id, cfg,
         generate_masks_and_position_ids=generate_masks_and_position_ids,
     )
 
+
+def build_dataloader(
+    cfg,
+    dataset,
+    consumed_samples,
+    mbs,
+    gbs,
+    drop_last=True,
+    pad_samples_to_global_batch_size=False,
+    collate_fn=None,
+    load_gbs=True,
+    use_random_sampler=True,
+):
+    """Buld dataloader given an input dataset."""
+
+    logging.info(
+        f"Building dataloader with consumed samples: {consumed_samples}, "
+        f"a DP rank of {parallel_state.get_data_parallel_rank()}, "
+        f"and a DP world size of {parallel_state.get_data_parallel_world_size()}"
+    )
+ 
+    # Common parameters for batch sampler creation
+    common_params = {
+        "total_samples": len(dataset),
+        "consumed_samples": consumed_samples,
+        "micro_batch_size": mbs,
+        "data_parallel_rank": parallel_state.get_data_parallel_rank(),
+        "data_parallel_size": parallel_state.get_data_parallel_world_size(),
+        "drop_last": drop_last,
+        "global_batch_size": gbs,
+        "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
+    }
+
+    if use_random_sampler:
+        cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
+        common_params["seed"] = cfg.model.seed
+    else:
+        cls = MegatronPretrainingBatchSampler if load_gbs else MegatronPretrainingSampler
+    batch_sampler = cls(**common_params)
+
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_sampler=batch_sampler,
+        num_workers=cfg.model.data.num_workers,
+        pin_memory=True,
+        collate_fn=collate_fn,
+    )
