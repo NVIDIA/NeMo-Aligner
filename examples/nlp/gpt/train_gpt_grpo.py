@@ -23,10 +23,9 @@ from nemo.utils import logging
 from nemo.utils.exp_manager import exp_manager
 from nemo_aligner.experimental.grpo.algorithms.grpo import GRPOTrainer
 from nemo_aligner.data.nlp.builders import (
-    build_dataloader,
     collate_with_pad_to_max_batch,
 )
-from nemo_aligner.experimental.grpo.data.builders import build_train_valid_test_task_datasets, environment_collate_with_pad_to_max_batch
+from nemo_aligner.experimental.grpo.data.builders import build_train_valid_test_task_datasets, environment_collate_with_pad_to_max_batch, build_dataloader
 from nemo_aligner.experimental.grpo.data.datasets import AllTaskDataset
 from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
 from nemo_aligner.experimental.grpo.experience.environments.math_environment import MathEnvironment
