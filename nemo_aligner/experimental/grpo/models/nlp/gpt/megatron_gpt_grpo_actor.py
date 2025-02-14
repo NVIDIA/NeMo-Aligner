@@ -39,7 +39,8 @@ from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModel
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.utils import logging
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
-from nemo_aligner.utils import parallel_state
+# from nemo_aligner.utils import parallel_state
+from nemo_aligner.experimental.grpo.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     broadcast_2d_tensor_within_pp,
     from_parallel_logits_to_logprobs,
@@ -70,6 +71,8 @@ from nemo_aligner.experimental.grpo.inference.utils.utils import parallel_save_c
 from nemo_aligner.experimental.grpo.inference.registry import get_backend, list_available_backends
 from nemo_aligner.experimental.grpo.models.nlp.gpt import conversion_dict as CONVERTER
 
+from tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
+
 class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
@@ -90,6 +93,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         # Initialize the inference backend
         self.inference_backend = None
+        self.prepare_for_inference_warmed_up = False
         # Collect backends from the configuration and check which ones are enabled
         enabled_backends = [
             name for name in cfg.grpo.inference_backend.config.keys() 
@@ -143,7 +147,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 tokenizer=self.tokenizer,
                 checkpoint_path=self.cfg.grpo.share_dir,
             )
-            self.pinned_cpu_state_dict = {}
+            self.shared_cpu_state_dict = SharedCPUMemoryTensorDict()
         elif backend_type == "trt_llm_pytorch":
 
             from nemo_aligner.experimental.grpo.inference.trtllm_pytorch.trtllm_pytorch_client import TRTLLMPytorchClient 
@@ -477,12 +481,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     if torch.distributed.get_rank() != owner_pp_global_rank:
                         tensor_to_send = torch.empty(*shape, dtype=dtype, device=torch.cuda.current_device())
                     torch.distributed.broadcast(tensor_to_send, src=owner_pp_global_rank, group=pp_group)
-                    # use pinned cpu memory
+                    # use shared cpu memory
                     if torch.cuda.current_device() == 0:
-                        if target_key not in self.pinned_cpu_state_dict:
-                            self.pinned_cpu_state_dict[target_key] = tensor_to_send.cpu().pin_memory()
-                        else:
-                            self.pinned_cpu_state_dict[target_key].copy_(tensor_to_send)
+                        self.shared_cpu_state_dict[target_key] = tensor_to_send
                     del tensor_to_send
                 
                 # Cleanup on the owner side.
@@ -516,8 +517,11 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         
                 try:
                     ptime = time.time()
-                    save_file(self.pinned_cpu_state_dict, os.path.join(out_dir, f"params.safetensors"))
-                    print(f"Saved to {out_dir} {list(os.listdir(out_dir))} {time.time() - ptime}", flush=True)
+                    if not self.prepare_for_inference_warmed_up:
+                        #save_file(self.shared_cpu_state_dict.as_dict(), os.path.join(out_dir, f"params.safetensors"))
+                        self.prepare_for_inference_warmed_up = True
+                        print(f"Saved to {out_dir} {list(os.listdir(out_dir))} {time.time() - ptime}", flush=True)
+                    torch.distributed.broadcast_object_list([self.shared_cpu_state_dict.get_metadata_dict()], src=torch.distributed.get_rank(), group=parallel_state.get_node_group())
                 except Exception as e:
                     print(f"Error saving params.safetensors: {e}", flush=True)
                     if os.path.exists(out_dir):
@@ -526,6 +530,16 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         except Exception:
                             pass
                     raise
+            else:
+                recv_metadata = [None]
+                torch.distributed.broadcast_object_list(
+                    recv_metadata,
+                    src=torch.distributed.get_rank() - torch.distributed.get_rank(group=parallel_state.get_node_group()),
+                    group=parallel_state.get_node_group()
+                )
+                self.shared_cpu_state_dict = SharedCPUMemoryTensorDict(
+                    communicable_metadata=recv_metadata[0]
+                )
 
         torch.distributed.barrier()
         print(f"MP group: {parallel_state.get_model_parallel_group()}", flush=True)
@@ -535,9 +549,16 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         if self.inference_backend:
             # Refitting or recompiling the inference model for generation
             print(f"Memory free before clear before refit {torch.cuda.mem_get_info()[0] / 1024**3:.2f} GB", flush=True)
+            print(f"reserved before clear before refit {torch.cuda.memory_reserved() / 1024**3:.2f} GB", flush=True)
+            print(f"allocated before clear before refit {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
             clear_memory()
             print(f"Memory free after clear before refit {torch.cuda.mem_get_info()[0] / 1024**3:.2f} GB", flush=True)  
-            self.inference_backend.refit(self.model)
+            print(f"reserved after clear before refit {torch.cuda.memory_reserved() / 1024**3:.2f} GB", flush=True)
+            print(f"allocated after clear before refit {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
+            if self.cfg.grpo.inference_backend.type == "vllm":
+                self.inference_backend.refit(self.shared_cpu_state_dict)
+            else:
+                self.inference_backend.refit(self.model)
             clear_memory()
             print(f"Memory free after clear after refit {torch.cuda.mem_get_info()[0] / 1024**3:.2f} GB", flush=True)
 
