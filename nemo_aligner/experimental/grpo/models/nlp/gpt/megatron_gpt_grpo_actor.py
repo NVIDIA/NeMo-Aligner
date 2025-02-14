@@ -372,6 +372,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         out_dir = self.cfg.grpo.share_dir #"/dev/shm/checkpoint_hf/"
 
         if torch.cuda.current_device() == 0:
+            print("### TRYING TO DO", self.cfg.hf_model_name_or_configs_dir)
+            print("### IS DIR", os.path.isdir(self.cfg.hf_model_name_or_configs_dir))
             if os.path.isdir(self.cfg.hf_model_name_or_configs_dir):
                 # If a directory is provided, use it directly to obtain all .json files.
                 source_hf_jsons_dir = self.cfg.hf_model_name_or_configs_dir
@@ -516,7 +518,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 try:
                     os.makedirs(out_dir, exist_ok=True, mode=0o777)
                     for file in os.listdir(source_hf_jsons_dir):
-                        if file.endswith('.json') and not file.endswith('.index.json'):
+                        if not file.endswith('.safetensors') and not os.path.isdir(os.path.join(source_hf_jsons_dir, file)) and not file.endswith('.index.json'):
                             src = os.path.join(source_hf_jsons_dir, file)
                             dst = os.path.join(out_dir, file)
                             shutil.copy(src, dst)
