@@ -29,6 +29,7 @@ _INFERENCE_RESHARD = False
 
 _GROUP_TO_RANKS_CACHE = {}
 _RESHARDED_DP_GROUP = None
+_NODE_GROUP = None
 
 
 def enable_inference_reshard_calls():
@@ -132,6 +133,33 @@ def get_pipeline_model_parallel_group():
 
 def is_model_parallel_src_rank():
     return torch.distributed.get_rank() == get_model_parallel_src_rank()
+
+def get_node_group():
+    global _NODE_GROUP
+    if _NODE_GROUP is None:
+        import socket
+        # Get the hostname of the current machine.
+        local_hostname = socket.gethostname()
+        world_size = torch.distributed.get_world_size()
+        # Gather hostnames from all ranks.
+        hostnames = [None] * world_size
+        torch.distributed.all_gather_object(hostnames, local_hostname)
+        # Build a mapping from hostname to the ordered list of ranks (preserving original order).
+        node_order = []
+        node_to_ranks = {}
+        for rank, host in enumerate(hostnames):
+            if host not in node_to_ranks:
+                node_to_ranks[host] = []
+                node_order.append(host)
+            node_to_ranks[host].append(rank)
+        # Construct process groups for every node following the established order.
+        node_groups = {}
+        for host in node_order:
+            node_groups[host] = torch.distributed.new_group(ranks=node_to_ranks[host])
+        # Set _NODE_GROUP as the group corresponding to the current node.
+        _NODE_GROUP = node_groups[local_hostname]
+        torch.cuda.synchronize()
+    return _NODE_GROUP
 
 """
 These functions will ignore your current 'resharded' context and return 

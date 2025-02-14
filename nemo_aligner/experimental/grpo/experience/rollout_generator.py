@@ -130,6 +130,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                         num_rollout_batches_per_data_batch = self.samples_per_prompt // num_repetitions
 
                     print(batch["text"].shape)
+                    print(f"batch idxs: {batch['idx']}", flush=True)
                     batch = batch_repeat(batch, num_repetitions=num_repetitions)
                     for _ in range(num_rollout_batches_per_data_batch):
                         rollout_batch = policy_model.infer(batch, use_greedy=greedy)
@@ -212,9 +213,9 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             )
             global_env_batch = unbalanced_env_batch.gather_and_balance_globally()
 
-        global_rollout_batch.update(global_env_batch)
-        with self.timer("env_postproc_and_metrics"):
-            global_rollout_batch, metrics = self.post_process_and_compute_rollout_metrics(global_rollout_batch)
+            global_rollout_batch.update(global_env_batch)
+            with self.timer("env_postproc_and_metrics"):
+                global_rollout_batch, metrics = self.post_process_and_compute_rollout_metrics(global_rollout_batch)
 
         # saving generations
         with self.timer("generation_save"):

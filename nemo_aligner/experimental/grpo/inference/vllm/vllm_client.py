@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Optional
 import requests
 import torch
 import nemo_aligner.experimental.grpo.utils.parallel_state as parallel_state
 from nemo_aligner.utils.distributed import broadcast_tensor 
 import time
 from contextlib import nullcontext
+from tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
 
 def print_group_ranks(group):
     """
@@ -105,7 +107,7 @@ class VLLMClient:
                 setattr(self, f"{cpu_group_name}_cpu_mp_gloo_group", group)
                 print(f"Rank {torch.distributed.get_rank()} local Gloo group built successfully",flush=True)
 
-    def refit(self, model):
+    def refit(self, model: Optional[SharedCPUMemoryTensorDict] = None):
         """
         Start the remote vLLM inference server.
         """
@@ -118,10 +120,16 @@ class VLLMClient:
                 if not self.server_started:
                     url = f"{self.base_url}/start"
                     try:
+                        #test = {"test": torch.randn(1000, dtype=torch.bfloat16)}
+                        #test_state_dict = SharedCPUMemoryTensorDict()
+                        #for k in test.keys():
+                        #    test_state_dict[k] = test[k]
+                        test_state_dict = model.get_metadata_dict()
                         data = {
                             "checkpoint_path": self.checkpoint_path,
                             "tp": parallel_state.get_tensor_model_parallel_world_size(),
                             "tp_src_gpu_idx": torch.cuda.current_device(),
+                            "test_state_dict": test_state_dict,
                         }
                         response = requests.post(url, json=data)
                         response.raise_for_status()
@@ -134,14 +142,21 @@ class VLLMClient:
                 else:
                     url = f"{self.base_url}/refit"
                     try:
+                        test = {"test": torch.randn(1000, dtype=torch.bfloat16)}
+                        self.test_state_dict = SharedCPUMemoryTensorDict()
+                        for k in test.keys():
+                            self.test_state_dict[k] = test[k]
                         data = {
                             "checkpoint_path": self.checkpoint_path,
+                            "test_dict": self.test_state_dict.get_metadata_dict(),
+                            "state_dict": model.get_metadata_dict(),
                         }
                         response = requests.post(url, json=data)
                         response.raise_for_status()
                         data = response.json()
                         print(f"Refit response: {data}")
                         ret_val = data
+                        self.test_state_dict.unlink()
                     except requests.exceptions.RequestException as e:
                         print(f"Error refitting the server: {e}")
 
