@@ -156,7 +156,7 @@ model:
     sampling_params:
       use_greedy: False
       temperature: 1.0
-      top_k: 0
+      top_k: -1
       top_p: 1.0
       repetition_penalty: 1.0
       add_BOS: False
@@ -169,7 +169,7 @@ model:
     # length argument for autoregressive sampling
     # max length means max amount of tokens to generate
     length_params:
-      max_length: ${int_div:${model.encoder_seq_length}, 2}
+      max_length: 3072 #${int_div:${model.encoder_seq_length}, 2}
       min_length: 1
 
     # pull from trainer, do not change here. Change at trainer.grpo.generation_rollout_mbs

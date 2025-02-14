@@ -134,18 +134,18 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
             self.running = False
             print("vLLM Inference Server shutdown.")
 
-        def generate(self, batch_tokens):
+        def generate(self, batch_tokens: list[list[int]], sampling_params: dict):
             """
             For each sequence in batch_tokens, we generate:
               - a new sequence of output tokens
               - a list of logprobs (one per token in the generated sequence)
             """
             sampling_params = SamplingParams(
-                temperature=1.0,
-                top_p=1.0,
-                top_k=-1,
+                temperature=sampling_params.get("temperature", 1.0),
+                top_p=sampling_params.get("top_p", 1.0),
+                top_k=sampling_params.get("top_k", -1),
                 logprobs=0,
-                max_tokens=3072,
+                max_tokens=sampling_params.get("max_tokens", 3072),
                 #ignore_eos=True,
             )
 
@@ -182,7 +182,8 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
             return
         elif command == "generate":
             batch_tokens = args[0]
-            out_queue.put(server.generate(batch_tokens))
+            sampling_params = args[1]
+            out_queue.put(server.generate(batch_tokens, sampling_params))
         elif command == "sleep":
             server.sleep()
             out_queue.put("asleep")
@@ -272,17 +273,19 @@ def generate():
     import time
     start_time = time.time()
     data = request.get_json()
+    tokens = data["tokens"]
+    sampling_params = data["sampling_params"]
     end_time = time.time()
     print(f"Request get_json time: {end_time - start_time} seconds")
-    if not isinstance(data, list):
+    if not isinstance(tokens, list):
         return jsonify({"error": "Expected a list of lists of tokens"}), 400
 
     # Validate that each element in the list is itself a list
-    for i, item in enumerate(data):
+    for i, item in enumerate(tokens):
         if not isinstance(item, list):
             return jsonify({"error": f"Element at index {i} is not a list"}), 400
 
-    in_q.put(("generate", (data,)))
+    in_q.put(("generate", (tokens, sampling_params)))
     generations, logprobs = out_q.get()
     response = {
         "response_tokens": generations,
