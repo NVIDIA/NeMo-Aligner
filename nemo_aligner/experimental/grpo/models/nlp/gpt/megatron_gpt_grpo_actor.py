@@ -141,11 +141,19 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             )
         elif backend_type == "vllm":
             from nemo_aligner.experimental.grpo.inference.vllm.vllm_client import VLLMClient
+            sampling_params = {
+                "temperature": self.cfg.grpo.sampling_params["temperature"],
+                "top_p": self.cfg.grpo.sampling_params["top_p"],
+                "top_k": self.cfg.grpo.sampling_params["top_k"],
+                "max_tokens": self.cfg.grpo.length_params.get("max_length", 2048),
+                "logprobs": 0,
+            }
             backend = VLLMClient(
                 self.cfg.grpo.inference_backend.config.vllm,
                 use_reshard=self.cfg.grpo.inference_backend.get("reshard", False),
                 tokenizer=self.tokenizer,
                 checkpoint_path=self.cfg.grpo.share_dir,
+                sampling_params=sampling_params,
             )
             self.shared_cpu_state_dict = SharedCPUMemoryTensorDict()
         elif backend_type == "trt_llm_pytorch":
@@ -220,7 +228,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 with torch.no_grad():
                     grpo_ratio = masked_mean(ratios.detach(), mask)
                     grpo_ratio_clamped = masked_mean(ratios_clamped.detach(), mask)
-                    print(loss.shape, grpo_ratio.shape, grpo_ratio_clamped.shape, "loss shapes", flush=True)
+                    #print(loss.shape, grpo_ratio.shape, grpo_ratio_clamped.shape, "loss shapes", flush=True)
 
                 (
                     reduced_actor_loss,
