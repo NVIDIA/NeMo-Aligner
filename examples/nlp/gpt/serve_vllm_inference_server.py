@@ -53,9 +53,15 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
         
         def update_weights_from_shared_dict(self, shared_dict: dict):
             shared_cpu_state_dict = SharedCPUMemoryTensorDict(communicable_metadata=shared_dict)
-            for key, value in shared_cpu_state_dict.as_dict().items():
-                #print(f"Key: {key} {value[0]} {value.shape} {value.dtype}", flush=True)
-                self.model_runner.model.load_weights(weights=[(key, value)])
+            # checksum_pre = 0
+            # checksum = 0
+            with torch.no_grad():
+                for key, value in shared_cpu_state_dict.as_dict().items():
+                    # checksum_pre += value.sum().item()
+                    #print(f"Key: {key} {value[0]} {value.shape} {value.dtype}", flush=True)
+                    self.model_runner.model.load_weights(weights=[(key, value)])
+                    # checksum += value.sum().item()
+            # print(f"Checksum: {checksum} {checksum_pre}", flush=True)
             shared_cpu_state_dict.close()
     
     class VLLMInferenceServer:

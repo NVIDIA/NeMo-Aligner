@@ -410,6 +410,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 return '{' + key + '}'
 
         with torch.no_grad():
+            checksum = 0
             import re  # For computing global keys from layer numbers
             # Initialize pipeline parallel group information.
             pp_group = parallel_state.get_training_pipeline_model_parallel_group()
@@ -517,6 +518,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     # use shared cpu memory
                     if torch.cuda.current_device() == 0:
                         self.shared_cpu_state_dict[target_key] = tensor_to_send
+                        checksum += tensor_to_send.sum().item()
                     del tensor_to_send
                 
                 # Cleanup on the owner side.
@@ -533,6 +535,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             gc.collect()
             torch.cuda.empty_cache()
             print("Finished parameter-by-parameter gathering over PP with conversion mapping.", flush=True)
+            print(f"Checksum: {checksum}", flush=True)
         
             # Copy HF jsons to CPU ramdisk with proper permissions and save the gathered parameters.
             if torch.cuda.current_device() == 0:
