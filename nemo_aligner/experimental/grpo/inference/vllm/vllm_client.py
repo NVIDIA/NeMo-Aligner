@@ -14,6 +14,7 @@
 
 from typing import Optional
 import requests
+import copy
 import torch
 import nemo_aligner.experimental.grpo.utils.parallel_state as parallel_state
 from nemo_aligner.utils.distributed import broadcast_tensor 
@@ -185,9 +186,10 @@ class VLLMClient:
             retry_ctr=0
             while not response_success:
                 try:
-                    sampling_params = self.sampling_params
+                    sampling_params = copy.deepcopy(self.sampling_params)
                     if use_greedy:
-                        sampling_params["top_k"] = 1
+                        #sampling_params["top_k"] = 1
+                        pass # TODO: add greedy sampling
                     to_send = {
                         "tokens": batch_input_ids,
                         "sampling_params": sampling_params
