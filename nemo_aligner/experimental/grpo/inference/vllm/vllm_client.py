@@ -230,8 +230,6 @@ class VLLMClient:
         # torch.distributed.barrier(group=parallel_state.get_model_parallel_group()) # wait for src process to get generation results
         assert self.generate_cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
         torch.distributed.barrier(group=self.generate_cpu_mp_gloo_group)
-        shapes = {k: v.shape for k, v in tensors.items()}
-        print(f"Tensors: {shapes}", flush=True)
         for k in sorted(tensors.keys()):
             print(k, flush=True)
             print(f"Broadcasting {k} rank {torch.distributed.get_rank()} src_rank {src_rank}")
