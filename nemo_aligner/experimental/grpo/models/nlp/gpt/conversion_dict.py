@@ -15,7 +15,7 @@
 import torch 
 import einops
 
-from nemo_aligner.utils import parallel_state
+from nemo_aligner.experimental.grpo.utils import parallel_state
 
 def get_local_layer_num(s):
     """Assumes layer number is preceeded by 'layers.'"""

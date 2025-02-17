@@ -173,6 +173,7 @@ class VLLMClient:
         :param batch_tokens: List of lists of tokens (e.g., [[1,2,3], [4,5,6]])
         :return: A dictionary with generations and logprobs if successful.
         """
+        print(f"Generating in inference reshard: {parallel_state.is_inference_reshard()}", flush=True)
         self.build_cpu_mp_gloo_group("generate") # will become a no-op if already built
         if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
             prompt_tokens, prompt_lengths = batch_tokens

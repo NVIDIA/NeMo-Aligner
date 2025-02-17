@@ -39,7 +39,6 @@ from nemo.collections.nlp.parts.mixins.nlp_adapter_mixins import NLPAdapterModel
 from nemo.collections.nlp.parts.utils_funcs import get_last_rank
 from nemo.utils import logging
 from nemo_aligner.models.alignable_interface import AlignableGenerativeInterface
-# from nemo_aligner.utils import parallel_state
 from nemo_aligner.experimental.grpo.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     broadcast_2d_tensor_within_pp,
