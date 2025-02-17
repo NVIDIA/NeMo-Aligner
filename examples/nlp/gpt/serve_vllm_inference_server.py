@@ -84,7 +84,7 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 tensor_parallel_size=tp, 
                 generation_config='auto', 
                 enforce_eager=True, 
-                gpu_memory_utilization=.5, 
+                gpu_memory_utilization=.7, 
                 enable_sleep_mode=True,
                 trust_remote_code=True,
             )
