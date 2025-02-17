@@ -32,7 +32,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.parts import utils_funcs
 from nemo.utils.timers import NamedTimer
-from nemo_aligner.utils import parallel_state
+from nemo_aligner.experimental.grpo.utils import parallel_state
 from nemo_aligner.utils.ppo_utils import calculate_entropy
 from nemo_aligner.utils.utils import deprecated_in_version
 

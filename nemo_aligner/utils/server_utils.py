@@ -20,7 +20,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from nemo_aligner.utils import parallel_state
+from nemo_aligner.experimental.grpo.utils import parallel_state
 
 
 def decode_bytes_ndarray(str_ndarray: np.ndarray) -> np.ndarray:
