@@ -176,6 +176,8 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         # we also do the logprob and init_logprob calculations here to overlap with async environment compute
         batched_response_tokens = balanced_local_batch["response_tokens"]
 
+        policy_model.inference_backend.free()
+
         with self.timer("logprobs"):
             rollout_logprobs = policy_model.get_inference_log_probs(batched_response_tokens)
             balanced_local_batch["logprobs"] = rollout_logprobs

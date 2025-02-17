@@ -692,7 +692,7 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
 def log_memory(prefix):
     pyt = torch.cuda.memory_allocated() / (1024 ** 3)
     el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
-    logging.info(f"Mem Usage (GB) | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
+    print(f"Mem Usage (GB) | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
 
 
 def deprecated_in_version(version: str, message: str | None = None):

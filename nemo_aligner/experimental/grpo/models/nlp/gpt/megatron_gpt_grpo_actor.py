@@ -29,6 +29,8 @@ from omegaconf.dictconfig import DictConfig
 from safetensors.torch import save_file
 from huggingface_hub import snapshot_download
 
+from nemo_aligner.utils.utils import log_memory
+
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
@@ -253,7 +255,28 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             gbs=self.cfg.global_batch_size,
             dp=parallel_state.get_data_parallel_world_size(),
         )
+
+        clear_memory()
+
+        log_memory("before offload parameters")
+        self.maybe_offload_parameters("Temporarily offload model weights for the shared inference backend to save memory")
+        clear_memory()
+        log_memory("after offload parameters")
+
+        log_memory("before init grad buffer")
+        self._optimizer._init_grad_buffer()
+        clear_memory()
+        log_memory("after init grad buffer")
+
+        log_memory("before onload parameters")
+        self.maybe_onload_parameters()
+        clear_memory()
+        log_memory("after onload parameters")
+
+        log_memory("before onload adam states")
         self.onload_adam_states()
+        clear_memory()
+        log_memory("after onload adam states")
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
@@ -660,8 +683,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self._restore_activation_checkpointing_args()
         self._restore_sequence_parallelism_args()
 
-        if self.inference_backend:
-            self.inference_backend.free()
+        # if self.inference_backend:
+        #     self.inference_backend.free()
 
 
         set_train(self)
@@ -700,6 +723,16 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
             # offload onto cpu
             self.distributed_adam_offload_manager.__enter__()
+
+            for k,v in self._optimizer._grad_buffers.items():
+                v.data = v.data.cpu()
+            
+            self._optimizer._grad_buffers.clear()
+            self._optimizer._grad_buffers.clear()
+            self._optimizer._params_buckets.clear()
+            self._optimizer._param_buffers.clear()
+            clear_memory()
+
 
     def onload_adam_states(self):
         if self.distributed_adam_offload_manager is not None:
