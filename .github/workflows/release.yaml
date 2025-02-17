@@ -32,16 +32,9 @@ on:
           
 jobs:
   release:
-    uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_release_library.yml@v0.18.4
+    uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_release_library.yml@v0.22.4
     with:
       release-ref: ${{ inputs.release-ref }}
-      image-name: nemo_aligner_container
-      dockerfile: Dockerfile
-      image-label: nemo-aligner
-      build-args: |
-        MAX_JOBS=32
-        ALIGNER_COMMIT=${{ inputs.release-ref }}
-      prune-filter-timerange: 24h
       python-package: nemo_aligner
       container-workdir: /opt/NeMo-Aligner
       library-name: NeMo-Aligner
@@ -50,6 +43,6 @@ jobs:
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
-      SLACK_RELEASE_ENDPOINT: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+      SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
       PAT: ${{ secrets.PAT }}

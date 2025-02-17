@@ -19,31 +19,23 @@ on:
     branches:
       - main
       - 'r**'
-
+  pull_request:
+    
 defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
 
 jobs:
   build-test-publish-wheel:
-    uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@v0.12.2
+    uses: NVIDIA/NeMo-FW-CI-templates/.github/workflows/_build_test_publish_wheel.yml@v0.22.3
     with:
-      image-name: nemo_container
-      dockerfile: Dockerfile
-      image-label: nemo-aligner
-      build-args: |
-        IMAGE_LABEL=nemo-aligner
-        MAX_JOBS=32
-        ALIGNER_COMMIT=${{ github.event.pull_request.head.sha || github.sha }}
-      prune-filter-timerange: 24h
       dry-run: true
       python-package: nemo_aligner
-      container-workdir: /opt/NeMo-Aligner
-      environment: public
+      python-version: "3.11"
     secrets:
       TWINE_USERNAME: ${{ secrets.TWINE_USERNAME }}
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}
+      SLACK_WEBHOOK: ${{ secrets.SLACK_RELEASE_ENDPOINT }}
       SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_WEBHOOK_ADMIN }}
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
 
   
