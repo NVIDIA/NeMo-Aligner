@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from functools import partial
+from collections import UserDict
 
 import torch
 import torch.multiprocessing as mp
@@ -163,11 +164,13 @@ def main(cfg) -> None:
 
     # init environments and rollout generator
     math_environment = MathEnvironment(cfg.trainer.grpo.environments.math)
-    # your_environment = Environment(cfg)
-    tasks_to_environments = {
-        "math": math_environment,
-        # "your_task": your_environment,
-    }
+
+    # hack to get all the environments to go to the same math_environment
+    class MyDict(UserDict):
+        def __missing__(self, key):
+            return math_environment
+
+    tasks_to_environments = MyDict()
     rollout_generator = SequenceRewardRolloutGenerator(cfg.trainer.grpo, tasks_to_environments)
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
