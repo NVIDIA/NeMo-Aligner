@@ -36,7 +36,7 @@ jobs:
     with:
       release-ref: ${{ inputs.release-ref }}
       python-package: nemo_aligner
-      container-workdir: /opt/NeMo-Aligner
+      python-version: "3.11"
       library-name: NeMo-Aligner
       dry-run: ${{ inputs.dry-run }}
       version-bump-branch: ${{ inputs.version-bump-branch }}
