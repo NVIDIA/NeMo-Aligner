@@ -768,7 +768,6 @@ def reconstruct_split_batch(
     Args:
         split_batches: List of data dictionaries (without indices/task keys)
         indices_list: Parallel list containing indices for each split batch
-        tasks: Parallel list of task identifiers (same length as split_batches)
     
     Returns:
         Dictionary reconstructing the original batch with correct ordering
