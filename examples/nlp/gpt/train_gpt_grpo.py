@@ -30,6 +30,7 @@ from nemo_aligner.experimental.grpo.data.builders import build_train_valid_test_
 from nemo_aligner.experimental.grpo.data.datasets import AllTaskDataset
 from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
 from nemo_aligner.experimental.grpo.experience.environments.math_environment import MathEnvironment
+from nemo_aligner.experimental.grpo.experience.environments.code_environment import CodeEnvironment
 from nemo_aligner.experimental.grpo.experience.rollout_generator import SequenceRewardRolloutGenerator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
@@ -164,10 +165,11 @@ def main(cfg) -> None:
 
     # init environments and rollout generator
     math_environment = MathEnvironment(cfg.trainer.grpo.environments.math)
+    code_environment = CodeEnvironment(cfg.trainer.grpo.environments.code)
     # your_environment = Environment(cfg)
     tasks_to_environments = {
         "math": math_environment,
-        # "your_task": your_environment,
+        "code": code_environment,
     }
     rollout_generator = SequenceRewardRolloutGenerator(cfg.trainer.grpo, tasks_to_environments)
 
