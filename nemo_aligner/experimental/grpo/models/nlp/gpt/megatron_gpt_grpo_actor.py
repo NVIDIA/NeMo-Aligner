@@ -156,13 +156,23 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             )
             self.shared_cpu_state_dict = SharedCPUMemoryTensorDict()
         elif backend_type == "trt_llm_pytorch":
+            sampling_params = {
+                "temperature": self.cfg.grpo.sampling_params["temperature"],
+                "top_p": self.cfg.grpo.sampling_params["top_p"],
+                "top_k": self.cfg.grpo.sampling_params["top_k"],
+                "max_tokens": self.cfg.grpo.length_params.get("max_length", 2048),
+                "logprobs": 0,
+            }
 
             from nemo_aligner.experimental.grpo.inference.trtllm_pytorch.trtllm_pytorch_client import TRTLLMPytorchClient 
             backend = TRTLLMPytorchClient(
                 self.cfg.grpo.inference_backend.config.trt_llm_pytorch,
+                use_reshard=self.cfg.grpo.inference_backend.get("reshard", False),
                 tokenizer=self.tokenizer,
                 checkpoint_path=self.cfg.grpo.share_dir,
+                sampling_params=sampling_params,
             )
+            self.shared_cpu_state_dict = SharedCPUMemoryTensorDict()
         else:
             raise ValueError(f"Unsupported inference backend: {backend_type}")
 
@@ -565,7 +575,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             print(f"Memory free after clear before refit {torch.cuda.mem_get_info()[0] / 1024**3:.2f} GB", flush=True)  
             print(f"reserved after clear before refit {torch.cuda.memory_reserved() / 1024**3:.2f} GB", flush=True)
             print(f"allocated after clear before refit {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
-            if self.cfg.grpo.inference_backend.type == "vllm":
+            if self.cfg.grpo.inference_backend.type == "vllm" or self.cfg.grpo.inference_backend.type == "trt_llm_pytorch":
                 self.inference_backend.refit(self.shared_cpu_state_dict)
             else:
                 self.inference_backend.refit(self.model)
