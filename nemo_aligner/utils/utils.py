@@ -29,6 +29,7 @@ from unittest.mock import patch
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
+from megatron.core.distributed import DistributedDataParallel
 from megatron.core.num_microbatches_calculator import reconfigure_num_microbatches_calculator
 from omegaconf import DictConfig, OmegaConf
 from torch.masked import as_masked_tensor
@@ -39,9 +40,6 @@ from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
-
-from megatron.core.distributed import DistributedDataParallel
-
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     """A save connector that will ask the Reward model to not try to load
@@ -504,17 +502,10 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
 
     if hasattr(model, "model"):
         model = model.model
-    if not isinstance(model, list):
-        model = [model]
+    if isinstance(model, list):
+        model = model[0]
 
-    model_copy = []
-    for i, m in enumerate(model):
-        if isinstance(m, DistributedDataParallel):
-            model_copy.append(m.module)
-        else:
-            model_copy.append(m)
-
-    for name, item in torch.nn.ModuleList(model_copy).state_dict().items():
+    for name, item in model.state_dict().items():
         if isinstance(item, torch.Tensor):
             item = item.detach().to(device="cpu", non_blocking=True, copy=True)
 
@@ -523,12 +514,8 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
     if megatron_amp_O2:
         cpu_dict = convert_to_amp_o2_format(cpu_dict)
 
-    updated_cpu_dict = {}
-    for k in cpu_dict:
-        updated_cpu_dict[k.replace("0.", "", 1)] = cpu_dict[k]
-
     torch.cuda.synchronize()
-    return updated_cpu_dict
+    return cpu_dict
 
 
 @torch.no_grad()
