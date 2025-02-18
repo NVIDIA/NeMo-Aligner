@@ -504,7 +504,9 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
     if hasattr(model, "model"):
         model = model.model
     if isinstance(model, list):
-        assert len(model) == 1, "NeMo-Aligner is currently incompatible with virtual pipeline parallel. Please disable VPP."
+        assert (
+            len(model) == 1
+        ), "NeMo-Aligner is currently incompatible with virtual pipeline parallel. Please disable VPP."
         model = model[0]
 
     for name, item in model.state_dict().items():
@@ -561,7 +563,9 @@ def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O
 
     load_to = resident_model.model
     if isinstance(load_to, list):
-        assert len(model) == 1, "NeMo-Aligner is currently incompatible with virtual pipeline parallel. Please disable VPP."
+        assert (
+            len(model) == 1
+        ), "NeMo-Aligner is currently incompatible with virtual pipeline parallel. Please disable VPP."
         load_to = load_to[0]
 
     load_to.load_state_dict(cpu_weights)
