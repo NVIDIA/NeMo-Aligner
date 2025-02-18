@@ -780,6 +780,8 @@ def reconstruct_split_batch(
             indices = indices.tolist()
         all_indices.extend(indices)
     n = max(all_indices) + 1 if all_indices else 0
+    print("#### ALL INDICES", all_indices)
+    print("#### N", n)
 
     if not split_batches:
         return {}
