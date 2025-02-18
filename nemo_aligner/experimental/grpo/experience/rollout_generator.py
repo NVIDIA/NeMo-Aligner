@@ -202,6 +202,8 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                         # not touching episode_complete for now since this loop only supports single-turn
                         all_task_results.append({"rewards": rewards})
                     batch_rewards = reconstruct_split_batch(all_task_indices, all_task_results)
+                    print("### TASK INDX", all_task_indices)
+                    print("### TASK RESULTS", all_task_results)
                     env_rollout_batches.append(batch_rewards)
 
             unbalanced_env_batch = GPTRolloutBatch.from_rollout_batches(

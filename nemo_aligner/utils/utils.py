@@ -807,6 +807,8 @@ def reconstruct_split_batch(
                     indices = indices.to(device)
                 else:
                     indices = torch.tensor(indices, device=device)
+                print("### DATA", data.shape)
+                print("### INDICES", indices.shape)
                 reconstructed[indices] = data
 
             original_batch[key] = reconstructed
