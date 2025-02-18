@@ -77,6 +77,11 @@ trainer:
           port: 4321
           ip: localhost
 
+        trt_llm_pytorch:
+          enable: False
+          port: 4321
+          ip: localhost
+          
     batch_iterator:
       # When use_flask is True, we will spawn a flask server on rank 0 to balance the work of policy rollouts.
       # This option is useful in cases where the generation length varies greatly across DP ranks since

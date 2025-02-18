@@ -63,7 +63,7 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                     # checksum += value.sum().item()
             # print(f"Checksum: {checksum} {checksum_pre}", flush=True)
             shared_cpu_state_dict.close()
-    
+            
     class VLLMInferenceServer:
         """
         This class simulates a vLLM inference server.
