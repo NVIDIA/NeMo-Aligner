@@ -108,6 +108,10 @@ def prepare_for_training_step(ptl_model, zero_grad=True):
         if ptl_model.prev_global_batch_size != current_global_batch_size and ptl_model.prev_global_batch_size:
             ptl_model.trainer.should_stop = True
 
+    ## zero grad buffers
+    for model_chunk in ptl_model.model:
+        model_chunk.zero_grad_buffer()
+
     if zero_grad:
         # we zero grads here because we also call backward in the megatron-core fwd/bwd functions
         ptl_model._optimizer.zero_grad()
