@@ -41,7 +41,11 @@ trainer:
           math_grader:
             ip: localhost
             port: 3141
-
+      code:
+        servers:
+          code_verifier:
+            ip: localhost
+            port: 3142
     # the sequence length to pad the rollout batch for training to
     # reduce fragmentation at the cost of using more
     # memory, set to null if we don't want to pad it

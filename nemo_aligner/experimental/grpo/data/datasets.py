@@ -70,15 +70,21 @@ class AllTaskDataset:
             task_name = self.data[idx]["task_name"]
 
         extra_verifier_info = None
-
         # hard code to math for now
-        text_str = self.data[idx]["problem"]
-        extra_verifier_info = {"ground_truth": self.data[idx]["expected_answer"]}
+        if task_name == "code":
+            text_str = self.data[idx]["prompt"]
+            extra_verifier_info = {"unittests": self.data[idx]["args"]["unittests"], "test_type": self.data[idx]["args"]["test_type"], "fn_name": self.data[idx]["args"].get("fn_name", None)}
+        else:
+            text_str = self.data[idx]["problem"]
+            extra_verifier_info = {"ground_truth": self.data[idx]["expected_answer"]}
 
-        if self.apply_chat_template:
+        if self.apply_chat_template or task_name == "code":
             chat = []
             if self.system_prompt:
                 chat.append({"role": "system", "content": self.system_prompt})
+            elif self.data[idx].get("system_prompt", None):
+                chat.append({"role": "system", "content": self.data[idx]["system_prompt"]})
+                
             chat.append({"role": "user", "content": self.prompt.format(text_str)})
             text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
         else:
