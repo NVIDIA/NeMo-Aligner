@@ -785,12 +785,14 @@ def reconstruct_split_batch(
         return {}
 
     original_batch = {}
+    print("### SPLIT BATCHES", split_batches)
 
     # Process each key present in the split batches
     for key in split_batches[0].keys():
         sample_value = split_batches[0][key]
 
         if isinstance(sample_value, torch.Tensor):
+            print("### SAMPLE VALUE", sample_value.shape)
             # Tensor reconstruction with device preservation
             device = sample_value.device
             dtype = sample_value.dtype
