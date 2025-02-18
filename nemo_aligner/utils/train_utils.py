@@ -109,8 +109,7 @@ def prepare_for_training_step(ptl_model, zero_grad=True):
             ptl_model.trainer.should_stop = True
 
     ## zero grad buffers
-    for model_chunk in ptl_model.model:
-        model_chunk.zero_grad_buffer()
+    ptl_model.model.zero_grad_buffer()
 
     if zero_grad:
         # we zero grads here because we also call backward in the megatron-core fwd/bwd functions
