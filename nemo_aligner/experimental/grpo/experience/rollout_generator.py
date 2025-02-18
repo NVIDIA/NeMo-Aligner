@@ -142,7 +142,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
 
                         # iterate over tasks and call the environments to get rewards
                         microbatch_futures = []
-                        for task in self.tasks_to_environments.keys():
+                        for task in sorted(self.tasks_to_environments.keys()):
                             indices = []
                             for idx, t in enumerate(rollout_batch["task_name"]):
                                 if t == task:
@@ -154,6 +154,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
 
                         rollout_batches.append(rollout_batch)
                         futures.append(microbatch_futures)
+                        print(f"microbatch_futures: {microbatch_futures}", flush=True)
 
             # The batch_iterator may be a load-redistributing server, so batches may be jagged.
             # We gather everything so that we can rebalance it.
@@ -199,6 +200,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                         _, _, rewards, episode_complete = self.tasks_to_environments[task].finish_step(task_future)
                         # not touching episode_complete for now since this loop only supports single-turn
                         all_task_results.append({"rewards": rewards})
+                    print(f"all_task_indices: {all_task_indices}, all_task_results: {all_task_results}", flush=True)
                     batch_rewards = reconstruct_split_batch(all_task_indices, all_task_results)
                     env_rollout_batches.append(batch_rewards)
 
@@ -224,7 +226,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
     def post_process_and_compute_rollout_metrics(self, global_rollout_batch):
         # iterate over tasks and call the environments to get metrics and finalized batches
         split_idxs, split_batches, metrics = [], [], {}
-        for task in self.tasks_to_environments.keys():
+        for task in sorted(self.tasks_to_environments.keys()):
             indices = []
             for idx, t in enumerate(global_rollout_batch["task_name"]):
                 if t == task:
