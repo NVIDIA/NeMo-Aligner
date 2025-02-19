@@ -6,6 +6,7 @@ trainer:
   devices: 8
   accelerator: gpu
   precision: bf16
+  gradient_clip_val: ${trainer.ppo.gradient_clip_val}  # No need to change. Megatron Core optimizer uses this value
 
   ppo:
     port: 5556
@@ -15,6 +16,7 @@ trainer:
 
     # used to set the learning rate scheduler
     max_steps: 10000
+    # TODO: delete once Megatron Core optimizer becomes default
     gradient_clip_val: 1.0
 
     # a PyTriton parameter to specify

@@ -29,6 +29,7 @@ from unittest.mock import patch
 
 import torch
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensorFactory
+from megatron.core.distributed import DistributedDataParallel
 from megatron.core.num_microbatches_calculator import reconfigure_num_microbatches_calculator
 from omegaconf import DictConfig, OmegaConf
 from torch.masked import as_masked_tensor
@@ -371,6 +372,14 @@ def retrieve_model_state_dict_in_cpu(model, megatron_amp_O2=True):
     """
     cpu_dict = {}
 
+    if hasattr(model, "model"):
+        model = model.model
+    if isinstance(model, list):
+        assert (
+            len(model) == 1
+        ), "NeMo-Aligner is currently incompatible with virtual pipeline parallel. Please disable VPP."
+        model = model[0]
+
     for name, item in model.state_dict().items():
         if isinstance(item, torch.Tensor):
             item = item.detach().to(device="cpu", non_blocking=True, copy=True)
@@ -423,7 +432,14 @@ def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O
     if offload_onto_cpu:
         offloaded_weights = retrieve_model_state_dict_in_cpu(resident_model, megatron_amp_O2=megatron_amp_O2)
 
-    resident_model.load_state_dict(cpu_weights)
+    load_to = resident_model.model
+    if isinstance(load_to, list):
+        assert (
+            len(load_to) == 1
+        ), "NeMo-Aligner is currently incompatible with virtual pipeline parallel. Please disable VPP."
+        load_to = load_to[0]
+
+    load_to.load_state_dict(cpu_weights)
     return offloaded_weights
 
 
@@ -431,6 +447,7 @@ def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O
 def cpu_weight_swap(resident_model, cpu_weights, megatron_amp_O2=True):
     """swap the weights into GPU, and then swap it out once return
     """
+
     cpu_dict = swap_dict(resident_model, cpu_weights, megatron_amp_O2=megatron_amp_O2)
     try:
         yield
