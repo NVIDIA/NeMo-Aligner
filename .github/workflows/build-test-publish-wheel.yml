@@ -19,7 +19,8 @@ on:
     branches:
       - main
       - 'r**'
-
+  pull_request:
+    
 defaults:
   run:
     shell: bash -x -e -u -o pipefail {0}
