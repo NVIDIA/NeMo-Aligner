@@ -31,6 +31,7 @@ from nemo_aligner.experimental.grpo.data.datasets import AllTaskDataset
 from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor import MegatronGPTActorModel
 from nemo_aligner.experimental.grpo.experience.environments.math_environment import MathEnvironment
 from nemo_aligner.experimental.grpo.experience.environments.code_environment import CodeEnvironment
+from nemo_aligner.experimental.grpo.experience.environments.llm_judge_environment import LLMJudgeEnvironment
 from nemo_aligner.experimental.grpo.experience.rollout_generator import SequenceRewardRolloutGenerator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
