@@ -564,7 +564,7 @@ def swap_dict(resident_model, cpu_weights, offload_onto_cpu=True, megatron_amp_O
     load_to = resident_model.model
     if isinstance(load_to, list):
         assert (
-            len(model) == 1
+            len(load_to) == 1
         ), "NeMo-Aligner is currently incompatible with virtual pipeline parallel. Please disable VPP."
         load_to = load_to[0]
 
