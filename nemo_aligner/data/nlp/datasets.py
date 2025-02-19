@@ -445,9 +445,6 @@ class DPOModelDataset(Dataset):
             prompt_fmtd = payload["prompt"]
             chosen_fmtd = payload["prompt"] + payload["chosen_response"]
             rejected_fmtd = payload["prompt"] + payload["rejected_response"]
-            logging.warning(
-                "Pre-formatting chat conversation as string with hardcoded chat tokens will be deprecated."
-            )  # (@adithyare) this will spam the console for now.
         else:
             prompt_fmtd = self.convert(payload["prompt"])  # (@adithyare) read var as "prompt formatted"
             chosen_fmtd = self.convert(payload["prompt"] + [payload["chosen_response"]])
