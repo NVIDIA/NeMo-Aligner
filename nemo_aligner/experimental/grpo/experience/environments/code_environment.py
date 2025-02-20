@@ -21,11 +21,13 @@ from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.utils import masked_mean
 from nemo_aligner.experimental.grpo.experience.interfaces import EnvironmentInterface
 from nemo_aligner.servers.http_communicator import FlaskCommunicator
+from nemo_aligner.experimental.grpo.experience.environments.format_checker import FormatChecker
 
 class CodeEnvironment(EnvironmentInterface):
     def __init__(self, cfg: DictConfig):
         self.executor = futures.ThreadPoolExecutor()
         self.communicator = FlaskCommunicator(cfg.servers)
+
         
         print(f"Started CodeEnvironment client with {cfg.servers}")
         
@@ -37,30 +39,34 @@ class CodeEnvironment(EnvironmentInterface):
             Also needs "test_type" field specifying "io_test" or "assertion"
         """
         if parallel_state.is_model_parallel_src_rank():
-            # fold all interactions after the prompt together
+            prompts = [interaction[0] for interaction in interactions]
             responses = [''.join(interaction[1:]) for interaction in interactions]
-            responses = [r.split("```python")[-1].split("```")[0].strip() for r in responses]
+            responses = [r.split("</think>")[-1].split("```python")[-1].split("```")[0].strip() for r in responses]
+            
+            # Source rank calculates format metrics
+            format_rewards = FormatChecker.calculate_format_metrics(prompts, responses)
             
             # Prepare test data for each response
             test_data = []
             for meta in metadata:
                 test_config = {
-                    "test_type": meta["test_type"]
+                    "test_type": meta["test_type"],
                 }
-
                 test_config["unittests"] = meta["unittests"]
                 if "fn_name" in meta:
                     test_config["fn_name"] = meta["fn_name"]
-
                 
                 test_data.append(test_config)
             
             data = {
                 "pred_responses": responses,
                 "test_data": test_data,
+                "format_rewards": format_rewards
             }
+            print(prompts)
             print(data)
             return self.communicator.send_data_to_server("code_verifier", data)
+        
         return None
 
     def finish_step(self, future):
@@ -68,6 +74,7 @@ class CodeEnvironment(EnvironmentInterface):
         results = self.communicator.get_result(future, "rewards")
 
         th_rewards = torch.tensor(results).squeeze(1)
+        print('th rewards shape', th_rewards.shape)
         return None, None, th_rewards, torch.ones(th_rewards.shape[0],)
     
     def global_post_process_and_metrics(self, batch):
@@ -125,11 +132,10 @@ class CodeEnvironment(EnvironmentInterface):
             #"table": table,  # TODO: Implement table logging if needed
             
             # Overall accuracy metrics
-            "coding_accuracy": batch["rewards"].mean().item(),
+            "accuracy": batch["rewards"].mean().item(),
             
             # RL-specific metrics
             "fraction_prompts_with_perfect_solution": prompts_with_perfect_solution / num_prompts,
-            "fraction_prompts_with_reward_range_gt_0": prompts_with_reward_signal / num_prompts,
             "avg_reward_range_per_prompt": sum(reward_range_per_prompt) / len(reward_range_per_prompt) if reward_range_per_prompt else 0,
             
             # Generation statistics

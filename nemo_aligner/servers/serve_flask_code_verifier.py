@@ -78,6 +78,7 @@ def verify_code():
         data = request.get_json()
         responses = data.get("pred_responses")
         test_data = data.get("test_data")
+        format_rewards = data.get("format_rewards", None)
 
         # Validate inputs
         if not responses or not test_data:
@@ -102,9 +103,19 @@ def verify_code():
             idx, result = result_queue.get()
             rewards[idx] = result["reward"]
 
+        # Convert format_rewards to numpy and reshape
+        if format_rewards is not None:
+            format_rewards = np.array(format_rewards)
+        else:
+            format_rewards = np.ones(len(responses))
+        print("format rewards", format_rewards)
+        print("rewards", rewards)
+        # Multiply rewards with format rewards
+        combined_rewards = rewards * format_rewards
+        
         # Match the math grader format
         output_dict = {
-            "rewards": rewards.reshape((rewards.shape[0], 1)).tolist(),
+            "rewards": combined_rewards.reshape((combined_rewards.shape[0], 1)).tolist(),
         }
 
         return jsonify(output_dict)
