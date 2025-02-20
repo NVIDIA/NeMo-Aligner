@@ -41,11 +41,12 @@ class CodeEnvironment(EnvironmentInterface):
         if parallel_state.is_model_parallel_src_rank():
             prompts = [interaction[0] for interaction in interactions]
             responses = [''.join(interaction[1:]) for interaction in interactions]
-            responses = [r.split("</think>")[-1].split("```python")[-1].split("```")[0].strip() for r in responses]
             
             # Source rank calculates format metrics
             format_rewards = FormatChecker.calculate_format_metrics(prompts, responses)
             
+            responses = [r.split("</think>")[-1].split("```python")[-1].split("```")[0].strip() for r in responses]
+
             # Prepare test data for each response
             test_data = []
             for meta in metadata:
