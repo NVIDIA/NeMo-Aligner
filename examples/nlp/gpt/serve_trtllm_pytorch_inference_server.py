@@ -35,6 +35,11 @@ class TRTLLMPytorchInferenceServer:
             gc.collect()
             torch.cuda.empty_cache()
 
+    def get_shared_dict_metadata(self, shared_tensor_dict):
+        from tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
+        shared_cpu_state_dict = SharedCPUMemoryTensorDict(communicable_metadata=shared_tensor_dict)
+        return shared_cpu_state_dict.get_metadata_dict()
+
     def create_shared_dict_file(self, shared_tensor_dict):
         """
         Creates an in-memory file object containing the JSON representation
@@ -103,13 +108,15 @@ class TRTLLMPytorchInferenceServer:
         #else:
         
         file_obj = self.create_shared_dict_file(state_dict)
-        self.llm.load_model(file_obj)
+        # self.llm.load_model(file_obj)
+        self.llm.load_shared_memory_state_dict(self.get_shared_dict_metadata(state_dict))
         print(f"TRTLLM Pytorch inference server started.", flush=True)
         self.get_gpu_memory_usage()
 
     def refit(self, path, state_dict, test_dict):
         file_obj = self.create_shared_dict_file(state_dict)
-        self.llm.load_model(file_obj)
+        # self.llm.load_model(file_obj)
+        self.llm.load_shared_memory_state_dict(self.get_shared_dict_metadata(state_dict))
         print(f"TRTLLM Pytorch inference server refitted.", flush=True)
         self.get_gpu_memory_usage()
 
