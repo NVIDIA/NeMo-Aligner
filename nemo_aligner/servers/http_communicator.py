@@ -71,6 +71,9 @@ class FlaskCommunicator:
         if resp is not None:
             output = resp.json()
 
+        print("### OUTPUT", output)
+        print("### future", future)
+
         results = []
         for key in keys:
             result = None

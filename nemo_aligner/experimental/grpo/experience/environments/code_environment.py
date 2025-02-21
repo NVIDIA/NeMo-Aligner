@@ -17,7 +17,7 @@ from concurrent import futures
 import torch
 from collections import Counter
 
-from nemo_aligner.utils import parallel_state
+from nemo_aligner.experimental.grpo.utils import parallel_state
 from nemo_aligner.utils.utils import masked_mean
 from nemo_aligner.experimental.grpo.experience.interfaces import EnvironmentInterface
 from nemo_aligner.servers.http_communicator import FlaskCommunicator
