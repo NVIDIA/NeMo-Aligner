@@ -72,6 +72,7 @@ class FlaskCommunicator:
             output = resp.json()
 
         print("### OUTPUT", output)
+        print("### future", future)
 
         results = []
         for key in keys:
