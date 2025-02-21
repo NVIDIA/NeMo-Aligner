@@ -73,6 +73,7 @@ class CodeEnvironment(EnvironmentInterface):
     def finish_step(self, future):
         # gets the future result and also broadcasts within the current MP group
         results = self.communicator.get_result(future, "rewards")
+        print("#### CODE RESULTS", results)
 
         th_rewards = torch.tensor(results).squeeze(1)
         print('th rewards shape', th_rewards.shape)
