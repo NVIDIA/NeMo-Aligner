@@ -170,6 +170,7 @@ def main(cfg) -> None:
     # your_environment = Environment(cfg)
     tasks_to_environments = {k:MathEnvironment(cfg.trainer.grpo.environments.math) for k in {"aime24", "amc23", "math", "qwq_sol_gen_no_ans_c4", "qwq_sol_gen_no_ans_c7", "qwq_sol_gen_no_ans_olymp_pr_gt03", "qwq_sol_gen_no_ans_olymp_pr_lt03"}}
     tasks_to_environments["code"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
+    tasks_to_environments["code_mbppplus_test"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
     rollout_generator = SequenceRewardRolloutGenerator(cfg.trainer.grpo, tasks_to_environments)
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
