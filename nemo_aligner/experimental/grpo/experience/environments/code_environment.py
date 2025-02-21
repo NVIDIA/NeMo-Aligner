@@ -130,6 +130,12 @@ class CodeEnvironment(EnvironmentInterface):
             correct_solution_generation_lengths = 0
         
         
+        # Calculate format rewards for all prompt-response pairs
+        format_rewards = FormatChecker.calculate_format_metrics(
+            batch["prompt_sentences"],
+            batch["response_sentences"]
+        )
+        
         metrics = {
             #"table": table,  # TODO: Implement table logging if needed
             
@@ -147,6 +153,9 @@ class CodeEnvironment(EnvironmentInterface):
             "prompt_lengths": batch["prompt_lengths"].float().mean().item(),
             "generation_lengths": (batch["response_lengths"] - batch["prompt_lengths"]).float().mean().item(),
             "correct_solution_generation_lengths": correct_solution_generation_lengths,
+            
+            # Add format metrics
+            "format_rewards": torch.tensor(format_rewards).float().mean().item(),
         }
         
         return batch, metrics
