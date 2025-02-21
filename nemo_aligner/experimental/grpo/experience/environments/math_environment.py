@@ -29,7 +29,7 @@ class MathEnvironment(EnvironmentInterface):
         
         print(f"Started MathEnvironment client with {cfg.servers}")
         
-    def start_step(self, interactions, metadata):
+    def start_step(self, interactions, metadata, is_end):
         """
         metadata: List[Dict]. Needs to contain a "ground_truth" key, which is what
                               the grader will use to evaluate correctness.

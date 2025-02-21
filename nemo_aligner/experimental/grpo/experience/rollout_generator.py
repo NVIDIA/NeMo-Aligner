@@ -101,7 +101,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
     def prepare_env_state(self, rollout_batch):
         interactions = [[p, r] for p, r in zip(rollout_batch["prompt_sentences"], rollout_batch["response_sentences"])]
         metadata = rollout_batch["extra_verifier_info"]
-        return interactions, metadata
+        return interactions, metadata, rollout_batch["is_end"]
         
     def generate_rollouts(self,
                           batch_iterator,
@@ -149,8 +149,8 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                                     indices.append(idx)
                             if len(indices) > 0:
                                 task_batch = batch_index_select(rollout_batch, indices)
-                                interactions, metadata = self.prepare_env_state(task_batch)
-                                microbatch_futures.append((task, indices, self.tasks_to_environments[task].start_step(interactions, metadata)))
+                                interactions, metadata, is_end = self.prepare_env_state(task_batch)
+                                microbatch_futures.append((task, indices, self.tasks_to_environments[task].start_step(interactions, metadata, is_end)))
 
                         rollout_batches.append(rollout_batch)
                         futures.append(microbatch_futures)

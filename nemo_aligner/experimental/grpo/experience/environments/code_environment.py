@@ -31,7 +31,7 @@ class CodeEnvironment(EnvironmentInterface):
         
         print(f"Started CodeEnvironment client with {cfg.servers}")
         
-    def start_step(self, interactions, metadata):
+    def start_step(self, interactions, metadata, is_end):
         """
         metadata: List[Dict]. Needs to contain either:
             - For IO tests: "unittests" and optionally "fn_name"
@@ -43,7 +43,7 @@ class CodeEnvironment(EnvironmentInterface):
             responses = [''.join(interaction[1:]) for interaction in interactions]
             
             # Source rank calculates format metrics
-            format_rewards = FormatChecker.calculate_format_metrics(prompts, responses)
+            format_rewards = FormatChecker.calculate_format_metrics(prompts, responses, is_end)
             
             responses = [r.split("</think>")[-1].split("```python")[-1].split("```")[0].strip() for r in responses]
 
@@ -133,7 +133,8 @@ class CodeEnvironment(EnvironmentInterface):
         # Calculate format rewards for all prompt-response pairs
         format_rewards = FormatChecker.calculate_format_metrics(
             batch["prompt_sentences"],
-            batch["response_sentences"]
+            batch["response_sentences"],
+            batch["is_end"]
         )
         
         metrics = {

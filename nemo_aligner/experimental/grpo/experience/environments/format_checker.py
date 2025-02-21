@@ -43,14 +43,18 @@ class FormatChecker:
         return True  # No format requirements if neither flag is present
     
     @staticmethod
-    def calculate_format_metrics(prompts: List[str], responses: List[str]):
+    def calculate_format_metrics(prompts: List[str], responses: List[str], is_end: List[bool]):
         """Calculate format rewards and metrics for a batch of responses."""
         format_rewards = []
         
-        for prompt, response in zip(prompts, responses):
+        for prompt, response, is_end in zip(prompts, responses, is_end):
             # Check format compliance
-            format_correct = FormatChecker.check_thinking_format(prompt, response)
-            format_rewards.append(1.0 if format_correct else 0.0)
+            # only check for those correctly terminated responses
+            if is_end:
+                format_correct = FormatChecker.check_thinking_format(prompt, response)
+                format_rewards.append(1.0 if format_correct else 0.0)
+            else:
+                format_rewards.append(1.0)
             
         
         return format_rewards
