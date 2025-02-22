@@ -25,3 +25,16 @@ The following table summarizes the FP8-related arguments that can be configured 
      - Indicates whether to store module-level parameters in FP8. Enabling this option can reduce memory consumption by eliminating the need to store a copy of weights in higher precision for cases where these weights are externally maintained, such as master parameters in the optimizer. For more information, refer to the `fp8_model_init <https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/api/pytorch.html#transformer_engine.pytorch.fp8_model_init>`_ API in TE.
 
 Importantly, you must enable Transformer Engine in order to leverage FP8. Make sure ``model.transformer_engine`` is set to ``True`` in your config.
+
+
+The following code can be appended to your train script to enable FP8 training. Note that the following configuration may need to modified for optimal performance
+depending on your model configuration.
+
+.. code-block:: bash 
+    ++model.fp8=True \
+    ++model.fp8_hybrid=True \
+    ++model.fp8_e4m3=False \
+    ++model.fp8_margin=0 \
+    ++model.fp8_amax_history_len=1024 \
+    ++model.fp8_amax_compute_algo="max" \
+    ++model.fp8_params=True
