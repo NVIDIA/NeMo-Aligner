@@ -30,7 +30,8 @@ Importantly, you must enable Transformer Engine in order to leverage FP8. Make s
 The following code can be appended to your train script to enable FP8 training. Note that the following configuration may need to modified for optimal performance
 depending on your model configuration.
 
-.. code-block:: bash 
+.. code-block:: bash
+
     ++model.fp8=True \
     ++model.fp8_hybrid=True \
     ++model.fp8_e4m3=False \
