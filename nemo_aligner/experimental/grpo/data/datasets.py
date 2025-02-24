@@ -85,7 +85,7 @@ class AllTaskDataset:
             elif self.data[idx].get("system_prompt", None):
                 chat.append({"role": "system", "content": self.data[idx]["system_prompt"]})
                 
-            chat.append({"role": "user", "content": self.prompt.format(text_str)})
+            chat.append({"role": "user", "content": text_str})
             text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
         else:
             text = self.prompt.format(text_str)
