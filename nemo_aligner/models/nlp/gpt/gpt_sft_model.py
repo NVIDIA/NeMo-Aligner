@@ -21,7 +21,8 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
-from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+#from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+from nemo_aligner.experimental.self_revising.self_revising_inference_model import SelfRevisingInferenceModel
 from nemo.collections.nlp.modules.common.megatron.utils import get_iterator_k_split
 from nemo.collections.nlp.modules.common.text_generation_strategy import TextGenerationStrategy
 from nemo.collections.nlp.modules.common.text_generation_utils import (
@@ -46,7 +47,7 @@ from nemo_aligner.utils.train_utils import (
 from nemo_aligner.utils.utils import configure_batch_sizes
 
 
-class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
+class GPTSFTModel(NLPAdapterModelMixin, SelfRevisingInferenceModel, SupervisedInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
 
@@ -142,7 +143,7 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
         mbs = int(self.cfg.data.train_ds.micro_batch_size)
         dp_size = int(parallel_state.get_data_parallel_world_size())
         configure_batch_sizes(mbs=mbs, gbs=gbs, dp=dp_size)
-
+    '''
     def generate(
         self,
         inputs: Union[List[str], Tuple[torch.Tensor, torch.Tensor]],
@@ -198,7 +199,7 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
                 for tokens, length in zip(output["token_ids"], prompt_lengths)
             ]
         return output
-
+    '''
     @torch.no_grad()
     def infer(self, inference_batch, length_params=None, sampling_params=None, strategy=None):
         prompt_tokens = inference_batch["text"].cuda(non_blocking=True)
