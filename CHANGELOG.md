@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 -->
 
 ## [Next Version]
+- Added support for [expert parallelism (EP)](https://docs.nvidia.com/nemo-framework/user-guide/24.09/nemotoolkit/features/parallelisms.html#expert-parallelism) for Mixture of Experts models. To enable EP, add `expert_model_parallel_size` to your config, for example:
+    - `++model.expert_model_parallel_size=2`
 - Added context parallel (CP) support for DPO and validated CP support without sequence packing for SFT. To enable context parallel without sequence packing, simply set `model.context_parallel_size` in your config.
     - _Note_: Context parallel is also compatible with sequence packing for DPO, but divergence has been observed in rare cases when using Transformer Engine version 1.13. This issue is under active investigation. If you try running DPO with both context parallelism and sequence packing and observe divergence, either:
         1. disable sequence packing, or
