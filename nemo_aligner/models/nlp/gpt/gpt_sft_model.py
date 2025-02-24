@@ -152,7 +152,7 @@ class GPTSFTModel(NLPAdapterModelMixin, GPTInferenceModel, SupervisedInterface):
         *,
         strategy: Optional[TextGenerationStrategy] = None,
     ) -> OutputType:
-        return super().generate(inputs=inputs, length_params=length_params, sampling_params=sampling_params, strategy=strategy)
+
         """
         Same as base model generate, except the following:
 
