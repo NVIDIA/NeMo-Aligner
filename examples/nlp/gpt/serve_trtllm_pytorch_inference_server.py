@@ -41,19 +41,6 @@ class TRTLLMPytorchInferenceServer:
         return shared_cpu_state_dict.get_metadata_dict()
 
     def create_shared_dict_file(self, shared_tensor_dict):
-        """
-        Creates an in-memory file object containing the JSON representation
-        of the metadata dictionary. On Linux, it uses os.memfd_create to get
-        a real file descriptor that lives in memory only; on other platforms,
-        it falls back to io.BytesIO.
-        
-        Args:
-            shared_tensor_dict (SharedCPUMemoryTensorDict): The instance whose
-            metadata we want to share.
-            
-        Returns:
-            A file-like object, opened for reading in binary mode.
-        """
         import json
         import io
         from tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
@@ -105,17 +92,12 @@ class TRTLLMPytorchInferenceServer:
             self.llm = LLM(model=path, tensor_parallel_size=tp, pytorch_backend_config=pytorch_config, kv_cache_config=KvCacheConfig(free_gpu_memory_fraction=0.7, enable_block_reuse=True))
             self.llm.free_gpu_resources()
             self.running = True
-        #else:
-        
-        file_obj = self.create_shared_dict_file(state_dict)
-        # self.llm.load_model(file_obj)
+
         self.llm.load_shared_memory_state_dict(self.get_shared_dict_metadata(state_dict))
         print(f"TRTLLM Pytorch inference server started.", flush=True)
         self.get_gpu_memory_usage()
 
     def refit(self, path, state_dict, test_dict):
-        file_obj = self.create_shared_dict_file(state_dict)
-        # self.llm.load_model(file_obj)
         self.llm.load_shared_memory_state_dict(self.get_shared_dict_metadata(state_dict))
         print(f"TRTLLM Pytorch inference server refitted.", flush=True)
         self.get_gpu_memory_usage()
@@ -124,7 +106,6 @@ class TRTLLMPytorchInferenceServer:
         self.get_gpu_memory_usage()
         self.llm.free_gpu_resources()
         print("TRTLLM Pytorch gpu resources freed.", flush=True)
-        # print the current memory usage for all GPUs
         self.get_gpu_memory_usage()
 
     def generate(self, batch_tokens, sampling_params):
@@ -139,7 +120,7 @@ class TRTLLMPytorchInferenceServer:
         sampling_params = SamplingParams(
             temperature=sampling_params["temperature"],
             top_p=sampling_params["top_p"],
-            max_tokens=sampling_params["max_tokens"], #self.max_seq_len,
+            max_tokens=sampling_params["max_tokens"],
             detokenize=False,
             # return_log_probs=True,
             return_generation_logits=True,
@@ -153,21 +134,8 @@ class TRTLLMPytorchInferenceServer:
         logprobs = []
         out_tokens = []
 
-        # def compute_logprobs(generation_logits, token_ids):
-        #     log_probs = torch.log_softmax(generation_logits, dim=-1)  # [seq_len, vocab_size]
-        #     if isinstance(token_ids, list):
-        #         token_ids = torch.tensor(token_ids, device=log_probs.device)
-        #     seq_indices = torch.arange(len(token_ids), device=log_probs.device)
-        #     selected_logprobs = log_probs[seq_indices, token_ids]  # [seq_len]    
-        #     return selected_logprobs
-
         for output in outputs:
-            # print(output.outputs[0].token_ids, flush=True)
-            #lps = output.outputs[0].logprobs
-            # generation logits
             generation_logits = output.outputs[0].generation_logits
-            # logprobs from generation logits
-            # lps = compute_logprobs(generation_logits, output.outputs[0].token_ids)
             lps = generation_logits.tolist()
             out_toks = output.outputs[0].token_ids
             logprobs.append(lps)
