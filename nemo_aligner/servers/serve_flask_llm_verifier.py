@@ -49,7 +49,7 @@ verifier = LLMVerifier(
     temperature=0.0
 )
 
-@app.route('/llm_verifier', methods=['POST'])
+@app.route('/llm_judge', methods=['POST'])
 def verify_responses():
     """
     Endpoint to evaluate responses using LLM judge.
@@ -77,6 +77,10 @@ def verify_responses():
         
         # Convert to rewards format
         rewards = np.array([1.0 if r["passed"] else 0.0 for r in results])
+        
+        full_responses = [r["full_response"] for r in results]
+        print(full_responses)
+        # todo: add format reward
         
         output_dict = {
             "rewards": rewards.reshape((rewards.shape[0], 1)).tolist(),

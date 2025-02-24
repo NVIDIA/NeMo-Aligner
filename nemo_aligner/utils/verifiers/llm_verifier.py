@@ -17,9 +17,7 @@ class LLMVerifier:
         self.max_tokens = max_tokens
         self.temperature = temperature
         
-        self.judge_prompt_template = """You are a fair and consistent judge. You will be given a problem, a ground truth answer, and a model's response. Evaluate if the model's response correctly solves the problem.
-
-Problem:
+        self.judge_prompt_template = """Problem:
 {prompt}
 
 Ground Truth Answer:
@@ -28,13 +26,9 @@ Ground Truth Answer:
 Model Response:
 {response}
 
-Evaluate if the model response is correct. Consider:
-1. Does it solve the problem correctly?
-2. Does it match the ground truth in meaning (not necessarily word-for-word)?
-3. Are there any errors or missing parts?
-4. The difference in case (lowercase vs uppercase) does not matter.
-
-Respond with only "CORRECT" or "WRONG" followed by a brief explanation.
+Instructions:
+You are a fair and consistent judge. Above is a problem, a ground truth answer, and a model's response. Evaluate if the model's response matches the ground truth answer.
+Answer "YES" or "NO", then provide a brief explanation.
 """
 
     def _call_single_api(self, msg: List[Dict[str, str]]) -> str:
@@ -89,7 +83,19 @@ Respond with only "CORRECT" or "WRONG" followed by a brief explanation.
             List of dictionaries containing verification results
         """
         results = []
-        
+        # to debug with exact match
+        # for resp, gt in zip(responses, ground_truths):
+        #     if resp.lower() == gt.lower():
+        #         results.append({
+        #             "passed": True,
+        #             "full_response": resp
+        #         })
+        #     else:
+        #         results.append({
+        #             "passed": False,
+        #             "full_response": resp
+        #         })
+
         # Prepare prompts for the judge
         judge_prompts = [
             self.judge_prompt_template.format(
@@ -102,11 +108,11 @@ Respond with only "CORRECT" or "WRONG" followed by a brief explanation.
         
         # Get LLM judgments through API
         generated_texts = self._call_vllm_api(judge_prompts)
-        
+        print(generated_texts)
         # Process results
         for generated_text in generated_texts:
             generated_text = generated_text.strip()
-            is_correct = "correct" in generated_text.lower()
+            is_correct = "yes" in generated_text.lower() and "no" not in generated_text.lower()
             
             results.append({
                 "passed": is_correct,

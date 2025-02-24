@@ -28,7 +28,7 @@ class LLMJudgeEnvironment(EnvironmentInterface):
         
         print(f"Started LLMJudgeEnvironment client with {cfg.servers}")
         
-    def start_step(self, interactions, metadata):
+    def start_step(self, interactions, metadata, is_end):
         """
         metadata: List[Dict] containing:
             - "prompt": The original problem prompt
@@ -39,7 +39,7 @@ class LLMJudgeEnvironment(EnvironmentInterface):
             responses = []
             for meta, interaction in zip(metadata, interactions):
                 if meta["extract_box"]:
-                    interaction = extract_answer(interaction)
+                    interaction = extract_answer(''.join(interaction[1:]))
                     if interaction is None:
                         interaction = ""
                 else:
@@ -52,14 +52,17 @@ class LLMJudgeEnvironment(EnvironmentInterface):
                 "responses": responses,
                 "ground_truths": [meta["ground_truth"] for meta in metadata],
             }
-            
-            return self.communicator.send_data_to_server("llm_verifier", data)
+            print(data)
+            print("### ", metadata[0]["prompt"], responses[0], metadata[0]["ground_truth"])
+            return self.communicator.send_data_to_server("llm_judge", data)
         return None
 
     def finish_step(self, future):
+        # gets the future result and also broadcasts within the current MP group
         results = self.communicator.get_result(future, "rewards")
-        
-        th_rewards = torch.tensor(results["rewards"]).squeeze(1)
+
+        th_rewards = torch.tensor(results).squeeze(1)
+        print('th rewards shape', th_rewards.shape)
         return None, None, th_rewards, torch.ones(th_rewards.shape[0],)
     
     def global_post_process_and_metrics(self, batch):
@@ -73,10 +76,9 @@ class LLMJudgeEnvironment(EnvironmentInterface):
             "reward": batch["rewards"][0].item(),
             "prompt_sentence": batch["prompt_sentences"][0],
             "response_sentence": batch["response_sentences"][0],
-            "expected_answer": batch["extra_verifier_info"][0]["ground_truth"],
-            "explanation": batch["extra_verifier_info"]["explanations"][0] if "explanations" in batch["extra_verifier_info"] else None,
+            "expected_answer": batch["extra_verifier_info"][0]["ground_truth"]
         }
-        
+        print("### ", table)
         # Set a reward of 0 for any incorrectly ended sequences
         batch["rewards"] = batch["rewards"] * batch["is_end"]
         
