@@ -147,6 +147,7 @@ def main(cfg) -> None:
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
         pad_samples_to_global_batch_size=False,
+        limit_batches=cfg.trainer.knowledge_distillation.limit_train_batches,
         collate_fn=partial(
             _collate_fn,
             eos_id=ptl_model.tokenizer.eos_id,

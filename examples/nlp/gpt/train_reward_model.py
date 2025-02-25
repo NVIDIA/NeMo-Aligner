@@ -123,6 +123,7 @@ def main(cfg) -> None:
         gbs=cfg.model.global_batch_size,
         load_gbs=True,
         use_random_sampler=cfg.trainer.rm.train_random_sampler,
+        limit_batches=cfg.trainer.rm.limit_train_batches,
     )
 
     val_dataloader = build_dataloader(

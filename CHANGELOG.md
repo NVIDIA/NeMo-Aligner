@@ -44,6 +44,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Using latest TransformerEngine versions may require `++model.dist_ckpt_load_strictness=log_all` when loading from a older pre-existing checkpoint to not error out.
 - NeMo-Aligner now requires Megatron-LM==0.9.0 for the APIs to calculate the microbatch sizes (API introduced `megatron.core.num_microbatches_calculator.reconfigure_num_microbatch_calculator`).
 - NeMo-Aligner now requires a version of NeMo with this change to how the MoE spec is handled: https://github.com/NVIDIA/NeMo/pull/9035 .
+- Using the new `TruncatedGPTSFTChatDataset` with max_seq_length > 0 will result in a finalised, loaded dataset which has a different number of samples
+  than what was previously loaded with `GPTSFTChatDataset`
 
 ### Bug Fixes
 - It is now required, for stability, to add `export NCCL_ALGO=...` to scripts launching PPO training loop. Please see the [RLHF docs](./docs/user-guide/rlhf.rst) for information.
@@ -57,6 +59,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 ### New Features and Optimizations
 - Implement Kahneman-Tversky Optimization (KTO).
 - Sequence packing is now supported when running SFT with prompt-response datasets.
+- [EXPERIMENTAL] Implement the [Self-Rewarding](https://arxiv.org/abs/2401.10020) and [Meta-Rewarding](https://arxiv.org/abs/2407.19594) algorithms.
 
 ### Breaking Changes
 

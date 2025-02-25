@@ -132,6 +132,7 @@ jobs:
           - reinforce-llama3-pp2-reshard
           - dpo-llama3
           - dpo-llama3-pack
+          - spin-llama3
           - kd-llama3
           - sft-llama3
           - rm-llama3
