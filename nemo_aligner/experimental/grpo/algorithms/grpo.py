@@ -268,6 +268,15 @@ class GRPOTrainer:
 
             grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
             grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
+
+            if torch.isnan(torch.tensor(grad_norm)):
+                logging.warning("Skipping training step due to NaN gradient norm.")
+                self.optimizer.zero_grad()  # Zero out gradients
+                metrics["grad_norm"] = float('nan')
+                metrics.update({"loss": loss_mean, "optim_step": self.grpo_optimization_step})
+                self.logger.log_metrics(metrics, step=self.step, prefix="train_optim/")
+                continue
+
             lr = self.optimizer.param_groups[0]["lr"]
 
             self.optimizer.step()
