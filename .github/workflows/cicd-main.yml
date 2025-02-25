@@ -137,8 +137,7 @@ jobs:
           - sft-llama3-cp
           - rm-llama3
           - e2e-nemo2
-          # TODO: Uncomment after mcore upgraded to ToT to fix hang and !2532 merged to fix crash
-          #- dpo-mixtral-ep
+          - dpo-mixtral-ep
           - dpo-mixtral-peft-tp-sp
     with:
       RUNNER: self-hosted-azure
