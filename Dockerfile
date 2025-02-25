@@ -123,8 +123,6 @@ RUN cd /opt/NeMo-Aligner && \
 
 RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
-<<<<<<< HEAD
-=======
 # NOTE: Comment this layer out if it is not needed
 # NOTE: This section exists to allow cherry-picking PRs in cases where
 #  we do not wish to simply update to the top-of-tree. Sometimes PRs
@@ -148,4 +146,3 @@ for pr_and_commit in \
   git tag cherry-pick-PR-${pr}
 done
 EOF
->>>>>>> 3604fc48 (feat: add context parallel support for SFT (#430))
