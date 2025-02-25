@@ -107,9 +107,9 @@ This script converts the *Instruction*, *Context*, and *Response* fields into *I
    }
 
 Sequence packing is also supported with prompt-response datasets. Sequence packing is a training technique in which multiple training examples are concatenated to create one longer sequence.
-This approach eliminates the need for padding and improves GPU utilization. Refer to the `sequence packing documentation <https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#>`_ for a detailed overview of sequence packing and its advantages.
+This approach eliminates the need for padding and improves GPU utilization. Refer to the `sequence packing documentation <https://docs.nvidia.com/nemo-framework/user-guide/24.07/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#>`_ for a detailed overview of sequence packing and its advantages.
 
-NeMo provides a script to pack your SFT prompt-response dataset. Refer to the `prepare dataset <https://docs.nvidia.com/nemo-framework/user-guide/latest/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#prepare-dataset>`_ section of the documentation for details on how to use this script.
+NeMo provides a script to pack your SFT prompt-response dataset. Refer to the `prepare dataset <https://docs.nvidia.com/nemo-framework/user-guide/24.07/nemotoolkit/features/optimizations/sequence_packing.html?highlight=packing#prepare-dataset>`_ section of the documentation for details on how to use this script.
 
 Step 2: Run SFT training.
 ^^^^^^^^^^^^^^^^^^^^^^^^^
