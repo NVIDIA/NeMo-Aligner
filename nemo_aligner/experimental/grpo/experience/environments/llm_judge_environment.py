@@ -44,7 +44,7 @@ class LLMJudgeEnvironment(EnvironmentInterface):
                         interaction = ""
                 else:
                     interaction = ''.join(interaction[1:])
-                responses.append(interaction)
+                responses.append(interaction.split("</think>")[-1].strip())
             
             # Prepare data for verification
             data = {
