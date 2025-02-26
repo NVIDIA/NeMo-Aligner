@@ -192,7 +192,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     required_keys.update(("response_tokens", "position_ids"))
 
                 if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("response_tokens", "advantages", "mask", "logprobs", "valid_mask", "init_logprobs"))
+                    required_keys.update(("response_tokens", "advantages", "mask", "logprobs", "valid_mask", "init_logprobs", "inference_logprobs", "importance_correction"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
 
@@ -205,6 +205,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 advantages = batch["advantages"]
                 prev_log_probs = batch["logprobs"]
                 init_log_probs = batch["init_logprobs"]
+                importance_correction = batch["importance_correction"]
                 tokens = batch["response_tokens"]
                 is_end = batch["valid_mask"]
 
@@ -217,7 +218,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
                 kl = self.cfg.grpo.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(
                     log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs
-                )
+                ) * importance_correction
                 kl = masked_mean(kl, is_end_mask)
 
                 # Calculate clipped GRPO surrogate loss function.
@@ -228,7 +229,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 loss2 = -advantages * ratios_clamped
 
                 if is_end_mask.sum() > 0:
-                    actor_loss = masked_mean(torch.max(loss1, loss2), is_end_mask)
+                    actor_loss = masked_mean(importance_correction * torch.max(loss1, loss2), is_end_mask)
                     loss = actor_loss + kl
                 else:
                     # hack to disable this update since there are no valid tokens

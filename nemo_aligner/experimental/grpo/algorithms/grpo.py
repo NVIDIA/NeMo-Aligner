@@ -158,22 +158,30 @@ class GRPOTrainer:
         # collect everything we need to train GRPO
         grpo_train_data["response_tokens"] = rollout_batch["response_tokens"]
         grpo_train_data["logprobs"] = rollout_batch["logprobs"]
+        grpo_train_data["inference_logprobs"] = rollout_batch["response_trt_lps"]
         grpo_train_data["valid_mask"] = rollout_batch["is_end"]
         grpo_train_data["mask"] = mask
         grpo_train_data["init_logprobs"] = rollout_batch["init_logprobs"]
         grpo_train_data["advantages"] = advantages
 
         # compute metrics
+        if self.cfg.get("importance_sample_correct", False):
+            importance_correction = rollout_batch["logprobs"] / rollout_batch["response_trt_lps"][:, 1:]
+        else:
+            importance_correction = torch.ones_like(rollout_batch["logprobs"])
+        grpo_train_data["importance_correction"] = importance_correction
+
         init_policy_kl = calculate_kl_penalty_joschu2020(
                 log_probs_policy=rollout_batch["logprobs"],
                 log_probs_reference=rollout_batch["init_logprobs"],
-            )
+            ) * importance_correction
         grpo_rollout_metrics["init_policy_kl"] = (
             masked_mean(init_policy_kl, mask).item()
         )
         grpo_rollout_metrics["nonzero_advantages"] = (advantages != 0).float().mean()
         grpo_rollout_metrics["logprobs_mean"] = masked_mean(rollout_batch["logprobs"], mask).item()
         grpo_rollout_metrics["init_logprobs_mean"] = masked_mean(rollout_batch["init_logprobs"], mask).item()
+        grpo_rollout_metrics["importance_correction_mean"] = masked_mean(importance_correction, mask).item()
         
         local_grpo_train_data = grpo_train_data.chunk(
             rank=parallel_state.get_training_data_parallel_rank(),
