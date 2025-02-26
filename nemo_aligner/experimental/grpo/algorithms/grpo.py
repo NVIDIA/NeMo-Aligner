@@ -166,7 +166,8 @@ class GRPOTrainer:
 
         # compute metrics
         if self.cfg.get("importance_sample_correct", False):
-            importance_correction = rollout_batch["logprobs"] / rollout_batch["response_trt_lps"][:, 1:]
+            importance_correction = torch.exp(rollout_batch["logprobs"] - rollout_batch["response_trt_lps"][:, 1:])
+            importance_correction = torch.nan_to_num(importance_correction, nan=0.0, posinf=0.0, neginf=0.0)
         else:
             importance_correction = torch.ones_like(rollout_batch["logprobs"])
         grpo_train_data["importance_correction"] = importance_correction
