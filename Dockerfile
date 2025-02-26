@@ -12,13 +12,13 @@
 ARG MAX_JOBS=8
 # Git refs for dependencies
 ARG TE_TAG=7d576ed25266a17a7b651f2c12e8498f67e0baea
-ARG PYTRITON_VERSION=0.5.10
+ARG PYTRITON_VERSION=0.5.13
 ARG NEMO_TAG=633cb602777bffefbe12066b0c915c87e7b469e9 # On: v2.1.0
 ARG MLM_TAG=d15cec53beb283e7127b7d594e1c46b8a0719b6d  # On: core_r0.10.0
 ARG ALIGNER_COMMIT=main
-ARG TRTLLM_VERSION=v0.13.0
+ARG TRTLLM_VERSION=v0.15.0
 ARG PROTOBUF_VERSION=4.24.4
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.07-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:24.10-py3
 
 FROM ${BASE_IMAGE} AS aligner-bump
 ARG ALIGNER_COMMIT
@@ -69,10 +69,6 @@ RUN git clone https://github.com/NVIDIA/TensorRT-LLM.git && \
     python3 ./scripts/build_wheel.py --job_count $(nproc) --trt_root /usr/local/tensorrt  --python_bindings --benchmarks && \
     pip install -e .
 ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/cuda-12/compat/lib.real/
-
-# TODO: This pinning of pynvml is only needed while on TRTLLM v13 since pynvml>=11.5.0 but pynvml==12.0.0 contains a
-#   breaking change. The last known working verison is 11.5.3
-RUN pip install pynvml==11.5.3
 
 # install TransformerEngine
 ARG MAX_JOBS
@@ -135,8 +131,6 @@ RUN pip install --no-cache-dir lightning
 COPY --from=aligner-bump /opt/NeMo-Aligner /opt/NeMo-Aligner
 RUN cd /opt/NeMo-Aligner && \
     pip install --no-deps -e .
-
-RUN cd TensorRT-LLM && patch -p1 < ../NeMo-Aligner/setup/trtllm.patch
 
 # NOTE: Comment this layer out if it is not needed
 # NOTE: This section exists to allow cherry-picking PRs in cases where
