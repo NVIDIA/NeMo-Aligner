@@ -20,6 +20,9 @@
 :ref:`Prerequisite Obtaining a Pre-Trained Model <prerequisite>`
    This section provides instructions on how to download pre-trained LLMs in .nemo format. The following section will use these base LLMs for further fine-tuning and alignment. 
 
+:ref:`General Tips <generic>`
+   This section provides some general information that is useful for all algorithms available in NeMo-Aligner.
+
 :ref:`Model Alignment by Supervised Fine-Tuning (SFT) <nemo-aligner-sft>`
    In this section, we walk you through the most straightforward alignment method. We use a supervised dataset in the prompt-response pairs format to fine-tune the base model according to the desired behavior.
 
