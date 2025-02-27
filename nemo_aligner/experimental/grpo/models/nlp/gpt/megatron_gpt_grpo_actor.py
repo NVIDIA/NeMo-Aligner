@@ -190,7 +190,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 required_keys.update(("response_tokens", "position_ids"))
 
             if parallel_state.is_pipeline_last_stage():
-                required_keys.update(("response_tokens", "advantages", "mask", "logprobs", "valid_mask", "init_logprobs"))
+                required_keys.update(("response_tokens", "advantages", "mask", "logprobs", "valid_mask", "init_logprobs", "inference_logprobs", "importance_correction"))
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in _batch.items()}
 
