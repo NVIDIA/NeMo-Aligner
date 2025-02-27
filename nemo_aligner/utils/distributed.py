@@ -304,6 +304,60 @@ def _compute_distributed_log_softmax(vocab_parallel_logits):
     return vocab_parallel_logits - sum_exp_logits.log_().to(vocab_parallel_logits.dtype)
 
 
+def allgather_cp_sharded_tensor(tensor, seq_dim):
+    return AllGatherCPTensor.apply(tensor, seq_dim)
+
+class AllGatherCPTensor(torch.autograd.Function):
+    def forward(ctx, tensor, seq_dim):
+        cp_size = parallel_state.get_context_parallel_world_size()
+        cp_rank_chunks = []
+        for _ in range(cp_size):
+            cp_rank_chunks.append(torch.empty_like(tensor))
+
+        torch.distributed.all_gather(
+            tensor_list=cp_rank_chunks, 
+            tensor=tensor, 
+            group=parallel_state.get_context_parallel_group())
+
+        # undo the CP load balancing chunking
+        tensor_chunks = []
+        for logit_chunk in cp_rank_chunks:
+            tensor_chunks.extend(torch.chunk(logit_chunk, chunks=2, dim=seq_dim))
+
+        chunk_indices = []
+        for cp_rank in range(cp_size):
+            chunk_indices.append(cp_rank)
+            chunk_indices.append(2 * cp_size - cp_rank - 1)
+
+        chunks_and_indices = list(zip(tensor_chunks, chunk_indices))
+        chunks_and_indices = sorted(chunks_and_indices, key=lambda tup: tup[1])
+        ret_tensor = [chunk for chunk, _ in chunks_and_indices]
+        ret_tensor = torch.cat(ret_tensor, dim=seq_dim)
+
+        return ret_tensor
+
+    def backward(ctx, grad_output):
+        cp_size = parallel_state.get_context_parallel_world_size()
+        cp_rank = parallel_state.get_context_parallel_rank()
+        torch.distributed.all_reduce(grad_output, group=parallel_state.get_context_parallel_group())
+        
+        #chunk the seqdim in 2*cp chunks, and select with a CP load balanced indexing
+        seq_dim = 1
+        grad_output = grad_output.view(
+            *grad_output.shape[0:seq_dim],
+            2 * cp_size,
+            grad_output.shape[seq_dim] // (2 * cp_size),
+            *grad_output.shape[(seq_dim + 1) :],
+        )
+        index = torch.tensor(
+            [cp_rank, (2 * cp_size - cp_rank - 1)], device="cpu", pin_memory=True
+        ).cuda(non_blocking=True)
+
+        grad_input = grad_output.index_select(seq_dim, index)
+        grad_input = grad_input.view(*grad_input.shape[0:seq_dim], -1, *grad_input.shape[(seq_dim + 2) :])
+
+        return grad_input, None
+
 class DistributedLogprob(torch.autograd.Function):
     """Function to get logprobs out and differentiate through it
     """
