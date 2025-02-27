@@ -308,7 +308,7 @@ def allgather_cp_sharded_tensor(tensor, seq_dim):
     return AllGatherCPTensor.apply(tensor, seq_dim)
 
 class AllGatherCPTensor(torch.autograd.Function):
-    def forward(ctx, tensor, seq_dim):
+    def forward(ctx, tensor, seq_dim=1):
         cp_size = parallel_state.get_context_parallel_world_size()
         cp_rank_chunks = []
         for _ in range(cp_size):
@@ -334,6 +334,8 @@ class AllGatherCPTensor(torch.autograd.Function):
         ret_tensor = [chunk for chunk, _ in chunks_and_indices]
         ret_tensor = torch.cat(ret_tensor, dim=seq_dim)
 
+        ctx.seq_dim = seq_dim
+
         return ret_tensor
 
     def backward(ctx, grad_output):
@@ -342,7 +344,7 @@ class AllGatherCPTensor(torch.autograd.Function):
         torch.distributed.all_reduce(grad_output, group=parallel_state.get_context_parallel_group())
         
         #chunk the seqdim in 2*cp chunks, and select with a CP load balanced indexing
-        seq_dim = 1
+        seq_dim = ctx.seq_dim
         grad_output = grad_output.view(
             *grad_output.shape[0:seq_dim],
             2 * cp_size,

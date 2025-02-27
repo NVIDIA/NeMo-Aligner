@@ -202,9 +202,6 @@ class VLLMClient:
                 except requests.exceptions.RequestException as e:
                     print(f"Error during generation: {e}, retrying {retry_ctr}")
                     retry_ctr += 1
-                    
-                if retry_ctr > 64:
-                    raise Exception
 
             # prefix add the prompt tokens to the response tokens
             response_tokens = data["response_tokens"]

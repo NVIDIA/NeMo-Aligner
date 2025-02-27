@@ -111,7 +111,7 @@ class GPTRolloutBatch(UserDict):
         assert len(batch_set) == 1, "batch sizes are not the same across the rollout batch"
         B = batch_set.pop()
         assert B % split_size == 0, f"batch size ({B}) is not a multiple of split_size ({split_size})"
-        assert B // split_size > rank, \
+        assert split_size > rank, \
             f"index OOB: not enough splits for this rank. rollout_batch_size: {B}, split_size ({split_size}), rank_idx ({rank})"
 
         indices = torch.arange(B).tensor_split(split_size)[rank]
