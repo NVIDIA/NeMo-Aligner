@@ -15,7 +15,7 @@ from omegaconf import DictConfig
 from concurrent import futures
 import torch
 
-from nemo_aligner.utils import parallel_state
+from nemo_aligner.experimental.grpo.utils import parallel_state
 from nemo_aligner.experimental.grpo.experience.interfaces import EnvironmentInterface
 from nemo_aligner.experimental.grpo.experience.environments.metrics import calculate_pass_rate_per_prompt
 from nemo_aligner.servers.http_communicator import FlaskCommunicator
