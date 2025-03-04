@@ -178,6 +178,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         batched_response_tokens = balanced_local_batch["response_tokens"]
 
         policy_model.inference_backend.free()
+# policy_model.inference_backend.shutdown()
 
         with self.timer("logprobs"):
             rollout_logprobs = policy_model.get_inference_log_probs(batched_response_tokens)

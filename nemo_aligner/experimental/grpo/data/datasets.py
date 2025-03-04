@@ -64,7 +64,9 @@ class AllTaskDataset:
         """
         Return a single prompt.
         """
-        if "task_name" not in self.data[idx]:
+        if "args" in self.data[idx]:
+            task_name = self.data[idx]["args"]["task"]
+        elif "task_name" not in self.data[idx]:
             task_name = self.data[idx]["dataset"]
         else:
             task_name = self.data[idx]["task_name"]
@@ -74,6 +76,9 @@ class AllTaskDataset:
         if task_name == "code":
             text_str = self.data[idx]["prompt"]
             extra_verifier_info = {"unittests": self.data[idx]["args"]["unittests"], "test_type": self.data[idx]["args"]["test_type"], "fn_name": self.data[idx]["args"].get("fn_name", None)}
+        elif "args" in self.data[idx] and task_name == "deepscaler":
+            text_str = self.data[idx]["text"]
+            extra_verifier_info = {"ground_truth": self.data[idx]["args"]["answer"]}
         else:
             text_str = self.data[idx]["problem"]
             extra_verifier_info = {"ground_truth": self.data[idx]["expected_answer"]}
@@ -87,6 +92,8 @@ class AllTaskDataset:
                 
             chat.append({"role": "user", "content": text_str})
             text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
+        elif "args" in self.data[idx] and task_name == "deepscaler":
+            text = self.data[idx]["text"]
         else:
             text = self.prompt.format(text_str)
         
