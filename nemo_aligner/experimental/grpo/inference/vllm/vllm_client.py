@@ -20,7 +20,7 @@ import nemo_aligner.experimental.grpo.utils.parallel_state as parallel_state
 from nemo_aligner.utils.distributed import broadcast_tensor 
 import time
 from contextlib import nullcontext
-from tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
+from nemo_aligner.tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
 
 def print_group_ranks(group):
     """

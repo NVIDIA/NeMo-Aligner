@@ -72,7 +72,7 @@ from nemo_aligner.experimental.grpo.inference.utils.utils import parallel_save_c
 from nemo_aligner.experimental.grpo.inference.registry import get_backend, list_available_backends
 from nemo_aligner.experimental.grpo.models.nlp.gpt import conversion_dict as CONVERTER
 
-from tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
+from nemo_aligner.tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
 
 class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
