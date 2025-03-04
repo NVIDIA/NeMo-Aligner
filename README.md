@@ -47,7 +47,7 @@ NeMo-Aligner has the same requirements as the [NeMo Toolkit Requirements](https:
 ### Quick start inside NeMo container
 NeMo Aligner comes included with NeMo containers. On a machine with NVIDIA GPUs and drivers installed run NeMo container:
 ```bash
-docker run --gpus all -it --rm --shm-size=8g --ulimit memlock=-1 --ulimit stack=67108864  nvcr.io/nvidia/nemo:24.07
+docker run --gpus all -it --rm --shm-size=8g --ulimit memlock=-1 --ulimit stack=67108864  nvcr.io/nvidia/nemo:24.12
 ```
 Once you are inside the container, NeMo-Aligner is already installed and together with NeMo and other tools can be found under ```/opt/``` folder.
 
