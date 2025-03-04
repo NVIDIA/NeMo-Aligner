@@ -29,7 +29,7 @@ To run interactively using a pre-built container, run the following code:
         docker run --rm -it \
           --gpus all --ipc=host --ulimit memlock=-1 --ulimit stack=67108864 --shm-size=8g \
           --workdir /opt/NeMo-Aligner \
-          nvcr.io/nvidia/nemo:24.09
+          nvcr.io/nvidia/nemo:24.12
 
     Please use the latest tag in the form yy.mm.(patch).
 
@@ -57,4 +57,4 @@ Run the following to build the image:
             --build-arg=ALIGNER_COMMIT=$ALIGNER_COMMIT \
             .
 
-        # Run the image using the above command in "Get Started" and swap out "nvcr.io/nvidia/nemo:24.09" with "aligner-custom".
+        # Run the image using the above command in "Get Started" and swap out "nvcr.io/nvidia/nemo:24.12" with "aligner-custom".
