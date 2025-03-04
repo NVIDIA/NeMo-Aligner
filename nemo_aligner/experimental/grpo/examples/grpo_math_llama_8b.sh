@@ -107,6 +107,7 @@ srun -l \
         exp_manager.checkpoint_callback_params.save_top_k=10 \
         exp_manager.create_checkpoint_callback=True \
         +model.tensor_model_parallel_size=4 \
+        +model.context_parallel_size=1 \
         ++model.optim.bucket_cap_mb=200 \
         ++model.optim.overlap_grad_sync=False \
         ++model.optim.contiguous_grad_buffer=True \

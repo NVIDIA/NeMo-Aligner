@@ -21,6 +21,7 @@ trainer:
     initial_policy_kl_penalty: 0.01
     use_leave_one_out_baseline: True
     normalize_rewards: True
+    importance_sample_correct: False
     
     # rollout arguments
     generation_rollout_mbs: 8
@@ -81,6 +82,11 @@ trainer:
           port: 4321
           ip: localhost
 
+        trt_llm_pytorch:
+          enable: False
+          port: 4321
+          ip: localhost
+          
     batch_iterator:
       # When use_flask is True, we will spawn a flask server on rank 0 to balance the work of policy rollouts.
       # This option is useful in cases where the generation length varies greatly across DP ranks since

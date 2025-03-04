@@ -45,6 +45,7 @@ from nemo_aligner.experimental.grpo.utils import parallel_state
 from nemo_aligner.utils.distributed import (
     broadcast_2d_tensor_within_pp,
     from_parallel_logits_to_logprobs,
+    allgather_cp_sharded_tensor,
 )
 from nemo_aligner.experimental.grpo.utils.rl_utils import calculate_kl_penalty_joschu2020
 from nemo_aligner.utils.text_generation_utils import (
@@ -158,13 +159,23 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             )
             self.shared_cpu_state_dict = SharedCPUMemoryTensorDict()
         elif backend_type == "trt_llm_pytorch":
+            sampling_params = {
+                "temperature": self.cfg.grpo.sampling_params["temperature"],
+                "top_p": self.cfg.grpo.sampling_params["top_p"],
+                "top_k": self.cfg.grpo.sampling_params["top_k"],
+                "max_tokens": self.cfg.grpo.length_params.get("max_length", 2048),
+                "logprobs": 0,
+            }
 
             from nemo_aligner.experimental.grpo.inference.trtllm_pytorch.trtllm_pytorch_client import TRTLLMPytorchClient 
             backend = TRTLLMPytorchClient(
                 self.cfg.grpo.inference_backend.config.trt_llm_pytorch,
+                use_reshard=self.cfg.grpo.inference_backend.get("reshard", False),
                 tokenizer=self.tokenizer,
                 checkpoint_path=self.cfg.grpo.share_dir,
+                sampling_params=sampling_params,
             )
+            self.shared_cpu_state_dict = SharedCPUMemoryTensorDict()
         else:
             raise ValueError(f"Unsupported inference backend: {backend_type}")
 
@@ -173,35 +184,53 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
     # training calls
     def get_actor_forward_output_and_loss_func(self):
         def fwd_output_and_loss_func(data_iterator, model):
-            batch = next(data_iterator)
+            _batch = next(data_iterator)
             required_keys = set()
-            if parallel_state.get_pipeline_model_parallel_world_size() == 1:
-                required_keys.update(batch.keys())
+            required_keys.add("attention_mask")
+
+            if parallel_state.is_pipeline_first_stage():
+                required_keys.update(("response_tokens", "position_ids"))
+
+            if parallel_state.is_pipeline_last_stage():
+                required_keys.update(("response_tokens", "advantages", "mask", "logprobs", "valid_mask", "init_logprobs", "inference_logprobs", "importance_correction"))
+
+            batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in _batch.items()}
+
+            if parallel_state.get_context_parallel_world_size() > 1:
+                _cp_batch = {
+                    "response_tokens" : batch['response_tokens'].clone(),
+                    "position_ids" : batch['position_ids'].clone(),
+                    "attention_mask" : batch['attention_mask'].clone(),
+                }
+                _cp_batch = self.get_batch_on_this_context_parallel_rank(_cp_batch)
+                parallel_logits = model(
+                    _cp_batch["response_tokens"], _cp_batch["position_ids"], _cp_batch["attention_mask"], labels=None,
+                )
+
             else:
-                required_keys.add("attention_mask")
-
-                if parallel_state.is_pipeline_first_stage():
-                    required_keys.update(("response_tokens", "position_ids"))
-
-                if parallel_state.is_pipeline_last_stage():
-                    required_keys.update(("response_tokens", "advantages", "mask", "logprobs", "valid_mask", "init_logprobs"))
-
-            batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in batch.items()}
-
-            parallel_logits = model(
-                batch["response_tokens"], batch["position_ids"], batch["attention_mask"], labels=None,
-            )
+                parallel_logits = model(
+                    batch["response_tokens"], batch["position_ids"], batch["attention_mask"], labels=None,
+                )
 
             def loss_func(parallel_logits):
                 mask = batch["mask"]
                 advantages = batch["advantages"]
                 prev_log_probs = batch["logprobs"]
                 init_log_probs = batch["init_logprobs"]
+                importance_correction = batch["importance_correction"]
                 tokens = batch["response_tokens"]
                 is_end = batch["valid_mask"]
 
                 #is_end_mask = mask * is_end.view(-1, 1)
                 is_end_mask = mask
+
+                # gather logits along CP seqlen dim and unpad
+                # TODO support CP wise from_parallel_logits_to_logprobs
+                if parallel_state.get_context_parallel_world_size() > 1:
+                    parallel_logits = allgather_cp_sharded_tensor(parallel_logits, seq_dim=1)
+                    #remove the 2*cp padding
+                    parallel_logits = parallel_logits[:,:_batch['cp_unpadded_seqlen'][0], :]
+                    tokens = tokens[:,:_batch['cp_unpadded_seqlen'][0]]
 
                 curr_log_probs = from_parallel_logits_to_logprobs(
                     vocab_parallel_logits=parallel_logits, target=tokens, higher_stability=True
@@ -209,7 +238,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
                 kl = self.cfg.grpo.initial_policy_kl_penalty * calculate_kl_penalty_joschu2020(
                     log_probs_policy=curr_log_probs, log_probs_reference=init_log_probs
-                )
+                ) * importance_correction
                 kl = masked_mean(kl, is_end_mask)
 
                 # Calculate clipped GRPO surrogate loss function.
@@ -220,7 +249,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 loss2 = -advantages * ratios_clamped
 
                 if is_end_mask.sum() > 0:
-                    actor_loss = masked_mean(torch.max(loss1, loss2), is_end_mask)
+                    actor_loss = masked_mean(importance_correction * torch.max(loss1, loss2), is_end_mask)
                     loss = actor_loss + kl
                 else:
                     # hack to disable this update since there are no valid tokens
@@ -283,13 +312,21 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         prepare_for_training_step(self, zero_grad=False)
 
     def get_loss_and_metrics(self, batch, forward_only):
-        sequence_length = batch["response_tokens"].size(1)
+        #seq len must be padded to the nearest cp*2 for context parallelism
+        if parallel_state.get_context_parallel_world_size() > 1:
+            response_tokens = batch['response_tokens']
+            cp_unpadded_seqlen = response_tokens.shape[1]
+            batch['response_tokens'] = self.pad_tensor_for_cp(response_tokens)
 
+        num_microbatches = get_num_microbatches()
         attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(tokens=batch["response_tokens"])
         batch["attention_mask"] = attention_mask
         batch["position_ids"] = position_ids
 
-        data_iter = get_iterator_k_split(batch, get_num_microbatches())
+        if parallel_state.get_context_parallel_world_size() > 1:
+            batch['cp_unpadded_seqlen'] = [cp_unpadded_seqlen] * num_microbatches
+
+        data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only)
         fwd_bwd_function = get_forward_backward_func()
 
@@ -297,10 +334,10 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             forward_step_func=self.get_actor_forward_output_and_loss_func(),
             data_iterator=self._make_data_iterator_list(data_iter),
             model=self.model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=num_microbatches,
             forward_only=forward_only,
-            seq_length=sequence_length,
-            micro_batch_size=self.cfg.micro_batch_size,
+            seq_length=None, #unused
+            micro_batch_size=None, #unused
         )
 
         metrics = {}
@@ -326,19 +363,52 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         """no need to offload adam states here
         """
 
+    def pad_tensor_for_cp(self, tensor):
+        seqlen = tensor.shape[1]
+        cp_times_two = parallel_state.get_context_parallel_world_size() * 2
+        padded_seqlen =  ((seqlen + cp_times_two - 1) // cp_times_two) * cp_times_two
+
+        padded_tensor = torch.nn.functional.pad(
+            tensor, 
+            (0,padded_seqlen - seqlen), 
+            value=self.tokenizer.eos_id,
+        )
+        return padded_tensor
+
     # inference calls
     def get_logprob_output_only_func(self, inference_only=True):
         fwd_output_only_func = self.get_forward_output_only_func()
 
         def log_prob_output_only_func(dataloader_iter, model):
-            batch = next(dataloader_iter)
+            _batch = next(dataloader_iter)
 
+            if parallel_state.get_context_parallel_world_size() > 1:
+                _cp_batch = {
+                    "response_tokens" : _batch['response_tokens'].clone(),
+                    "position_ids" : _batch['position_ids'].clone(),
+                    "attention_mask" : _batch['attention_mask'].clone(),
+                }
+                _cp_batch = self.get_batch_on_this_context_parallel_rank(_cp_batch)
+                batch = [_cp_batch['response_tokens'], _cp_batch['attention_mask'], _cp_batch['position_ids']]
+            else:
+                batch = [_batch['response_tokens'], _batch['attention_mask'], _batch['position_ids']]
             output_tensor, _ = fwd_output_only_func(iter([batch,]), model)
 
             def id_func(output_tensor, non_loss_data=True):
+                # gather logits along CP seqlen dim and unpad
+                # TODO support CP wise from_parallel_logits_to_logprobs
+                if parallel_state.get_context_parallel_world_size() > 1:
+                    logits = allgather_cp_sharded_tensor(output_tensor, seq_dim=1)
+                    #remove the 2*cp padding
+                    logits = logits[:,:_batch['cp_unpadded_seqlen'][0], :]
+                    response_tokens = _batch['response_tokens'][:,:_batch['cp_unpadded_seqlen'][0]]
+                else:
+                    logits = output_tensor
+                    response_tokens = _batch['response_tokens']
+
                 logprobs = from_parallel_logits_to_logprobs(
-                    vocab_parallel_logits=output_tensor,
-                    target=batch[0],
+                    vocab_parallel_logits=logits,
+                    target=response_tokens,
                     inference_only=inference_only,
                     higher_stability=True,
                 )
@@ -357,11 +427,25 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         set_sync_funcs(self, forward_only=True)
 
+        #seq len must be padded to the nearest cp*2 for context parallelism
+        if parallel_state.get_context_parallel_world_size() > 1:
+            cp_unpadded_seqlen = response_tokens.shape[1]
+            response_tokens = self.pad_tensor_for_cp(response_tokens)
+
         mbs, seq_length = response_tokens.size()
         num_microbatches = divide(mbs, forward_micro_batch_size)
         attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(response_tokens)
 
-        batch_iter = get_iterator_k_split([response_tokens, attention_mask, position_ids], num_microbatches)
+        batch = {
+            'response_tokens': response_tokens,
+            'attention_mask': attention_mask,
+            'position_ids': position_ids,
+        }
+
+        if parallel_state.get_context_parallel_world_size() > 1:
+            batch['cp_unpadded_seqlen'] = [cp_unpadded_seqlen] * num_microbatches
+
+        batch_iter = get_iterator_k_split(batch, num_microbatches)
 
         fwd_bwd_function = get_forward_backward_func()
         logprobs_list = fwd_bwd_function(
@@ -590,7 +674,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             print(f"Memory free after clear before refit {torch.cuda.mem_get_info()[0] / 1024**3:.2f} GB", flush=True)  
             print(f"reserved after clear before refit {torch.cuda.memory_reserved() / 1024**3:.2f} GB", flush=True)
             print(f"allocated after clear before refit {torch.cuda.memory_allocated() / 1024**3:.2f} GB", flush=True)
-            if self.cfg.grpo.inference_backend.type == "vllm":
+            if self.cfg.grpo.inference_backend.type == "vllm" or self.cfg.grpo.inference_backend.type == "trt_llm_pytorch":
                 self.inference_backend.refit(self.shared_cpu_state_dict)
             else:
                 self.inference_backend.refit(self.model)

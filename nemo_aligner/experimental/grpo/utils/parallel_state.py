@@ -71,9 +71,11 @@ def get_model_parallel_group():
 
 def get_data_parallel_world_size():
     data_parallel_size = mcore_parallel_state.get_data_parallel_world_size()
+    pipeline_parallel_size = mcore_parallel_state.get_pipeline_model_parallel_world_size()
+    context_parallel_size = mcore_parallel_state.get_context_parallel_world_size()
 
     return (
-        data_parallel_size * mcore_parallel_state.get_pipeline_model_parallel_world_size()
+        data_parallel_size * pipeline_parallel_size * context_parallel_size
         if is_inference_reshard()
         else data_parallel_size
     )
@@ -83,10 +85,16 @@ def get_data_parallel_rank():
     data_parallel_rank = mcore_parallel_state.get_data_parallel_rank()
 
     if is_inference_reshard():
-        data_parallel_rank = data_parallel_rank + (
-            mcore_parallel_state.get_data_parallel_world_size()
-            * mcore_parallel_state.get_pipeline_model_parallel_rank()
-        )
+        dp_size = mcore_parallel_state.get_data_parallel_world_size()
+        pp_rank = mcore_parallel_state.get_pipeline_model_parallel_rank()
+        pp_size = mcore_parallel_state.get_pipeline_model_parallel_world_size()
+        cp_rank = mcore_parallel_state.get_context_parallel_rank()
+        cp_size = mcore_parallel_state.get_context_parallel_world_size()
+
+        # unfold cp
+        data_parallel_rank = (cp_rank * dp_size) + data_parallel_rank 
+        # unfold pp
+        data_parallel_rank = (cp_size * dp_size * pp_rank) + data_parallel_rank
 
     return data_parallel_rank
 
@@ -94,18 +102,20 @@ def get_data_parallel_group():
     if is_inference_reshard():
         global _RESHARDED_DP_GROUP
         if _RESHARDED_DP_GROUP is None:
-            # gather all dp and pp ranks into one list
-            pp_ranks = torch.tensor(get_all_rank_ids_in_group(mcore_parallel_state.get_pipeline_model_parallel_group()), dtype=torch.int, device=torch.cuda.current_device())
-            # distributed all gather
-            ppdp = [torch.empty_like(pp_ranks) for _ in range(mcore_parallel_state.get_data_parallel_world_size())]
-            torch.distributed.all_gather(ppdp, pp_ranks, group=mcore_parallel_state.get_data_parallel_group())
-            # flatten the list of tensors
-            ppdp = torch.cat(ppdp).tolist()
-            print(f"my ppdp: {ppdp}", flush=True)
+            rank_ids = [torch.distributed.get_rank(), mcore_parallel_state.get_tensor_model_parallel_rank()]
+            rank_ids = torch.tensor(rank_ids, device=torch.cuda.current_device())
 
-            # gather over all tp ranks
-            all_ppdp = gather_and_sort_lists_of_lists([ppdp], mcore_parallel_state.get_tensor_model_parallel_group())
-            for rank_group in all_ppdp:
+            global_rank_ids = [torch.empty_like(rank_ids) for _ in range(torch.distributed.get_world_size())]
+            torch.distributed.all_gather(global_rank_ids, rank_ids)
+
+            global_rank_ids = [n.tolist() for n in global_rank_ids]
+            dp_ranks = []
+            for global_rank, tp_rank in global_rank_ids:
+                if tp_rank == mcore_parallel_state.get_tensor_model_parallel_rank():
+                    dp_ranks.append(global_rank)
+
+            all_dp_groups = gather_and_sort_lists_of_lists([dp_ranks], mcore_parallel_state.get_tensor_model_parallel_group())
+            for rank_group in all_dp_groups:
                 print(f"DP RESHARD Rank {torch.distributed.get_rank()} Building group with ranks: {rank_group}",flush=True)
                 group = torch.distributed.new_group(list(rank_group))
                 if int(torch.distributed.get_rank()) in list(rank_group):
@@ -120,12 +130,16 @@ def get_data_parallel_group():
 def get_tensor_model_parallel_world_size():
     return mcore_parallel_state.get_tensor_model_parallel_world_size()
 
+def get_context_parallel_world_size():
+    return 1 if is_inference_reshard() else mcore_parallel_state.get_context_parallel_world_size()
+
+
 def get_pipeline_model_parallel_world_size():
     return 1 if is_inference_reshard() else mcore_parallel_state.get_pipeline_model_parallel_world_size()
 
 def get_pipeline_model_parallel_group():
     group = (
-        mcore_parallel_state.get_pipeline_model_parallel_group()
+        torch.distributed.new_group(ranks=torch.distributed.get_rank())
         if is_inference_reshard()
         else mcore_parallel_state.get_pipeline_model_parallel_group()
     )

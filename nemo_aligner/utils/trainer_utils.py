@@ -72,7 +72,7 @@ def check_progress(
     is_save_enabled = save_interval > 0
     is_train_end = step == max_steps
 
-    if is_validation_enabled:
+    if is_validation_enabled and is_save_enabled:
         assert save_interval % val_check_interval == 0, f"{save_interval=} must be divisible by {val_check_interval=}"
 
     # run validation on the last step
