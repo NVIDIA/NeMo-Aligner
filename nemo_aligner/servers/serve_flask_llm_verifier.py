@@ -36,7 +36,7 @@ def start_vllm_server(model_path, port=5000):
     atexit.register(cleanup)
     
     # Wait for server to start
-    time.sleep(30)  # Adjust based on model loading time
+    time.sleep(300)  # Adjust based on model loading time
     return process
 
 # Start vLLM server

@@ -39,7 +39,7 @@ Answer "YES" or "NO", then provide a brief explanation.
                 messages=msg,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                timeout=60
+                timeout=600
             )
             return completion.choices[0].message.content
         except Exception as e:
