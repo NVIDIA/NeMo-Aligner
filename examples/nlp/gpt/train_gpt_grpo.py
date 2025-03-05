@@ -173,6 +173,8 @@ def main(cfg) -> None:
     tasks_to_environments["llm_judge_gpqa"] = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
     tasks_to_environments["llm_judge_scp116k"] = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
     tasks_to_environments["llm_judge_supergpqa"] = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
+    tasks_to_environments["llm_judge_aime24"] = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
+    tasks_to_environments["llm_judge_aime25"] = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
     # your_environment = Environment(cfg)
     
     rollout_generator = SequenceRewardRolloutGenerator(cfg.trainer.grpo, tasks_to_environments)
