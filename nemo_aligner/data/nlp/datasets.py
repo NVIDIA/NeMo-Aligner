@@ -582,6 +582,7 @@ class DPOPackedDataset(DPOModelDataset):
         reset_attention_mask=False,
         eod_mask_loss=False,
         pad_length_to_multiple_of: int | None = None,
+        get_attention_mask_from_fusion=True, ## unused
     ):
         def combine_keys(key):
             return [item[key] for item in batch]

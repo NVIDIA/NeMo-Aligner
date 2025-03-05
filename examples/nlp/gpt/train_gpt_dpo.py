@@ -154,6 +154,7 @@ def main(cfg) -> None:
             reset_position_ids=cfg.model.data.get("reset_position_ids", False),
             reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
             eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
+            get_attention_mask_from_fusion=cfg.model.data.get("get_attention_mask_from_fusion", False),
         ),
         logger=logger,
         ckpt_callback=ckpt_callback,
