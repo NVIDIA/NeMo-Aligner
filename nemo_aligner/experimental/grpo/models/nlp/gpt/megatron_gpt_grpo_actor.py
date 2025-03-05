@@ -339,7 +339,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             num_microbatches=num_microbatches,
             forward_only=forward_only,
             seq_length=sequence_length,
-            micro_batch_size=None, #unused
+            micro_batch_size=self.cfg.micro_batch_size, #unused
         )
 
         metrics = {}
