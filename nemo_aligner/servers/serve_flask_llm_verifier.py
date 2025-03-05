@@ -45,7 +45,7 @@ vllm_process = start_vllm_server(os.environ.get("MODEL_PATH", "meta-llama/Llama-
 # Initialize verifier with vLLM API endpoint
 verifier = LLMVerifier(
     api_base="http://localhost:5000/v1",
-    max_tokens=256,
+    max_tokens=128,
     temperature=0.0
 )
 
@@ -57,7 +57,8 @@ def verify_responses():
     {
         "prompts": [prompt1, prompt2, ...],
         "responses": [response1, response2, ...],
-        "ground_truths": [gt1, gt2, ...]
+        "ground_truths": [gt1, gt2, ...],
+        "format_rewards": [reward1, reward2, ...]
     }
     """
     try:
@@ -65,6 +66,7 @@ def verify_responses():
         prompts = data.get("prompts")
         responses = data.get("responses")
         ground_truths = data.get("ground_truths")
+        format_rewards = data.get("format_rewards", [1.0] * len(prompts))  # Default to 1.0 if not provided
 
         # Validate inputs
         if not all([prompts, responses, ground_truths]):
@@ -75,15 +77,19 @@ def verify_responses():
         # Get verification results
         results = verifier.verify(prompts, responses, ground_truths)
         
-        # Convert to rewards format
-        rewards = np.array([1.0 if r["passed"] else 0.0 for r in results])
+        # Convert to rewards format and apply format rewards
+        correctness_rewards = np.array([1.0 if r["passed"] else 0.0 for r in results])
+        format_rewards = np.array(format_rewards)
+        
+        # Combine correctness and format rewards (correctness is primary)
+        # Only give full reward if both format and correctness are good
+        combined_rewards = correctness_rewards * format_rewards
         
         full_responses = [r["full_response"] for r in results]
         print(full_responses)
-        # todo: add format reward
         
         output_dict = {
-            "rewards": rewards.reshape((rewards.shape[0], 1)).tolist(),
+            "rewards": combined_rewards.reshape((combined_rewards.shape[0], 1)).tolist(),
         }
 
         return jsonify(output_dict)

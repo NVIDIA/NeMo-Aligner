@@ -20,6 +20,7 @@ from nemo_aligner.experimental.grpo.experience.interfaces import EnvironmentInte
 from nemo_aligner.experimental.grpo.experience.environments.metrics import calculate_pass_rate_per_prompt
 from nemo_aligner.servers.http_communicator import FlaskCommunicator
 from nemo_aligner.utils.verifiers.math_grader import extract_answer
+from nemo_aligner.experimental.grpo.experience.environments.format_checker import FormatChecker
 
 class LLMJudgeEnvironment(EnvironmentInterface):
     def __init__(self, cfg: DictConfig):
@@ -36,6 +37,12 @@ class LLMJudgeEnvironment(EnvironmentInterface):
         """
         if parallel_state.is_model_parallel_src_rank():
             # fold all interactions after the prompt together
+            prompts = [interaction[0] for interaction in interactions]
+            full_responses = [''.join(interaction[1:]) for interaction in interactions]
+            
+            # Source rank calculates format metrics
+            format_rewards = FormatChecker.calculate_format_metrics(prompts, full_responses, is_end)
+            
             responses = []
             for meta, interaction in zip(metadata, interactions):
                 if meta["extract_box"]:
@@ -51,6 +58,7 @@ class LLMJudgeEnvironment(EnvironmentInterface):
                 "prompts": [meta["prompt"] for meta in metadata],
                 "responses": responses,
                 "ground_truths": [meta["ground_truth"] for meta in metadata],
+                "format_rewards": format_rewards
             }
             print(data)
             print("### ", metadata[0]["prompt"], responses[0], metadata[0]["ground_truth"])
@@ -90,6 +98,13 @@ class LLMJudgeEnvironment(EnvironmentInterface):
         else:
             correct_solution_generation_lengths = 0
         
+        # Calculate format rewards for all prompt-response pairs
+        format_rewards = FormatChecker.calculate_format_metrics(
+            batch["prompt_sentences"],
+            batch["response_sentences"],
+            batch["is_end"]
+        )
+        
         metrics = {
             #"table": table, # TODO @sahilj WIP
             "accuracy": batch["rewards"].mean().item(),
@@ -100,6 +115,7 @@ class LLMJudgeEnvironment(EnvironmentInterface):
             "prompt_lengths": batch["prompt_lengths"].float().mean().item(),
             "generation_lengths": (batch["response_lengths"] - batch["prompt_lengths"]).float().mean().item(),
             "correct_solution_generation_lengths": correct_solution_generation_lengths,
+            "format_rewards": torch.tensor(format_rewards).float().mean().item(),
         }
         
         return batch, metrics
