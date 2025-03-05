@@ -317,6 +317,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             response_tokens = batch['response_tokens']
             cp_unpadded_seqlen = response_tokens.shape[1]
             batch['response_tokens'] = self.pad_tensor_for_cp(response_tokens)
+        
+        sequence_length = batch["response_tokens"].size(1)
 
         num_microbatches = get_num_microbatches()
         attention_mask, _, position_ids = self.get_ltor_masks_and_position_ids(tokens=batch["response_tokens"])
@@ -336,7 +338,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             model=self.model,
             num_microbatches=num_microbatches,
             forward_only=forward_only,
-            seq_length=None, #unused
+            seq_length=sequence_length,
             micro_batch_size=None, #unused
         )
 
