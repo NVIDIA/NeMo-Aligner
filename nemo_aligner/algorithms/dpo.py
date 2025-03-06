@@ -96,11 +96,13 @@ def dpo_custom_collate(
     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
         chosen_tokens.cuda(), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss, compute_attention_mask=not get_attention_mask_from_fusion
     )
-    assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
-    if attention_mask.shape[0] == 1:
-        # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
-        # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
-        attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
+
+    if attention_mask is not None:
+        assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
+        if attention_mask.shape[0] == 1:
+            # using .expand() here causes errors from pin_memory=True, so need to use .repeat()
+            # attention_mask = attention_mask.expand(len(batch), *((-1,) * (len(attention_mask.shape) - 1)))
+            attention_mask = attention_mask.repeat(len(batch), *((1,) * (len(attention_mask.shape) - 1)))
 
     output = {
         "chosen": chosen_tokens,
