@@ -62,6 +62,13 @@ for more details on running `prepare_packed_ft_dataset.py` and on running SFT wi
     ```
 - Add code and instructions for replicating Reward Modeling training in HelpSteer2 and HelpSteer2-Preference
 - Implement REINFORCE algorithm.
+- Added support for DeepSeek-V3. Training from a DeepSeek-v3 NeMo 2.0 checkpoint requires adding these additional parameters to the training script:
+    ```
+    ++model.transformer_engine=True \
+    ++model.dist_ckpt_load_strictness=log_all \
+    ++model.name=decoder_block_gpt \
+    ++model.moe_layer_freq=[0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ```
 
 ### Breaking Changes
 - Upgrade TRTLLM dependency from v0.10.0 to v0.12.0 and migrate from `GPTSession` cpp runtime to `ModelRunner` python runtime. Please use the latest Dockerfile.
