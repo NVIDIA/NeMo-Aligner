@@ -208,7 +208,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             # position_ids = batch["position_ids"][0:1]
 
             ## if using packing via TE, attention mask is generated in TE
-            attention_mask = batch["attention_mask"][0:1] if not packed else None
+            attention_mask = None
+            if "attention_mask" in batch and not packed:
+                attention_mask = batch["attention_mask"][0:1]
 
             # Model forward pass
             forward_args = {

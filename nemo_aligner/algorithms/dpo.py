@@ -46,6 +46,7 @@ def dpo_custom_collate(
     reset_attention_mask: bool = False,
     eod_mask_loss: bool = False,
     pad_length_to_multiple_of: int | None = None,
+    get_attention_mask_from_fusion: bool = False,
 ) -> dict[str, torch.Tensor]:
     """
     Transposes minibatch from list[dict] -> dict[Tensor] and also pads
@@ -93,7 +94,7 @@ def dpo_custom_collate(
         )
 
     attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-        chosen_tokens.cuda(), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss,
+        chosen_tokens.cuda(), eos_id, reset_position_ids, reset_attention_mask, eod_mask_loss, compute_attention_mask=not get_attention_mask_from_fusion
     )
     assert attention_mask.ndim == 4, "attention_mask is incorrect shape for dpo_custom_collate"
     if attention_mask.shape[0] == 1:
@@ -108,11 +109,14 @@ def dpo_custom_collate(
         "rejected_length": rejected_lengths,
         "chosen_labels": chosen_labels,
         "rejected_labels": rejected_labels,
-        "attention_mask": attention_mask,
         "position_ids": position_ids,
         "chosen_rewards": chosen_rewards,
         "rejected_rewards": rejected_rewards,
     }
+
+    if not get_attention_mask_from_fusion:
+        output["attention_mask"] = attention_mask
+
     return output
 
 
