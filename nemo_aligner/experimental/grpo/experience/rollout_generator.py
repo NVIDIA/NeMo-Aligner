@@ -26,6 +26,7 @@ from ..utils.parallel_state import is_inference_reshard, inference_reshard_regio
 from nemo_aligner.utils.distributed import ScopedTimer
 from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface, EnvironmentInterface
 from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
+from nemo_aligner.utils.utils import log_memory
 
 class SuperSimpleRolloutGenerator(RolloutGeneratorInterface):
     def __init__(self, cfg: DictConfig, tasks_to_environments: Dict[str, EnvironmentInterface]):
@@ -108,6 +109,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                           policy_model,
                           is_validation=False,
                           greedy=False):
+        log_memory("rollout_generator.py generate_rollouts START")
         """
         Generate experience rollouts using the policy model and environments.
         Currently only supports single-turn (no environment feedback).
@@ -134,6 +136,8 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                     batch = batch_repeat(batch, num_repetitions=num_repetitions)
                     for _ in range(num_rollout_batches_per_data_batch):
                         rollout_batch = policy_model.infer(batch, use_greedy=greedy)
+                        log_memory("rollout_generator.py generate_rollouts policy_model.infer")
+
                         rollout_batch = batch | rollout_batch
                         rollout_batch["generator_rank"] = (
                             torch.ones(batch["text"].shape[0]) * parallel_state.get_model_parallel_src_rank()
@@ -163,7 +167,10 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                 eos_id=policy_model.tokenizer.eos_id,
                 rollout_batch_seq_length=self.rollout_batch_seq_length,
             )
+            log_memory("rollout_generator.py generate_rollouts PTRolloutBatch.from_rollout_batches")
+
             global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()
+            log_memory("rollout_generator.py generate_rollouts PTRolloutBatch.from_rollout_batches")
 
         padded_rollout_sequence_length = global_rollout_batch["response_tokens"].size(-1)
 
@@ -183,6 +190,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         with self.timer("logprobs"):
             rollout_logprobs = policy_model.get_inference_log_probs(batched_response_tokens)
             balanced_local_batch["logprobs"] = rollout_logprobs
+            log_memory("rollout_generator.py policy_model.get_inference_log_probs")
 
         # compute init logprobs only if not in validation
         if not is_validation:
@@ -190,6 +198,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                 rollout_init_logprobs = policy_model.get_init_policy_logprobs(batched_response_tokens)
                 balanced_local_batch["init_logprobs"] = rollout_init_logprobs
         global_rollout_batch = balanced_local_batch.gather_and_balance_globally()
+        log_memory("rollout_generator.py balanced_local_batch.gather_and_balance_globally")
 
         # getting environment results
         # we send environment step requests in the sharded context, so we need to keep this sharding and then undo it
@@ -225,7 +234,8 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             rank = torch.distributed.get_rank()
             savefile = f"train_{rank}.jsonl" if not is_validation else f"validation_{rank}.jsonl"
             self.generation_log(global_rollout_batch, os.path.join(self.generation_save_dir, savefile))
-        
+        log_memory("rollout_generator.py generate_rollouts DONE")
+    
         return global_rollout_batch, cpu_dict(metrics), self.timer.consume_durations()
     
     def post_process_and_compute_rollout_metrics(self, global_rollout_batch):

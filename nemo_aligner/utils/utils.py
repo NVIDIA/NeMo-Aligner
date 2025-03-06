@@ -690,6 +690,7 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
 
 
 def log_memory(prefix):
+    torch.cuda.synchronize()
     pyt = torch.cuda.memory_allocated() / (1024 ** 3)
     el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
     print(f"Mem Usage (GB) | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
