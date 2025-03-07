@@ -664,7 +664,16 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         if self.inference_backend:
             self._convert_model_for_inference_backend()
+
+            # at this point, offload all the training memory
             self.maybe_offload_parameters("prepare_for_inference")
+            # clear pipeline parallel input_tensor
+            from megatron.core.utils import get_attr_wrapped_model
+            set_input_tensor = get_attr_wrapped_model(self.model, "set_input_tensor")
+            set_input_tensor(None)
+            # clear TE workspace-> 64mb
+            from transformer_engine.pytorch.module.base import _cublas_workspace
+            _cublas_workspace = None
             torch.cuda.synchronize()
 
             # Refitting or recompiling the inference model for generation
