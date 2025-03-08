@@ -73,7 +73,8 @@ class SupervisedTrainer:
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
         self.dict_limit_val_batches = {
-            key: compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches) for key, val_dataloader in self.val_dataloaders.items()
+            key: compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
+            for key, val_dataloader in self.val_dataloaders.items()
         }
         self.val_check_interval = (
             int(self.cfg.val_check_interval * self.num_steps_per_epoch)

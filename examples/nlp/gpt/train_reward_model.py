@@ -24,6 +24,7 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_regression_rm_datasets,
     build_train_valid_test_rm_datasets,
 )
+from nemo_aligner.data.nlp.datasets import RewardModelDataset
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -36,7 +37,6 @@ from nemo_aligner.utils.train_script_utils import (
     retrieve_custom_trainer_state_dict,
 )
 from nemo_aligner.utils.utils import load_and_override_model_config, load_from_nemo
-from nemo_aligner.data.nlp.datasets import RewardModelDataset
 
 """Script to start Reward Model training"""
 

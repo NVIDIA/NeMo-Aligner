@@ -199,7 +199,9 @@ def build_train_valid_test_datasets(
 
         for key in data_prefix.keys():
             if key not in ["train", "test"] and key.startswith("validation") is False:
-                raise NotImplementedError(f"Unsupported key '{key}' found in data_prefix. Supported keys are: 'train', 'validation*', and 'test'.")
+                raise NotImplementedError(
+                    f"Unsupported key '{key}' found in data_prefix. Supported keys are: 'train', 'validation*', and 'test'."
+                )
 
         train_ds = build_dataset_generic(
             cls=cls,
