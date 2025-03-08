@@ -52,7 +52,7 @@ class SupervisedTrainer:
     ):
         self.model = model
         self.train_dataloader = train_dataloader
-        self.val_dataloader = val_dataloader
+        self.val_dataloaders = val_dataloader if isinstance(val_dataloader, dict) else {"validation": val_dataloader}
         self.test_dataloader = test_dataloader
         self.logger = logger
         self.cfg = cfg
@@ -72,8 +72,9 @@ class SupervisedTrainer:
         self.num_steps_per_epoch = compute_num_steps_per_epoch(
             self.train_dataloader.batch_sampler, self.cfg.get("limit_train_batches", 1.0)
         )
-
-        self.limit_val_batches = compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches)
+        self.dict_limit_val_batches = {
+            key: compute_limit_batches(len(val_dataloader), self.cfg.limit_val_batches) for key, val_dataloader in self.val_dataloaders.items()
+        }
         self.val_check_interval = (
             int(self.cfg.val_check_interval * self.num_steps_per_epoch)
             if isinstance(self.cfg.val_check_interval, float)
@@ -98,12 +99,23 @@ class SupervisedTrainer:
 
     @torch.no_grad()
     def run_validation(self):
+        val_loss, val_metrics = None, None
+
+        for key in self.val_dataloaders:
+            loss, metrics = self.run_validation_one_dataset(key)
+            if key == "validation":
+                val_loss, val_metrics = loss, metrics
+
+        return val_loss, val_metrics
+
+    @torch.no_grad()
+    def run_validation_one_dataset(self, key: str):
         loss_means = []
         val_metrics = defaultdict(list)
 
         val_pbar = tqdm(
-            zip(range(self.limit_val_batches), self.val_dataloader),
-            total=self.limit_val_batches,
+            zip(range(self.dict_limit_val_batches[key]), self.val_dataloaders[key]),
+            total=self.dict_limit_val_batches[key],
             leave=True,
             desc="Validation steps",
         )
@@ -133,6 +145,8 @@ class SupervisedTrainer:
         val_metrics = {k: mean(v) for k, v in val_metrics.items()}
         val_metrics.update(self.inference_metrics_handler.compute())
         self.inference_metrics_handler.reset()
+
+        self.logger.log_metrics(val_metrics, step=self.step, prefix=f"{key}/")
 
         return mean(loss_means), val_metrics
 
@@ -188,7 +202,6 @@ class SupervisedTrainer:
             val_loss, val_metrics = self.run_validation()
             # validation is done on the UPDATED weights
             # so we use the incremented self.step
-            self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
             logging.info("Initial validation metrics logged.")
 
         for _ in epoch_iter:
@@ -229,7 +242,7 @@ class SupervisedTrainer:
                     self.max_steps,
                     self.val_check_interval,
                     self.cfg.save_interval,
-                    self.limit_val_batches,
+                    self.dict_limit_val_batches["validation"],
                     run_time_exceeded=run_time_exceeded,
                 )
 
@@ -237,7 +250,6 @@ class SupervisedTrainer:
                     val_loss, val_metrics = self.run_validation()
                     # validation is done on the UPDATED weights
                     # so we use the incremented self.step
-                    self.logger.log_metrics(val_metrics, step=self.step, prefix="val/")
                     val_metrics = {f"val_{k}": v for k, v in val_metrics.items()}
                     metrics.update(val_metrics)
 
