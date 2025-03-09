@@ -16,6 +16,7 @@ from contextlib import nullcontext
 import os
 import time
 import shutil
+import subprocess
 import gc
 
 import torch
@@ -75,9 +76,45 @@ from nemo_aligner.experimental.grpo.models.nlp.gpt import conversion_dict as CON
 
 from nemo_aligner.tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
 
+def log_shared_memory_usage():
+    # Define the command you want to run
+    command = ["df", "-h", "/dev/shm"]
+
+    # Run the command and capture the output
+    result = subprocess.run(command, capture_output=True, text=True)
+
+    # Print the output
+    print("Command Output:")
+    print(result.stdout)
+
+    # Print any errors
+    if result.stderr:
+        print("Errors:")
+        print(result.stderr)
+
+def remove_writable_files(directory):
+    # Loop over the files in the directory
+    for filename in os.listdir(directory):
+        file_path = os.path.join(directory, filename)
+        
+        # Check if it is a file and if we have write permission
+        if os.path.isfile(file_path) and os.access(file_path, os.W_OK):
+            try:
+                # Remove the file
+                os.remove(file_path)
+                print(f"Removed: {file_path}")
+            except Exception as e:
+                print(f"Failed to remove {file_path}: {e}")
+
 class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
+        print("Before shared memory cleanup")
+        log_shared_memory_usage()
+        remove_writable_files("/dev/shm")
+        print("After shared memory cleanup")
+        log_shared_memory_usage()
+
         self.automatic_optimization = False
 
         self.init_policy_state_dict = None
@@ -468,6 +505,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         return logprobs
 
+
+
     def _convert_model_for_inference_backend(self):
         # testing sync and save to cpu ramdisk
         start_time = time.time()
@@ -488,6 +527,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 return '{' + key + '}'
 
         with torch.no_grad():
+            log_memory("Start converting model")
+            log_shared_memory_usage()
             checksum = 0
             import re  # For computing global keys from layer numbers
             # Initialize pipeline parallel group information.
@@ -510,9 +551,13 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     global_key = key
                 local_map[global_key] = key
 
+            log_memory("Before all gather")
+            log_shared_memory_usage()
             # Gather the local maps from all PP ranks (only lightweight key info is gathered).
             all_maps = [None] * pp_world_size
             torch.distributed.all_gather_object(all_maps, local_map, group=pp_group)
+            log_memory("After all gather")
+            log_shared_memory_usage()
             
             # Build the union over global keys and assign an owner (the rank with the smallest PP rank).
             union_global_map = {}
@@ -524,11 +569,16 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         print(f"WARNING: {gk} already in union_global_map when gathering keys", flush=True)
 
             #merged_cpu_param_dict = {}
-   
+  
+            global_map_counter = 0
             # Process each parameter (by its unique global key) one at a time.
             for gk in sorted(union_global_map.keys()):
                 ptime = time.time()
                 owner_pp_global_rank, owner_raw_key = union_global_map[gk]
+
+                log_memory(f"Before global map counter {global_map_counter}, gk = {gk}")
+                log_shared_memory_usage()
+                global_map_counter += 1
 
                 # Only the owner PP rank has the parameter locally.
                 if torch.distributed.get_rank() == owner_pp_global_rank:
@@ -553,8 +603,15 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                             gathered_slices = [torch.empty_like(param) for _ in range(tp_world_size)]
                             torch.distributed.all_gather(gathered_slices, param, group=tp_group)
                             full_param = torch.cat(gathered_slices, dim=recipe["tp"]).to(torch.bfloat16)
+                            size_in_mbytes = full_param.nelement() * full_param.element_size() / 1048576.0
+                            print(f"TP all_gather: len(gathered_slices) = {len(gathered_slices)}, slice_0 type = {gathered_slices[0].dtype}, slice_0 size = {gathered_slices[0].size()}, full_param size = {full_param.size()}, in MB = {size_in_mbytes}", flush=True)
+                            for one_slice in gathered_slices:
+                                del one_slice
+                            del gathered_slices
+                            clear_memory()
                         else:
                             full_param = torch.clone(param).to(torch.bfloat16)
+                        
                         
                         # Convert the parameter using the provided function or mapping.
                         if recipe.get("hf_func", None) is not None:
@@ -612,12 +669,15 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             print("Finished parameter-by-parameter gathering over PP with conversion mapping.", flush=True)
             print(f"Checksum: {checksum}", flush=True)
         
+            log_memory("After parameter-by-parameter gathering")
+            log_shared_memory_usage()
             # Copy HF jsons to CPU ramdisk with proper permissions and save the gathered parameters.
             if torch.cuda.current_device() == 0:
                 try:
                     os.makedirs(out_dir, exist_ok=True, mode=0o777)
                     for file in os.listdir(source_hf_jsons_dir):
-                        if not file.endswith('.safetensors') and not os.path.isdir(os.path.join(source_hf_jsons_dir, file)) and not file.endswith('.index.json'):
+                        full_file_path = os.path.join(source_hf_jsons_dir, file)
+                        if not file.endswith('.safetensors') and not os.path.isdir(full_file_path) and not file.endswith('.index.json') and not os.path.islink(full_file_path):
                             src = os.path.join(source_hf_jsons_dir, file)
                             dst = os.path.join(out_dir, file)
                             shutil.copy(src, dst)
@@ -651,6 +711,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 self.shared_cpu_state_dict = SharedCPUMemoryTensorDict(
                     communicable_metadata=recv_metadata[0]
                 )
+            log_memory("After final step")
+            log_shared_memory_usage()
 
         print(f'TIME TO SAVE {time.time() - start_time}', flush=True)
         
@@ -663,7 +725,11 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         self.offload_adam_states()
 
         if self.inference_backend:
+            log_memory("before convert model")
+            log_shared_memory_usage()
             self._convert_model_for_inference_backend()
+            log_memory("after convert model")
+            log_shared_memory_usage()
 
             # at this point, offload all the training memory
             self.maybe_offload_parameters("prepare_for_inference")
