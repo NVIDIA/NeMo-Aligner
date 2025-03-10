@@ -217,7 +217,7 @@ class VLLMClient:
             output_ids[output_ids == self.pad_id] = self.eos_id
             tensors = {
                 "response_tokens": output_ids,
-                "response_lengths": torch.tensor(response_lengths, device="cuda").long(),
+                "response_lengths": torch.tensor(response_lengths, device="cpu").long(),
                 "response_logprobs_trt": response_logprobs,
             }
         else:

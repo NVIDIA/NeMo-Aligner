@@ -160,6 +160,9 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                         futures.append(microbatch_futures)
                         print(f"microbatch_futures: {microbatch_futures}", flush=True)
 
+            log_memory("Before freeing inference backencd")
+            policy_model.inference_backend.free()
+            log_memory("After freeing inference backencd")
             # The batch_iterator may be a load-redistributing server, so batches may be jagged.
             # We gather everything so that we can rebalance it.
             unbalanced_local_batch = GPTRolloutBatch.from_rollout_batches(
@@ -184,7 +187,6 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         # we also do the logprob and init_logprob calculations here to overlap with async environment compute
         batched_response_tokens = balanced_local_batch["response_tokens"]
 
-        policy_model.inference_backend.free()
 # policy_model.inference_backend.shutdown()
 
         with self.timer("logprobs"):
