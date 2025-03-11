@@ -106,6 +106,23 @@ def remove_writable_files(directory):
             except Exception as e:
                 print(f"Failed to remove {file_path}: {e}")
 
+def check_shm_space():
+    # Get the filesystem statistics for /dev/shm
+    statvfs = os.statvfs('/dev/shm')
+
+    # Calculate the available space in bytes
+    available_space = statvfs.f_frsize * statvfs.f_bavail
+
+    # Convert the available space to gigabytes
+    available_space_gb = available_space / (1024 ** 3)
+
+    # Check if the available space is less than 550GB
+    if available_space_gb < 520:
+        raise Exception(f"Available space in /dev/shm is less than 550GB: {available_space_gb:.2f}GB")
+    else:
+        print(f"Available space in /dev/shm: {available_space_gb:.2f}GB")
+
+
 class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGenerativeInterface):
     def __init__(self, cfg: DictConfig, trainer: Trainer):
         super().__init__(cfg, trainer=trainer)
@@ -114,6 +131,11 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         remove_writable_files("/dev/shm")
         print("After shared memory cleanup")
         log_shared_memory_usage()
+        try:
+            check_shm_space()
+        except Exception as e:
+            print(e)
+            raise
 
         self.automatic_optimization = False
 
@@ -233,13 +255,15 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
             batch = {key: val.cuda(non_blocking=True) if key in required_keys else None for key, val in _batch.items()}
 
+            log_memory("Before calling model forward")
             if parallel_state.get_context_parallel_world_size() > 1:
                 _cp_batch = {
-                    "response_tokens" : batch['response_tokens'].clone(),
-                    "position_ids" : batch['position_ids'].clone(),
-                    "attention_mask" : batch['attention_mask'].clone(),
+                    "response_tokens" : batch['response_tokens'].clone() if isinstance(batch['response_tokens'], torch.Tensor) else None,
+                    "position_ids" : batch['position_ids'].clone() if isinstance(batch['position_ids'], torch.Tensor) else None,
+                    "attention_mask" : batch['attention_mask'].clone() if isinstance(batch ['attention_mask'], torch.Tensor) else None,
                 }
-                _cp_batch = self.get_batch_on_this_context_parallel_rank(_cp_batch)
+                if parallel_state.is_pipeline_first_stage():
+                    _cp_batch = self.get_batch_on_this_context_parallel_rank(_cp_batch)
                 parallel_logits = model(
                     _cp_batch["response_tokens"], _cp_batch["position_ids"], _cp_batch["attention_mask"], labels=None,
                 )
@@ -248,6 +272,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 parallel_logits = model(
                     batch["response_tokens"], batch["position_ids"], batch["attention_mask"], labels=None,
                 )
+            log_memory("After calling model forward")
 
             def loss_func(parallel_logits):
                 mask = batch["mask"]
@@ -528,7 +553,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         with torch.no_grad():
             log_memory("Start converting model")
-            # log_shared_memory_usage()
             checksum = 0
             import re  # For computing global keys from layer numbers
             # Initialize pipeline parallel group information.
@@ -551,13 +575,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     global_key = key
                 local_map[global_key] = key
 
-            # log_memory("Before all gather")
-            # log_shared_memory_usage()
             # Gather the local maps from all PP ranks (only lightweight key info is gathered).
             all_maps = [None] * pp_world_size
             torch.distributed.all_gather_object(all_maps, local_map, group=pp_group)
-            # log_memory("After all gather")
-            # log_shared_memory_usage()
             
             # Build the union over global keys and assign an owner (the rank with the smallest PP rank).
             union_global_map = {}
@@ -576,8 +596,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 ptime = time.time()
                 owner_pp_global_rank, owner_raw_key = union_global_map[gk]
 
-                # log_memory(f"Before global map counter {global_map_counter}, gk = {gk}")
-                # log_shared_memory_usage()
                 global_map_counter += 1
 
                 # Only the owner PP rank has the parameter locally.
@@ -669,8 +687,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             print("Finished parameter-by-parameter gathering over PP with conversion mapping.", flush=True)
             print(f"Checksum: {checksum}", flush=True)
         
-            # log_memory("After parameter-by-parameter gathering")
-            # log_shared_memory_usage()
             # Copy HF jsons to CPU ramdisk with proper permissions and save the gathered parameters.
             if torch.cuda.current_device() == 0:
                 try:
@@ -711,8 +727,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 self.shared_cpu_state_dict = SharedCPUMemoryTensorDict(
                     communicable_metadata=recv_metadata[0]
                 )
-            log_memory("After final step")
-            log_shared_memory_usage()
 
         print(f'TIME TO SAVE {time.time() - start_time}', flush=True)
         
@@ -724,10 +738,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         if self.inference_backend:
             log_memory("before convert model")
-            log_shared_memory_usage()
             self._convert_model_for_inference_backend()
             log_memory("after convert model")
-            log_shared_memory_usage()
 
             # at this point, offload all the training memory
             self.maybe_offload_parameters("prepare_for_inference")
