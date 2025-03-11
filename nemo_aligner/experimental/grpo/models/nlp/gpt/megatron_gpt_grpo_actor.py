@@ -528,7 +528,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
         with torch.no_grad():
             log_memory("Start converting model")
-            log_shared_memory_usage()
+            # log_shared_memory_usage()
             checksum = 0
             import re  # For computing global keys from layer numbers
             # Initialize pipeline parallel group information.
@@ -551,13 +551,13 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     global_key = key
                 local_map[global_key] = key
 
-            log_memory("Before all gather")
-            log_shared_memory_usage()
+            # log_memory("Before all gather")
+            # log_shared_memory_usage()
             # Gather the local maps from all PP ranks (only lightweight key info is gathered).
             all_maps = [None] * pp_world_size
             torch.distributed.all_gather_object(all_maps, local_map, group=pp_group)
-            log_memory("After all gather")
-            log_shared_memory_usage()
+            # log_memory("After all gather")
+            # log_shared_memory_usage()
             
             # Build the union over global keys and assign an owner (the rank with the smallest PP rank).
             union_global_map = {}
@@ -576,8 +576,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 ptime = time.time()
                 owner_pp_global_rank, owner_raw_key = union_global_map[gk]
 
-                log_memory(f"Before global map counter {global_map_counter}, gk = {gk}")
-                log_shared_memory_usage()
+                # log_memory(f"Before global map counter {global_map_counter}, gk = {gk}")
+                # log_shared_memory_usage()
                 global_map_counter += 1
 
                 # Only the owner PP rank has the parameter locally.
@@ -669,8 +669,8 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             print("Finished parameter-by-parameter gathering over PP with conversion mapping.", flush=True)
             print(f"Checksum: {checksum}", flush=True)
         
-            log_memory("After parameter-by-parameter gathering")
-            log_shared_memory_usage()
+            # log_memory("After parameter-by-parameter gathering")
+            # log_shared_memory_usage()
             # Copy HF jsons to CPU ramdisk with proper permissions and save the gathered parameters.
             if torch.cuda.current_device() == 0:
                 try:
@@ -719,8 +719,6 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
     def prepare_for_inference(self):
         """normally we would configure the micro batch calculator here
             but the nemo generation already does the configuration"""
-        self._reset_activation_checkpointing_args()
-        self._reset_sequence_parallelism_args()
         set_eval(self)
         self.offload_adam_states()
 
@@ -756,6 +754,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 self.inference_backend.refit(self.model)
             clear_memory()
             print(f"Memory free after clear after refit {torch.cuda.mem_get_info()[0] / 1024**3:.2f} GB", flush=True)
+        else:
+            self._reset_activation_checkpointing_args()
+            self._reset_sequence_parallelism_args()
 
     @torch.no_grad()
     def infer(self, inference_batch, use_greedy=False):
@@ -839,12 +840,9 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
     def finish_inference(self):
         # training will onload the adam states, no need to onload it here
-        self._restore_activation_checkpointing_args()
-        self._restore_sequence_parallelism_args()
-
-        # if self.inference_backend:
-        #     self.inference_backend.free()
-
+        if not self.inference_backend:
+            self._restore_activation_checkpointing_args()
+            self._restore_sequence_parallelism_args()
 
         set_train(self)
 
