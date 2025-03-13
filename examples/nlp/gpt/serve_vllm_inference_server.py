@@ -58,7 +58,7 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
             with torch.no_grad():
                 for key, value in shared_cpu_state_dict.as_dict().items():
                     # checksum_pre += value.sum().item()
-                    #print(f"Key: {key} {value[0]} {value.shape} {value.dtype}", flush=True)
+                    print(f"Key: {key} {value[0]} {value.shape} {value.dtype}", flush=True)
                     self.model_runner.model.load_weights(weights=[(key, value)])
                     # checksum += value.sum().item()
             # print(f"Checksum: {checksum} {checksum_pre}", flush=True)
@@ -87,13 +87,14 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 gpu_memory_utilization=.92, 
                 enable_sleep_mode=True,
                 trust_remote_code=True,
+                # quantization='fp8'
                 # max_model_len=16384,
             )
             self.running = True
             print("vLLM Inference Server started.")
 
         def sleep(self):
-            self.llm.sleep(level=1)
+            self.llm.sleep(level=2)
             self.asleep = True
 
         def wake_up(self):
