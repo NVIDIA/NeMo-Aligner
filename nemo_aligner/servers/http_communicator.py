@@ -13,9 +13,77 @@
 # limitations under the License.
 
 from pytriton.client import FuturesModelClient
+from concurrent import futures
+from typing import Dict, Tuple, List, Optional, Union
+import requests
+import torch
 
 from nemo.utils import logging
+from nemo_aligner.utils.server_utils import FutureResult
+from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp
 
+def get_mp_future_result(future, *keys):
+    """It waits for the result of the future to be ready, gets the value with the given key,
+    and broadcasts it to the model parallel group. Then it returns it as output.
+    """
+    output = None if future is None else future.result()
+
+    results = []
+
+    for key in keys:
+
+        result = None
+        if output is not None:
+            result = torch.tensor(output[key], device=torch.cuda.current_device())
+
+        ten = broadcast_2d_tensor_within_mp(result)
+
+        results.append(ten)
+
+    if len(results) == 1:
+        return results[0]
+
+    return results
+
+class FlaskCommunicator:
+    """
+    Communicator class for async requests to flask servers
+    """
+    def __init__(self, servers: Dict[str, Dict[str, Union[str, int]]]):
+        """
+        servers: A dictionary of server names to server ips + ports
+                 requests will be sent to {ip}:{port}/{name}
+        """
+        self.executor = futures.ThreadPoolExecutor(max_workers=8 * len(servers))
+        self.servers = servers
+
+    def send_data_to_server(self, name: str, data: List[Dict]) -> Optional[FutureResult]:
+        ip = self.servers[name]["ip"]
+        port = self.servers[name]["port"]
+        url = f"http://{ip}:{port}/{name}"
+
+        future = self.executor.submit(lambda: requests.post(url, json=data))
+        return future
+
+    def get_result(self, future: futures.Future, *keys):
+        resp = None if future is None else future.result()
+        output = None
+        if resp is not None:
+            output = resp.json()
+
+        results = []
+        for key in keys:
+            result = None
+            if output is not None:
+                result = torch.tensor(output[key], device=torch.cuda.current_device())
+
+            ten = broadcast_2d_tensor_within_mp(result)
+            results.append(ten)
+
+        if len(results) == 1:
+            return results[0]
+
+        return results
 
 class HTTPCommunicator:
     """Communicator class for the actor to send async requests to the remote servers

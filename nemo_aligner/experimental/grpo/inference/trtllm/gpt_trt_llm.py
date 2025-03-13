@@ -1,4 +1,4 @@
-# Copyright (c) 2023, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,19 +11,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os
-import shutil
 import secrets
-import tensorrt_llm
-import torch
-import torch.distributed
-
+from nemo_aligner.inference_backends.base_backend import InferenceBackendBase
+from nemo_aligner.inference_backends.registry import register_backend
 from nemo.export.tensorrt_llm import TensorRTLLM
 from nemo.export.trt_llm import tensorrt_llm_run
 from nemo.export.trt_llm.nemo_ckpt_loader.nemo_file import build_tokenizer
-from nemo.utils import logging
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, broadcast_tensor_within_pp
+from nemo.utils import logging
 from nemo_aligner.utils.utils import clear_memory, log_memory
+from ..utils.utils import append_and_repad_list
+import torch
+
 
 try:
     import tensorrt_llm
@@ -32,17 +31,6 @@ try:
 except (ImportError, ModuleNotFoundError) as e:
     logging.info(f"got error message {e} when importing trt-llm dependencies, disabling")
     HAVE_TRTLLM = False
-
-
-def append_and_repad_list(list_of_items, item_to_append, pad_id):
-    items = [item for item in list_of_items if item != pad_id]
-    items.append(item_to_append)
-
-    # add 1 because we inserted 1 into the list
-    if len(items) < len(list_of_items) + 1:
-        items += [pad_id] * (len(list_of_items) + 1 - len(items))
-
-    return items
 
 
 class GPTGenerateTRTLLM:
@@ -85,7 +73,6 @@ class GPTGenerateTRTLLM:
             logging.warning(f"'use_greedy=True' overrides {sample_top_k=} to 1")
             sample_top_k = 1
 
-        self.trt_model_dir = trt_model_dir
         self.model_cfg = model_cfg
         self.tokenizer = tokenizer
         self.max_generation_length = max_generation_length
@@ -151,22 +138,8 @@ class GPTGenerateTRTLLM:
             return_dict=True,
             output_sequence_lengths=True,
         )
-        self.sampling_config.update(output_log_probs=True)
 
     def refit(self, model):
-        # del self.trt_llm_exporter
-        # clear_memory()
-        # if torch.cuda.current_device() == 0:
-            # directory = self.trt_model_dir
-            # if os.path.exists(directory) and os.path.isdir(directory):
-                # print(f"Directory {directory} exists. Deleting it...")
-                # shutil.rmtree(directory)
-                # print("Directory deleted.")
-            # else:
-                # print(f"Directory {directory} does not exist.")
-        # torch.distributed.barrier()
-        # self.trt_llm_exporter = TensorRTLLM(self.trt_model_dir, load_model=False)
-        # self._trtllm_model_compiled = False
         if not self._trtllm_model_compiled:
             log_memory("Before TRT-LLM engine build")
             global_devices = [None for _ in range(torch.distributed.get_world_size())]
@@ -184,7 +157,6 @@ class GPTGenerateTRTLLM:
                 max_batch_size=self.generation_batch_size,
                 use_refit=True,
                 reshard_model=self.reshard_model,
-                #use_mcore_path=False
             )
             self._trtllm_model_compiled = True
             log_memory("After TRT-LLM engine build")
@@ -193,7 +165,7 @@ class GPTGenerateTRTLLM:
             self.trt_llm_exporter.refit(model, self.model_cfg)
             log_memory("After TRT-LLM engine refit")
 
-    def _generate(self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy:bool=False) -> tuple[torch.Tensor, torch.Tensor]:
+    def _generate(self, inputs: tuple[torch.Tensor, torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Internal API to make it easier to validate raw TRT-LLM outputs
         """
@@ -207,15 +179,10 @@ class GPTGenerateTRTLLM:
             0, 2 ** 32, size=(prompt_tokens.shape[0],), dtype=torch.long, generator=self.rng_generator
         )
         self.sampling_config.update(random_seed=random_seeds)
-        prev_config_topk = self.sampling_config.top_k
-        self.sampling_config.update(top_k=prev_config_topk if not use_greedy else 1)
-        print("in trtllm generation, use greedy ", use_greedy, " topk ", self.sampling_config.top_k)
 
         output_dict = tensorrt_llm_run.tensorrt_llm_worker_context.decoder.generate(
             batch_input_ids=batch_input_ids, sampling_config=self.sampling_config, streaming=False
         )
-
-        self.sampling_config.update(top_k=prev_config_topk)
 
         # TRTLLM returns the output_ids and sequence_lengths only on the first PP rank, and None otherwise, so we need to broadcast
         output_ids = broadcast_tensor_within_pp(output_dict["output_ids"] if output_dict else None, from_last=False)
@@ -226,13 +193,10 @@ class GPTGenerateTRTLLM:
         # remove beam dim from output_ids: [mbs, beam_dim, sequence len]
         output_ids = torch.squeeze(output_ids, dim=1).long()
         response_lengths = torch.squeeze(response_lengths, dim=1).long()
-        output_lps = output_dict.get("log_probs", None)
-        print('output_lps', output_lps)
-        return output_ids, response_lengths, output_lps
+        return output_ids, response_lengths
 
-    def generate(self, inputs: tuple[torch.Tensor, torch.Tensor], use_greedy:bool=False):
-
-        output_ids, response_lengths, output_lps = self._generate(inputs, use_greedy=use_greedy)
+    def generate(self, inputs):
+        output_ids, response_lengths = self._generate(inputs)
         max_length = response_lengths.max().item()
 
         # Map pad_id to eos_id in case tokenizer does not have a pad_id
@@ -243,7 +207,6 @@ class GPTGenerateTRTLLM:
         output = {
             "response_tokens": output_ids,
             "response_lengths": response_lengths,
-            "response_logprobs_trt": output_lps
         }
 
         return output
@@ -253,5 +216,5 @@ class GPTGenerateTRTLLM:
             return
         log_memory("Before TRT-LLM engine unload")
         self.trt_llm_exporter.unload_engine()
-        clear_memory()
+        clear_memory() # TODO (pchadha): Rename clear_memory to something more descriptive
         log_memory("After TRT-LLM engine unload")
