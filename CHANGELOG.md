@@ -38,12 +38,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
     ```
 - Add code and instructions for replicating Reward Modeling training in HelpSteer2 and HelpSteer2-Preference
 - Implement REINFORCE algorithm.
+- Add support for multiple validation sets when training a Reward Model.
 
 ### Breaking Changes
 - Upgrade TRTLLM dependency from v0.10.0 to v0.12.0 and migrate from `GPTSession` cpp runtime to `ModelRunner` python runtime. Please use the latest Dockerfile.
 - Using latest TransformerEngine versions may require `++model.dist_ckpt_load_strictness=log_all` when loading from a older pre-existing checkpoint to not error out.
 - NeMo-Aligner now requires Megatron-LM==0.9.0 for the APIs to calculate the microbatch sizes (API introduced `megatron.core.num_microbatches_calculator.reconfigure_num_microbatch_calculator`).
 - NeMo-Aligner now requires a version of NeMo with this change to how the MoE spec is handled: https://github.com/NVIDIA/NeMo/pull/9035 .
+- Validation metrics of the SupervisedTrainer (used by SFT and Reward Model) are now logged in Weights&Biases as <validation_key>/<metric_name> instead of val/<metric_name>.
 
 ### Bug Fixes
 - It is now required, for stability, to add `export NCCL_ALGO=...` to scripts launching PPO training loop. Please see the [RLHF docs](./docs/user-guide/rlhf.rst) for information.

@@ -197,6 +197,12 @@ def build_train_valid_test_datasets(
             validation_n_chunks = n_chunks
             test_n_chunks = n_chunks
 
+        for key in data_prefix.keys():
+            if key not in ["train", "test"] and not key.startswith("validation"):
+                raise NotImplementedError(
+                    f"Unsupported key '{key}' found in data_prefix. Supported keys are: 'train', 'validation*', and 'test'."
+                )
+
         train_ds = build_dataset_generic(
             cls=cls,
             cfg=cfg,
@@ -210,19 +216,27 @@ def build_train_valid_test_datasets(
             n_chunks=train_n_chunks,
             n_examples_per_chunk=train_examples_per_chunk,
         )
-        validation_ds = build_dataset_generic(
-            cls=cls,
-            cfg=cfg,
-            data_prefix=data_prefix["validation"],
-            data_impl=data_impl,
-            num_samples=int(train_valid_test_num_samples[1]),
-            seq_length=seq_length,
-            seed=seed,
-            tokenizer=tokenizer,
-            name="validation",
-            n_chunks=validation_n_chunks,
-            n_examples_per_chunk=validation_examples_per_chunk,
-        )
+        validation_keys = [key for key in data_prefix if key.startswith("validation")]
+        validation_ds = {
+            key: build_dataset_generic(
+                cls=cls,
+                cfg=cfg,
+                data_prefix=data_prefix[key],
+                data_impl=data_impl,
+                num_samples=int(train_valid_test_num_samples[1]),
+                seq_length=seq_length,
+                seed=seed,
+                tokenizer=tokenizer,
+                name=key,
+                n_chunks=validation_n_chunks,
+                n_examples_per_chunk=validation_examples_per_chunk,
+            )
+            for key in validation_keys
+        }
+        if len(validation_ds) <= 1:
+            assert len(validation_ds) == 1, "No validation key found in data_prefix"
+            validation_ds = next(iter(validation_ds.values()))  # Use validation dataset directly instead of a dict
+
         test_ds = build_dataset_generic(
             cls=cls,
             cfg=cfg,

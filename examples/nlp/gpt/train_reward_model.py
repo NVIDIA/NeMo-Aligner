@@ -24,6 +24,7 @@ from nemo_aligner.data.nlp.builders import (
     build_train_valid_test_regression_rm_datasets,
     build_train_valid_test_rm_datasets,
 )
+from nemo_aligner.data.nlp.datasets import RewardModelDataset
 from nemo_aligner.models.nlp.gpt.reward_model_classes import REWARD_MODEL_CLASS_DICT, RewardModelType
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -124,16 +125,31 @@ def main(cfg) -> None:
         load_gbs=True,
         use_random_sampler=cfg.trainer.rm.train_random_sampler,
     )
-
-    val_dataloader = build_dataloader(
-        cfg=cfg,
-        dataset=validation_ds,
-        consumed_samples=0,
-        mbs=cfg.model.micro_batch_size,
-        gbs=cfg.model.global_batch_size,
-        load_gbs=True,
-        use_random_sampler=cfg.trainer.rm.val_random_sampler,
-    )
+    if isinstance(validation_ds, RewardModelDataset):
+        val_dataloader = build_dataloader(
+            cfg=cfg,
+            dataset=validation_ds,
+            consumed_samples=0,
+            mbs=cfg.model.micro_batch_size,
+            gbs=cfg.model.global_batch_size,
+            load_gbs=True,
+            use_random_sampler=cfg.trainer.rm.val_random_sampler,
+        )
+    elif isinstance(validation_ds, dict):
+        val_dataloader = {
+            key: build_dataloader(
+                cfg=cfg,
+                dataset=dataset,
+                consumed_samples=0,
+                mbs=cfg.model.micro_batch_size,
+                gbs=cfg.model.global_batch_size,
+                load_gbs=True,
+                use_random_sampler=False,
+            )
+            for key, dataset in validation_ds.items()
+        }
+    else:
+        raise NotImplementedError("Unsupported validation dataset type")
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
