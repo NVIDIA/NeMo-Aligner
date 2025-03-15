@@ -110,7 +110,7 @@ class GRPOBatchIterator:
 
             for midx, micro_batch_ids in enumerate(ids_with_repetitions):
                 print(f"dp_rank {dp_rank}: global ids {ids_with_repetitions} mbs {midx} mbs ids {micro_batch_ids}")
-                batch = self.collate_fn([self.dataset[index] for index in ids])
+                batch = self.collate_fn([self.dataset[index] for index in micro_batch_ids])
 
                 yield batch
 

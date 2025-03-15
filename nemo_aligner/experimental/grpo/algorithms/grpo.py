@@ -85,10 +85,6 @@ class GRPOTrainer:
         self.ckpt_callback = ckpt_callback
         self.overall_iter = 0
 
-        num_prompts_per_grpo_step = self.cfg.num_prompts_per_grpo_step
-        samples_per_prompt = self.cfg.val_samples_per_prompt
-        self.cfg.model_gbs = num_prompts_per_grpo_step*samples_per_prompt
-
         # this timer checks if we should stop training
         self.run_timer = run_timer
 
@@ -353,7 +349,7 @@ class GRPOTrainer:
             dp_size = parallel_state.get_training_data_parallel_world_size()
 
             num_prompts_per_grpo_step = self.cfg.num_prompts_per_grpo_step
-            samples_per_prompt = self.cfg.val_samples_per_prompt
+            samples_per_prompt = self.cfg.samples_per_prompt
             gbs = num_prompts_per_grpo_step*samples_per_prompt
             num_samples_to_load_on_each_dp = divide(gbs, dp_size)
             
