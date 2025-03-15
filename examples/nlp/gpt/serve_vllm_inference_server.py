@@ -93,7 +93,7 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
             print("vLLM Inference Server started.")
 
         def sleep(self):
-            self.llm.sleep(level=1)
+            self.llm.sleep(level=2)
             self.asleep = True
 
         def wake_up(self):
@@ -108,6 +108,8 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 free_bytes_before_wake = torch.cuda.mem_get_info()[0]
                 print(f"GPU memory available before wake up: {free_bytes_before_wake / 1024**3:.2f} GB", flush=True)
                 self.wake_up()
+                free_bytes_before_wake = torch.cuda.mem_get_info()[0]
+                print(f"GPU memory available after wake up: {free_bytes_before_wake / 1024**3:.2f} GB", flush=True)
             print(f"vLLM Wake up ({time.time() - start:.2f} seconds elapsed)", flush=True)
             if not isinstance(path, str):
                 raise ValueError("a string path is needed to pass refit")

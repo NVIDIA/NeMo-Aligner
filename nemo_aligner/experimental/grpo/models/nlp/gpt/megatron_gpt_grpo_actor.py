@@ -30,7 +30,7 @@ from omegaconf.dictconfig import DictConfig
 from safetensors.torch import save_file
 from huggingface_hub import snapshot_download
 
-from nemo_aligner.utils.utils import log_memory
+from nemo_aligner.utils.utils import log_memory, print_memory_info
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
@@ -275,6 +275,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             log_memory("After calling model forward")
 
             def loss_func(parallel_logits):
+                log_memory("Before calling loss function")
                 mask = batch["mask"]
                 advantages = batch["advantages"]
                 prev_log_probs = batch["logprobs"]
@@ -335,6 +336,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         "grpo_ratio_clamped": grpo_ratio_clamped,
                     },
                 )
+                log_memory("After calling loss function")
 
             return parallel_logits, loss_func
 
@@ -359,15 +361,18 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         # clear_memory()
         # log_memory("after init grad buffer")
 
+        print_memory_info("Before onload parameters")
         log_memory("before onload parameters")
         self.maybe_onload_parameters()
         clear_memory()
         log_memory("after onload parameters")
 
+        print_memory_info("Before onload adam states")
         log_memory("before onload adam states")
         self.onload_adam_states()
         clear_memory()
         log_memory("after onload adam states")
+        print_memory_info("After onload adam states")
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
@@ -622,11 +627,13 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                             torch.distributed.all_gather(gathered_slices, param, group=tp_group)
                             full_param = torch.cat(gathered_slices, dim=recipe["tp"]).to(torch.bfloat16)
                             size_in_mbytes = full_param.nelement() * full_param.element_size() / 1048576.0
-                            print(f"TP all_gather: len(gathered_slices) = {len(gathered_slices)}, slice_0 type = {gathered_slices[0].dtype}, slice_0 size = {gathered_slices[0].size()}, full_param size = {full_param.size()}, in MB = {size_in_mbytes}", flush=True)
-                            for one_slice in gathered_slices:
-                                del one_slice
-                            del gathered_slices
-                            clear_memory()
+                            # print(f"TP all_gather: len(gathered_slices) = {len(gathered_slices)}, slice_0 type = {gathered_slices[0].dtype}, slice_0 size = {gathered_slices[0].size()}, full_param size = {full_param.size()}, in MB = {size_in_mbytes}", flush=True)
+                            # If the tensor size > 10GB, do aggressive memory cleaning.
+                            if size_in_mbytes > 10240:
+                                for one_slice in gathered_slices:
+                                    del one_slice
+                                del gathered_slices
+                                clear_memory()
                         else:
                             full_param = torch.clone(param).to(torch.bfloat16)
                         
