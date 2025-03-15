@@ -124,46 +124,47 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
         with generation_reshard_context():
             with self.timer("generate"):
                 for batch in batch_iterator:
-                    if is_validation:
-                        num_repetitions = self.rollout_mbs // self.val_prompt_batch_size
-                        num_rollout_batches_per_data_batch = self.val_samples_per_prompt // num_repetitions
-                    else:
-                        num_repetitions = self.rollout_mbs // self.prompt_batch_size
-                        num_rollout_batches_per_data_batch = self.samples_per_prompt // num_repetitions
+                    # if is_validation:
+                    #     num_repetitions = self.rollout_mbs // self.val_prompt_batch_size
+                    #     num_rollout_batches_per_data_batch = self.val_samples_per_prompt // num_repetitions
+                    # else:
+                    #     num_repetitions = self.rollout_mbs // self.prompt_batch_size
+                    #     num_rollout_batches_per_data_batch = self.samples_per_prompt // num_repetitions
 
-                    print(batch["text"].shape)
+                    # print(batch["text"].shape)
                     print(f"batch idxs: {batch['idx']}", flush=True)
-                    batch = batch_repeat(batch, num_repetitions=num_repetitions)
-                    for _ in range(num_rollout_batches_per_data_batch):
-                        rollout_batch = policy_model.infer(batch, use_greedy=greedy)
-                        log_memory("rollout_generator.py generate_rollouts policy_model.infer")
+                    # batch = batch_repeat(batch, num_repetitions=num_repetitions)
+                    # for _ in range(num_rollout_batches_per_data_batch):
+                    rollout_batch = policy_model.infer(batch, use_greedy=greedy)
+                    log_memory("rollout_generator.py generate_rollouts policy_model.infer")
 
-                        rollout_batch = batch | rollout_batch
-                        rollout_batch["generator_rank"] = (
-                            torch.ones(batch["text"].shape[0]) * parallel_state.get_model_parallel_src_rank()
-                        )
-                        rollout_batch = self.detokenize(policy_model, rollout_batch)
+                    rollout_batch = batch | rollout_batch
+                    rollout_batch["generator_rank"] = (
+                        torch.ones(batch["text"].shape[0]) * parallel_state.get_model_parallel_src_rank()
+                    )
+                    rollout_batch = self.detokenize(policy_model, rollout_batch)
 
-                        # iterate over tasks and call the environments to get rewards
-                        microbatch_futures = []
-                        for task in sorted(self.tasks_to_environments.keys()):
-                            indices = []
-                            for idx, t in enumerate(rollout_batch["task_name"]):
-                                if t == task:
-                                    indices.append(idx)
-                            if len(indices) > 0:
-                                task_batch = batch_index_select(rollout_batch, indices)
-                                interactions, metadata, is_end = self.prepare_env_state(task_batch)
-                                microbatch_futures.append((task, indices, self.tasks_to_environments[task].start_step(interactions, metadata, is_end)))
+                    # iterate over tasks and call the environments to get rewards
+                    microbatch_futures = []
+                    for task in sorted(self.tasks_to_environments.keys()):
+                        indices = []
+                        for idx, t in enumerate(rollout_batch["task_name"]):
+                            if t == task:
+                                indices.append(idx)
+                        if len(indices) > 0:
+                            task_batch = batch_index_select(rollout_batch, indices)
+                            interactions, metadata, is_end = self.prepare_env_state(task_batch)
+                            microbatch_futures.append((task, indices, self.tasks_to_environments[task].start_step(interactions, metadata, is_end)))
 
-                        rollout_batches.append(rollout_batch)
-                        futures.append(microbatch_futures)
-                        print(f"microbatch_futures: {microbatch_futures}", flush=True)
+                    rollout_batches.append(rollout_batch)
+                    futures.append(microbatch_futures)
+                    # print(f"microbatch_futures: {microbatch_futures}", flush=True)
             print_memory_info("Before freeing inference backend")
             log_memory("Before freeing inference backencd")
             policy_model.inference_backend.free()
             log_memory("After freeing inference backencd")
             print_memory_info("After freeing inference backend")
+
             # The batch_iterator may be a load-redistributing server, so batches may be jagged.
             # We gather everything so that we can rebalance it.
             unbalanced_local_batch = GPTRolloutBatch.from_rollout_batches(
@@ -216,10 +217,10 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                         _, _, rewards, episode_complete = self.tasks_to_environments[task].finish_step(task_future)
                         # not touching episode_complete for now since this loop only supports single-turn
                         all_task_results.append({"rewards": rewards})
-                    print(f"all_task_indices: {all_task_indices}, all_task_results: {all_task_results}", flush=True)
+                    # print(f"all_task_indices: {all_task_indices}, all_task_results: {all_task_results}", flush=True)
                     batch_rewards = reconstruct_split_batch(all_task_indices, all_task_results)
-                    print("### TASK INDX", all_task_indices)
-                    print("### TASK RESULTS", all_task_results)
+                    # print("### TASK INDX", all_task_indices)
+                    # print("### TASK RESULTS", all_task_results)
                     env_rollout_batches.append(batch_rewards)
 
             unbalanced_env_batch = GPTRolloutBatch.from_rollout_batches(

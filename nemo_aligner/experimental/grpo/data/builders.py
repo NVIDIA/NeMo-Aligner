@@ -67,14 +67,14 @@ def build_dataloader(
     common_params = {
         "total_samples": len(dataset),
         "consumed_samples": consumed_samples,
-        "micro_batch_size": mbs,
-        "data_parallel_rank": parallel_state.get_data_parallel_rank(),
-        "data_parallel_size": parallel_state.get_data_parallel_world_size(),
+        "micro_batch_size": gbs,
+        "data_parallel_rank": 0,
+        "data_parallel_size": 1,
         "drop_last": drop_last,
         "global_batch_size": gbs,
         "pad_samples_to_global_batch_size": pad_samples_to_global_batch_size,
     }
-
+    
     if use_random_sampler:
         cls = MegatronPretrainingRandomBatchSampler if load_gbs else MegatronPretrainingRandomSampler
         common_params["seed"] = cfg.model.seed

@@ -45,6 +45,7 @@ from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_p
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface
 from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
+from nemo_aligner.utils.utils import log_memory
 
 def compute_num_rollout_microbatches_per_dp_group(dataloader):
     return divide(
@@ -83,6 +84,10 @@ class GRPOTrainer:
         self.logger = logger
         self.ckpt_callback = ckpt_callback
         self.overall_iter = 0
+
+        num_prompts_per_grpo_step = self.cfg.num_prompts_per_grpo_step
+        samples_per_prompt = self.cfg.val_samples_per_prompt
+        self.cfg.model_gbs = num_prompts_per_grpo_step*samples_per_prompt
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -215,11 +220,22 @@ class GRPOTrainer:
             sampler_iter = iter(dataloader.batch_sampler)
 
             # must compute the number of microbatches in the generation context for correct DP groups
-            num_microbatches = compute_num_rollout_microbatches_per_dp_group(dataloader)
+            # num_microbatches = compute_num_rollout_microbatches_per_dp_group(dataloader)
+            if is_validation:
+                num_prompts_per_grpo_step = self.cfg.val_num_prompts_per_grpo_step
+                samples_per_prompt = self.cfg.val_samples_per_prompt
+            else:
+                num_prompts_per_grpo_step = self.cfg.num_prompts_per_grpo_step
+                samples_per_prompt = self.cfg.samples_per_prompt
 
             with self.timer("batch_iterator_init"):
                 batch_iterator = self.batch_iterator_cls(
-                    sampler_iter, num_microbatches, dataloader.dataset, self.collate_fn
+                    sampler_iter=sampler_iter, 
+                    micro_batch_size=self.cfg.generation_rollout_mbs, 
+                    num_prompts_per_grpo_step=self.cfg.num_prompts_per_grpo_step,
+                    samples_per_prompt=self.cfg.samples_per_prompt,
+                    dataset=dataloader.dataset, 
+                    collate_fn=self.collate_fn
                 )
 
         # the rollout_generator handles experience generation and returns a global batch
@@ -335,7 +351,12 @@ class GRPOTrainer:
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="GRPO Global Step")
 
             dp_size = parallel_state.get_training_data_parallel_world_size()
-            num_samples_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
+
+            num_prompts_per_grpo_step = self.cfg.num_prompts_per_grpo_step
+            samples_per_prompt = self.cfg.val_samples_per_prompt
+            gbs = num_prompts_per_grpo_step*samples_per_prompt
+            num_samples_to_load_on_each_dp = divide(gbs, dp_size)
+            
             print('dp, num samples', dp_size, num_samples_to_load_on_each_dp, flush=True)
 
             self.run_timer.start_time()
@@ -396,6 +417,7 @@ class GRPOTrainer:
                 # start training
                 clear_memory()
                 with self.timer("train_time"):
+                    log_memory("grpo.py self.run_training")
                     self.run_training(rollout_dataloader_iter)
 
                 self.logger.log_metrics(
@@ -413,7 +435,7 @@ class GRPOTrainer:
                     1.0,  # TODO:(geshen): allow for limit val batches
                     run_time_exceeded=run_time_exceeded,
                 )
-
+                
                 if run_val:
                     with self.timer("validation_time"):
                         val_metrics = self.run_validation()

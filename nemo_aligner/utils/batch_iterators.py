@@ -28,6 +28,7 @@ from flask import Flask, request
 
 from nemo_aligner.utils.distributed import broadcast_2d_tensor_within_mp, run_if_model_parallel_src
 from nemo_aligner.utils.utils import get_global_set
+from nemo_aligner.experimental.grpo.utils import parallel_state
 
 
 def _send_request(host, port, endpoint="get_idx", batch_size=1):
@@ -84,6 +85,37 @@ class DefaultBatchIterator:
 
 
 @dataclass
+class GRPOBatchIterator:
+    """The default batch iterator used for getting samples for generation stage 
+    """
+
+    sampler_iter: Iterator[int]
+    micro_batch_size: int
+    samples_per_prompt: int
+    num_prompts_per_grpo_step: int
+    dataset: Mapping
+    collate_fn: Callable
+
+    def __iter__(self):
+        for _, ids in zip(range(self.num_prompts_per_grpo_step), self.sampler_iter):
+            ids_with_repetitions = [x for item in ids for x in [item]*self.samples_per_prompt]
+            ids_per_rank = len(ids_with_repetitions) // parallel_state.get_data_parallel_world_size()
+
+            # get the indexes for this data parallel rank
+            dp_rank = parallel_state.get_data_parallel_rank()
+            ids_with_repetitions = ids_with_repetitions[dp_rank*ids_per_rank:(dp_rank+1)*(ids_per_rank)]
+            #split the indices into microbatches
+            num_microbatches = len(ids_with_repetitions) // self.micro_batch_size
+            ids_with_repetitions = [ids_with_repetitions[i:i+self.micro_batch_size] for i in range(0, len(ids_with_repetitions), self.micro_batch_size)]
+
+            for midx, micro_batch_ids in enumerate(ids_with_repetitions):
+                print(f"dp_rank {dp_rank}: global ids {ids_with_repetitions} mbs {midx} mbs ids {micro_batch_ids}")
+                batch = self.collate_fn([self.dataset[index] for index in ids])
+
+                yield batch
+
+
+@dataclass
 class HTTPBatchIterator:
     shared_set: Union[SharedSet, None]
     host: str
@@ -118,7 +150,7 @@ class HTTPBatchIterator:
 def get_batch_iterator_cls(batch_iterator_cfg):
     use_flask = batch_iterator_cfg.get("use_flask", False)
     if not use_flask:
-        return DefaultBatchIterator
+        return GRPOBatchIterator
 
     port = batch_iterator_cfg.get("port", 5557)
     ip_address = [socket.gethostbyname(socket.gethostname())]
