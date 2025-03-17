@@ -83,11 +83,11 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 device='cuda',
                 tensor_parallel_size=tp, 
                 generation_config='auto', 
-                enforce_eager=True,
-                gpu_memory_utilization=.92, 
+                enforce_eager=False,
+                gpu_memory_utilization=.85, 
                 enable_sleep_mode=True,
                 trust_remote_code=True,
-                # quantization='fp8'
+                quantization='fp8'
                 # max_model_len=16384,
             )
             self.running = True
@@ -124,6 +124,12 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
             for worker in self.llm.llm_engine.model_executor.workers:
                 worker.execute_method("update_weights_from_shared_dict", state_dict)
             self.llm.llm_engine.model_executor.driver_worker.worker.update_weights_from_shared_dict(state_dict)
+
+            # when using sleep(level=2), the sin cos cache of rotary embed layers are destroyed
+            # so rebuild the caches here
+            for worker in self.llm.llm_engine.model_executor.workers:
+                worker.execute_method("refresh_rot_embed_sin_cos_cache")
+            self.llm.llm_engine.model_executor.driver_worker.worker.refresh_rot_embed_sin_cos_cache()
 
             elapsed_time = time.time() - start
             print(f"vLLM Refit ({elapsed_time:.2f} seconds elapsed)")
