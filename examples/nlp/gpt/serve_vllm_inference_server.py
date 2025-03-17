@@ -63,6 +63,16 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                     # checksum += value.sum().item()
             # print(f"Checksum: {checksum} {checksum_pre}", flush=True)
             shared_cpu_state_dict.close()
+
+        def refresh_rot_embed_sin_cos_cache(self):
+            layers = self.model_runner.model.model.layers
+            for layer in layers:
+                if hasattr(layer, "self_attn"):
+                    rot_embed = layer.self_attn.rotary_emb
+                    cache = rot_embed._compute_cos_sin_cache()
+                    cache = cache.to(rot_embed.dtype)
+                    rot_embed.cos_sin_cache.copy_(cache)
+
             
     class VLLMInferenceServer:
         """
