@@ -395,6 +395,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         if parallel_state.get_context_parallel_world_size() > 1:
             batch['cp_unpadded_seqlen'] = [cp_unpadded_seqlen] * num_microbatches
 
+        print(f"batch size response_tokens = {batch['response_tokens'].size()}, num_microbatches = {num_microbatches}")
         data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only)
         fwd_bwd_function = get_forward_backward_func()
@@ -847,6 +848,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
     def get_init_policy_logprobs(self, response_tokens):
         use_peft_init_policy = self.use_peft and self.init_policy_state_dict is None
+        print(f"Get reference model results, use_peft = {use_peft_init_policy}")
 
         context_mgr = (
             adapter_control(self)

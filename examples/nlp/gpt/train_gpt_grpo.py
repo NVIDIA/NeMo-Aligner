@@ -63,9 +63,6 @@ def main(cfg) -> None:
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
 
-    cfg.model.global_batch_size = cfg.trainer.grpo.num_prompts_per_grpo_step * cfg.trainer.grpo.samples_per_prompt
-    cfg.model.micro_batch_size = cfg.trainer.grpo.generation_rollout_mbs
-
     trainer = resolve_and_create_trainer(cfg, "grpo")
     exp_manager(trainer, cfg.exp_manager)
 

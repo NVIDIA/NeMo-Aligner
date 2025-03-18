@@ -89,6 +89,8 @@ class GRPOTrainer:
         self.run_timer = run_timer
 
         self.reshard_weights_for_generation = cfg.inference_backend.enable and cfg.inference_backend.reshard
+
+        print(f"model_gbs in initialization: {cfg.model_gbs}")
         
 
         # Tracked by state dict and checkpointed
@@ -228,8 +230,8 @@ class GRPOTrainer:
                 batch_iterator = self.batch_iterator_cls(
                     sampler_iter=sampler_iter, 
                     micro_batch_size=self.cfg.generation_rollout_mbs, 
-                    num_prompts_per_grpo_step=self.cfg.num_prompts_per_grpo_step,
-                    samples_per_prompt=self.cfg.samples_per_prompt,
+                    num_prompts_per_grpo_step=num_prompts_per_grpo_step,
+                    samples_per_prompt=samples_per_prompt,
                     dataset=dataloader.dataset, 
                     collate_fn=self.collate_fn
                 )
@@ -347,13 +349,9 @@ class GRPOTrainer:
             global_pbar = tqdm(loop_iter, initial=self.step, total=self.max_steps, leave=True, desc="GRPO Global Step")
 
             dp_size = parallel_state.get_training_data_parallel_world_size()
-
-            num_prompts_per_grpo_step = self.cfg.num_prompts_per_grpo_step
-            samples_per_prompt = self.cfg.samples_per_prompt
-            gbs = num_prompts_per_grpo_step*samples_per_prompt
-            num_samples_to_load_on_each_dp = divide(gbs, dp_size)
-            
-            print('dp, num samples', dp_size, num_samples_to_load_on_each_dp, flush=True)
+            num_samples_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
+           
+            print(f"dp = {dp_size}, num_samples_to_load_on_each_dp = {num_samples_to_load_on_each_dp}, model_gbs = {self.cfg.model_gbs}", flush=True)
 
             self.run_timer.start_time()
             for _ in global_pbar:
@@ -410,6 +408,7 @@ class GRPOTrainer:
                 rollout_dataloader_iter = get_iterator_k_split(
                     grpo_rollout_data, divide(rollout_size, num_samples_to_load_on_each_dp)
                 )
+                print(f"grpo_rollout_data size = {grpo_rollout_data['response_tokens'].size()}, rollout_size = {rollout_size}, num_samples_to_load_on_each_dp = {num_samples_to_load_on_each_dp}")
                 # start training
                 clear_memory()
                 with self.timer("train_time"):
