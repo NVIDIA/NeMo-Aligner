@@ -629,11 +629,11 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
             global_map_counter = 0
 
-            need_clear = False
+            # Very large params are converted on the cpu.
+            cpu_param_cache = {}
+
             # Process each parameter (by its unique global key) one at a time.
             for gk in sorted(union_global_map.keys()):
-                log_memory("top of loop")
-
                 ptime = time.time()
                 owner_pp_global_rank, owner_raw_key = union_global_map[gk]
 
@@ -661,13 +661,18 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         else:
                             full_param = torch.clone(param).to(torch.bfloat16) 
 
-                        if full_param.numel() > 5e9:
-                            log_memory(f"{gk} PRE TP CLEAR")
-                            full_param = full_param.cpu()
+                        convert_on_cpu = full_param.numel() > 10e9
+                        if convert_on_cpu:
+                            if gk not in cpu_param_cache:
+                                cpu_param_cache[gk] = torch.empty_like(
+                                    full_param,
+                                    device=torch.device("cpu"),
+                                    pin_memory=True,
+                                )
+                            cpu_param_cache[gk].copy_(full_param, non_blocking=True)
+                            full_param = cpu_param_cache[gk]
                             clear_memory()
-                            need_clear = True
-                            log_memory(f"{gk} POST TP CLEAR")
-                        
+ 
                         # Convert the parameter using the provided function or mapping.
                         if recipe.get("hf_func", None) is not None:
                             hf_mapping = recipe["hf_func"](full_param, self.cfg)
@@ -677,11 +682,13 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         else:
                             raise NotImplementedError(f"No conversion recipe found for {owner_raw_key}")
 
-                        if need_clear:
-                            del full_param
-                            hf_mapping = {k:v.cuda() for k,v in hf_mapping.items()}
-                            log_memory(f"{gk} POST HF_MAPPING")
-
+                        if convert_on_cpu:
+                            del param
+                            hf_mapping = {
+                                k:v.to(torch.cuda.current_device(), non_blocking=True)
+                                for k,v in hf_mapping.items()
+                            }
+                            clear_memory()
 
                 else:
                     hf_mapping = None  # Non-owner ranks will receive the converted tensors.
