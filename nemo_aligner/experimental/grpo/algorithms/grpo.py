@@ -33,6 +33,7 @@ from nemo_aligner.utils.distributed import (
     all_reduce_dict,
     masked_global_mean_var,
 )
+from nemo_aligner.utils.utils import log_memory, print_memory_info
 from ..utils.parallel_state import is_inference_reshard, inference_reshard_region
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.experimental.grpo.utils.rl_utils import (
@@ -81,6 +82,7 @@ class GRPOTrainer:
         self.batch_iterator_cls = batch_iterator_cls
         self.logger = logger
         self.ckpt_callback = ckpt_callback
+        self.overall_iter = 0
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
@@ -266,9 +268,12 @@ class GRPOTrainer:
         )
 
     def run_training(self, dataloader_iter):
+        iteration = 0
         self.model.prepare_for_training()
 
         for batch in dataloader_iter:
+            print(f"Iteration {iteration}, overall_iter = {self.overall_iter}")
+            iteration += 1
             self.optimizer.zero_grad()
 
             self.model.prepare_for_training_step()
@@ -305,6 +310,7 @@ class GRPOTrainer:
 
             self.grpo_optimization_step += 1
         print("grpo optimization step", self.grpo_optimization_step)
+        self.overall_iter += 1
 
         self.model.finish_training()
 
@@ -387,6 +393,7 @@ class GRPOTrainer:
                 rollout_dataloader_iter = get_iterator_k_split(
                     grpo_rollout_data, divide(rollout_size, num_samples_to_load_on_each_dp)
                 )
+                print(f"grpo_rollout_data size = {grpo_rollout_data['response_tokens'].size()}, rollout_size = {rollout_size}, num_samples_to_load_on_each_dp = {num_samples_to_load_on_each_dp}")
                 # start training
                 clear_memory()
                 with self.timer("train_time"):
@@ -473,12 +480,20 @@ class GRPOTrainer:
         if extra_candidates is None:
             extra_candidates = {}
 
+        log_memory("Before monitor candidate")
+        print_memory_info("Before monitor candidate")
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
+        log_memory("Before checkpoint save")
+        print_memory_info("Before checkpoint save")
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
+        log_memory("Before finish training")
+        print_memory_info("Before finish training")
         self.model.finish_training()
+        log_memory("After finish training")
+        print_memory_info("After finish training")
 
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs

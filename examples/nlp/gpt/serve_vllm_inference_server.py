@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import os
 import contextlib
 from flask import Flask, request, jsonify
@@ -16,6 +17,10 @@ os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
 in_q = mp.Queue()
 out_q = mp.Queue()
 inference_process = None
+
+def print_with_datetime(message, flush):
+    current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{current_datetime}-> {message}", flush=flush)
 
 def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
     import torch
@@ -121,6 +126,8 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 free_bytes_before_wake = torch.cuda.mem_get_info()[0]
                 print(f"GPU memory available before wake up: {free_bytes_before_wake / 1024**3:.2f} GB", flush=True)
                 self.wake_up()
+                free_bytes_before_wake = torch.cuda.mem_get_info()[0]
+                print(f"GPU memory available after wake up: {free_bytes_before_wake / 1024**3:.2f} GB", flush=True)
             print(f"vLLM Wake up ({time.time() - start:.2f} seconds elapsed)", flush=True)
             if not isinstance(path, str):
                 raise ValueError("a string path is needed to pass refit")
@@ -174,11 +181,13 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 max_tokens=sampling_params.get("max_tokens", 3072),
                 #ignore_eos=True,
             )
+            print_with_datetime(f"Receive one request, length of batch_tokens = {len(batch_tokens)}, max_tokens: {sampling_params.max_tokens}, sampling_params = {sampling_params}", flush=True)
 
             # Generate texts from the prompts. The output is a list of RequestOutput objects
             # that contain the prompt, generated text, and other information.
             prompt_tokens = [TokensPrompt(prompt_token_ids=tok_seq) for tok_seq in batch_tokens]
             outputs = self.llm.generate(prompt_tokens, sampling_params, use_tqdm=True)
+            print_with_datetime(f"Finished LLM generation, output length = {len(outputs)}", flush=True)
             logprobs = []
             out_tokens = []
             for output in outputs:

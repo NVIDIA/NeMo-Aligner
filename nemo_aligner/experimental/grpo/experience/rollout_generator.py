@@ -24,6 +24,7 @@ from nemo_aligner.experimental.grpo.utils import parallel_state
 from nemo_aligner.utils.utils import batch_repeat, batch_index_select, reconstruct_split_batch, cpu_dict
 from ..utils.parallel_state import is_inference_reshard, inference_reshard_region
 from nemo_aligner.utils.distributed import ScopedTimer
+from nemo_aligner.utils.utils import print_memory_info
 from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface, EnvironmentInterface
 from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
 from nemo_aligner.utils.utils import log_memory
@@ -36,7 +37,6 @@ class SuperSimpleRolloutGenerator(RolloutGeneratorInterface):
         self.rollout_batch_seq_length = cfg.rollout_batch_seq_length
     
     # TODO @sahil have a basic example 
-    
 
 class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
     def __init__(self, cfg: DictConfig, tasks_to_environments: Dict[str, EnvironmentInterface]):
@@ -159,10 +159,11 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                         rollout_batches.append(rollout_batch)
                         futures.append(microbatch_futures)
                         print(f"microbatch_futures: {microbatch_futures}", flush=True)
-
+            print_memory_info("Before freeing inference backend")
             log_memory("Before freeing inference backencd")
             policy_model.inference_backend.free()
             log_memory("After freeing inference backencd")
+            print_memory_info("After freeing inference backend")
             # The batch_iterator may be a load-redistributing server, so batches may be jagged.
             # We gather everything so that we can rebalance it.
             unbalanced_local_batch = GPTRolloutBatch.from_rollout_batches(
@@ -170,6 +171,7 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                 eos_id=policy_model.tokenizer.eos_id,
                 rollout_batch_seq_length=self.rollout_batch_seq_length,
             )
+            print_memory_info("After from_rollout_batches")
             log_memory("rollout_generator.py generate_rollouts PTRolloutBatch.from_rollout_batches")
 
             global_rollout_batch = unbalanced_local_batch.gather_and_balance_globally()

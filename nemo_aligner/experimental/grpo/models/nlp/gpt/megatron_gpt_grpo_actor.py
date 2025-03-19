@@ -30,7 +30,7 @@ from omegaconf.dictconfig import DictConfig
 from safetensors.torch import save_file
 from huggingface_hub import snapshot_download
 
-from nemo_aligner.utils.utils import log_memory
+from nemo_aligner.utils.utils import log_memory, print_memory_info
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
@@ -275,6 +275,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             log_memory("After calling model forward")
 
             def loss_func(parallel_logits):
+                log_memory("Before calling loss function")
                 mask = batch["mask"]
                 advantages = batch["advantages"]
                 prev_log_probs = batch["logprobs"]
@@ -335,6 +336,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                         "grpo_ratio_clamped": grpo_ratio_clamped,
                     },
                 )
+                log_memory("After calling loss function")
 
             return parallel_logits, loss_func
 
@@ -359,15 +361,18 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         # clear_memory()
         # log_memory("after init grad buffer")
 
+        print_memory_info("Before onload parameters")
         log_memory("before onload parameters")
         self.maybe_onload_parameters()
         clear_memory()
         log_memory("after onload parameters")
 
+        print_memory_info("Before onload adam states")
         log_memory("before onload adam states")
         self.onload_adam_states()
         clear_memory()
         log_memory("after onload adam states")
+        print_memory_info("After onload adam states")
 
     def prepare_for_training_step(self):
         # custom trainers will always zero grad for us
@@ -390,6 +395,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         if parallel_state.get_context_parallel_world_size() > 1:
             batch['cp_unpadded_seqlen'] = [cp_unpadded_seqlen] * num_microbatches
 
+        print(f"batch size response_tokens = {batch['response_tokens'].size()}, num_microbatches = {num_microbatches}")
         data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only)
         fwd_bwd_function = get_forward_backward_func()
