@@ -596,9 +596,44 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
             #merged_cpu_param_dict = {}
   
+            def _tp_all_gather(tp_param, tp_dim):
+                tp_group = parallel_state.get_training_tensor_model_parallel_group()
+                tp_world_size = torch.distributed.get_world_size(tp_group)
+
+                new_shape = tuple([x * tp_world_size if i == tp_dim else x for i, x in enumerate(param.shape)])
+                if tp_dim == 0:
+                    tensor_for_allreduce = torch.zeros((tp_world_size, *param.shape), dtype=param.dtype, device=param.device)
+                    tensor_for_allreduce[torch.distributed.get_rank(tp_group)] = param
+                    torch.distributed.all_reduce(tensor_for_allreduce, group=tp_group)
+                elif tp_dim == 1:
+                    tensor_for_allreduce = torch.zeros((param.shape[0], tp_world_size, *param.shape[1:]), dtype=param.dtype, device=param.device)
+                    tensor_for_allreduce[:, torch.distributed.get_rank(tp_group), ...] = param
+                    torch.distributed.all_reduce(tensor_for_allreduce, group=tp_group)
+                else:
+                    # the general case
+                    # create a zero tensor that expands param by tp_world_size times, 
+                    # only the tensor whose first dimension index is tp rank is set equal to param
+                    # then all-reduce this tensor across tp_group. This is essentially an all-gather but without having to concat (which saves memory)
+                    tensor_for_allreduce = torch.zeros((tp_world_size, *param.shape), dtype=param.dtype, device=param.device)
+                    tensor_for_allreduce[torch.distributed.get_rank(tp_group)] = param
+                    torch.distributed.all_reduce(tensor_for_allreduce, group=tp_group)
+                    # transpose the tensor_for_allreduce, put the first axis to the axis right before the tp_dim
+                    old_shape = (tp_world_size, *param.shape)
+                    # flatten the axes between axis 1 and axis tp_dim -1
+                    print("tp_dim:", tp_dim)
+                    tensor_for_allreduce = torch.flatten(tensor_for_allreduce, start_dim=1, end_dim=tp_dim+1)
+                    tensor_for_allreduce = tensor_for_allreduce.transpose(0, 1)
+                # reshape to new_shape
+                full_param = tensor_for_allreduce.view(new_shape).contiguous().to(torch.bfloat16)
+                return full_param
+
             global_map_counter = 0
+
+            need_clear = False
             # Process each parameter (by its unique global key) one at a time.
             for gk in sorted(union_global_map.keys()):
+                log_memory("top of loop")
+
                 ptime = time.time()
                 owner_pp_global_rank, owner_raw_key = union_global_map[gk]
 
@@ -622,22 +657,16 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     else:
                         # If the parameter is TP-sharded, gather its slices on GPU.
                         if recipe.get("tp", None) is not None:
-                            tp_group = parallel_state.get_training_tensor_model_parallel_group()
-                            tp_world_size = torch.distributed.get_world_size(tp_group)
-                            gathered_slices = [torch.empty_like(param) for _ in range(tp_world_size)]
-                            torch.distributed.all_gather(gathered_slices, param, group=tp_group)
-                            full_param = torch.cat(gathered_slices, dim=recipe["tp"]).to(torch.bfloat16)
-                            size_in_mbytes = full_param.nelement() * full_param.element_size() / 1048576.0
-                            # print(f"TP all_gather: len(gathered_slices) = {len(gathered_slices)}, slice_0 type = {gathered_slices[0].dtype}, slice_0 size = {gathered_slices[0].size()}, full_param size = {full_param.size()}, in MB = {size_in_mbytes}", flush=True)
-                            # If the tensor size > 10GB, do aggressive memory cleaning.
-                            if size_in_mbytes > 10240:
-                                for one_slice in gathered_slices:
-                                    del one_slice
-                                del gathered_slices
-                                clear_memory()
+                            full_param = _tp_all_gather(param, tp_dim=recipe["tp"])
                         else:
-                            full_param = torch.clone(param).to(torch.bfloat16)
-                        
+                            full_param = torch.clone(param).to(torch.bfloat16) 
+
+                        if full_param.numel() > 5e9:
+                            log_memory(f"{gk} PRE TP CLEAR")
+                            full_param = full_param.cpu()
+                            clear_memory()
+                            need_clear = True
+                            log_memory(f"{gk} POST TP CLEAR")
                         
                         # Convert the parameter using the provided function or mapping.
                         if recipe.get("hf_func", None) is not None:
@@ -647,6 +676,13 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                             hf_mapping = {recipe["hf"].format_map(format_dict): full_param}
                         else:
                             raise NotImplementedError(f"No conversion recipe found for {owner_raw_key}")
+
+                        if need_clear:
+                            del full_param
+                            hf_mapping = {k:v.cuda() for k,v in hf_mapping.items()}
+                            log_memory(f"{gk} POST HF_MAPPING")
+
+
                 else:
                     hf_mapping = None  # Non-owner ranks will receive the converted tensors.
                 
