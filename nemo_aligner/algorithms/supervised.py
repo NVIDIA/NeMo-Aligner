@@ -156,8 +156,12 @@ class SupervisedTrainer:
             trainer_metrics = {"nan_skip": 1}
         else:
             trainer_metrics = {"nan_skip": 0}
-            self.optimizer.step(closure=None)
+            opt_ret = self.optimizer.step(closure=None)
             self.scheduler.step()
+
+            # For mcore optimizer, grad_norm is returned from optimzer.step()
+            if grad_norm is None and self.model.use_mcore_dist_optim and opt_ret is not None and isinstance(opt_ret, tuple) and len(opt_ret) >= 2:
+                grad_norm = opt_ret[1]
 
         if grad_norm is not None:
             trainer_metrics["grad_norm"] = grad_norm
