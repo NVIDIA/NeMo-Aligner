@@ -16,6 +16,7 @@ from collections import defaultdict
 from statistics import mean
 
 import torch
+import math
 from omegaconf.dictconfig import DictConfig
 from tqdm import tqdm
 
@@ -150,10 +151,14 @@ class SupervisedTrainer:
         grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
         lr = self.optimizer.param_groups[0]["lr"]
 
-        self.optimizer.step(closure=None)
-        self.scheduler.step()
-
         trainer_metrics = {}
+        if math.isnan(loss_mean):
+            trainer_metrics = {"nan_skip": 1}
+        else:
+            trainer_metrics = {"nan_skip": 0}
+            self.optimizer.step(closure=None)
+            self.scheduler.step()
+
         if grad_norm is not None:
             trainer_metrics["grad_norm"] = grad_norm
         trainer_metrics.update({"lr": lr, "loss": loss_mean})
