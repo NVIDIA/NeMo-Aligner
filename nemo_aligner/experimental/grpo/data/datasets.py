@@ -19,6 +19,8 @@ import torch
 from nemo.collections.nlp.modules.common.megatron.utils import get_ltor_masks_and_position_ids
 from nemo_aligner.utils.utils import batch_pad_to_fixed_len
 
+HARD_CODED_PROMPT_TEMPLATE = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\ndetailed thinking on<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nBelow is a math question. I want you to reason through the steps and then give a final answer. Your final answer should be in \\boxed{{}}.\nQuestion: {}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+
 #TODO @sahilj handle too-long prompts and masking them out throughout the whole process and renormalizing on loss
 class AllTaskDataset:
     def __init__(self, data_path, tokenizer, apply_chat_template: bool = True, system_prompt_file: str = None, prompt_file: str = None, seq_length=None):
@@ -48,7 +50,9 @@ class AllTaskDataset:
                 f"prompt file {prompt_file} was specified but does not exist"
             with open(prompt_file, "r", encoding="utf-8") as f:
                 self.prompt = f.read()
-        
+        else:
+            self.prompt = HARD_CODED_PROMPT_TEMPLATE
+
     def __len__(self):
         return len(self.data)
 
@@ -60,32 +64,40 @@ class AllTaskDataset:
         """
         Return a single prompt.
         """
+        
         task_name = self.data[idx]["task_name"]
+
         extra_verifier_info = None
-        if task_name == "math":
-            text_str = self.data[idx]["problem"]
-            extra_verifier_info = {"ground_truth": self.data[idx]["expected_answer"]}
-        elif task_name == "code":
+        # hard code to math for now
+        if task_name == "code":
             text_str = self.data[idx]["prompt"]
             extra_verifier_info = {"unittests": self.data[idx]["args"]["unittests"], "test_type": self.data[idx]["args"]["test_type"], "fn_name": self.data[idx]["args"].get("fn_name", None)}
+        elif ("args" in self.data[idx] and task_name == "deepscaler") or "text" in self.data[idx]:
+            text_str = self.data[idx]["text"]
+            extra_verifier_info = {"ground_truth": self.data[idx]["args"]["answer"]}
         elif "llm_judge" in task_name:
             text_str = self.data[idx]["prompt"]
             extra_verifier_info = {"ground_truth": self.data[idx]["args"]["expected_answer"], "prompt": self.data[idx]["args"]["prompt"], "extract_box": self.data[idx]["args"].get("extract_box", False)}
+        elif task_name == "math":
+            text_str = self.data[idx]["problem"]
+            extra_verifier_info = {"ground_truth": self.data[idx]["expected_answer"]}
         else:
             raise NotImplementedError(f"task name {task_name} in your dataset doesn't have a handler yet!")
 
-        if self.apply_chat_template:
+        if self.apply_chat_template or task_name == "code":
             chat = []
             if self.system_prompt:
                 chat.append({"role": "system", "content": self.system_prompt})
             elif self.data[idx].get("system_prompt", None):
                 chat.append({"role": "system", "content": self.data[idx]["system_prompt"]})
                 
-            chat.append({"role": "user", "content": self.prompt.format(text_str)})
+            chat.append({"role": "user", "content": text_str})
             text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
+        elif "args" in self.data[idx] and task_name == "deepscaler":
+            text = self.data[idx]["text"]
         else:
             text = self.prompt.format(text_str)
-
+        
         sample, _ = self.encode(text)
         sample_tensor = torch.as_tensor(sample, dtype=torch.int64)
         

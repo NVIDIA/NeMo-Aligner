@@ -63,7 +63,7 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                     # checksum += value.sum().item()
             # print(f"Checksum: {checksum} {checksum_pre}", flush=True)
             shared_cpu_state_dict.close()
-    
+            
     class VLLMInferenceServer:
         """
         This class simulates a vLLM inference server.
@@ -83,16 +83,17 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 device='cuda',
                 tensor_parallel_size=tp, 
                 generation_config='auto', 
-                enforce_eager=True, 
-                gpu_memory_utilization=.7, 
+                enforce_eager=True,
+                gpu_memory_utilization=.92, 
                 enable_sleep_mode=True,
                 trust_remote_code=True,
+                # max_model_len=16384,
             )
             self.running = True
             print("vLLM Inference Server started.")
 
         def sleep(self):
-            self.llm.sleep(level=1)
+            self.llm.sleep(level=2)
             self.asleep = True
 
         def wake_up(self):
@@ -107,6 +108,8 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 free_bytes_before_wake = torch.cuda.mem_get_info()[0]
                 print(f"GPU memory available before wake up: {free_bytes_before_wake / 1024**3:.2f} GB", flush=True)
                 self.wake_up()
+                free_bytes_before_wake = torch.cuda.mem_get_info()[0]
+                print(f"GPU memory available after wake up: {free_bytes_before_wake / 1024**3:.2f} GB", flush=True)
             print(f"vLLM Wake up ({time.time() - start:.2f} seconds elapsed)", flush=True)
             if not isinstance(path, str):
                 raise ValueError("a string path is needed to pass refit")

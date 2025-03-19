@@ -33,6 +33,7 @@ from nemo_aligner.utils.distributed import (
     all_reduce_dict,
     masked_global_mean_var,
 )
+from nemo_aligner.utils.utils import log_memory, print_memory_info
 from ..utils.parallel_state import is_inference_reshard, inference_reshard_region
 from nemo_aligner.utils.ppo_utils import create_mask
 from nemo_aligner.experimental.grpo.utils.rl_utils import (
@@ -44,6 +45,7 @@ from nemo_aligner.utils.trainer_utils import check_progress, compute_num_steps_p
 from nemo_aligner.utils.utils import clear_memory, cpu_dict, masked_mean
 from nemo_aligner.experimental.grpo.experience.interfaces import RolloutGeneratorInterface
 from nemo_aligner.experimental.grpo.experience.rollout_batch import GPTRolloutBatch
+from nemo_aligner.utils.utils import log_memory
 
 def compute_num_rollout_microbatches_per_dp_group(dataloader):
     return divide(
@@ -81,11 +83,14 @@ class GRPOTrainer:
         self.batch_iterator_cls = batch_iterator_cls
         self.logger = logger
         self.ckpt_callback = ckpt_callback
+        self.overall_iter = 0
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
 
         self.reshard_weights_for_generation = cfg.inference_backend.enable and cfg.inference_backend.reshard
+
+        print(f"model_gbs in initialization: {cfg.model_gbs}")
         
 
         # Tracked by state dict and checkpointed
@@ -158,22 +163,31 @@ class GRPOTrainer:
         # collect everything we need to train GRPO
         grpo_train_data["response_tokens"] = rollout_batch["response_tokens"]
         grpo_train_data["logprobs"] = rollout_batch["logprobs"]
+        grpo_train_data["inference_logprobs"] = rollout_batch["response_trt_lps"]
         grpo_train_data["valid_mask"] = rollout_batch["is_end"]
         grpo_train_data["mask"] = mask
         grpo_train_data["init_logprobs"] = rollout_batch["init_logprobs"]
         grpo_train_data["advantages"] = advantages
 
         # compute metrics
+        if self.cfg.get("importance_sample_correct", False):
+            importance_correction = torch.exp(rollout_batch["logprobs"] - rollout_batch["response_trt_lps"][:, 1:])
+            importance_correction = torch.nan_to_num(importance_correction, nan=0.0, posinf=0.0, neginf=0.0)
+        else:
+            importance_correction = torch.ones_like(rollout_batch["logprobs"])
+        grpo_train_data["importance_correction"] = importance_correction
+
         init_policy_kl = calculate_kl_penalty_joschu2020(
                 log_probs_policy=rollout_batch["logprobs"],
                 log_probs_reference=rollout_batch["init_logprobs"],
-            )
+            ) * importance_correction
         grpo_rollout_metrics["init_policy_kl"] = (
             masked_mean(init_policy_kl, mask).item()
         )
         grpo_rollout_metrics["nonzero_advantages"] = (advantages != 0).float().mean()
         grpo_rollout_metrics["logprobs_mean"] = masked_mean(rollout_batch["logprobs"], mask).item()
         grpo_rollout_metrics["init_logprobs_mean"] = masked_mean(rollout_batch["init_logprobs"], mask).item()
+        grpo_rollout_metrics["importance_correction_mean"] = masked_mean(importance_correction, mask).item()
         
         local_grpo_train_data = grpo_train_data.chunk(
             rank=parallel_state.get_training_data_parallel_rank(),
@@ -204,11 +218,22 @@ class GRPOTrainer:
             sampler_iter = iter(dataloader.batch_sampler)
 
             # must compute the number of microbatches in the generation context for correct DP groups
-            num_microbatches = compute_num_rollout_microbatches_per_dp_group(dataloader)
+            # num_microbatches = compute_num_rollout_microbatches_per_dp_group(dataloader)
+            if is_validation:
+                num_prompts_per_grpo_step = self.cfg.val_num_prompts_per_grpo_step
+                samples_per_prompt = self.cfg.val_samples_per_prompt
+            else:
+                num_prompts_per_grpo_step = self.cfg.num_prompts_per_grpo_step
+                samples_per_prompt = self.cfg.samples_per_prompt
 
             with self.timer("batch_iterator_init"):
                 batch_iterator = self.batch_iterator_cls(
-                    sampler_iter, num_microbatches, dataloader.dataset, self.collate_fn
+                    sampler_iter=sampler_iter, 
+                    micro_batch_size=self.cfg.generation_rollout_mbs, 
+                    num_prompts_per_grpo_step=num_prompts_per_grpo_step,
+                    samples_per_prompt=samples_per_prompt,
+                    dataset=dataloader.dataset, 
+                    collate_fn=self.collate_fn
                 )
 
         # the rollout_generator handles experience generation and returns a global batch
@@ -257,9 +282,12 @@ class GRPOTrainer:
         )
 
     def run_training(self, dataloader_iter):
+        iteration = 0
         self.model.prepare_for_training()
 
         for batch in dataloader_iter:
+            print(f"Iteration {iteration}, overall_iter = {self.overall_iter}")
+            iteration += 1
             self.optimizer.zero_grad()
 
             self.model.prepare_for_training_step()
@@ -268,6 +296,15 @@ class GRPOTrainer:
 
             grad_norm = clip_gradients(self.model, self.cfg.gradient_clip_val)
             grad_norm = grad_norm.item() if torch.is_tensor(grad_norm) else grad_norm
+
+            if torch.isnan(torch.tensor(grad_norm)):
+                logging.warning("Skipping training step due to NaN gradient norm.")
+                self.optimizer.zero_grad()  # Zero out gradients
+                metrics["grad_norm"] = float('nan')
+                metrics.update({"loss": loss_mean, "optim_step": self.grpo_optimization_step})
+                self.logger.log_metrics(metrics, step=self.step, prefix="train_optim/")
+                continue
+
             lr = self.optimizer.param_groups[0]["lr"]
 
             self.optimizer.step()
@@ -287,6 +324,7 @@ class GRPOTrainer:
 
             self.grpo_optimization_step += 1
         print("grpo optimization step", self.grpo_optimization_step)
+        self.overall_iter += 1
 
         self.model.finish_training()
 
@@ -312,7 +350,8 @@ class GRPOTrainer:
 
             dp_size = parallel_state.get_training_data_parallel_world_size()
             num_samples_to_load_on_each_dp = divide(self.cfg.model_gbs, dp_size)
-            print('dp, num samples', dp_size, num_samples_to_load_on_each_dp, flush=True)
+           
+            print(f"dp = {dp_size}, num_samples_to_load_on_each_dp = {num_samples_to_load_on_each_dp}, model_gbs = {self.cfg.model_gbs}", flush=True)
 
             self.run_timer.start_time()
             for _ in global_pbar:
@@ -369,9 +408,11 @@ class GRPOTrainer:
                 rollout_dataloader_iter = get_iterator_k_split(
                     grpo_rollout_data, divide(rollout_size, num_samples_to_load_on_each_dp)
                 )
+                print(f"grpo_rollout_data size = {grpo_rollout_data['response_tokens'].size()}, rollout_size = {rollout_size}, num_samples_to_load_on_each_dp = {num_samples_to_load_on_each_dp}")
                 # start training
                 clear_memory()
                 with self.timer("train_time"):
+                    log_memory("grpo.py self.run_training")
                     self.run_training(rollout_dataloader_iter)
 
                 self.logger.log_metrics(
@@ -389,7 +430,7 @@ class GRPOTrainer:
                     1.0,  # TODO:(geshen): allow for limit val batches
                     run_time_exceeded=run_time_exceeded,
                 )
-
+                
                 if run_val:
                     with self.timer("validation_time"):
                         val_metrics = self.run_validation()
@@ -455,12 +496,20 @@ class GRPOTrainer:
         if extra_candidates is None:
             extra_candidates = {}
 
+        log_memory("Before monitor candidate")
+        print_memory_info("Before monitor candidate")
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
+        log_memory("Before checkpoint save")
+        print_memory_info("Before checkpoint save")
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
 
+        log_memory("Before finish training")
+        print_memory_info("Before finish training")
         self.model.finish_training()
+        log_memory("After finish training")
+        print_memory_info("After finish training")
 
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs

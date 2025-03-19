@@ -1,0 +1,109 @@
+diff --git a/nemo/collections/common/tokenizers/huggingface/auto_tokenizer.py b/nemo/collections/common/tokenizers/huggingface/auto_tokenizer.py
+index 14da2d13a..aa8294655 100644
+--- a/nemo/collections/common/tokenizers/huggingface/auto_tokenizer.py
++++ b/nemo/collections/common/tokenizers/huggingface/auto_tokenizer.py
+@@ -169,6 +169,9 @@ class AutoTokenizer(TokenizerSpec):
+         self.space_sensitive = self.text_to_tokens('x y') != self.text_to_tokens('x') + self.text_to_tokens('y')
+         self._inv_vocab_dict = {}
+ 
++    def apply_chat_template(self, *args, **kwargs):
++        return self.tokenizer.apply_chat_template(*args, **kwargs)
++
+     @property
+     def vocab_size(self):
+         return len(self.tokenizer)
+diff --git a/nemo/collections/nlp/parts/nlp_overrides.py b/nemo/collections/nlp/parts/nlp_overrides.py
+index da3c6ef01..5224f4402 100644
+--- a/nemo/collections/nlp/parts/nlp_overrides.py
++++ b/nemo/collections/nlp/parts/nlp_overrides.py
+@@ -389,38 +389,40 @@ class NLPDDPStrategy(DDPStrategy):
+             When using megatron core, the distributed checkpointing library expects save functions to be
+             called on every rank and internally does the rank checking.
+         """
++        print("Arrived at callback save_checkpoint", self.use_distributed_checkpointing)
+         # check if using distributed checkpointing
+         if self.use_distributed_checkpointing:
+             assert (
+                 len(checkpoint['optimizer_states']) == 1
+             ), "Currently only support checkpointing 1 distributed optimizer per time!"
+-            if self.save_top_k:
+-                nemo_save_dir = Path(ckpt_to_dir(filepath)) / "checkpoint.nemo"
+-                self.model.save_to(nemo_save_dir)
+-            else:
+-                # converts the optimizer states to their sharded equivalents
+-                sharded_optim_state = self.optimizer_sharded_state_dict(
+-                    unsharded_optim_state=checkpoint['optimizer_states'][0]
+-                )
++            #if self.save_top_k:
++            #    nemo_save_dir = Path(ckpt_to_dir(filepath)) / "checkpoint.nemo"
++            #    self.model.save_to(nemo_save_dir)
++            #else:
++
++            # converts the optimizer states to their sharded equivalents
++            sharded_optim_state = self.optimizer_sharded_state_dict(
++                unsharded_optim_state=checkpoint['optimizer_states'][0]
++            )
+ 
+-                # Check whether to save optim states
+-                include_optimizer = True if not storage_options else storage_options.get('include_optimizer', True)
+-                if include_optimizer:
+-                    checkpoint['optimizer_states'] = [sharded_optim_state]
+-                else:
+-                    checkpoint['optimizer_states'] = None
+-                # remove device state_dict
+-                checkpoint['state_dict'] = OrderedDict([])
++            # Check whether to save optim states
++            include_optimizer = True if not storage_options else storage_options.get('include_optimizer', True)
++            if include_optimizer:
++                checkpoint['optimizer_states'] = [sharded_optim_state]
++            else:
++                checkpoint['optimizer_states'] = None
++            # remove device state_dict
++            checkpoint['state_dict'] = OrderedDict([])
+ 
+-                self.checkpoint_io.save_checkpoint(checkpoint, ckpt_to_dir(filepath), storage_options=storage_options)
++            self.checkpoint_io.save_checkpoint(checkpoint, ckpt_to_dir(filepath), storage_options=storage_options)
+ 
+-                if HAVE_MODELOPT and hasattr(self.lightning_module, "get_model_module_list"):
+-                    save_sharded_modelopt_state(
+-                        self.lightning_module.get_model_module_list(),
+-                        ckpt_to_dir(filepath),
+-                        self.unwrapped_checkpoint_io.save_sharded_strategy,
+-                        prefix="model.",
+-                    )
++            if HAVE_MODELOPT and hasattr(self.lightning_module, "get_model_module_list"):
++                save_sharded_modelopt_state(
++                    self.lightning_module.get_model_module_list(),
++                    ckpt_to_dir(filepath),
++                    self.unwrapped_checkpoint_io.save_sharded_strategy,
++                    prefix="model.",
++                )
+         else:
+             # PTL override to accomodate model parallel checkpoints
+             filepath = inject_model_parallel_rank(filepath)
+diff --git a/nemo/export/tensorrt_llm.py b/nemo/export/tensorrt_llm.py
+index 864876899..55047e564 100644
+--- a/nemo/export/tensorrt_llm.py
++++ b/nemo/export/tensorrt_llm.py
+@@ -786,7 +786,7 @@ class TensorRTLLM(ITritonDeployable):
+         """
+         Convert a model parallel nemo model to TensorRT-LLM.
+         """
+-        assert tensorrt_llm.mpi_rank() == torch.distributed.get_rank()
++        #assert tensorrt_llm.mpi_rank() == torch.distributed.get_rank()
+         self.use_refit, self.model_type, self.gpus_per_node = use_refit, model_type, gpus_per_node
+         self.mp_rank, self.dp_rank, self.tp_size, self.pp_size, self.dp_size = init_model_parallel_from_nemo(
+             reshard_model
+diff --git a/nemo/lightning/pytorch/strategies/megatron_strategy.py b/nemo/lightning/pytorch/strategies/megatron_strategy.py
+index b74677b01..0358372b7 100644
+--- a/nemo/lightning/pytorch/strategies/megatron_strategy.py
++++ b/nemo/lightning/pytorch/strategies/megatron_strategy.py
+@@ -199,7 +199,7 @@ class MegatronStrategy(DDPStrategy, io.IOMixin):
+         lazy_init: bool = False,
+         pipeline_dtype: Optional[torch.dtype] = None,
+         save_ckpt_format: str = "torch_dist",
+-        ckpt_async_save: bool = True,
++        ckpt_async_save: bool = False, #True,
+         ckpt_torch_dist_multiproc: int = None,  ## TODO(ashors): put elsewhere?
+         ckpt_assume_constant_structure: bool = False,
+         ckpt_parallel_save: bool = True,

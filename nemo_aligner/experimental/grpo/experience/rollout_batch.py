@@ -75,16 +75,11 @@ class GPTRolloutBatch(UserDict):
                 # So, we need to balance them first and then balance by all the original (training) DP groups
                 # We call get_(training)_pipeline_model_parallel_group() here because that refers to the pp groups
                 # as they were in training. In the inference(current) context, get_pipeline_model_parallel_group would be 1.
-                if parallel_state.is_inference_reshard():
-                    value = rebalance_nd_tensor(value, group=parallel_state.get_training_pipeline_model_parallel_group())
-
-                value = rebalance_nd_tensor(value, group=parallel_state.get_training_data_parallel_group())
+                value = rebalance_nd_tensor(value, group=parallel_state.get_data_parallel_group())
                 global_rollout_batch[k] = value
             elif isinstance(value, list):
                 # same infernence reshard logic described above, but now using object gathers.
-                if parallel_state.is_inference_reshard():
-                    value = gather_jagged_object_lists(value, group=parallel_state.get_training_pipeline_model_parallel_group())
-                value = gather_jagged_object_lists(value, parallel_state.get_training_data_parallel_group())
+                value = gather_jagged_object_lists(value, parallel_state.get_data_parallel_group())
                 global_rollout_batch[k] = value
             else:
                 raise NotImplementedError(
@@ -116,7 +111,7 @@ class GPTRolloutBatch(UserDict):
         assert len(batch_set) == 1, "batch sizes are not the same across the rollout batch"
         B = batch_set.pop()
         assert B % split_size == 0, f"batch size ({B}) is not a multiple of split_size ({split_size})"
-        assert B // split_size > rank, \
+        assert split_size > rank, \
             f"index OOB: not enough splits for this rank. rollout_batch_size: {B}, split_size ({split_size}), rank_idx ({rank})"
 
         indices = torch.arange(B).tensor_split(split_size)[rank]

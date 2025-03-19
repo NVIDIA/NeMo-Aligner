@@ -18,6 +18,7 @@ import gc
 import itertools
 import os
 import re
+import psutil
 import time
 import tempfile
 import warnings
@@ -40,6 +41,30 @@ from nemo.core.classes.mixins.adapter_mixins import AdapterModuleMixin
 from nemo.utils import AppState, logging
 from nemo.utils.exp_manager import NeMoModelCheckpoint
 from nemo_aligner.models.nlp.gpt.gpt_reward_model import GPTRewardModel
+
+def print_memory_info(title):
+    mem = psutil.virtual_memory()
+
+    # Create the table as a single string
+    table = (
+        f"{f'Memory Usage at {title}':^50}\n"
+        f"{'-'*50}\n"
+        f"{'Metric':<20} {'Value (GB)':>30}\n"
+        f"{'-'*50}\n"
+        f"{'Total memory':<20} {mem.total / (1024 ** 3):>30.2f}\n"
+        f"{'Available memory':<20} {mem.available / (1024 ** 3):>30.2f}\n"
+        f"{'Used memory':<20} {mem.used / (1024 ** 3):>30.2f}\n"
+        f"{'Free memory':<20} {mem.free / (1024 ** 3):>30.2f}\n"
+        f"{'Active memory':<20} {mem.active / (1024 ** 3):>30.2f}\n"
+        f"{'Inactive memory':<20} {mem.inactive / (1024 ** 3):>30.2f}\n"
+        f"{'Buffers':<20} {mem.buffers / (1024 ** 3):>30.2f}\n"
+        f"{'Cached':<20} {mem.cached / (1024 ** 3):>30.2f}\n"
+        f"{'Shared memory':<20} {mem.shared / (1024 ** 3):>30.2f}\n"
+        f"{'Slab':<20} {mem.slab / (1024 ** 3):>30.2f}\n"
+    )
+
+    # Print the table in one print() function
+    print(table, flush=True)
 
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
@@ -690,9 +715,10 @@ def make_sharded_tensors_from_reference(reference_param, model_param, prefix: st
 
 
 def log_memory(prefix):
+    torch.cuda.synchronize()
     pyt = torch.cuda.memory_allocated() / (1024 ** 3)
     el = (torch.cuda.mem_get_info()[1] - torch.cuda.mem_get_info()[0]) / (1024 ** 3)
-    print(f"Mem Usage (GB) | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}")
+    print(f"Mem Usage (GB) | {prefix} | pytorch:{pyt} total_occupied:{el} | memory_other_than_pyt:{el-pyt}", flush=True)
 
 
 def deprecated_in_version(version: str, message: str | None = None):
@@ -779,17 +805,21 @@ def reconstruct_split_batch(
             indices = indices.tolist()
         all_indices.extend(indices)
     n = max(all_indices) + 1 if all_indices else 0
+    print("#### ALL INDICES", all_indices)
+    print("#### N", n)
 
     if not split_batches:
         return {}
 
     original_batch = {}
+    # print("### SPLIT BATCHES", split_batches)
 
     # Process each key present in the split batches
     for key in split_batches[0].keys():
         sample_value = split_batches[0][key]
 
         if isinstance(sample_value, torch.Tensor):
+            print("### SAMPLE VALUE", sample_value.shape)
             # Tensor reconstruction with device preservation
             device = sample_value.device
             dtype = sample_value.dtype
@@ -802,6 +832,8 @@ def reconstruct_split_batch(
                     indices = indices.to(device)
                 else:
                     indices = torch.tensor(indices, device=device)
+                print("### DATA", data.shape)
+                print("### INDICES", indices.shape)
                 reconstructed[indices] = data
 
             original_batch[key] = reconstructed

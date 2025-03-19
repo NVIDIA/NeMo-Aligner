@@ -1,26 +1,12 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 from typing import Optional
 import requests
-import copy
 import torch
+import copy
 import nemo_aligner.experimental.grpo.utils.parallel_state as parallel_state
 from nemo_aligner.utils.distributed import broadcast_tensor 
-import time
 from contextlib import nullcontext
-from nemo_aligner.tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
+from tensor_comms.shared_tensors import SharedCPUMemoryTensorDict
+import time
 
 def print_group_ranks(group):
     """
@@ -49,14 +35,13 @@ def print_group_ranks(group):
     print(f"Group ranks: {group_ranks}", flush=True)
     return group_ranks
 
-class VLLMClient:
+class TRTLLMPytorchClient:
     DEFAULT_PAD_ID = -42
 
     def __init__(self, cfg, use_reshard, tokenizer, checkpoint_path, sampling_params: dict):
         self.base_url = f"http://{cfg.ip}:{cfg.port}"
         self.sampling_params = sampling_params
-
-        self.pad_id = VLLMClient.DEFAULT_PAD_ID
+        self.pad_id = TRTLLMPytorchClient.DEFAULT_PAD_ID
         self.eos_id = tokenizer.eos_id
         self.checkpoint_path = checkpoint_path
         self.refit_cpu_mp_gloo_group = None
@@ -64,7 +49,7 @@ class VLLMClient:
         self.free_cpu_mp_gloo_group = None
         self.server_started = False
         self.reshard_context = lambda: parallel_state.inference_reshard_region() if use_reshard else nullcontext()
-        
+
     def build_cpu_mp_gloo_group(self, cpu_group_name):
         if getattr(self, f"{cpu_group_name}_cpu_mp_gloo_group") is not None:
             return
@@ -108,10 +93,10 @@ class VLLMClient:
             if int(torch.distributed.get_rank()) in list(rank_group):
                 setattr(self, f"{cpu_group_name}_cpu_mp_gloo_group", group)
                 print(f"Rank {torch.distributed.get_rank()} local Gloo group built successfully with ranks: {rank_group}",flush=True)
-
+    
     def refit(self, model: Optional[SharedCPUMemoryTensorDict] = None):
         """
-        Start the remote vLLM inference server.
+        Start the remote trtllm_pytorch inference server.
         """
         context = nullcontext() if parallel_state.is_inference_reshard() else self.reshard_context()
         with context:
@@ -142,7 +127,7 @@ class VLLMClient:
                         print(f"Error starting the server: {e}")
                     self.server_started = True
                 else:
-                    url = f"{self.base_url}/refit"
+                    url = f"{self.base_url}/start"
                     try:
                         test = {"test": torch.randn(1000, dtype=torch.bfloat16)}
                         self.test_state_dict = SharedCPUMemoryTensorDict()
@@ -165,7 +150,7 @@ class VLLMClient:
         assert self.refit_cpu_mp_gloo_group is not None # cpu gloo group must be built before calling this function
         torch.distributed.barrier(group=self.refit_cpu_mp_gloo_group)
         return ret_val
-
+    
     def generate(self, batch_tokens: tuple[torch.Tensor, torch.Tensor], use_greedy: bool = False):
         """
         Perform generation on a batch of token lists.
@@ -217,7 +202,7 @@ class VLLMClient:
             output_ids[output_ids == self.pad_id] = self.eos_id
             tensors = {
                 "response_tokens": output_ids,
-                "response_lengths": torch.tensor(response_lengths, device="cpu").long(),
+                "response_lengths": torch.tensor(response_lengths, device="cuda").long(),
                 "response_logprobs_trt": response_logprobs,
             }
         else:
@@ -241,13 +226,13 @@ class VLLMClient:
         return tensors
 
     def free(self):
-        """Put the vLLM inference server to sleep."""
+        """Put the TRTLLM Pytorch inference server to sleep."""
         context = nullcontext() if parallel_state.is_inference_reshard() else self.reshard_context()
         with context:
             self.build_cpu_mp_gloo_group("free") # will become a no-op if already built
             data = None
             if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
-                url = f"{self.base_url}/sleep"
+                url = f"{self.base_url}/shutdown"
                 try:
                     response = requests.post(url)
                     response.raise_for_status()
