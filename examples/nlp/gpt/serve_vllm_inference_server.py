@@ -65,13 +65,14 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
             shared_cpu_state_dict.close()
 
         def refresh_rot_embed_sin_cos_cache(self):
-            layers = self.model_runner.model.model.layers
-            for layer in layers:
-                if hasattr(layer, "self_attn"):
-                    rot_embed = layer.self_attn.rotary_emb
-                    cache = rot_embed._compute_cos_sin_cache()
-                    cache = cache.to(rot_embed.dtype)
-                    rot_embed.cos_sin_cache.copy_(cache)
+            with torch.autograd.grad_mode.inference_mode(mode=True):
+                layers = self.model_runner.model.model.layers
+                for layer in layers:
+                    if hasattr(layer, "self_attn"):
+                        rot_embed = layer.self_attn.rotary_emb
+                        cache = rot_embed._compute_cos_sin_cache()
+                        cache = cache.to(rot_embed.dtype)
+                        rot_embed.cos_sin_cache.copy_(cache)
 
             
     class VLLMInferenceServer:
@@ -94,11 +95,12 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 tensor_parallel_size=tp, 
                 generation_config='auto', 
                 enforce_eager=False,
-                gpu_memory_utilization=.85, 
+                gpu_memory_utilization=.7, 
                 enable_sleep_mode=True,
                 trust_remote_code=True,
-                quantization='fp8'
-                # max_model_len=16384,
+                quantization='fp8',
+                max_model_len=16384,
+                enable_chunked_prefill=True,
             )
             self.running = True
             print("vLLM Inference Server started.")
