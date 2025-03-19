@@ -395,6 +395,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         if parallel_state.get_context_parallel_world_size() > 1:
             batch['cp_unpadded_seqlen'] = [cp_unpadded_seqlen] * num_microbatches
 
+        print(f"batch size response_tokens = {batch['response_tokens'].size()}, num_microbatches = {num_microbatches}")
         data_iter = get_iterator_k_split(batch, num_microbatches)
         set_sync_funcs(self, forward_only)
         fwd_bwd_function = get_forward_backward_func()

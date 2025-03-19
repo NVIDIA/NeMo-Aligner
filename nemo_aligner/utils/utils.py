@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Misc helper functions"""
+import datetime
 import functools
 import gc
 import itertools
@@ -66,6 +67,9 @@ def print_memory_info(title):
     # Print the table in one print() function
     print(table, flush=True)
 
+def print_with_datetime(message):
+    current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{current_datetime} -> {message}", flush=True)
 
 class CustomSaveRestoreConnector(NLPSaveRestoreConnector):
     """A save connector that will ask the Reward model to not try to load

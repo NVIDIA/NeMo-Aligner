@@ -393,6 +393,7 @@ class GRPOTrainer:
                 rollout_dataloader_iter = get_iterator_k_split(
                     grpo_rollout_data, divide(rollout_size, num_samples_to_load_on_each_dp)
                 )
+                print(f"grpo_rollout_data size = {grpo_rollout_data['response_tokens'].size()}, rollout_size = {rollout_size}, num_samples_to_load_on_each_dp = {num_samples_to_load_on_each_dp}")
                 # start training
                 clear_memory()
                 with self.timer("train_time"):
