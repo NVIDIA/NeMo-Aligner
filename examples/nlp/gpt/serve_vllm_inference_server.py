@@ -1,4 +1,5 @@
 import argparse
+import datetime
 import os
 import contextlib
 from flask import Flask, request, jsonify
@@ -16,6 +17,10 @@ os.environ['VLLM_WORKER_MULTIPROC_METHOD'] = 'spawn'
 in_q = mp.Queue()
 out_q = mp.Queue()
 inference_process = None
+
+def print_with_datetime(message, flush):
+    current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{current_datetime}-> {message}", flush=flush)
 
 def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
     import torch
@@ -58,11 +63,22 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
             with torch.no_grad():
                 for key, value in shared_cpu_state_dict.as_dict().items():
                     # checksum_pre += value.sum().item()
-                    #print(f"Key: {key} {value[0]} {value.shape} {value.dtype}", flush=True)
+                    print(f"Key: {key} {value[0]} {value.shape} {value.dtype}", flush=True)
                     self.model_runner.model.load_weights(weights=[(key, value)])
                     # checksum += value.sum().item()
             # print(f"Checksum: {checksum} {checksum_pre}", flush=True)
             shared_cpu_state_dict.close()
+
+        def refresh_rot_embed_sin_cos_cache(self):
+            with torch.autograd.grad_mode.inference_mode(mode=True):
+                layers = self.model_runner.model.model.layers
+                for layer in layers:
+                    if hasattr(layer, "self_attn"):
+                        rot_embed = layer.self_attn.rotary_emb
+                        cache = rot_embed._compute_cos_sin_cache()
+                        cache = cache.to(rot_embed.dtype)
+                        rot_embed.cos_sin_cache.copy_(cache)
+
             
     class VLLMInferenceServer:
         """
@@ -83,11 +99,13 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 device='cuda',
                 tensor_parallel_size=tp, 
                 generation_config='auto', 
-                enforce_eager=True,
-                gpu_memory_utilization=.92, 
+                enforce_eager=False,
+                gpu_memory_utilization=.7, 
                 enable_sleep_mode=True,
                 trust_remote_code=True,
-                # max_model_len=16384,
+                quantization='fp8',
+                max_model_len=16384,
+                enable_chunked_prefill=True,
             )
             self.running = True
             print("vLLM Inference Server started.")
@@ -126,6 +144,12 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 worker.execute_method("update_weights_from_shared_dict", state_dict)
             self.llm.llm_engine.model_executor.driver_worker.worker.update_weights_from_shared_dict(state_dict)
 
+            # when using sleep(level=2), the sin cos cache of rotary embed layers are destroyed
+            # so rebuild the caches here
+            for worker in self.llm.llm_engine.model_executor.workers:
+                worker.execute_method("refresh_rot_embed_sin_cos_cache")
+            self.llm.llm_engine.model_executor.driver_worker.worker.refresh_rot_embed_sin_cos_cache()
+
             elapsed_time = time.time() - start
             print(f"vLLM Refit ({elapsed_time:.2f} seconds elapsed)")
             return True
@@ -157,11 +181,13 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 max_tokens=sampling_params.get("max_tokens", 3072),
                 #ignore_eos=True,
             )
+            print_with_datetime(f"Receive one request, length of batch_tokens = {len(batch_tokens)}, max_tokens: {sampling_params.max_tokens}, sampling_params = {sampling_params}", flush=True)
 
             # Generate texts from the prompts. The output is a list of RequestOutput objects
             # that contain the prompt, generated text, and other information.
             prompt_tokens = [TokensPrompt(prompt_token_ids=tok_seq) for tok_seq in batch_tokens]
             outputs = self.llm.generate(prompt_tokens, sampling_params, use_tqdm=True)
+            print_with_datetime(f"Finished LLM generation, output length = {len(outputs)}", flush=True)
             logprobs = []
             out_tokens = []
             for output in outputs:

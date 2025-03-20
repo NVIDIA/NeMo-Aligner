@@ -155,6 +155,10 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         # Initialize the inference backend
         self.inference_backend = None
         self.prepare_for_inference_warmed_up = False
+
+        # Whether we have already saved the HF files.
+        self.hf_file_saved = False
+
         # Collect backends from the configuration and check which ones are enabled
         enabled_backends = [
             name for name in cfg.grpo.inference_backend.config.keys() 
@@ -596,7 +600,42 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
 
             #merged_cpu_param_dict = {}
   
+            def _tp_all_gather(tp_param, tp_dim):
+                tp_group = parallel_state.get_training_tensor_model_parallel_group()
+                tp_world_size = torch.distributed.get_world_size(tp_group)
+
+                new_shape = tuple([x * tp_world_size if i == tp_dim else x for i, x in enumerate(param.shape)])
+                if tp_dim == 0:
+                    tensor_for_allreduce = torch.zeros((tp_world_size, *param.shape), dtype=param.dtype, device=param.device)
+                    tensor_for_allreduce[torch.distributed.get_rank(tp_group)] = param
+                    torch.distributed.all_reduce(tensor_for_allreduce, group=tp_group)
+                elif tp_dim == 1:
+                    tensor_for_allreduce = torch.zeros((param.shape[0], tp_world_size, *param.shape[1:]), dtype=param.dtype, device=param.device)
+                    tensor_for_allreduce[:, torch.distributed.get_rank(tp_group), ...] = param
+                    torch.distributed.all_reduce(tensor_for_allreduce, group=tp_group)
+                else:
+                    # the general case
+                    # create a zero tensor that expands param by tp_world_size times, 
+                    # only the tensor whose first dimension index is tp rank is set equal to param
+                    # then all-reduce this tensor across tp_group. This is essentially an all-gather but without having to concat (which saves memory)
+                    tensor_for_allreduce = torch.zeros((tp_world_size, *param.shape), dtype=param.dtype, device=param.device)
+                    tensor_for_allreduce[torch.distributed.get_rank(tp_group)] = param
+                    torch.distributed.all_reduce(tensor_for_allreduce, group=tp_group)
+                    # transpose the tensor_for_allreduce, put the first axis to the axis right before the tp_dim
+                    old_shape = (tp_world_size, *param.shape)
+                    # flatten the axes between axis 1 and axis tp_dim -1
+                    print("tp_dim:", tp_dim)
+                    tensor_for_allreduce = torch.flatten(tensor_for_allreduce, start_dim=1, end_dim=tp_dim+1)
+                    tensor_for_allreduce = tensor_for_allreduce.transpose(0, 1)
+                # reshape to new_shape
+                full_param = tensor_for_allreduce.view(new_shape).contiguous().to(torch.bfloat16)
+                return full_param
+
             global_map_counter = 0
+
+            # Very large params are converted on the cpu.
+            cpu_param_cache = {}
+
             # Process each parameter (by its unique global key) one at a time.
             for gk in sorted(union_global_map.keys()):
                 ptime = time.time()
@@ -622,23 +661,22 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                     else:
                         # If the parameter is TP-sharded, gather its slices on GPU.
                         if recipe.get("tp", None) is not None:
-                            tp_group = parallel_state.get_training_tensor_model_parallel_group()
-                            tp_world_size = torch.distributed.get_world_size(tp_group)
-                            gathered_slices = [torch.empty_like(param) for _ in range(tp_world_size)]
-                            torch.distributed.all_gather(gathered_slices, param, group=tp_group)
-                            full_param = torch.cat(gathered_slices, dim=recipe["tp"]).to(torch.bfloat16)
-                            size_in_mbytes = full_param.nelement() * full_param.element_size() / 1048576.0
-                            # print(f"TP all_gather: len(gathered_slices) = {len(gathered_slices)}, slice_0 type = {gathered_slices[0].dtype}, slice_0 size = {gathered_slices[0].size()}, full_param size = {full_param.size()}, in MB = {size_in_mbytes}", flush=True)
-                            # If the tensor size > 10GB, do aggressive memory cleaning.
-                            if size_in_mbytes > 10240:
-                                for one_slice in gathered_slices:
-                                    del one_slice
-                                del gathered_slices
-                                clear_memory()
+                            full_param = _tp_all_gather(param, tp_dim=recipe["tp"])
                         else:
-                            full_param = torch.clone(param).to(torch.bfloat16)
-                        
-                        
+                            full_param = torch.clone(param).to(torch.bfloat16) 
+
+                        convert_on_cpu = full_param.numel() > 10e9
+                        if convert_on_cpu:
+                            if gk not in cpu_param_cache:
+                                cpu_param_cache[gk] = torch.empty_like(
+                                    full_param,
+                                    device=torch.device("cpu"),
+                                    pin_memory=True,
+                                )
+                            cpu_param_cache[gk].copy_(full_param, non_blocking=True)
+                            full_param = cpu_param_cache[gk]
+                            clear_memory()
+ 
                         # Convert the parameter using the provided function or mapping.
                         if recipe.get("hf_func", None) is not None:
                             hf_mapping = recipe["hf_func"](full_param, self.cfg)
@@ -647,6 +685,15 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                             hf_mapping = {recipe["hf"].format_map(format_dict): full_param}
                         else:
                             raise NotImplementedError(f"No conversion recipe found for {owner_raw_key}")
+
+                        if convert_on_cpu:
+                            del param
+                            hf_mapping = {
+                                k:v.to(torch.cuda.current_device(), non_blocking=True)
+                                for k,v in hf_mapping.items()
+                            }
+                            clear_memory()
+
                 else:
                     hf_mapping = None  # Non-owner ranks will receive the converted tensors.
                 
@@ -696,45 +743,47 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             print(f"Checksum: {checksum}", flush=True)
         
             # Copy HF jsons to CPU ramdisk with proper permissions and save the gathered parameters.
-            if torch.cuda.current_device() == 0:
-                try:
-                    os.makedirs(out_dir, exist_ok=True, mode=0o777)
-                    for file in os.listdir(source_hf_jsons_dir):
-                        full_file_path = os.path.join(source_hf_jsons_dir, file)
-                        if not file.endswith('.safetensors') and not os.path.isdir(full_file_path) and not file.endswith('.index.json') and not os.path.islink(full_file_path):
-                            src = os.path.join(source_hf_jsons_dir, file)
-                            dst = os.path.join(out_dir, file)
-                            shutil.copy(src, dst)
-                            os.chmod(dst, 0o666)
-                except Exception as e:
-                    print(f"Error copying HF json files: {e}", flush=True)
-                    raise
+            if self.hf_file_saved is False:
+                self.hf_file_saved = True
+                if torch.cuda.current_device() == 0:
+                    try:
+                        os.makedirs(out_dir, exist_ok=True, mode=0o777)
+                        for file in os.listdir(source_hf_jsons_dir):
+                            full_file_path = os.path.join(source_hf_jsons_dir, file)
+                            if not file.endswith('.safetensors') and not os.path.isdir(full_file_path) and not file.endswith('.index.json') and not os.path.islink(full_file_path):
+                                src = os.path.join(source_hf_jsons_dir, file)
+                                dst = os.path.join(out_dir, file)
+                                shutil.copy(src, dst)
+                                os.chmod(dst, 0o666)
+                    except Exception as e:
+                        print(f"Error copying HF json files: {e}", flush=True)
+                        raise
         
-                try:
-                    ptime = time.time()
-                    if not self.prepare_for_inference_warmed_up:
-                        #save_file(self.shared_cpu_state_dict.as_dict(), os.path.join(out_dir, f"params.safetensors"))
-                        self.prepare_for_inference_warmed_up = True
-                        print(f"Saved to {out_dir} {list(os.listdir(out_dir))} {time.time() - ptime}", flush=True)
-                    torch.distributed.broadcast_object_list([self.shared_cpu_state_dict.get_metadata_dict()], src=torch.distributed.get_rank(), group=parallel_state.get_node_group())
-                except Exception as e:
-                    print(f"Error saving params.safetensors: {e}", flush=True)
-                    if os.path.exists(out_dir):
-                        try:
-                            os.remove(out_dir)
-                        except Exception:
-                            pass
-                    raise
-            else:
-                recv_metadata = [None]
-                torch.distributed.broadcast_object_list(
-                    recv_metadata,
-                    src=torch.distributed.get_rank() - torch.distributed.get_rank(group=parallel_state.get_node_group()),
-                    group=parallel_state.get_node_group()
-                )
-                self.shared_cpu_state_dict = SharedCPUMemoryTensorDict(
-                    communicable_metadata=recv_metadata[0]
-                )
+                    try:
+                        ptime = time.time()
+                        if not self.prepare_for_inference_warmed_up:
+                            #save_file(self.shared_cpu_state_dict.as_dict(), os.path.join(out_dir, f"params.safetensors"))
+                            self.prepare_for_inference_warmed_up = True
+                            print(f"Saved to {out_dir} {list(os.listdir(out_dir))} {time.time() - ptime}", flush=True)
+                        torch.distributed.broadcast_object_list([self.shared_cpu_state_dict.get_metadata_dict()], src=torch.distributed.get_rank(), group=parallel_state.get_node_group())
+                    except Exception as e:
+                        print(f"Error saving params.safetensors: {e}", flush=True)
+                        if os.path.exists(out_dir):
+                            try:
+                                os.remove(out_dir)
+                            except Exception:
+                                pass
+                        raise
+                else:
+                    recv_metadata = [None]
+                    torch.distributed.broadcast_object_list(
+                        recv_metadata,
+                        src=torch.distributed.get_rank() - torch.distributed.get_rank(group=parallel_state.get_node_group()),
+                        group=parallel_state.get_node_group()
+                    )
+                    self.shared_cpu_state_dict = SharedCPUMemoryTensorDict(
+                        communicable_metadata=recv_metadata[0]
+                    )
 
         print(f'TIME TO SAVE {time.time() - start_time}', flush=True)
         

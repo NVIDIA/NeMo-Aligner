@@ -15,6 +15,7 @@
 """Wrapper around mcore parallel state to handle cases of resharding"""
 
 from contextlib import contextmanager
+from datetime import timedelta
 
 import torch
 
@@ -24,6 +25,8 @@ from nemo_aligner.utils.distributed import gather_and_sort_lists_of_lists
 from nemo.collections.nlp.modules.common.text_generation_utils import (
     get_model_parallel_src_rank as nemo_get_model_parallel_src_rank,
 )
+
+_DEFAULT_NCCL_TIMEOUT = timedelta(seconds=1800)
 
 _INFERENCE_RESHARD = False
 
@@ -117,7 +120,7 @@ def get_data_parallel_group():
             all_dp_groups = gather_and_sort_lists_of_lists([dp_ranks], mcore_parallel_state.get_tensor_model_parallel_group())
             for rank_group in all_dp_groups:
                 print(f"DP RESHARD Rank {torch.distributed.get_rank()} Building group with ranks: {rank_group}",flush=True)
-                group = torch.distributed.new_group(list(rank_group))
+                group = torch.distributed.new_group(list(rank_group), timeout=_DEFAULT_NCCL_TIMEOUT)
                 if int(torch.distributed.get_rank()) in list(rank_group):
                     _RESHARDED_DP_GROUP = group
                     print(f"DP RESHARD Rank {torch.distributed.get_rank()} local Gloo group built successfully",flush=True)
@@ -139,7 +142,7 @@ def get_pipeline_model_parallel_world_size():
 
 def get_pipeline_model_parallel_group():
     group = (
-        torch.distributed.new_group(ranks=torch.distributed.get_rank())
+        torch.distributed.new_group(ranks=torch.distributed.get_rank(), timeout=_DEFAULT_NCCL_TIMEOUT)
         if is_inference_reshard()
         else mcore_parallel_state.get_pipeline_model_parallel_group()
     )
@@ -169,7 +172,7 @@ def get_node_group():
         # Construct process groups for every node following the established order.
         node_groups = {}
         for host in node_order:
-            node_groups[host] = torch.distributed.new_group(ranks=node_to_ranks[host])
+            node_groups[host] = torch.distributed.new_group(ranks=node_to_ranks[host], timeout=_DEFAULT_NCCL_TIMEOUT)
         # Set _NODE_GROUP as the group corresponding to the current node.
         _NODE_GROUP = node_groups[local_hostname]
         torch.cuda.synchronize()

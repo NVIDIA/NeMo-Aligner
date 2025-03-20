@@ -64,6 +64,13 @@ class VLLMClient:
         self.free_cpu_mp_gloo_group = None
         self.server_started = False
         self.reshard_context = lambda: parallel_state.inference_reshard_region() if use_reshard else nullcontext()
+
+    def build_cpu_gloo_groups(self):
+        # Build CPU Gloo groups.
+        self.build_cpu_mp_gloo_group("refit") # will become a no-op if already built
+        self.build_cpu_mp_gloo_group("generate") # will become a no-op if already built
+        self.build_cpu_mp_gloo_group("free") # will become a no-op if already built
+
         
     def build_cpu_mp_gloo_group(self, cpu_group_name):
         if getattr(self, f"{cpu_group_name}_cpu_mp_gloo_group") is not None:
@@ -115,7 +122,7 @@ class VLLMClient:
         """
         context = nullcontext() if parallel_state.is_inference_reshard() else self.reshard_context()
         with context:
-            self.build_cpu_mp_gloo_group("refit") # will become a no-op if already built
+            self.build_cpu_gloo_groups()
             ret_val = None
             #print(f"MP source rank: {parallel_state.get_model_parallel_src_rank()}", flush=True)
             if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
@@ -174,7 +181,7 @@ class VLLMClient:
         :return: A dictionary with generations and logprobs if successful.
         """
         print(f"Generating in inference reshard: {parallel_state.is_inference_reshard()}", flush=True)
-        self.build_cpu_mp_gloo_group("generate") # will become a no-op if already built
+        self.build_cpu_gloo_groups()
         if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
             prompt_tokens, prompt_lengths = batch_tokens
             batch_input_ids = []
@@ -244,7 +251,6 @@ class VLLMClient:
         """Put the vLLM inference server to sleep."""
         context = nullcontext() if parallel_state.is_inference_reshard() else self.reshard_context()
         with context:
-            self.build_cpu_mp_gloo_group("free") # will become a no-op if already built
             data = None
             if torch.distributed.get_rank() == parallel_state.get_model_parallel_src_rank():
                 url = f"{self.base_url}/sleep"

@@ -107,23 +107,17 @@ class GRPOBatchIterator:
 
         dp_rank = parallel_state.get_data_parallel_rank()
         global_num_samples = self.num_prompts_per_grpo_step * self.samples_per_prompt
-        print(f"ids = {ids}")
-        print(f"ids_with_repetitions = {ids_with_repetitions}")
         assert global_num_samples % dp_size == 0, f"global_num_samples = {global_num_samples}, num_prompts_per_grpo_step = {self.num_prompts_per_grpo_step}, samples_per_prompt = {self.samples_per_prompt}, dp_size = {dp_size}"
         for ids_offset in range(0, global_num_samples, global_num_samples_per_micro_batch):
             start_id = ids_offset
             end_id = min(ids_offset + global_num_samples_per_micro_batch, len(ids_with_repetitions))
             samples_to_be_distributed = ids_with_repetitions[start_id : end_id]
-            print(f"samples_to_be_distributed = {samples_to_be_distributed}")
             num_samples_per_dp_rank = len(samples_to_be_distributed) // dp_size
-            print(f"start_id = {start_id}, end_id = {end_id}, global_num_samples_per_micro_batch = {global_num_samples_per_micro_batch}, num_samples_per_dp_rank = {num_samples_per_dp_rank}")
 
             # Prompt IDs that we will sampe from this rank
             prompt_ids_for_the_rank = samples_to_be_distributed[dp_rank * num_samples_per_dp_rank : (dp_rank + 1) * num_samples_per_dp_rank]
-            print(f"prompt_ids_for_the_rank = {prompt_ids_for_the_rank}")
 
             output = [self.dataset[index] for index in prompt_ids_for_the_rank]
-            print(f"output = {output}")
             batch = self.collate_fn([self.dataset[index] for index in prompt_ids_for_the_rank])
             yield batch
 
