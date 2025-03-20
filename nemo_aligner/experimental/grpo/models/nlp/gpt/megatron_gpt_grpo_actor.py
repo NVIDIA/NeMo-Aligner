@@ -155,6 +155,10 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
         # Initialize the inference backend
         self.inference_backend = None
         self.prepare_for_inference_warmed_up = False
+
+        # Whether we have already saved the HF files.
+        self.hf_file_saved = False
+
         # Collect backends from the configuration and check which ones are enabled
         enabled_backends = [
             name for name in cfg.grpo.inference_backend.config.keys() 
@@ -739,45 +743,47 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             print(f"Checksum: {checksum}", flush=True)
         
             # Copy HF jsons to CPU ramdisk with proper permissions and save the gathered parameters.
-            if torch.cuda.current_device() == 0:
-                try:
-                    os.makedirs(out_dir, exist_ok=True, mode=0o777)
-                    for file in os.listdir(source_hf_jsons_dir):
-                        full_file_path = os.path.join(source_hf_jsons_dir, file)
-                        if not file.endswith('.safetensors') and not os.path.isdir(full_file_path) and not file.endswith('.index.json') and not os.path.islink(full_file_path):
-                            src = os.path.join(source_hf_jsons_dir, file)
-                            dst = os.path.join(out_dir, file)
-                            shutil.copy(src, dst)
-                            os.chmod(dst, 0o666)
-                except Exception as e:
-                    print(f"Error copying HF json files: {e}", flush=True)
-                    raise
+            if self.hf_file_saved is False:
+                self.hf_file_saved = True
+                if torch.cuda.current_device() == 0:
+                    try:
+                        os.makedirs(out_dir, exist_ok=True, mode=0o777)
+                        for file in os.listdir(source_hf_jsons_dir):
+                            full_file_path = os.path.join(source_hf_jsons_dir, file)
+                            if not file.endswith('.safetensors') and not os.path.isdir(full_file_path) and not file.endswith('.index.json') and not os.path.islink(full_file_path):
+                                src = os.path.join(source_hf_jsons_dir, file)
+                                dst = os.path.join(out_dir, file)
+                                shutil.copy(src, dst)
+                                os.chmod(dst, 0o666)
+                    except Exception as e:
+                        print(f"Error copying HF json files: {e}", flush=True)
+                        raise
         
-                try:
-                    ptime = time.time()
-                    if not self.prepare_for_inference_warmed_up:
-                        #save_file(self.shared_cpu_state_dict.as_dict(), os.path.join(out_dir, f"params.safetensors"))
-                        self.prepare_for_inference_warmed_up = True
-                        print(f"Saved to {out_dir} {list(os.listdir(out_dir))} {time.time() - ptime}", flush=True)
-                    torch.distributed.broadcast_object_list([self.shared_cpu_state_dict.get_metadata_dict()], src=torch.distributed.get_rank(), group=parallel_state.get_node_group())
-                except Exception as e:
-                    print(f"Error saving params.safetensors: {e}", flush=True)
-                    if os.path.exists(out_dir):
-                        try:
-                            os.remove(out_dir)
-                        except Exception:
-                            pass
-                    raise
-            else:
-                recv_metadata = [None]
-                torch.distributed.broadcast_object_list(
-                    recv_metadata,
-                    src=torch.distributed.get_rank() - torch.distributed.get_rank(group=parallel_state.get_node_group()),
-                    group=parallel_state.get_node_group()
-                )
-                self.shared_cpu_state_dict = SharedCPUMemoryTensorDict(
-                    communicable_metadata=recv_metadata[0]
-                )
+                    try:
+                        ptime = time.time()
+                        if not self.prepare_for_inference_warmed_up:
+                            #save_file(self.shared_cpu_state_dict.as_dict(), os.path.join(out_dir, f"params.safetensors"))
+                            self.prepare_for_inference_warmed_up = True
+                            print(f"Saved to {out_dir} {list(os.listdir(out_dir))} {time.time() - ptime}", flush=True)
+                        torch.distributed.broadcast_object_list([self.shared_cpu_state_dict.get_metadata_dict()], src=torch.distributed.get_rank(), group=parallel_state.get_node_group())
+                    except Exception as e:
+                        print(f"Error saving params.safetensors: {e}", flush=True)
+                        if os.path.exists(out_dir):
+                            try:
+                                os.remove(out_dir)
+                            except Exception:
+                                pass
+                        raise
+                else:
+                    recv_metadata = [None]
+                    torch.distributed.broadcast_object_list(
+                        recv_metadata,
+                        src=torch.distributed.get_rank() - torch.distributed.get_rank(group=parallel_state.get_node_group()),
+                        group=parallel_state.get_node_group()
+                    )
+                    self.shared_cpu_state_dict = SharedCPUMemoryTensorDict(
+                        communicable_metadata=recv_metadata[0]
+                    )
 
         print(f'TIME TO SAVE {time.time() - start_time}', flush=True)
         
