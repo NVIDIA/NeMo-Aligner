@@ -135,8 +135,6 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
                     # print(batch["text"].shape)
                     print(f"iteration_num: {iteration_num}, is_validation: {is_validation}")
                     iteration_num += 1
-                    print(f"batch idxs: {batch['idx']}", flush=True)
-                    print(f"batch : {batch}")
                     # batch = batch_repeat(batch, num_repetitions=num_repetitions)
                     # for _ in range(num_rollout_batches_per_data_batch):
                     rollout_batch = policy_model.infer(batch, use_greedy=greedy)
