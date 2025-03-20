@@ -165,7 +165,7 @@ def main(cfg) -> None:
 
     # init environments and rollout generator
     math_environment = MathEnvironment(cfg.trainer.grpo.environments.math)
-    code_environment = CodeEnvironment(cfg.trainer.grpo.environments.code)
+    # code_environment = CodeEnvironment(cfg.trainer.grpo.environments.code)
     # llm_judge_environment = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
 
     tasks_to_environments = {k:MathEnvironment(cfg.trainer.grpo.environments.math) for k in {"aime24", "amc23", "math", "qwq_sol_gen_no_ans_c4", "qwq_sol_gen_no_ans_c7", "qwq_sol_gen_no_ans_olymp_pr_gt03", "qwq_sol_gen_no_ans_olymp_pr_lt03"}}
@@ -176,9 +176,8 @@ def main(cfg) -> None:
     tasks_to_environments["llm_judge_aime24"] = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
     tasks_to_environments["llm_judge_aime25"] = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
     # your_environment = Environment(cfg)
-    tasks_to_environments = {k:MathEnvironment(cfg.trainer.grpo.environments.math) for k in {"aime24", "amc23", "math", "qwq_sol_gen_no_ans_c4", "qwq_sol_gen_no_ans_c7", "qwq_sol_gen_no_ans_olymp_pr_gt03", "qwq_sol_gen_no_ans_olymp_pr_lt03", "deepscaler"}}
-    tasks_to_environments["code"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
-    tasks_to_environments["code_mbppplus_test"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
+    # tasks_to_environments["code"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
+    # tasks_to_environments["code_mbppplus_test"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
     rollout_generator = SequenceRewardRolloutGenerator(cfg.trainer.grpo, tasks_to_environments)
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)
