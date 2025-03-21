@@ -171,7 +171,12 @@ class GRPOTrainer:
 
         # compute metrics
         if self.cfg.get("importance_sample_correct", False):
-            importance_correction = torch.exp(rollout_batch["logprobs"] - rollout_batch["response_trt_lps"][:, 1:])
+            # logprobs is left rolled by 1 and padded to the rollout max_seqlen. So apply the same to "response_trt_lps"
+            trt_lps = rollout_batch["response_trt_lps"][:, 1:]
+            trt_lps = torch.nn.functional.pad(trt_lps, (0, 1), value=0)
+            assert trt_lps.shape == rollout_batch["logprobs"].shape
+
+            importance_correction = torch.exp(rollout_batch["logprobs"] - trt_lps)
             importance_correction = torch.nan_to_num(importance_correction, nan=0.0, posinf=0.0, neginf=0.0)
         else:
             importance_correction = torch.ones_like(rollout_batch["logprobs"])
