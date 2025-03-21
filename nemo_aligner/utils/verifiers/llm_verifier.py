@@ -4,7 +4,7 @@ from openai import OpenAI
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class LLMVerifier:
-    def __init__(self, api_base: str = "http://localhost:5000/v1", max_tokens: int = 256, temperature: float = 0.0):
+    def __init__(self, api_base: str = "http://localhost:5000/v1", max_tokens: int = 32, temperature: float = 0.0):
         """
         Initialize LLM verifier that connects to vLLM OpenAI-compatible API
         

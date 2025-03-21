@@ -45,7 +45,7 @@ vllm_process = start_vllm_server(os.environ.get("MODEL_PATH", "meta-llama/Llama-
 # Initialize verifier with vLLM API endpoint
 verifier = LLMVerifier(
     api_base="http://localhost:5000/v1",
-    max_tokens=128,
+    max_tokens=32,
     temperature=0.0
 )
 
