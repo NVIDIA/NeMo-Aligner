@@ -173,11 +173,16 @@ class GRPOTrainer:
         if self.cfg.get("importance_sample_correct", False):
             # logprobs is left rolled by 1 and padded to the rollout max_seqlen. So apply the same to "response_trt_lps"
             trt_lps = rollout_batch["response_trt_lps"][:, 1:]
-            trt_lps = torch.nn.functional.pad(trt_lps, (0, 1), value=0)
+            rollout_batch_size = rollout_batch['logprobs'].size()
+            trt_lps_size = trt_lps.size()
+            if trt_lps_size[1] == rollout_batch_size[1] - 1:
+                trt_lps = torch.nn.functional.pad(trt_lps, (0, 1), value=0)
+            print(f"rollout_batch shape = {rollout_batch['logprobs'].shape}, trt_lps shape = {trt_lps.shape}", flush=True)
             assert trt_lps.shape == rollout_batch["logprobs"].shape
 
             importance_correction = torch.exp(rollout_batch["logprobs"] - trt_lps)
             importance_correction = torch.nan_to_num(importance_correction, nan=0.0, posinf=0.0, neginf=0.0)
+            print(f"importance_correction max = {torch.max(importance_correction).item()}, min = {torch.min(importance_correction).item()}")
         else:
             importance_correction = torch.ones_like(rollout_batch["logprobs"])
         grpo_train_data["importance_correction"] = importance_correction

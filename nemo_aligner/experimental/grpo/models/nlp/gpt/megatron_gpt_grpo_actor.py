@@ -746,18 +746,25 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
             if self.hf_file_saved is False:
                 self.hf_file_saved = True
                 if torch.cuda.current_device() == 0:
-                    try:
-                        os.makedirs(out_dir, exist_ok=True, mode=0o777)
-                        for file in os.listdir(source_hf_jsons_dir):
-                            full_file_path = os.path.join(source_hf_jsons_dir, file)
-                            if not file.endswith('.safetensors') and not os.path.isdir(full_file_path) and not file.endswith('.index.json') and not os.path.islink(full_file_path):
-                                src = os.path.join(source_hf_jsons_dir, file)
-                                dst = os.path.join(out_dir, file)
-                                shutil.copy(src, dst)
-                                os.chmod(dst, 0o666)
-                    except Exception as e:
-                        print(f"Error copying HF json files: {e}", flush=True)
-                        raise
+                    num_retries = 5
+                    for retry_attempt in range(num_retries):
+                        try:
+                            os.makedirs(out_dir, exist_ok=True, mode=0o777)
+                            for file in os.listdir(source_hf_jsons_dir):
+                                full_file_path = os.path.join(source_hf_jsons_dir, file)
+                                if not file.endswith('.safetensors') and not os.path.isdir(full_file_path) and not file.endswith('.index.json') and not os.path.islink(full_file_path):
+                                    src = os.path.join(source_hf_jsons_dir, file)
+                                    dst = os.path.join(out_dir, file)
+                                    shutil.copy(src, dst)
+                                    os.chmod(dst, 0o666)
+                            break
+                        except Exception as e:
+                            print(f"Error copying HF json files: {e}", flush=True)
+                            if retry_attempt < num_retries - 1:
+                                print(f"Attempt {retry_attempt}: file IO has failed, try again!")
+                                time.sleep(3)
+                            else:
+                                raise
         
                     try:
                         ptime = time.time()
