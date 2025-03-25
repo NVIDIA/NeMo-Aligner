@@ -176,7 +176,7 @@ def main(cfg) -> None:
     tasks_to_environments["llm_judge_aime24"] = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
     tasks_to_environments["llm_judge_aime25"] = LLMJudgeEnvironment(cfg.trainer.grpo.environments.llm_judge)
     # your_environment = Environment(cfg)
-    # tasks_to_environments["code"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
+    tasks_to_environments["code"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
     # tasks_to_environments["code_mbppplus_test"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
     rollout_generator = SequenceRewardRolloutGenerator(cfg.trainer.grpo, tasks_to_environments)
 
