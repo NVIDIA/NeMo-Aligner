@@ -141,7 +141,9 @@ class GRPOTrainer:
         grpo_rollout_metrics = {}
 
         rewards = rollout_batch["rewards"]
-
+        if self.cfg.length_penalty_enabled:
+            rewards = -1 * (1 - rewards) + -1 *rewards * ((rollout_batch["response_lengths"] - rollout_batch["prompt_lengths"]) / self.cfg.max_sequence_length)
+            
         baseline, reward_std = calculate_baseline_and_std_per_prompt(
                 prompts=rollout_batch["text"],
                 rewards=rollout_batch["rewards"],
