@@ -85,6 +85,8 @@ class GRPOTrainer:
         self.ckpt_callback = ckpt_callback
         self.overall_iter = 0
 
+        print_memory_info("In the GRPOTrainer constructor")
+
         # this timer checks if we should stop training
         self.run_timer = run_timer
 
@@ -440,6 +442,8 @@ class GRPOTrainer:
                     1.0,  # TODO:(geshen): allow for limit val batches
                     run_time_exceeded=run_time_exceeded,
                 )
+
+                print(f"run_val = {run_val}, save_model = {save_model}, is_train_end = {is_train_end}, step = {self.step}, cfg.val_check_interval = {self.cfg.val_check_interval}, cfg.save_interval = {self.cfg.save_interval}")
                 
                 if run_val:
                     with self.timer("validation_time"):
@@ -466,7 +470,7 @@ class GRPOTrainer:
 
                 if save_model:
                     step_metrics = {k: torch.as_tensor(v) for k, v in filter(lambda i: not isinstance(i[1], dict), step_metrics.items())}
-                    self.save(step_metrics, is_train_end=is_train_end)
+                    self.save(step_metrics, is_train_end=is_train_end, run_val=run_val)
 
                 if run_time_exceeded:
                     logging.info(f"Time limit given by run_timer={self.run_timer} reached. Stopping run")
@@ -497,29 +501,25 @@ class GRPOTrainer:
         # restore max steps we need to run for
         self.set_max_steps()
 
-    def save(self, extra_candidates=None, is_train_end=False):
+    def save(self, extra_candidates=None, is_train_end=False, run_val=False):
         self.model.prepare_for_training()
         # load back in the adam states if needed
         torch.cuda.synchronize()
         torch.distributed.barrier()
 
-        if extra_candidates is None:
+        if extra_candidates is None or run_val is False:
             extra_candidates = {}
 
-        log_memory("Before monitor candidate")
-        print_memory_info("Before monitor candidate")
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)
 
         log_memory("Before checkpoint save")
         print_memory_info("Before checkpoint save")
         self.ckpt_callback.custom_save(monitor_candidates=monitor_candidates, is_train_end=is_train_end)
+        log_memory("After checkpoint save")
+        print_memory_info("After checkpoint save")
 
-        log_memory("Before finish training")
-        print_memory_info("Before finish training")
         self.model.finish_training()
-        log_memory("After finish training")
-        print_memory_info("After finish training")
 
     def set_max_steps(self):
         self.max_steps = self.num_steps_per_epoch * self.cfg.max_epochs
