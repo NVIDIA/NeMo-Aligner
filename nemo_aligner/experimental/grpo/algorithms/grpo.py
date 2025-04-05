@@ -510,7 +510,10 @@ class GRPOTrainer:
         torch.distributed.barrier()
 
         if extra_candidates is None or run_val is False:
-            extra_candidates = {}
+            # Add an arbitrary rewards to keep the checkpoint even when validation is not triggered.
+            extra_candidates = {
+                'val_rewards': torch.tensor(0.1),
+            }
 
         monitor_candidates = {k: torch.tensor(v, dtype=torch.int32) for k, v in self.state_dict().items()}
         monitor_candidates.update(extra_candidates)

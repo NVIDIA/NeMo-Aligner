@@ -288,13 +288,14 @@ class SequenceRewardRolloutGenerator(RolloutGeneratorInterface):
             sum_trt_error += error.item()
             num_toks += response_length - prompt_length
 
-            error_diff = torch.abs(logprobs - trt_lps)
-            error_max = torch.max(error_diff)
-            error_min = torch.min(error_diff)
-            error_mean = torch.mean(error_diff)
-            error_percentiles = torch.quantile(error_diff, torch.tensor([0.50, 0.90, 0.99], device='cuda'))
-            print(f"Prompt {i}: response_length = {response_length}, prompt_length = {prompt_length}, sum_trt_error = {sum_trt_error}, num_toks = {num_toks}")
-            print(f"Prompt {i} error stats: error_max = {error_max.item()}, error_min = {error_min.item()}, error_mean = {error_mean.item()}, 50% percentile: {error_percentiles[0].item()}, 90% percentile = {error_percentiles[1].item()}, 99% percentile = {error_percentiles[2].item()}")
+            # The following can be turned on if we need to debug spikes in logprob_error.
+            # error_diff = torch.abs(logprobs - trt_lps)
+            # error_max = torch.max(error_diff)
+            # error_min = torch.min(error_diff)
+            # error_mean = torch.mean(error_diff)
+            # error_percentiles = torch.quantile(error_diff, torch.tensor([0.50, 0.90, 0.99], device='cuda'))
+            # print(f"Prompt {i}: response_length = {response_length}, prompt_length = {prompt_length}, sum_trt_error = {sum_trt_error}, num_toks = {num_toks}")
+            # print(f"Prompt {i} error stats: error_max = {error_max.item()}, error_min = {error_min.item()}, error_mean = {error_mean.item()}, 50% percentile: {error_percentiles[0].item()}, 90% percentile = {error_percentiles[1].item()}, 99% percentile = {error_percentiles[2].item()}")
 
 
         metrics = {
