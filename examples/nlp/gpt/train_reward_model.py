@@ -136,6 +136,7 @@ def main(cfg) -> None:
             use_random_sampler=cfg.trainer.rm.val_random_sampler,
         )
     elif isinstance(validation_ds, dict):
+        drop_last = cfg.model.data.get("validation_drop_last", True)
         val_dataloader = {
             key: build_dataloader(
                 cfg=cfg,
@@ -145,6 +146,8 @@ def main(cfg) -> None:
                 gbs=cfg.model.global_batch_size,
                 load_gbs=True,
                 use_random_sampler=False,
+                drop_last=drop_last,
+                pad_samples_to_global_batch_size=not drop_last,
             )
             for key, dataset in validation_ds.items()
         }
