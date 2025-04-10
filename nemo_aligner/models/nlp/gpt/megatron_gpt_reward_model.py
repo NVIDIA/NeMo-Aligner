@@ -203,14 +203,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                     else:
                         loss_sum_for_ub = num_valid_pairs * loss_for_ub
 
-                    tensor_to_reduce = torch.stack([
-                        loss_sum_for_ub,
-                        num_valid_pairs,
-                        num_correct_pairs,
-                    ])
-                    torch.distributed.all_reduce(
-                        tensor_to_reduce, group=parallel_state.get_data_parallel_group()
-                    )
+                    tensor_to_reduce = torch.stack([loss_sum_for_ub, num_valid_pairs, num_correct_pairs,])
+                    torch.distributed.all_reduce(tensor_to_reduce, group=parallel_state.get_data_parallel_group())
                     loss_sum_for_ub, num_valid_pairs, num_correct_pairs = tensor_to_reduce
 
                     if num_valid_pairs > 0:
@@ -284,12 +278,8 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
             num_valid_pairs = torch.stack(
                 [loss_reduced["num_valid_pairs"] for loss_reduced in losses_reduced_per_micro_batch]
             )
-            loss_tensor = torch.cat(
-                [loss_reduced["avg"].view(1) for loss_reduced in losses_reduced_per_micro_batch]
-            )
-            acc_tensor = torch.cat(
-                [loss_reduced["acc"].view(1) for loss_reduced in losses_reduced_per_micro_batch]
-            )
+            loss_tensor = torch.cat([loss_reduced["avg"].view(1) for loss_reduced in losses_reduced_per_micro_batch])
+            acc_tensor = torch.cat([loss_reduced["acc"].view(1) for loss_reduced in losses_reduced_per_micro_batch])
 
             weights = num_valid_pairs.sum().float()
             loss_mean = (loss_tensor * num_valid_pairs).sum() / weights

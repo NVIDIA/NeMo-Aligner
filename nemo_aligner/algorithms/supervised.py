@@ -146,8 +146,7 @@ class SupervisedTrainer:
         if "weights" in val_metrics:
             w = val_metrics.pop("weights")
             val_metrics = {
-                k: sum([value*weight for value, weight in zip(v, w)]) / sum(w)
-                for k, v in val_metrics.items()
+                k: sum([value * weight for value, weight in zip(v, w)]) / sum(w) for k, v in val_metrics.items()
             }
         else:
             val_metrics = {k: mean(v) for k, v in val_metrics.items()}
