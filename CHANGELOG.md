@@ -39,6 +39,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 
 - Add code and instructions for replicating Reward Modeling training in HelpSteer2 and HelpSteer2-Preference
 - Implement REINFORCE algorithm.
 - Add support for multiple validation sets when training a Reward Model.
+- Add support for `validation_drop_last=False` when training a Reward Model.
 
 ### Breaking Changes
 - Upgrade TRTLLM dependency from v0.10.0 to v0.12.0 and migrate from `GPTSession` cpp runtime to `ModelRunner` python runtime. Please use the latest Dockerfile.
