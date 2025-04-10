@@ -198,7 +198,7 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                 if validation_step and not self.cfg.data.get("validation_drop_last", True):
 
                     if loss_for_ub.isnan():
-                        assert batch["loss_mask"].count_nonzero() == 0, "Got NaN loss with non-empty input"
+                        assert num_valid_pairs == 0, "Got NaN loss with non-empty input"
                         loss_sum_for_ub = torch.zeros_like(num_valid_pairs, dtype=loss_for_ub.dtype)
                     else:
                         loss_sum_for_ub = num_valid_pairs * loss_for_ub
@@ -215,12 +215,9 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
 
                     if num_valid_pairs > 0:
                         reduced_loss = loss_sum_for_ub / num_valid_pairs
-                    else:
-                        reduced_loss = torch.zeros_like(loss_sum_for_ub)
-
-                    if num_valid_pairs > 0:
                         reduced_acc = num_correct_pairs / num_valid_pairs
                     else:
+                        reduced_loss = torch.zeros_like(loss_sum_for_ub)
                         reduced_acc = torch.zeros_like(num_correct_pairs)
 
                 else:
@@ -294,15 +291,15 @@ class MegatronGPTRewardModel(MegatronGPTModel, SupervisedInterface, Inferrable):
                 [loss_reduced["acc"].view(1) for loss_reduced in losses_reduced_per_micro_batch]
             )
 
-            loss_mean = (loss_tensor * num_valid_pairs).sum() / num_valid_pairs.sum()
-            acc_mean = (acc_tensor * num_valid_pairs).sum() / num_valid_pairs.sum()
-            weights = num_valid_pairs.sum()
+            weights = num_valid_pairs.sum().float()
+            loss_mean = (loss_tensor * num_valid_pairs).sum() / weights
+            acc_mean = (acc_tensor * num_valid_pairs).sum() / weights
 
         else:
 
             loss_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             acc_mean = torch.tensor(0.0, device=torch.cuda.current_device())
-            weights = torch.tensor(1.0, device=torch.cuda.current_device())
+            weights = torch.tensor(0.0, device=torch.cuda.current_device())
 
             rewards_chosen_mean = torch.tensor(0.0, device=torch.cuda.current_device())
             rewards_rejected_mean = torch.tensor(0.0, device=torch.cuda.current_device())
