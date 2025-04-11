@@ -423,11 +423,11 @@ class RemoteGPTRMClient:
             )
             format_correct = True
 
-            # user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
+            user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
 
-            # text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
-            if not text.endswith("<|eot_id|>"):
-                text = text + "<|eot_id|>"
+            text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
+            # if not text.endswith("<|eot_id|>"):
+            # text = text + "<|eot_id|>"
             texts.append(text)
             print(text)
 
