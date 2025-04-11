@@ -143,7 +143,13 @@ class SupervisedTrainer:
             log_val_metrics = {f"val_{k}": v for k, v in metrics.items()}
             val_pbar.set_postfix(log_val_metrics)
 
-        val_metrics = {k: mean(v) for k, v in val_metrics.items()}
+        if "weights" in val_metrics:
+            w = val_metrics.pop("weights")
+            val_metrics = {
+                k: sum([value * weight for value, weight in zip(v, w)]) / sum(w) for k, v in val_metrics.items()
+            }
+        else:
+            val_metrics = {k: mean(v) for k, v in val_metrics.items()}
         val_metrics.update(self.inference_metrics_handler.compute())
         self.inference_metrics_handler.reset()
 

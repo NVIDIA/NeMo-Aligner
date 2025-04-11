@@ -129,7 +129,7 @@ def build_dataset_generic(
         logging.info("     Total {} documents is : {} ".format(name, total_num_of_documents))
 
         drop_last = True
-        if name == "valid":
+        if name.startswith("validation"):
             drop_last = cfg.data.get("validation_drop_last", True)
 
         dataset = cls(
