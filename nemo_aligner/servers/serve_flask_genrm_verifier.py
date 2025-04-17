@@ -46,7 +46,7 @@ def verify_genrm():
         
         # Apply format rewards
         format_rewards = np.array(format_rewards)
-        combined_rewards = scores * format_rewards
+        combined_rewards = np.where(format_rewards == 0, -100, scores * format_rewards)
         
         app.logger.info(f"Scores: {scores}")
         app.logger.info(f"Format rewards: {format_rewards}")
