@@ -32,6 +32,7 @@ from nemo_aligner.experimental.grpo.models.nlp.gpt.megatron_gpt_grpo_actor impor
 from nemo_aligner.experimental.grpo.experience.environments.math_environment import MathEnvironment
 from nemo_aligner.experimental.grpo.experience.environments.code_environment import CodeEnvironment
 from nemo_aligner.experimental.grpo.experience.environments.llm_judge_environment import LLMJudgeEnvironment
+from nemo_aligner.experimental.grpo.experience.environments.reward_model_environment import RewardModelEnvironment
 from nemo_aligner.experimental.grpo.experience.rollout_generator import SequenceRewardRolloutGenerator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
@@ -178,6 +179,9 @@ def main(cfg) -> None:
     # your_environment = Environment(cfg)
     tasks_to_environments["code"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
     # tasks_to_environments["code_mbppplus_test"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
+
+    tasks_to_environments["reward_model"] = RewardModelEnvironment(cfg.trainer.grpo.environments.reward_model_judge)
+
     rollout_generator = SequenceRewardRolloutGenerator(cfg.trainer.grpo, tasks_to_environments)
 
     timer = Timer(cfg.exp_manager.get("max_time_per_run") if cfg.exp_manager else None)

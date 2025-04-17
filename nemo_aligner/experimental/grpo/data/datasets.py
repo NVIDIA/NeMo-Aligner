@@ -69,7 +69,10 @@ class AllTaskDataset:
 
         extra_verifier_info = None
         # hard code to math for now
-        if task_name == "code":
+        if task_name == "reward_model":
+            text_str = self.data[idx]["prompt"]
+            extra_verifier_info = {}
+        elif task_name == "code":
             text_str = self.data[idx]["prompt"]
             extra_verifier_info = {"unittests": self.data[idx]["args"]["unittests"], "test_type": self.data[idx]["args"]["test_type"], "fn_name": self.data[idx]["args"].get("fn_name", None)}
         elif ("args" in self.data[idx] and task_name == "deepscaler") or "text" in self.data[idx]:
@@ -84,7 +87,7 @@ class AllTaskDataset:
         else:
             raise NotImplementedError(f"task name {task_name} in your dataset doesn't have a handler yet!")
 
-        if self.apply_chat_template or task_name == "code":
+        if (self.apply_chat_template or task_name == "code") and task_name != "reward_model":
             chat = []
             if self.system_prompt:
                 chat.append({"role": "system", "content": self.system_prompt})
@@ -95,6 +98,8 @@ class AllTaskDataset:
             text = self.tokenizer.tokenizer.apply_chat_template(chat, tokenize=False, add_generation_prompt=True)
         elif "args" in self.data[idx] and task_name == "deepscaler":
             text = self.data[idx]["text"]
+        elif task_name == "reward_model":
+            text = self.data[idx]["prompt"]
         else:
             text = self.prompt.format(text_str)
         

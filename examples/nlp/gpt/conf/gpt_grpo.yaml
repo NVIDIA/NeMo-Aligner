@@ -54,6 +54,11 @@ trainer:
           llm_judge:
             ip: localhost
             port: 3143
+      reward_model_judge:
+        servers:
+          reward_model_judge:
+            ip: localhost
+            port: 3144
     # the sequence length to pad the rollout batch for training to
     # reduce fragmentation at the cost of using more
     # memory, set to null if we don't want to pad it
