@@ -39,9 +39,7 @@ trainer:
     generation_save_dir: null
     
     dapo:
-      token_loss: False
       length_penalty: False
-      clip_higher: False
       length_penalty_params:
         max_length: 20480
         acceptable_length: 16384
@@ -207,6 +205,11 @@ model:
     # pull from trainer, do not change here. Change at trainer.grpo.initial_policy_kl_penalty
     initial_policy_kl_penalty: ${trainer.grpo.initial_policy_kl_penalty}
     inference_backend: ${trainer.grpo.inference_backend}
+
+    dapo:
+      token_loss: False
+      clip_higher: False
+
 
   peft:
     peft_scheme: "none"  # ["lora", "none"]

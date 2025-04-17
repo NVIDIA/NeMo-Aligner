@@ -141,15 +141,15 @@ class GRPOTrainer:
         grpo_rollout_metrics = {}
 
         rewards = rollout_batch["rewards"]
-        assert not (self.cfg.length_penalty_enabled and self.cfg.grpo.get("dapo", {}).get("length_penalty", False)), "length_penalty_enabled (alex's) and dapo.length_penalty cannot both be True"
+        assert not (self.cfg.length_penalty_enabled and self.cfg.get("dapo", {}).get("length_penalty", False)), "length_penalty_enabled (alex's) and dapo.length_penalty cannot both be True"
         # alex's linear length penalty
         if self.cfg.length_penalty_enabled:
             rewards = -1 * (1 - rewards) + -1 *rewards * ((rollout_batch["response_lengths"] - rollout_batch["prompt_lengths"]) / self.cfg.max_sequence_length) + 1
         
         # dapo's linear length penalty
-        elif self.cfg.grpo.get("dapo", {}).get("length_penalty", False):
+        elif self.cfg.get("dapo", {}).get("length_penalty", False):
             # Get acceptable length from config or default to 75% of max sequence length
-            acceptable_length = self.cfg.grpo.get("dapo", {}).get("acceptable_length", int(0.75 * self.cfg.dpo.length_penalty_params.max_length))
+            acceptable_length = self.cfg.get("dapo", {}).get("acceptable_length", int(0.75 * self.cfg.dpo.length_penalty_params.max_length))
             
             # Calculate response lengths (excluding prompt)
             generation_lengths = rollout_batch["response_lengths"] - rollout_batch["prompt_lengths"]

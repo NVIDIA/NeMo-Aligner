@@ -339,7 +339,7 @@ class MegatronGPTActorModel(NLPAdapterModelMixin, MegatronGPTModel, AlignableGen
                 # Calculate clipped GRPO surrogate loss function.
                 ratios = (curr_log_probs - prev_log_probs).exp()
                 if self.cfg.grpo.get("dapo", {}).get("clip_higher", False):
-                    ratios_clamped = ratios.clamp(1.0 - self.ratio_eps_low, 1.0 + self.ratio_eps_high)
+                    ratios_clamped = ratios.clamp(1.0 - self.cfg.grpo.ratio_eps_low, 1.0 + self.cfg.grpo.ratio_eps_high)
                 else:
                     ratios_clamped = ratios.clamp(1.0 - self.ratio_eps, 1.0 + self.ratio_eps)
 
