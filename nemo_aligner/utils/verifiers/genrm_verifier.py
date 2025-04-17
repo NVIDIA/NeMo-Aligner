@@ -46,7 +46,12 @@ class GenRMVerifier:
         return None
 
     def distance_abs(self, a, b):
-        return abs(int(a) - int(b))
+        try:
+            d = abs(int(a) - int(b))
+        except Exception as e:
+            logging.error(f"Error calculating distance: {e}, a: {a}, b: {b}")
+            d = -100
+        return d
     
     def verify(self, responses: List[str], 
                metadata: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
