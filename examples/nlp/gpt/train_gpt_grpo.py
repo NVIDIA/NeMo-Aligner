@@ -33,6 +33,7 @@ from nemo_aligner.experimental.grpo.experience.environments.math_environment imp
 from nemo_aligner.experimental.grpo.experience.environments.code_environment import CodeEnvironment
 from nemo_aligner.experimental.grpo.experience.environments.llm_judge_environment import LLMJudgeEnvironment
 from nemo_aligner.experimental.grpo.experience.environments.reward_model_environment import RewardModelEnvironment
+from nemo_aligner.experimental.grpo.experience.environments.genrm_environment import GenRMEnvironment
 from nemo_aligner.experimental.grpo.experience.rollout_generator import SequenceRewardRolloutGenerator
 from nemo_aligner.utils import parallel_state
 from nemo_aligner.utils.batch_iterators import get_batch_iterator_cls
@@ -181,6 +182,7 @@ def main(cfg) -> None:
     # tasks_to_environments["code_mbppplus_test"] = CodeEnvironment(cfg.trainer.grpo.environments.code)
 
     tasks_to_environments["reward_model"] = RewardModelEnvironment(cfg.trainer.grpo.environments.reward_model_judge)
+    tasks_to_environments["genrm"] = GenRMEnvironment(cfg.trainer.grpo.environments.genrm_verifier)
 
     rollout_generator = SequenceRewardRolloutGenerator(cfg.trainer.grpo, tasks_to_environments)
 

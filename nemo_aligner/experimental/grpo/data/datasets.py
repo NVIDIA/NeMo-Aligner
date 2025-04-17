@@ -69,7 +69,10 @@ class AllTaskDataset:
 
         extra_verifier_info = None
         # hard code to math for now
-        if task_name == "reward_model":
+        if task_name == "genrm":
+            text_str = self.data[idx]["prompt"]
+            extra_verifier_info = {"num_responses": self.data[idx]["args"]["num_responses"], "helpfulness_1": self.data[idx]["args"]["helpfulness_1"], "helpfulness_2": self.data[idx]["args"].get("helpfulness_2", None), "preference_ranking": self.data[idx]["args"].get("preference_ranking", None)}
+        elif task_name == "reward_model":
             text_str = self.data[idx]["prompt"]
             extra_verifier_info = {}
         elif task_name == "code":

@@ -67,7 +67,11 @@ trainer:
           reward_model_judge:
             ip: localhost
             port: 3144
-
+      genrm_verifier:
+        servers:
+          genrm_verifier:
+            ip: localhost
+            port: 3145
     # the sequence length to pad the rollout batch for training to
     # reduce fragmentation at the cost of using more
     # memory, set to null if we don't want to pad it
