@@ -38,6 +38,14 @@ trainer:
     
     generation_save_dir: null
     
+    dapo:
+      token_loss: False
+      length_penalty: False
+      clip_higher: False
+      length_penalty_params:
+        max_length: 20480
+        acceptable_length: 16384
+
     environments:
       math:
         servers:
@@ -59,6 +67,7 @@ trainer:
           reward_model_judge:
             ip: localhost
             port: 3144
+
     # the sequence length to pad the rollout batch for training to
     # reduce fragmentation at the cost of using more
     # memory, set to null if we don't want to pad it
@@ -164,6 +173,8 @@ model:
 
     # GRPO loss params
     ratio_eps: 0.2
+    ratio_eps_low: 0.2
+    ratio_eps_high: 0.28
 
     # params for generation
     sampling_params:

@@ -348,6 +348,33 @@ def masked_mean(values, mask, dim=None):
         return values[mask.bool()].mean()
     return as_masked_tensor(values, mask.bool()).mean(dim=dim).to_tensor(torch.nan)
 
+# need to surpress the masked tensor warnings from pytorch
+@surpress_user_warnings
+def masked_sum(values, mask, dim=None):
+    """
+    Masks values with mask, and computes the sum of the values using the masked values.
+    Returns the sum of the masked values and the total number of tokens as a single scalar.
+    
+    Args:
+        values (torch.Tensor): Tensor of values to sum
+        mask (torch.Tensor): Boolean mask tensor
+        dim (int, optional): Dimension along which to perform the sum
+        
+    Returns:
+        tuple: (sum_values, total_tokens) - sum of masked values and total token count as a single scalar
+    """
+    bool_mask = mask.bool()
+    
+    # Always compute total token count as a single scalar value
+    total_tokens = bool_mask.sum().item()
+    
+    if dim is None:
+        return values[bool_mask].sum(), total_tokens
+    
+    masked_tensor = as_masked_tensor(values, bool_mask)
+    sum_values = masked_tensor.sum(dim=dim).to_tensor(torch.nan)
+    return sum_values, total_tokens
+ 
 
 # need to surpress the masked tensor warnings from pytorch
 @surpress_user_warnings

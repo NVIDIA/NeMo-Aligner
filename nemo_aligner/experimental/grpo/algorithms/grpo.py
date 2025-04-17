@@ -141,9 +141,38 @@ class GRPOTrainer:
         grpo_rollout_metrics = {}
 
         rewards = rollout_batch["rewards"]
+        assert not (self.cfg.length_penalty_enabled and self.cfg.grpo.get("dapo", {}).get("length_penalty", False)), "length_penalty_enabled (alex's) and dapo.length_penalty cannot both be True"
+        # alex's linear length penalty
         if self.cfg.length_penalty_enabled:
             rewards = -1 * (1 - rewards) + -1 *rewards * ((rollout_batch["response_lengths"] - rollout_batch["prompt_lengths"]) / self.cfg.max_sequence_length) + 1
+        
+        # dapo's linear length penalty
+        elif self.cfg.grpo.get("dapo", {}).get("length_penalty", False):
+            # Get acceptable length from config or default to 75% of max sequence length
+            acceptable_length = self.cfg.grpo.get("dapo", {}).get("acceptable_length", int(0.75 * self.cfg.dpo.length_penalty_params.max_length))
             
+            # Calculate response lengths (excluding prompt)
+            generation_lengths = rollout_batch["response_lengths"] - rollout_batch["prompt_lengths"]
+            
+            # Initialize penalty tensor with zeros (same shape as rewards)
+            length_penalty = torch.zeros_like(rewards)
+            
+            # Find responses longer than acceptable length
+            long_responses_mask = generation_lengths > acceptable_length
+            
+            # For long responses, apply linear penalty from 0 to 0.5 as length increases, if the reward scale changes (now 0-1), this needs to be changed
+            if long_responses_mask.any():
+                # Calculate how far into the penalty zone we are (0 to 1)
+                penalty_zone_length = self.cfg.dpo.length_penalty_params.max_length - acceptable_length
+                position_in_penalty_zone = (generation_lengths[long_responses_mask] - acceptable_length) / penalty_zone_length
+                # Clamp to [0, 1] range in case of any numerical issues
+                position_in_penalty_zone = torch.clamp(position_in_penalty_zone, 0, 1)
+                # Scale to [0, 0.5] range for penalty
+                length_penalty[long_responses_mask] = 0.5 * position_in_penalty_zone
+            
+            # Apply penalty to rewards
+            rewards = rewards - length_penalty
+
         baseline, reward_std = calculate_baseline_and_std_per_prompt(
                 prompts=rollout_batch["text"],
                 rewards=rewards,
