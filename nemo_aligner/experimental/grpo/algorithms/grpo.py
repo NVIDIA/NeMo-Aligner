@@ -149,7 +149,7 @@ class GRPOTrainer:
         # dapo's linear length penalty
         elif self.cfg.get("dapo", {}).get("length_penalty", False):
             # Get acceptable length from config or default to 75% of max sequence length
-            acceptable_length = self.cfg.get("dapo", {}).get("acceptable_length", int(0.75 * self.cfg.dpo.length_penalty_params.max_length))
+            acceptable_length = self.cfg.get("dapo", {}).get("acceptable_length", int(0.75 * self.cfg.dapo.length_penalty_params.max_length))
             
             # Calculate response lengths (excluding prompt)
             generation_lengths = rollout_batch["response_lengths"] - rollout_batch["prompt_lengths"]
@@ -163,7 +163,7 @@ class GRPOTrainer:
             # For long responses, apply linear penalty from 0 to 0.5 as length increases, if the reward scale changes (now 0-1), this needs to be changed
             if long_responses_mask.any():
                 # Calculate how far into the penalty zone we are (0 to 1)
-                penalty_zone_length = self.cfg.dpo.length_penalty_params.max_length - acceptable_length
+                penalty_zone_length = self.cfg.dapo.length_penalty_params.max_length - acceptable_length
                 position_in_penalty_zone = (generation_lengths[long_responses_mask] - acceptable_length) / penalty_zone_length
                 # Clamp to [0, 1] range in case of any numerical issues
                 position_in_penalty_zone = torch.clamp(position_in_penalty_zone, 0, 1)
