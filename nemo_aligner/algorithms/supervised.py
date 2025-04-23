@@ -145,17 +145,19 @@ class SupervisedTrainer:
 
         if "weights" in val_metrics:
             w = val_metrics.pop("weights")
+            val_loss = sum([value * weight for value, weight in zip(loss_means, w)]) / sum(w)
             val_metrics = {
                 k: sum([value * weight for value, weight in zip(v, w)]) / sum(w) for k, v in val_metrics.items()
             }
         else:
+            val_loss = mean(loss_means)
             val_metrics = {k: mean(v) for k, v in val_metrics.items()}
         val_metrics.update(self.inference_metrics_handler.compute())
         self.inference_metrics_handler.reset()
 
         self.logger.log_metrics(val_metrics, step=self.step, prefix=f"{key}/")
 
-        return mean(loss_means), val_metrics
+        return val_loss, val_metrics
 
     def train_single_step(self, batch):
         self.optimizer.zero_grad()
