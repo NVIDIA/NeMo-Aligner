@@ -126,6 +126,7 @@ def main(cfg) -> None:
         use_random_sampler=cfg.trainer.rm.train_random_sampler,
     )
     if isinstance(validation_ds, RewardModelDataset):
+        drop_last = cfg.model.data.get("validation_drop_last", True)
         val_dataloader = build_dataloader(
             cfg=cfg,
             dataset=validation_ds,
@@ -134,6 +135,8 @@ def main(cfg) -> None:
             gbs=cfg.model.global_batch_size,
             load_gbs=True,
             use_random_sampler=cfg.trainer.rm.val_random_sampler,
+            drop_last=drop_last,
+            pad_samples_to_global_batch_size=not drop_last,
         )
     elif isinstance(validation_ds, dict):
         drop_last = cfg.model.data.get("validation_drop_last", True)
@@ -145,7 +148,7 @@ def main(cfg) -> None:
                 mbs=cfg.model.micro_batch_size,
                 gbs=cfg.model.global_batch_size,
                 load_gbs=True,
-                use_random_sampler=False,
+                use_random_sampler=cfg.trainer.rm.val_random_sampler,
                 drop_last=drop_last,
                 pad_samples_to_global_batch_size=not drop_last,
             )
