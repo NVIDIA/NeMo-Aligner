@@ -366,7 +366,7 @@ def masked_sum(values, mask, dim=None):
     bool_mask = mask.bool()
     
     # Always compute total token count as a single scalar value
-    total_tokens = bool_mask.sum().item()
+    total_tokens = bool_mask.sum()
     
     if dim is None:
         return values[bool_mask].sum(), total_tokens
