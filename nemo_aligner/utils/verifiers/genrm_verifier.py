@@ -77,9 +77,11 @@ class GenRMVerifier:
                     gt_individual = meta["helpfulness_1"] 
                     distance = self.distance_abs(individual_scores[0], gt_individual)
                 elif meta["num_responses"] == 2:
-                    gt_individual_1 = meta["helpfulness_1"] 
-                    gt_individual_2 = meta["helpfulness_2"]
-                    distance = self.distance_abs(individual_scores[0], gt_individual_1) + self.distance_abs(individual_scores[1], gt_individual_2)
+                    gt_individual_1 = meta.get("helpfulness_1", None)
+                    gt_individual_2 = meta.get("helpfulness_2", None)
+                    distance = 0
+                    if gt_individual_1 is not None and gt_individual_2 is not None:
+                        distance = self.distance_abs(individual_scores[0], gt_individual_1) + self.distance_abs(individual_scores[1], gt_individual_2)
 
                     # get preference ranking score
                     preference_ranking_paragraph = response.split("[The Begin of Ranking Score]")[-1].split("[The End of Ranking Score]")[0]
