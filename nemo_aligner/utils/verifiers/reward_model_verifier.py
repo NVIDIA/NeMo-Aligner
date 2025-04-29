@@ -101,18 +101,6 @@ class RewardModelVerifier:
                 # Extract the reward score
                 reward_score = response_token_ids['scores'][0][0][0].item()
                 
-                # add a check for identity
-                keywords = ["llama", "nemotron", "nvidia"]
-                badwords = ["qwen", "alibaba", "deepseek", "r1", "qwq", "qvq", "tongyi", "damo"]
-                # has_all_keywords = "nvidia" in response.lower() or ("llama" in response.lower() and "nemotron" in response.lower())
-                # has_all_keywords = all(keyword.lower() in response.lower() for keyword in keywords)
-                has_any_badwords = any(badword.lower() in response.lower() for badword in badwords)
-                # if has_all_keywords and not has_any_badwords:
-                #     reward_score = 0
-                # else:
-                #     reward_score = -10
-                if has_any_badwords:
-                    reward_score = reward_score - 100
                 print(reward_score)
                 logger.info(f"Reward score: {reward_score}")  # Use the module logger
                 # Normalize the reward score to [0, 1] range if needed

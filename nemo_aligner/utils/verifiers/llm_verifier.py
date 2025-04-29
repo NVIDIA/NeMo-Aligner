@@ -110,12 +110,13 @@ Answer "YES" or "NO", then provide a brief explanation.
         generated_texts = self._call_vllm_api(judge_prompts)
         print(generated_texts)
         # Process results
-        for generated_text in generated_texts:
+        for gt, resp, generated_text in zip(ground_truths, responses, generated_texts):
             generated_text = generated_text.strip()
             is_correct = "yes" in generated_text.lower() and "no" not in generated_text.lower()
-            
+            score = 1 if is_correct else 0
+                    
             results.append({
-                "passed": is_correct,
+                "passed": score,
                 "full_response": generated_text
             })
             
