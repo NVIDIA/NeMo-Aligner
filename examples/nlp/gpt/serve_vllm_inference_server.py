@@ -22,7 +22,7 @@ def print_with_datetime(message, flush):
     current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"{current_datetime}-> {message}", flush=flush)
 
-def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
+def worker_process(in_queue, out_queue, load_path, tp, max_model_len=20480, test_state_dict=None):
     import torch
     import gc
     import glob
@@ -104,7 +104,7 @@ def worker_process(in_queue, out_queue, load_path, tp, test_state_dict=None):
                 enable_sleep_mode=True,
                 trust_remote_code=True,
                 quantization='fp8',
-                max_model_len=16384,
+                max_model_len=20480,
                 enable_chunked_prefill=True,
             )
             self.running = True
