@@ -14,6 +14,7 @@
 
 import json
 import os
+import pickle
 from collections import defaultdict
 from functools import partial
 from statistics import mean
@@ -69,6 +70,9 @@ def generate_sft_custom_collate(batch, eos_id):
     output = {
         "prompts_only": context_ids,
         "prompt_lengths": context_lengths,
+        "metadata": [
+            (x["metadata"] if "metadata" in x else None) for x in batch
+        ],
     }
 
     return output
@@ -251,6 +255,7 @@ class GenerationTrainer:
                 prompt_lens = global_batch["prompt_lens"]
                 gen_lens = global_batch["gen_lens"]
                 valids = global_batch["valids"]
+                metadata = global_batch["metadata"] if "metadata" in global_batch else None
 
                 gen_tokens_list = [torch.zeros_like(gen_tokens) for _ in range(dp_group.size())]
                 prompt_lens_list = [torch.zeros_like(prompt_lens) for _ in range(dp_group.size())]
@@ -261,12 +266,22 @@ class GenerationTrainer:
                 torch.distributed.all_gather(prompt_lens_list, prompt_lens, group=dp_group)
                 torch.distributed.all_gather(gen_lens_list, gen_lens, group=dp_group)
                 torch.distributed.all_gather(valids_list, valids, group=dp_group)
+                
+                if metadata is not None:
+                    local_dp_meta_size = torch.as_tensor([metadata.size(0)], device=torch.cuda.current_device(), dtype=torch.int64)
+                    metadata_length_list = [torch.zeros_like(local_dp_meta_size) for _ in range(dp_group.size())]
+                    torch.distributed.all_gather(metadata_length_list, local_dp_meta_size, group=dp_group)
+                    metadata_list = [torch.zeros(x.item(), device=torch.cuda.current_device(), dtype=torch.int8) for x in metadata_length_list]
+                    torch.distributed.all_gather(metadata_list, metadata, group=dp_group)
+                    metadata_dict_list = [pickle.loads(x.cpu().numpy().tobytes()) for x in metadata_list]
+                else:
+                    metadata_dict_list = [None] * dp_group.size()
 
                 self.consumed_samples += self.model.cfg.global_batch_size
                 self.step += 1
 
                 if torch.distributed.get_rank() == 0:
-                    for t, s, e, v in zip(gen_tokens_list, prompt_lens_list, gen_lens_list, valids_list):
+                    for t, s, e, v, meta in zip(gen_tokens_list, prompt_lens_list, gen_lens_list, valids_list, metadata_dict_list):
                         buffer = [[] for _ in range(t.shape[1])]
                         for idx in range(len(t)):
                             for pdx, (t_, s_, e_, v_) in enumerate(
@@ -277,7 +292,7 @@ class GenerationTrainer:
                                 if v_:
                                     buffer[pdx].append((prompt, response))
 
-                        for cand_list in buffer:
+                        for cand_list, meta_ in zip(buffer, meta):
                             if len(cand_list) == 0:
                                 continue
                             assert all([cand_list[0][0] == x[0] for x in cand_list]), "all prompts in group not equal"
@@ -285,9 +300,12 @@ class GenerationTrainer:
                                 "step": self.step,
                                 "consumed_samples": self.consumed_samples,
                                 "prompt": cand_list[0][0],
-                                "responses": list(set([x[1] for x in cand_list])),
+                                "metadata": meta_,
+                                #"responses": list(set([x[1] for x in cand_list])),
+                                "responses": [x[1] for x in cand_list],
                             }
                             self.generations_fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+                    #self.generations_fh.flush()
                 torch.distributed.barrier()
 
                 run_time_exceeded = self.run_timer.is_finished()
@@ -341,6 +359,7 @@ class GenerationTrainer:
                     gen_lens.append(gen_lengths_buf)
                     valids.append(is_end)
 
+                assert all([len(x) == self.num_responses_to_gen for x in [gen_tokens, prompt_lens, gen_lens, valids]])
                 # if you want to pad to the global DP batch instead of model.cfg.encoder_seq_length you can uncomment this
                 # max_seq_length = torch.tensor([x.size(-1) for x in gen_tokens], dtype=torch.float32, device=torch.cuda.current_device()).max().unsqueeze(0)
                 # torch.distributed.all_reduce(max_seq_length, op=torch.distributed.ReduceOp.MAX, group=parallel_state.get_data_parallel_group())
@@ -360,6 +379,10 @@ class GenerationTrainer:
                     "gen_lens": torch.stack(gen_lens, dim=0).cuda(non_blocking=True),
                     "valids": torch.stack(valids, dim=0).cuda(non_blocking=True),
                 }
+                
+                if batch['metadata'] is not None:
+                    nbuffer = np.ascontiguousarray(np.frombuffer(pickle.dumps(batch['metadata']), dtype=np.int8))
+                    new_batch['metadata'] = torch.from_numpy(np.copy(nbuffer)).contiguous().cuda(non_blocking=True)
 
                 yield new_batch
                 del new_batch, gen_tokens, prompt_lens, gen_lens, valids

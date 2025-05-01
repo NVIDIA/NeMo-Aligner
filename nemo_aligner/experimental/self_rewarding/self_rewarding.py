@@ -825,6 +825,18 @@ class SelfRewardingTrainer:
             self.model.ref_policy_state_dict = retrieve_model_state_dict_in_cpu(
                 self.model, megatron_amp_O2=self.model.cfg.get("megatron_amp_O2", False)
             )
+            # reset optimizer
+            self.optimizer.zero_grad()
+            for state_bucket in self.optimizer.state_dict(state_dict_format=1, gather_on_root=False)["state"]["buckets"]:
+                exp_avg_shard = getattr(state_bucket, "exp_avg_shard")
+                exp_avg_sq_shard = getattr(state_bucket, "exp_avg_sq_shard")
+                if exp_avg_shard is not None:
+                    exp_avg_shard.zero_()
+                if exp_avg_sq_shard is not None:
+                    exp_avg_sq_shard.zero_()
+            if "step" in self.optimizer.state_dict(state_dict_format=1, gather_on_root=False)["state"]:
+                print(f'**** optimizer_step_A_reset : type {type(self.optimizer.state_dict(state_dict_format=1, gather_on_root=False)["state"]["step"])} ****')
+                self.optimizer.state_dict(state_dict_format=1, gather_on_root=False)["state"]["step"] = 0
 
         self.logger.finalize()
 
