@@ -133,9 +133,6 @@ def main(cfg) -> None:
     collate_fn = partial(
        self_taught_custom_collate,
        eos_id=ptl_model.tokenizer.eos_id,
-       reset_position_ids=cfg.model.data.get("reset_position_ids", False),
-       reset_attention_mask=cfg.model.data.get("reset_attention_mask", False),
-       eod_mask_loss=cfg.model.data.get("eod_mask_loss", False),
     )
 
     train_dataloader = build_dataloader(

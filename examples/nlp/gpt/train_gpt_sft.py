@@ -14,6 +14,8 @@
 
 
 import torch.multiprocessing as mp
+from functools import partial
+import itertools
 from omegaconf.omegaconf import OmegaConf, open_dict
 
 from nemo.collections.nlp.data.language_modeling.megatron.gpt_sft_chat_dataset import get_prompt_template_example
@@ -115,6 +117,20 @@ def _modify_config(gpt_cfg, cfg, add_cfg_to_tree=False):
 
     return gpt_cfg
 
+def collate_fn_wrapper(batch, pass_through):
+    #input_ids = [item['input_ids'][:-1].tolist() for item in batch]
+    #labels = [item['input_ids'][1:].tolist() for item in batch]
+    #contexts = [item['context_ids'].tolist() for item in batch]
+    #answers = [item['answer_ids'].tolist() for item in batch]
+    #loss_mask = [item['mask'][1:].tolist() for item in batch]
+    #metadata = [item['metadata'] for item in batch]
+
+    for item in batch:
+        final_idx = [list(v)[0] for k,v in itertools.groupby([(i,c) for i,c in enumerate(item['mask'])], lambda kk: kk[1])][-1][0]
+        item['mask'][:final_idx] = False
+    
+    return pass_through(batch)
+
 
 @hydra_runner(config_path="conf", config_name="gpt_sft")
 def main(cfg) -> None:
@@ -189,6 +205,9 @@ def main(cfg) -> None:
         is_chat=cfg.model.data.chat,
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
+    
+    bypass_collate_train = partial(collate_fn_wrapper, pass_through=train_ds.collate_fn)
+    bypass_collate_valid = partial(collate_fn_wrapper, pass_through=validation_ds.collate_fn)
 
     train_dataloader = build_dataloader(
         cfg=cfg,
@@ -196,7 +215,7 @@ def main(cfg) -> None:
         consumed_samples=consumed_samples,
         mbs=train_data_cfg.micro_batch_size,
         gbs=train_data_cfg.global_batch_size,
-        collate_fn=train_ds.collate_fn,
+        collate_fn=bypass_collate_train,
         drop_last=train_data_cfg.drop_last,
         pad_samples_to_global_batch_size=not train_data_cfg.drop_last,
         load_gbs=True,
@@ -208,7 +227,7 @@ def main(cfg) -> None:
         consumed_samples=0,
         mbs=val_data_cfg.micro_batch_size,
         gbs=val_data_cfg.global_batch_size,
-        collate_fn=validation_ds.collate_fn,
+        collate_fn=bypass_collate_valid,
         drop_last=val_data_cfg.drop_last,
         pad_samples_to_global_batch_size=not val_data_cfg.drop_last,
         load_gbs=True,

@@ -66,9 +66,7 @@ metadata: dict - with keys "system" for the preamble, and "mask" which is "User"
 """
 
 
-def self_taught_custom_collate(
-    batch, eos_id, reset_position_ids=False, reset_attention_mask=False, eod_mask_loss=False
-):
+def self_taught_custom_collate(batch, eos_id):
     input_ids = [item["input_ids"] for item in batch]
     masks = [item["mask"] for item in batch]
     context_ids = [item["context_ids"] for item in batch]
@@ -88,6 +86,7 @@ def self_taught_custom_collate(
         "answers_only": answer_ids,
         "prompt_lengths": context_lengths,
         "combined_lengths": combined_lengths,
+        "dataset_mask": batch[0]['metadata']['mask'] if 'metadata' in batch[0] else "",
     }
 
     return output
@@ -574,6 +573,8 @@ class SelfTaughtTrainer:
         for t, s, e, end in zip(perturb_responses, prompt_lengths.tolist(), resp_lengths.tolist(), is_end.tolist()):
             response = self.tokenizer.ids_to_text(t[s:e].tolist())
             batch_responses_str.append(response)
+            if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
+                print(f"*** PERTURBED_PROMPT_AND_RESP  [ {self.tokenizer.ids_to_text(t[:e].tolist())} ]")
         perturbs_as_str = [self.bad_response_regex_resp_fn(resp_str.strip()) for resp_str in batch_responses_str]
         for idx, (r, end) in enumerate(zip(perturbs_as_str, is_end.tolist())):
             perturbed_responses.append(
@@ -765,6 +766,45 @@ class SelfTaughtTrainer:
         assert loaded_values == to_broadcast.tolist()
         # restore max steps we need to run for
         self.set_max_steps()
+    
+    def extract_prompt_elements(self, prompt, response, dataset_mask):
+        if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
+            p_list = re.findall(
+                rf"(?s)(?<={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn + dataset_mask)}\n\n).*?(?={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn)})",
+                prompt,
+            )
+            r_list = re.findall(
+                rf"(?s)(?<={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn + dataset_mask.replace('user', 'assistant'))}\n\n).*?(?={re.escape(self.model.cfg.data.chat_prompt_tokens.end_of_turn)})",
+                prompt,
+            )
+            resp_raw = response.replace(self.model.cfg.data.chat_prompt_tokens.end_of_turn, "").strip()
+        else:
+            p_list = re.findall(
+                rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}User\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
+                prompt,
+            )
+            r_list = re.findall(
+                rf"(?s)(?<={self.model.cfg.data.chat_prompt_tokens.turn_start}Assistant\n).*?(?=\n{self.model.cfg.data.chat_prompt_tokens.turn_start})",
+                prompt,
+            )
+            resp_raw = response.replace(f"\n{self.model.cfg.data.chat_prompt_tokens.turn_start}", "")
+
+        return p_list, r_list, resp_raw
+
+    def normalise_prompt(self, prompt, response, dataset_mask):
+        p_list, r_list, resp_raw = self.extract_prompt_elements(prompt, response, dataset_mask)
+        if len(p_list) == 1 and len(r_list) == 0:
+            return "User: " + p_list[0], resp_raw, p_list[-1]
+        elif len(p_list) == len(r_list) + 1:
+            comp = "User: " + p_list[0]
+            for p, r in zip(p_list[1:], r_list):
+                comp += "\n\nAssistant: " + r
+                comp += "\n\nUser: " + p
+            return comp, resp_raw, p_list[-1]
+        else:
+            raise RuntimeError(
+                f"Received strange normalise payload PROMPT [ {prompt} ]  P_LIST [ {p_list} ]  R_LIST [ {r_list} ]"
+            )
 
     def augment_dataloader(self, dataloader):
         """Augment dataloader with generations and ref policy log probs"""
@@ -803,6 +843,7 @@ class SelfTaughtTrainer:
                     perturb_buffer = []
                     orig_prompts_and_responses = []
                     for t, s, e in zip(gen_tokens_buf, gen_prompt_lengths_buf.tolist(), gen_lengths_buf.tolist()):
+                        
                         if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
                             prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace(
                                 "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", ""
@@ -815,56 +856,50 @@ class SelfTaughtTrainer:
                                 "<extra_id_0>System\n\n", ""
                             )
                             response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("\n<extra_id_1>", "")
+                        
                         # llama3
                         # prompt = self.tokenizer.ids_to_text(t[:s].tolist()).replace("<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n", "")
                         # response = self.tokenizer.ids_to_text(t[s:e].tolist()).replace("<|eot_id|>", "").strip()
+                        #prompt, response = self.normalise_prompt(self.tokenizer.ids_to_text(t[:s].tolist()), self.tokenizer.ids_to_text(t[s:e].tolist()), buffer[0]["dataset_mask"])
                         perturb_prompt_str = self.bad_response_template_fn(orig_prompt=prompt, orig_response=response)
                         perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
                         # if len(reward_prompt) > (self.model.cfg.encoder_seq_length - self.max_gen_seq_len):
                         if len(perturb_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-                            prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
-                            try:
-                                if self.cfg.trt_llm.get("model_type", "gptnext").lower() == "llama":
-                                    prompt_ft = re.findall(
-                                        r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)",
-                                        prompt_and_response,
-                                    )[0]
-                                    response_ft = re.findall(
-                                        r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)",
-                                        prompt_and_response,
-                                    )[0]
-                                else:
-                                    prompt_ft = re.findall(
-                                        r"(?s)(?<=<extra_id_1>User\n).*?(?=\n<extra_id_1>)", prompt_and_response
-                                    )[0]
-                                    response_ft = re.findall(
-                                        r"(?s)(?<=<extra_id_1>Assistant\n).*?(?=\n<extra_id_1>)",
-                                        prompt_and_response,
-                                    )[0]
-                                # llama3
-                                # prompt_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
-                                # response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
+                            #prompt_and_response = self.tokenizer.ids_to_text(t[:e].tolist())
+                            #try:
+                            p_list, _, _ = self.extract_prompt_elements(
+                                prompt, response, buffer[0]["dataset_mask"]
+                            )
+                            if len(p_list) == 0:
+                                prompt_ft = prompt
+                            else:
+                                prompt_ft = p_list[-1]
+                            response_ft = response
+                            # llama3
+                            # prompt_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>user\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
+                            # response_ft = re.findall(r"(?s)(?<=\<\|eot_id\|\>\<\|start_header_id\|\>assistant\<\|end_header_id\|\>\n\n).*?(?=\<\|eot_id\|\>)", prompt_and_response)[0]
+                            perturb_prompt_str = self.bad_response_template_fn(orig_prompt=prompt_ft, orig_response=response_ft)
+                            perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
+
+                            while len(perturb_prompt) > (
+                                self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
+                            ):
+                                overage = len(perturb_prompt) - self.model.cfg.data.train_ds.max_seq_length
+                                if overage > len(self.model.tokenizer.text_to_ids(response_ft)):
+                                    print(f"*** OVERAGE_NOT_FIT_RESPONSE: {perturb_prompt_str}")
+                                    perturb_prompt_str = self.bad_response_template_fn(
+                                        orig_prompt="How does one make tea?", orig_response="I have no answer at all."
+                                    )
+                                    perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
+                                    break
+                                response_ft = self.tokenizer.ids_to_text(
+                                    self.model.tokenizer.text_to_ids(response_ft)[:-overage]
+                                )
                                 perturb_prompt_str = self.bad_response_template_fn(orig_prompt=prompt_ft, orig_response=response_ft)
                                 perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
-
-                                while len(perturb_prompt) > (
-                                    self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
-                                ):
-                                    overage = len(perturb_prompt) - self.model.cfg.data.train_ds.max_seq_length
-                                    if overage > len(self.model.tokenizer.text_to_ids(response_ft)):
-                                        print(f"*** OVERAGE_NOT_FIT_RESPONSE: {perturb_prompt_str}")
-                                        perturb_prompt_str = self.bad_response_template_fn(
-                                            orig_prompt="How does one make tea?", orig_response="I have no answer at all."
-                                        )
-                                        perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
-                                        break
-                                    response_ft = self.tokenizer.ids_to_text(
-                                        self.model.tokenizer.text_to_ids(response_ft)[:-overage]
-                                    )
-                                    perturb_prompt_str = self.bad_response_template_fn(orig_prompt=prompt_ft, orig_response=response_ft)
-                                    perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
-                                prompt = prompt_ft
-                                response = response_ft
+                            prompt = prompt_ft
+                            response = response_ft
+                            '''
                             except:
                                 print(f"*** TOO_LONG: {prompt_and_response}")
                                 # overage = len(reward_prompt) - (self.model.cfg.encoder_seq_length - self.max_gen_seq_len)
@@ -887,6 +922,7 @@ class SelfTaughtTrainer:
                                         )
                                         perturb_prompt = self.model.tokenizer.text_to_ids(perturb_prompt_str)
                                         break
+                            '''
                             assert len(perturb_prompt) <= (
                                 self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
                             ), f"truncation of response only failed [ {len(perturb_prompt)} ]: {perturb_prompt_str}"
@@ -1016,6 +1052,10 @@ class SelfTaughtTrainer:
                                 "bad_ends": bad_ends,
                             }
                         )
+                
+                self.model.finish_inference()
+                if self.use_trtllm_generation:
+                    self.trtllm_generate.free()
 
                 original_gbs_size = len(buffer[0]["prompt_lengths"])
                 for batch in divide_chunks(final_buffer, original_gbs_size):
@@ -1083,10 +1123,6 @@ class SelfTaughtTrainer:
                     assert (
                         chosen_resp_lens - chosen_prompt_lens >= 0
                     ).all(), "negative generated length encountered in chosen"
-                    
-                    self.model.finish_inference()
-                    if self.use_trtllm_generation:
-                        self.trtllm_generate.free()
 
                     yield new_batch
                     
