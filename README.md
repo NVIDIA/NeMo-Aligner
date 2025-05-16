@@ -1,5 +1,7 @@
 # NVIDIA NeMo-Aligner
 
+⚠️ **As of 5/15/2025, this repository is no longer actively maintained. We recommend switching to [NeMo RL](https://github.com/NVIDIA/NeMo-RL), a scalable and modular post-training library with seamless Hugging Face integration, Megatron Core optimizations, and uses Ray as the scheduling backbone.** ⚠️
+
 # Latest News
 - We released Nemotron-4-340B [Base](https://huggingface.co/nvidia/Nemotron-4-340B-Base), [Instruct](https://huggingface.co/nvidia/Nemotron-4-340B-Instruct), [Reward](https://huggingface.co/nvidia/Nemotron-4-340B-Reward). The Instruct and Reward variants are trained in Nemo-Aligner. Please see the [Helpsteer2](https://arxiv.org/abs/2406.08673) paper for more details on the reward model training.
 - We are excited to announce the release of accelerated generation support in our RLHF pipeline using [TensorRT-LLM](https://github.com/NVIDIA/TensorRT-LLM). For more information, please refer to our [RLHF documentation](https://docs.nvidia.com/nemo-framework/user-guide/latest/modelalignment/rlhf.html).
