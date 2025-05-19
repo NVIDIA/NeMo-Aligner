@@ -93,9 +93,9 @@ model:
 
     # Current default judge prompt is copied from https://arxiv.org/abs/2401.10020
     critique_prompt_template: |
-      ${model.data.chat_prompt_tokens.system_turn_start}System
+      ${model.data.chat_prompt_tokens.system_turn_start}<|start_header_id|>system<|end_header_id|>
       
-      ${model.data.chat_prompt_tokens.turn_start}User
+      ${model.data.chat_prompt_tokens.end_of_turn}<|start_header_id|>user<|end_header_id|>${model.data.chat_prompt_tokens.end_of_name}
       Review the user's question and the corresponding response using the additive 5-point
       scoring system described below. Points are accumulated based on the satisfaction of each
       criterion:
@@ -122,13 +122,13 @@ model:
       Remember to assess from the AI Assistant perspective, utilizing web search knowledge as
       necessary. To evaluate the response in alignment with this additive scoring model, we'll
       systematically attribute points based on the outlined criteria.
-      ${model.data.chat_prompt_tokens.turn_start}Assistant
+      ${model.data.chat_prompt_tokens.end_of_turn}<|start_header_id|>assistant<|end_header_id|>${model.data.chat_prompt_tokens.end_of_name}
 
     # Current default meta-judge prompt is copied from https://arxiv.org/abs/2407.19594
     revise_prompt_template: |
-      ${model.data.chat_prompt_tokens.system_turn_start}System
+      ${model.data.chat_prompt_tokens.system_turn_start}<|start_header_id|>system<|end_header_id|>
       
-      ${model.data.chat_prompt_tokens.turn_start}User
+      ${model.data.chat_prompt_tokens.end_of_turn}<|start_header_id|>user<|end_header_id|>${model.data.chat_prompt_tokens.end_of_name}
       Review the user's question and the corresponding response, along with two judgments.
       Determine which judgment is more accurate according to the rubric provided below. The
       rubric used for the initial judgments is as follows:
@@ -156,7 +156,7 @@ model:
       Consider factors such as adherence to the rubric, accuracy in evaluating the response, and
       consistency in applying the criteria.
       - Conclude with a clear statement of which judgment is better using the format: "Winner: [Judgement A | Judgement B]"
-      ${model.data.chat_prompt_tokens.turn_start}Assistant
+      ${model.data.chat_prompt_tokens.end_of_turn}<|start_header_id|>assistant<|end_header_id|>${model.data.chat_prompt_tokens.end_of_name}
 
 
     # params for generation
@@ -204,11 +204,11 @@ model:
   data:
     chat: True # whether to use chatbot data or not
     chat_prompt_tokens:  # special tokens for the chat prompts, a dictionary of {token_type: token}. note that some tokenizer may combine the characters at the junction between {end_of_turn}{turn_start}. e.g. '<im end><im start>', the '><' sometimes is merged to be a single token. This is not supported, try to avoid
-      system_turn_start: "<extra_id_0>"
-      turn_start: "<extra_id_1>"
+      system_turn_start: "<|begin_of_text|>"
+      turn_start: ""
       label_start: "<extra_id_2>"
-      end_of_turn: "\x0A"  # \0x0A is '\n'
-      end_of_name: "\x0A"  # \0x0A is '\n'
+      end_of_turn: "<|eot_id|>"
+      end_of_name: "\x0A\x0A"  # \0x0A is '\n'
 
     sample: False # create the index mapping files for the sample data, so max_steps * global_batch_size can be larger than the dataset size
     num_workers: 0
@@ -266,10 +266,32 @@ model:
       truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
       output_original_text: True  # needed for the proper metrics support
 
+    alt_ds:
+      file_path: ??? # Path to a JSONL file corresponding to the source data. Data format is identical to validation_ds.
+      global_batch_size: ${model.global_batch_size}
+      micro_batch_size: ${model.micro_batch_size}
+      shuffle: True
+      memmap_workers: ${model.data.train_ds.memmap_workers}
+      max_seq_length: ${model.data.train_ds.max_seq_length}
+      min_seq_length: 1
+      drop_last: True
+      label_key: ${model.data.train_ds.label_key}
+      add_eos: ${model.data.train_ds.add_eos}
+      add_sep: ${model.data.train_ds.add_sep}
+      add_bos: ${model.data.train_ds.add_bos}
+      truncation_field: ${model.data.train_ds.truncation_field} # Options: keys in prompt_template
+      index_mapping_dir: null # Path to a directory to write index mapping files.
+      prompt_template: ${model.data.train_ds.prompt_template} # fstring to use for assistant prompt. Example: "Q: {input}\nA: {output}"
+      hf_dataset: True # Whether to load the json file with the HuggingFace dataset. otherwise, will load the jsonl file with the JSONLMemMapDataset.
+      truncation_method: 'right' # Truncation from which position, Options: ['left', 'right']
+      output_original_text: True  # needed for the proper metrics support
+
   # define fields from the base model's config that should be ignored when merging with this config.
   overwrite_base_config:
     data:
       train_ds:
         file_path: True
       validation_ds:
+        file_path: True
+      alt_ds:
         file_path: True

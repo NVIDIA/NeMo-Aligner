@@ -24,6 +24,7 @@ from omegaconf.dictconfig import DictConfig
 from pytorch_lightning.trainer.trainer import Trainer
 
 from nemo.collections.nlp.models.language_modeling.megatron_gpt_model import MegatronGPTModel
+#from nemo_aligner.models.nlp.gpt.gpt_inference_model import GPTInferenceModel
 from nemo.collections.nlp.modules.common.megatron.utils import (
     average_losses_across_data_parallel_group,
     get_iterator_k_split,
@@ -97,6 +98,13 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         # variants of preference losses, by default DPO.
         self.preference_loss = self.cfg.spin.get("preference_loss", "dpo")
         self.gt_reward_scale = self.cfg.spin.get("gt_reward_scale", 1.0)
+        
+        # beta-DPO params
+        self.dynamic_kl = self.cfg.spin.get("dynamic_kl", False)
+        self.M_0 = 1.0
+        self.momentum = 0.9
+        self.alpha = 0.2
+        self.B_0 = 0.1
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, masks, average_log_probs=False):
@@ -277,12 +285,32 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
             return (logps * loss_mask).sum(-1) / loss_mask.sum(-1).clamp(min=1)
         else:
             return (logps * loss_mask).sum(-1)
+    
+    @torch.no_grad()
+    def update_kl_across_ranks(self, local_batch_Mi):
+        local_batch_Mi = local_batch_Mi.detach()
+        
+        # average down to scalar
+        local_batch_Mi_mean = local_batch_Mi.mean(0)
+        
+        # all-reduce the scalar means from all other ranks
+        tensor_to_accumulate = torch.tensor([local_batch_Mi_mean], dtype=torch.float32, device=torch.cuda.current_device())
+        torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group(), op=torch.distributed.ReduceOp.AVG)
+        
+        global_Mi_mean = tensor_to_accumulate[0].item()
+        
+        self.M_0 = self.momentum * self.M_0 + (1.0 - self.momentum) * global_Mi_mean
+        
+        self.ref_policy_kl_penalty = (1.0 + self.alpha * (global_Mi_mean - self.M_0)) * self.B_0
 
     def loss_func(self, pi_logprobs, ref_logprobs, masks, gt_rewards, average_log_probs=False):
         rewards = self.get_reduced_masked_logps(pi_logprobs - ref_logprobs, masks, average_log_probs=average_log_probs)
 
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
         rewards_delta = chosen_rewards - reject_rewards
+        
+        if self.dynamic_kl:
+            self.update_kl_across_ranks(rewards_delta)
 
         if self.preference_loss == "dpo":
             loss = -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)
@@ -336,6 +364,17 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         logprobs = self.get_reduced_masked_logps(pi_logprobs, labels, average_log_probs=average_log_probs)
         chosen_logprobs, _ = self.split_output_tensor(logprobs)
         return -chosen_logprobs.mean(0)
+    
+    def loss_func_sft_workaround(self, loss_mask, num_valid_tokens_in_ub, output_tensor):
+        losses = output_tensor.float()
+        is_finite = losses.isfinite()
+        loss_mask = loss_mask.view(-1).float()
+        loss_mask = loss_mask * is_finite.view(-1)
+        # TODO: add nemo version here
+        loss = 1.0 * torch.sum(losses.view(-1) * loss_mask) / num_valid_tokens_in_ub.clamp(min=1)  # sequence level nll
+        if parallel_state.get_context_parallel_world_size() > 1:
+            torch.distributed.all_reduce(loss, group=parallel_state.get_context_parallel_group())
+        return loss
 
     def get_loss_and_metrics(self, batch, forward_only):
         seq_length = batch["chosen"].shape[1]
@@ -420,6 +459,10 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
 
         # move to CPU
         metrics = {k: v.item() for k, v in metrics.items()}
+        
+        if self.dynamic_kl:
+            metrics["dynamic_kl_kl_penalty"] = self.ref_policy_kl_penalty
+            metrics["dynamic_kl_M_0"] = self.M_0
 
         return loss_mean.item(), metrics
 
@@ -440,7 +483,8 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
         set_sync_funcs(self, forward_only)
 
         orig_loss_func = self.loss_func
-        self.loss_func = super().loss_func
+        #self.loss_func = super().loss_func
+        self.loss_func = self.loss_func_sft_workaround
 
         fwd_bwd_function = get_forward_backward_func()
         fwd_loss_fn = super().get_forward_output_and_loss_func(forward_only)
@@ -588,6 +632,10 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                     sharded_state_dict_orig[key], v, "reference_policy"
                 )
             sharded_state_dict_orig["reference_policy"] = ref_policy_sharded_state_dict
+        
+        if self.dynamic_kl:
+            dynamic_kl_dict = {"M_0": self.M_0, "ref_policy_kl_penalty": self.ref_policy_kl_penalty}
+            sharded_state_dict_orig["dynamic_kl"] = dynamic_kl_dict
 
         return sharded_state_dict_orig
 
@@ -662,6 +710,11 @@ class MegatronGPTSPINModel(MegatronGPTModel, SupervisedInterface):
                         # param_mean_ref = sum([v.mean().item() for k,v in ref_policy.items() if isinstance(v, torch.Tensor)])
                         # print(f"*** REF_MEAN_LOAD_RAW: {param_mean_ref}", flush=True)
                         self.ref_policy_state_dict = ref_policy
+                    
+                    dynamic_kl = checkpoint_state_dict.pop("dynamic_kl", None)
+                    if dynamic_kl is not None and len(dynamic_kl) > 0 and self.cfg.spin.get("dynamic_kl", False):
+                        self.M_0 = dynamic_kl["M_0"]
+                        self.ref_policy_kl_penalty = dynamic_kl["ref_policy_kl_penalty"]
                     module.load_state_dict(checkpoint_state_dict, strict=True)
             else:
                 # when restoring a distributed checkpoint from a ptl checkpoint we need to defer loading the state_dict

@@ -19,6 +19,7 @@ import math
 import os
 from collections import defaultdict
 from functools import partial
+import itertools
 from statistics import mean
 from textwrap import dedent
 
@@ -370,7 +371,11 @@ class SelfRevisingTrainer:
             )
         '''
 
+        #self.num_responses_to_gen = self.model.cfg.spin.num_responses_to_gen
         self.num_critiques_to_gen = self.model.cfg.spin.num_critiques_to_gen
+        
+        self.use_meta_critiques = self.model.cfg.spin.get("use_meta_critiques", False)
+        self.meta_critiques_pcnt = self.model.cfg.spin.get("meta_critiques_pcnt", -1.0)
 
         self.length_params = OmegaConf.to_container(self.model.cfg.spin.length_params, resolve=True)
         self.sampling_params = OmegaConf.to_container(self.model.cfg.spin.sampling_params, resolve=True)
@@ -764,8 +769,8 @@ class SelfRevisingTrainer:
                 print(f"*** REGEX_TAG [{idx}]: {tag}")
         for idx, (r, end) in enumerate(zip(tagged_as_str, is_end.tolist())):
             tagged_responses.append(
-                #r if (end and (r is not None)) else None
-                r if (r is not None) else None
+                #r if end else None
+                r
             )
 
         return tagged_responses
@@ -1042,7 +1047,7 @@ class SelfRevisingTrainer:
             self.alt_iter = iter(self.alt_dataloader)
             batch = next(self.alt_iter)
             return batch
-    
+        
     def truncate_critique(self, prompt, response, buffer, vargs):
         p_list, _, resp_trunc = self.extract_prompt_elements(
             prompt, response, buffer[0]["dataset_mask"]
@@ -1092,7 +1097,7 @@ class SelfRevisingTrainer:
 
         return critique_prompt
     
-    def truncate_revise(self, prompt, response, buffer, critique, cl_valid, bad_idxs, idx):
+    def truncate_revise(self, prompt, response, buffer, critique, bad_idxs, idx):
         p_list, r_list, resp_raw = self.extract_prompt_elements(
             prompt, response, buffer[0]["dataset_mask"]
         )
@@ -1102,7 +1107,7 @@ class SelfRevisingTrainer:
         else:
             prompt_ft = p_list[-1]
         response_ft = resp_raw
-        revise_prompt_str = self.revise_template_fn(prompt=prompt_ft, response=response_ft, num_annotators=str(max(1, len(cl_valid))), s_or_not="" if len(cl_valid) <= 1 else "s", critique=critique)
+        revise_prompt_str = self.revise_template_fn(prompt=prompt_ft, response=response_ft, num_annotators="1", s_or_not="", critique=critique)
         revise_prompt = self.tokenizer.text_to_ids(revise_prompt_str)
 
         while len(revise_prompt) > (
@@ -1114,17 +1119,17 @@ class SelfRevisingTrainer:
                 response_ft = self.tokenizer.ids_to_text(
                     self.model.tokenizer.text_to_ids(response_ft)[:-spillover]
                 )
-                revise_prompt_str = self.revise_template_fn(prompt="", response=response_ft, num_annotators=str(max(1, len(cl_valid))), s_or_not="" if len(cl_valid) <= 1 else "s", critique=critique)
+                revise_prompt_str = self.revise_template_fn(prompt="", response=response_ft, num_annotators="1", s_or_not="", critique=critique)
                 revise_prompt = self.tokenizer.text_to_ids(revise_prompt_str)
                 break
             prompt_ft = self.tokenizer.ids_to_text(
                 self.model.tokenizer.text_to_ids(prompt_ft)[:-overage]
             )
-            revise_prompt_str = self.revise_template_fn(prompt=prompt_ft, response=response_ft, num_annotators=str(max(1, len(cl_valid))), s_or_not="" if len(cl_valid) <= 1 else "s", critique=critique)
+            revise_prompt_str = self.revise_template_fn(prompt=prompt_ft, response=response_ft, num_annotators="1", s_or_not="", critique=critique)
             revise_prompt = self.tokenizer.text_to_ids(revise_prompt_str)
         
         if len(revise_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-            revise_prompt_str = self.revise_template_fn(prompt="", response=response_ft, num_annotators=str(max(1, len(cl_valid))), s_or_not="" if len(cl_valid) <= 1 else "s", critique="I have no critique.")
+            revise_prompt_str = self.revise_template_fn(prompt="", response=response_ft, num_annotators="1", s_or_not="", critique="I have no critique.")
             revise_prompt = self.tokenizer.text_to_ids(revise_prompt_str)
             bad_idxs.append(idx)
         
@@ -1156,6 +1161,44 @@ class SelfRevisingTrainer:
             select_prompt = self.tokenizer.text_to_ids(select_prompt_str)
         
         return select_prompt
+    
+    def create_meta_sample(self, orig_prompt, orig_response, crit_chosen, crit_reject):
+        critique_prompt_str = self.critique_template_fn(prompt=orig_prompt, response=orig_response)
+        prompt_tokens = torch.LongTensor(self.tokenizer.text_to_ids(critique_prompt_str))
+        prompt_len = len(prompt_tokens)
+        
+        chosen_resp_text = crit_chosen + self.model.cfg.data.chat_prompt_tokens.end_of_turn
+        chosen_resp_tokens = torch.LongTensor(self.tokenizer.text_to_ids(chosen_resp_text))
+        reject_resp_text = crit_reject + self.model.cfg.data.chat_prompt_tokens.end_of_turn
+        reject_resp_tokens = torch.LongTensor(self.tokenizer.text_to_ids(reject_resp_text))
+        
+        # 1 x max_len tensor
+        chosen_prompt_len = prompt_len
+        chosen_tokens = torch.cat([prompt_tokens, chosen_resp_tokens], dim=0)
+        chosen_gen_len = len(chosen_tokens)
+        chosen_score = 1.0
+        
+        reject_prompt_len = prompt_len
+        reject_tokens = torch.cat([prompt_tokens, reject_resp_tokens], dim=0)
+        reject_gen_len = len(reject_tokens)
+        reject_score = 0.0
+        
+        if chosen_gen_len > self.model.cfg.encoder_seq_length or reject_gen_len > self.model.cfg.encoder_seq_length:
+            return None
+        else:
+            return {
+                        "chosen_tokens": chosen_tokens,
+                        "chosen_prompt_len": chosen_prompt_len,
+                        "chosen_gen_len": chosen_gen_len,
+                        "chosen_score": chosen_score,
+                        "reject_tokens": reject_tokens,
+                        "reject_prompt_len": reject_prompt_len,
+                        "reject_gen_len": reject_gen_len,
+                        "reject_score": reject_score,
+                        "bad_sample": False,
+                        "bad_ends": 0,
+                    }
+        
 
     def augment_dataloader(self, dataloader):
         """Augment dataloader with generations and ref policy log probs"""
@@ -1163,9 +1206,9 @@ class SelfRevisingTrainer:
         #iter_alt = None
         #if self.alt_dataloader is not None:
         #    iter_alt = iter(self.alt_dataloader)
-        buffer = []
+        buffer, meta_buffer = [], []
         done = False
-        samples_main = samples_seen = 0
+        samples_main = samples_seen = samples_replaced = 0
         while not done:
             try:
                 batches = next(iter_dataloader)
@@ -1191,12 +1234,9 @@ class SelfRevisingTrainer:
                         # at this point self.model is the reference policy from cpu_weight_swap
                         self.trtllm_generate.refit(self.model)
                         clear_memory()
-
-                    #candidate_responses_with_critiques = [
-                    #    [] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))
-                    #]
+                    
+                    
                     candidate_responses_with_critiques = []
-                    #for _ in range(self.num_responses_to_gen):
                     # Generation happens on GPU but returned tensors are on CPU so as not to blow up VRAM due to self.num_responses_to_gen
                     gen_tokens_buf, gen_prompt_lengths_buf, gen_lengths_buf, is_end = self.get_generations(buffer)
 
@@ -1213,7 +1253,7 @@ class SelfRevisingTrainer:
                             response = response_orig.replace("<|eot_id|>", "").strip()
                         else:
                             prompt = prompt_orig.replace("<extra_id_0>System\n\n", "")
-                            response = response_orig.replace("\n<extra_id_1>", "")
+                            response = response_orig.replace("\n<extra_id_1>", "").strip()
                         
                         #prompt, response, last_prompt = self.normalise_prompt(
                         #    self.tokenizer.ids_to_text(t[:s].tolist()),
@@ -1233,11 +1273,11 @@ class SelfRevisingTrainer:
                         critique_prompt = self.tokenizer.text_to_ids(critique_prompt_str)
                         if len(critique_prompt) > self.model.cfg.data.train_ds.max_seq_length:
                             critique_prompt = self.truncate_critique(prompt, response, buffer, vargs)
-                        
+
                         assert len(critique_prompt) <= (
                             self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
                         ), f"truncation of critique template failed [ {len(critique_prompt)} ]: {critique_prompt_str}"
-
+                        
                         critique_buffer.append(
                             {
                                 "prompt_lengths": torch.LongTensor([len(critique_prompt)]),
@@ -1247,116 +1287,127 @@ class SelfRevisingTrainer:
                         orig_prompts_and_responses.append( (prompt, response) )
 
                     
-                    critiques_list = [
+                    critiques_with_revisions_list = [
                         [] for _ in range(sum([len(b["prompt_lengths"]) for b in buffer]))
                     ]
                     for _ in range(self.num_critiques_to_gen):
                         critiques_as_str = self.get_tagged_responses(critique_buffer, regex_fn=None)
-                        
-                        for idx, critique in enumerate(critiques_as_str):
-                            critiques_list[idx].append(critique)
                     
-                    revise_buffer, bad_idxs = [], []
-                    for idx, ((prompt, response), critique_list) in enumerate(zip(orig_prompts_and_responses, critiques_list)):
+                        revise_buffer, bad_idxs = [], []
+                        for idx, ((prompt, response), critique) in enumerate(zip(orig_prompts_and_responses, critiques_as_str)):
+                            if critique is None or len(critique) == 0:
+                                critique = "I have no critique."
+                                bad_idxs.append(idx)
+                            revise_prompt_str = self.revise_template_fn(prompt=prompt, response=response, num_annotators="1", s_or_not="", critique=critique)
+                            revise_prompt = self.tokenizer.text_to_ids(revise_prompt_str)
+                            if len(revise_prompt) > self.model.cfg.data.train_ds.max_seq_length:
+                                revise_prompt = self.truncate_revise(prompt, response, buffer, critique, bad_idxs, idx)
+                        
+                            assert len(revise_prompt) <= (
+                                    self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
+                                ), f"truncation of revise template failed [ {len(revise_prompt)} ]: {revise_prompt_str}"
+                            
+                            revise_buffer.append(
+                                {
+                                    "prompt_lengths": torch.LongTensor([len(revise_prompt)]),
+                                    "prompts_only": torch.LongTensor(revise_prompt).unsqueeze(0),
+                                }
+                            )
+                        
                         if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
-                            print("*** RAW_CRITIQUE_LIST: ", critique_list)
-                        cl_valid = [*filter(exists, critique_list)]
-                        if len(cl_valid) == 0:
-                            critique = "I have no critique."
-                            bad_idxs.append(idx)
-                        else:
-                            cl_valid = list(set(cl_valid))
-                            critique = "\n-------------------------------------------\n".join(cl_valid)
-                        revise_prompt_str = self.revise_template_fn(prompt=prompt, response=response, num_annotators=str(max(1, len(cl_valid))), s_or_not="" if len(cl_valid) <= 1 else "s", critique=critique)
-                        revise_prompt = self.tokenizer.text_to_ids(revise_prompt_str)
-                        if len(revise_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-                            revise_prompt = self.truncate_revise(prompt, response, buffer, critique, cl_valid, bad_idxs, idx)
+                            print("**** BAD_IDXS: ", bad_idxs)
+                        revisions_as_str = self.get_tagged_responses(revise_buffer, regex_fn=None)
+                        revisions_as_str = [(None if i in bad_idxs else x) for i,x in enumerate(revisions_as_str)]
                         
-                        assert len(revise_prompt) <= (
-                                self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
-                            ), f"truncation of revise template failed [ {len(revise_prompt)} ]: {revise_prompt_str}"
+                        for idx, (critique_as_str, revised_resp_str) in enumerate(zip(critiques_as_str, revisions_as_str)):
+                            critiques_with_revisions_list[idx].append( (critique_as_str, revised_resp_str) )
                     
-                        revise_buffer.append(
-                            {
-                                "prompt_lengths": torch.LongTensor([len(revise_prompt)]),
-                                "prompts_only": torch.LongTensor(revise_prompt).unsqueeze(0),
-                            }
-                        )
-                    
-                    if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
-                        print("**** BAD_IDXS: ", bad_idxs)
-                    revisions_as_str = self.get_tagged_responses(revise_buffer, regex_fn=None)
-                    revisions_as_str = [(None if i in bad_idxs else x) for i,x in enumerate(revisions_as_str)]
-                    
-                    select_buffer = []
-                    for idx, ((orig_prompt, orig_response), revised_resp_str) in enumerate(zip(orig_prompts_and_responses, revisions_as_str)):
-                        if revised_resp_str is None:
-                            revised_resp_str = "NULL"
-                        if torch.rand([1], generator=self.rng_generator) < 0.5:
-                            resp_A = orig_response
-                            resp_B = revised_resp_str
-                        else:
-                            resp_A = revised_resp_str
-                            resp_B = orig_response
-                        select_prompt_str = self.select_template_fn(orig_prompt=orig_prompt, response_A=resp_A, response_B=resp_B)
-                        select_prompt = self.tokenizer.text_to_ids(select_prompt_str)
-                        if len(select_prompt) > self.model.cfg.data.train_ds.max_seq_length:
-                            select_prompt = self.truncate_select(orig_prompt, buffer, resp_A, resp_B)
-                        
-                        assert len(select_prompt) <= (
-                                self.model.cfg.encoder_seq_length - self.max_gen_seq_len - 8
-                            ), f"truncation of select template failed [ {len(select_prompt)} ]: {select_prompt_str}"
-                    
-                        select_buffer.append(
-                            {
-                                "prompt_lengths": torch.LongTensor([len(select_prompt)]),
-                                "prompts_only": torch.LongTensor(select_prompt).unsqueeze(0),
-                                "resp_dict": {"A": resp_A, "B": resp_B},
-                            }
-                        )
-                    
-                    selections_as_str = self.get_tagged_responses(select_buffer, regex_fn=self.select_regex_fn)
-                    if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
-                        print(f"**** SELECTIONS_AS_STR: {selections_as_str}")
-                    
+                    #elo_score_buffer = []
                     chosen_and_reject_responses = []
-                    for idx, (select_str, s_buffer) in enumerate(zip(selections_as_str, select_buffer)):
-                        resp_dict = s_buffer["resp_dict"]
-                        if select_str in ["A", "B"]:
-                            if select_str == "A":
-                                chosen = resp_dict["A"]
-                                reject = resp_dict["B"]
-                            elif select_str == "B":
-                                chosen = resp_dict["B"]
-                                reject = resp_dict["A"]
-                            else:
-                                raise RuntimeError(f"Got incorrect select_str: {select_str}")
-                            chosen_and_reject_responses.append({"chosen": chosen, "reject": reject})
+                    for idx in range(len(critiques_with_revisions_list)):
+                        orig_prompt, orig_response = orig_prompts_and_responses[idx]
+                        individual_select_buffer = []
+                        candidate_responses = [orig_response] + [x[-1] for x in critiques_with_revisions_list[idx]]
+                        candidate_critiques = [x[0] for x in critiques_with_revisions_list[idx]]
+                        combinations = list(itertools.combinations(candidate_responses, 2))
+                        for resp_A, resp_B in combinations:
+                            #resp_A = resp_A_t[-1]
+                            #resp_B = resp_B_t[-1]
+                            if resp_A is None:
+                                resp_A = "NULL"
+                            if resp_B is None:
+                                resp_B = "NULL"
+                            select_prompt_str_AB = self.select_template_fn(orig_prompt=orig_prompt, response_A=resp_A, response_B=resp_B)
+                            select_prompt_AB = self.tokenizer.text_to_ids(select_prompt_str_AB)
+                            if len(select_prompt_AB) > self.model.cfg.data.train_ds.max_seq_length:
+                                select_prompt_AB = self.truncate_select(orig_prompt, buffer, resp_A, resp_B)
+                            select_prompt_str_BA = self.select_template_fn(orig_prompt=orig_prompt, response_A=resp_B, response_B=resp_A)
+                            select_prompt_BA = self.tokenizer.text_to_ids(select_prompt_str_BA)
+                            if len(select_prompt_BA) > self.model.cfg.data.train_ds.max_seq_length:
+                                select_prompt_BA = self.truncate_select(orig_prompt, buffer, resp_B, resp_A)
+                            
+                            individual_select_buffer.append(
+                                {
+                                    "prompt_lengths": torch.LongTensor([len(select_prompt_AB)]),
+                                    "prompts_only": torch.LongTensor(select_prompt_AB).unsqueeze(0),
+                                    #"resp_dict": {"A": resp_A, "B": resp_B},
+                                }
+                            )
+                            individual_select_buffer.append(
+                                {
+                                    "prompt_lengths": torch.LongTensor([len(select_prompt_BA)]),
+                                    "prompts_only": torch.LongTensor(select_prompt_BA).unsqueeze(0),
+                                    #"resp_dict": {"A": resp_A, "B": resp_B},
+                                }
+                            )
+                        selections_as_str = []
+                        for batch in divide_chunks(individual_select_buffer, self.rollout_micro_batch_size):
+                            batch_output = self.get_tagged_responses(batch, regex_fn=self.select_regex_fn)
+                            selections_as_str.extend(batch_output)
+                        elo_scores = self.get_elo_scores(len(candidate_responses), selections_as_str)
+                        #elo_score_buffer.append( (elo_scores, candidate_responses) )
+                        if np.sum(elo_scores == elo_scores.max()) > 1:
+                            chosen_idx = torch.multinomial(torch.FloatTensor(elo_scores == elo_scores.max()), num_samples=1, replacement=False, generator=self.rng_generator).item()
                         else:
-                            print(f"*** BAD_SELECT_STR  {select_str}")
-                            chosen_and_reject_responses.append(None)
+                            chosen_idx = np.argmax(elo_scores)
+                        #if np.sum(elo_scores == elo_scores.min()) > 1:
+                        #    reject_idx = torch.multinomial(torch.FloatTensor(elo_scores == elo_scores.min()), num_samples=1, replacement=False, generator=self.rng_generator).item()
+                        #else:
+                        #    reject_idx = np.argmin(elo_scores)
+                        if sum(elo_scores != elo_scores[chosen_idx]) == 0:
+                            reject_idx = torch.multinomial(torch.FloatTensor(elo_scores == elo_scores.min()), num_samples=1, replacement=False, generator=self.rng_generator).item()
+                        else:
+                            reject_idx = torch.multinomial(torch.FloatTensor(elo_scores != elo_scores[chosen_idx]), num_samples=1, replacement=False, generator=self.rng_generator).item()
+                        chosen_and_reject_responses.append( {"chosen": candidate_responses[chosen_idx], "reject": candidate_responses[reject_idx], "chosen_is_orig": chosen_idx == 0} )
+                        
+                        if self.use_meta_critiques and len(meta_buffer) < self.model.cfg.global_batch_size * 30:
+                            cand_scores_with_idx = [(i,c) for i,c in enumerate(elo_scores[1:])]
+                            for crit_A, crit_B in itertools.combinations(sorted(cand_scores_with_idx, key=lambda kk: kk[-1], reverse=True), 2):
+                                if crit_A[-1] > crit_B[-1]:
+                                    crit_chosen = candidate_critiques[crit_A[0]]
+                                    crit_reject = candidate_critiques[crit_B[0]]
+                                    meta_sample = self.create_meta_sample(orig_prompt, orig_response, crit_chosen, crit_reject)
+                                    if meta_sample is not None:
+                                        meta_buffer.append(meta_sample)
+                            
 
-                    for idx, (t, s, e, end, op_and_r, critique, revise, select) in enumerate(
+                    for idx, (t, s, e, end, op_and_r, critique_and_revise, select) in enumerate(
                         zip(
                             gen_tokens_buf,
                             gen_prompt_lengths_buf.tolist(),
                             gen_lengths_buf.tolist(),
                             is_end.tolist(),
                             orig_prompts_and_responses,
-                            critiques_list,
-                            revisions_as_str,
+                            critiques_with_revisions_list,
                             chosen_and_reject_responses,
                         )
                     ):
-                        candidate_responses_with_critiques[idx].append((t, s, e, op_and_r[0], op_and_r[-1], critique, revise, select, end))
+                        candidate_responses_with_critiques.append( (t, s, e, op_and_r[0], op_and_r[-1], [x[0] for x in critique_and_revise], [x[-1] for x in critique_and_revise], select, end) )
 
                     final_buffer = []
                     # now we need to pick the chosen/rejected
                     for cand_selected in candidate_responses_with_critiques:
                         bad_sample = False
-                        #idx_chosen = 0
-                        
-                        #cand_selected = cand_list[idx_chosen]
                         
                         # DPO format
                         prompt_len = cand_selected[1]
@@ -1380,28 +1431,45 @@ class SelfRevisingTrainer:
                         
                         bad_ends = sum(~np.array([cand_selected[-1], cand_selected[-1]]))
 
-                        if torch.equal(chosen_tokens, reject_tokens) or (cand_selected[-3] is None) or (cand_selected[-2] is None) or (all([b is None for b in cand_selected[-4]])):
+                        if (cand_selected[-2]["chosen_is_orig"]) or torch.equal(chosen_tokens, reject_tokens) or (all([b is None for b in cand_selected[-3]])) or (cand_selected[-2] is None) or (all([b is None for b in cand_selected[-4]])):
                             bad_sample = True
 
                         samples_seen += 1
                         
+                        if (
+                            self.use_meta_critiques
+                            and (
+                                (bad_ends > 0 or bad_sample)
+                                #or (
+                                #    self.rng_generator.random()
+                                #    <= self.meta_judge_pcnt - (samples_replaced / samples_seen)
+                                #)
+                            )
+                            and len(meta_buffer) > 0
+                        ):
+                            #final_buffer.append(meta_buffer.pop(0))
+                            # if you want to pop a random element instead, uncomment the below
+                            final_buffer.append(meta_buffer.pop(torch.randint(0, len(meta_buffer), size=(1,), generator=self.rng_generator).item()))
+
+                            samples_replaced += 1
+                        else:
+                            final_buffer.append(
+                                    {
+                                        "chosen_tokens": chosen_tokens,
+                                        "chosen_prompt_len": chosen_prompt_len,
+                                        "chosen_gen_len": chosen_gen_len,
+                                        "chosen_score": chosen_score,
+                                        "reject_tokens": reject_tokens,
+                                        "reject_prompt_len": reject_prompt_len,
+                                        "reject_gen_len": reject_gen_len,
+                                        "reject_score": reject_score,
+                                        "bad_sample": bad_sample,
+                                        "bad_ends": bad_ends,
+                                    }
+                                )
+                        
                         if torch.distributed.get_rank() == 0 and torch.distributed.get_rank() == parallel_state.get_data_parallel_src_rank():
                             print(f"CHOSEN_TOKENS: {self.tokenizer.ids_to_text(chosen_tokens.tolist())}  REJECT_TOKENS: {self.tokenizer.ids_to_text(reject_tokens.tolist())}")
-
-                        final_buffer.append(
-                                {
-                                    "chosen_tokens": chosen_tokens,
-                                    "chosen_prompt_len": chosen_prompt_len,
-                                    "chosen_gen_len": chosen_gen_len,
-                                    "chosen_score": chosen_score,
-                                    "reject_tokens": reject_tokens,
-                                    "reject_prompt_len": reject_prompt_len,
-                                    "reject_gen_len": reject_gen_len,
-                                    "reject_score": reject_score,
-                                    "bad_sample": bad_sample,
-                                    "bad_ends": bad_ends,
-                                }
-                            )
                 
                     self.model.finish_inference()
                     if self.use_trtllm_generation:
@@ -1506,6 +1574,58 @@ class SelfRevisingTrainer:
                     del logprobs, chosen_logps, reject_logps, new_batch
 
                 buffer.clear()
+    
+    def get_elo_scores(self, p, meta_reward_scores):
+        SCALE = 400
+        INIT_RATING = 1000
+        
+        players = list(range(p))
+        Bm = itertools.combinations(players, 2)
+        ptbl_a_win = np.zeros([p, p])
+        ptbl_b_win = np.zeros([p, p])
+        ptbl_tie = np.zeros([p, p])
+        for (m_a, m_b), (ab, ba) in zip(Bm, [tuple(x) for x in divide_chunks(meta_reward_scores, 2)]):
+            if ab is not None and ba is not None:
+                ptbl_a_win[m_a, m_b] += int(ab == "A" and ba == "B")
+                ptbl_b_win[m_a, m_b] += int(ab == "B" and ba == "A")
+                ptbl_tie[m_a, m_b] += int(ab == ba)
+
+        ptbl_win = ptbl_a_win * 1 + ptbl_b_win.T * 1 + (ptbl_tie + ptbl_tie.T)
+
+        X = np.zeros([p * (p - 1) * 2, p])
+        Y = np.zeros(p * (p - 1) * 2)
+        # w1 = ptbl_b_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
+        # w2 = ptbl_a_win.sum() / (ptbl_a_win.sum() + ptbl_b_win.sum())
+        cur_row = 0
+        sample_weights = []
+        for m_a in players:
+            for m_b in players:
+                if m_a == m_b:
+                    continue
+                # if nan skip
+                if math.isnan(ptbl_win[m_a, m_b]) or math.isnan(ptbl_win[m_b, m_a]):
+                    continue
+                X[cur_row, players[m_a]] = 1.0
+                X[cur_row, players[m_b]] = -1.0
+                Y[cur_row] = 1.0
+                sample_weights.append(ptbl_win[m_a, m_b])
+                # sample_weights.append(w1 * (1 if ptbl_a_win[m_a, m_b] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_a, m_b] >= 1 else 0))
+
+                X[cur_row + 1, players[m_a]] = 1.0
+                X[cur_row + 1, players[m_b]] = -1.0
+                Y[cur_row + 1] = 0.0
+                sample_weights.append(ptbl_win[m_b, m_a])
+                # sample_weights.append(w1 * (1 if ptbl_a_win[m_b, m_a] >= 1 else 0) + w2 * (1 if ptbl_b_win[m_b, m_a] >= 1 else 0))
+                cur_row += 2
+        X = X[:cur_row]
+        Y = Y[:cur_row]
+
+        lr = LogisticRegression(fit_intercept=False, penalty=None, tol=1e-6)
+        lr.fit(X, Y, sample_weight=sample_weights)
+
+        elo_scores = SCALE * lr.coef_[0] + INIT_RATING
+
+        return elo_scores
 
     def set_rho_by_iteration(self, iteration):
         if isinstance(self.spin_config["length_control"], (float, int)):

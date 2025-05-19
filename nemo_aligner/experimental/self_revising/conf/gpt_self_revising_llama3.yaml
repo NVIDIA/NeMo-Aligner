@@ -79,7 +79,6 @@ model:
     rollout_micro_batch_size: 32
     ref_policy_kl_penalty: 0.1  # Can also be a list of elements of size max_iterations, where each element will be the KL penalty used for that iteration
     offload_adam_states: True
-    num_responses_to_gen: 1  # number of responses to generate per prompt
     num_critiques_to_gen: 3  # number of independent critiques to generate per response
     preference_average_log_probs: False # whether normalizing log probs according to the sequence length in preference_loss
     sft_average_log_probs: ${.preference_average_log_probs} # whether normalizing log probs according to the sequence length in sft_loss
@@ -87,6 +86,7 @@ model:
     preference_loss: dpo # the preference loss, we support dpo, ipo, rpo_sq, rpo_bwd_kl, rpo_fwd_kl
     preference_loss_weight: 1 # the coefficient of the preference loss
     sft_loss_weight: 0 # the coefficient of the SFT loss
+    dynamic_kl: False  # whether to dynamically update Beta on each batch via the Beta-DPO paper
 
     critique_regex: \"$'(?i)(?s)(?<=\[CRITIQUE RESPONSE START\])(.*?)(?=\[CRITIQUE RESPONSE END\])'\"
     revised_regex: \"$'(?i)(?s)(?<=\[REVISED RESPONSE START\])(.*?)(?=\[REVISED RESPONSE END\])'\"

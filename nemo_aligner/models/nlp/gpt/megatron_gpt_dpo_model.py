@@ -73,6 +73,13 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         # variants of preference losses, by default DPO.
         self.preference_loss = self.cfg.dpo.get("preference_loss", "dpo")
         self.gt_reward_scale = self.cfg.dpo.get("gt_reward_scale", 1.0)
+        
+        # beta-DPO params
+        self.dynamic_kl = self.cfg.dpo.get("dynamic_kl", False)
+        self.M_0 = 1.0
+        self.momentum = 0.9
+        self.alpha = 0.75
+        self.B_0 = 0.1
 
     @torch.no_grad()
     def gather_and_split_rewards(self, pi_logprobs, ref_logprobs, labels, cu_seqlens=None, average_log_probs=False):
@@ -343,6 +350,23 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
             return (logps * loss_mask).sum(-1) / loss_mask.sum(-1).clamp(min=1)
         else:
             return (logps * loss_mask).sum(-1)
+    
+    @torch.no_grad()
+    def update_kl_across_ranks(self, local_batch_Mi):
+        local_batch_Mi = local_batch_Mi.detach()
+        
+        # average down to scalar
+        local_batch_Mi_mean = local_batch_Mi.mean(0)
+        
+        # all-reduce the scalar means from all other ranks
+        tensor_to_accumulate = torch.tensor([local_batch_Mi_mean], dtype=torch.float32, device=torch.cuda.current_device())
+        torch.distributed.all_reduce(tensor_to_accumulate, group=parallel_state.get_data_parallel_group(), op=torch.distributed.ReduceOp.AVG)
+        
+        global_Mi_mean = tensor_to_accumulate[0].item()
+        
+        self.M_0 = self.momentum * self.M_0 + (1.0 - self.momentum) * global_Mi_mean
+        
+        self.ref_policy_kl_penalty = (1.0 + self.alpha * (global_Mi_mean - self.M_0)) * self.B_0
 
     def loss_func(self, pi_logprobs, ref_logprobs, labels, gt_rewards, cu_seqlens=None, average_log_probs=False):
         rewards = self.get_reduced_masked_logps(
@@ -350,6 +374,9 @@ class MegatronGPTDPOModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInte
         )
         chosen_rewards, reject_rewards = self.split_output_tensor(rewards)
         rewards_delta = chosen_rewards - reject_rewards
+        
+        if self.dynamic_kl:
+            self.update_kl_across_ranks(rewards_delta)
 
         if self.preference_loss == "dpo":
             loss = -torch.nn.functional.logsigmoid(self.ref_policy_kl_penalty * rewards_delta).mean(0)

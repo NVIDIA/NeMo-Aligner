@@ -59,7 +59,7 @@ OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 mp.set_start_method("spawn", force=True)
 
 
-@hydra_runner(config_path="conf", config_name="gpt_self_revising_llama3")
+@hydra_runner(config_path="conf", config_name="gpt_self_revising_alt_llama3")
 def main(cfg) -> None:
     cfg.model = load_and_override_model_config(cfg.pretrained_checkpoint.restore_from_path, cfg.model)
 
@@ -103,6 +103,10 @@ def main(cfg) -> None:
 
     train_data_cfg = cfg.model.data.train_ds
     val_data_cfg = cfg.model.data.validation_ds
+    HAVE_ALT_DS = False
+    if "alt_ds" in cfg.model.data:
+        HAVE_ALT_DS = True
+        alt_data_cfg = cfg.model.data.alt_ds
 
     if cfg.model.data.get("sample", False):
         # if it is negative, num_samples is None
@@ -112,6 +116,7 @@ def main(cfg) -> None:
             num_samples = cfg.trainer.self_revising.max_steps * cfg.model.global_batch_size
     else:
         num_samples = None
+
     train_ds = build_sft_dataset(
         train_data_cfg,
         ptl_model.tokenizer,
@@ -133,6 +138,18 @@ def main(cfg) -> None:
         is_chat=cfg.model.data.chat,
         special_tokens=cfg.model.data.chat_prompt_tokens,
     )
+    
+    if HAVE_ALT_DS:
+        alt_ds = build_sft_dataset(
+            alt_data_cfg,
+            ptl_model.tokenizer,
+            None,
+            answer_only_loss=True,
+            is_chat=cfg.model.data.chat,
+            special_tokens=cfg.model.data.chat_prompt_tokens,
+        )
+    else:
+        alt_ds = None
 
     # eos_id = ptl_model.tokenizer.eos_id
 
@@ -169,6 +186,22 @@ def main(cfg) -> None:
         pad_samples_to_global_batch_size=False,
         load_gbs=True,
     )
+    
+    if HAVE_ALT_DS:
+        alt_dataloader = build_dataloader(
+            cfg=cfg,
+            dataset=alt_ds,
+            consumed_samples=consumed_samples,
+            mbs=cfg.model.micro_batch_size,
+            gbs=cfg.model.global_batch_size,
+            collate_fn=alt_ds.collate_fn,
+            drop_last=alt_data_cfg.drop_last,
+            pad_samples_to_global_batch_size=False,
+            load_gbs=True,
+            limit_batches=cfg.trainer.self_revising.limit_train_batches,
+        )
+    else:
+        alt_dataloader = None
 
     init_using_ptl(trainer, ptl_model, train_dataloader, train_ds)
     optimizer, scheduler = extract_optimizer_scheduler_from_ptl_model(ptl_model)
@@ -185,7 +218,7 @@ def main(cfg) -> None:
         scheduler=scheduler,
         train_dataloader=train_dataloader,
         val_dataloader=val_dataloader,
-        test_dataloader=None,
+        alt_dataloader=alt_dataloader,
         logger=logger,
         ckpt_callback=ckpt_callback,
         run_timer=timer,
