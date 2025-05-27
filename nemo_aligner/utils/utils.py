@@ -88,7 +88,8 @@ def load_from_nemo(
     """load a model using nemo checkpoint
     """
     connector = CustomSaveRestoreConnector(load_base_model_only=load_base_model_only)
-    assert os.path.exists(restore_path), f"tried to load from {restore_path=} but it does not exist"
+    if "msc" not in restore_path:
+        assert os.path.exists(restore_path), f"tried to load from {restore_path=} but it does not exist"
 
     # if we gave it a directory, then load as if it was extracted already
     if os.path.isdir(restore_path):
@@ -114,7 +115,8 @@ def load_checkpoint_model_config(restore_path):
     """load only the model config from a checkpoint
     """
     config_name_in_ckpt = NLPSaveRestoreConnector()._model_config_yaml
-    assert os.path.exists(restore_path), f"tried to load from {restore_path=} but it does not exist"
+    if "msc" not in restore_path:
+        assert os.path.exists(restore_path), f"tried to load from {restore_path=} but it does not exist"
 
     # if we gave it a directory, then load the cfg directly
     if os.path.isdir(restore_path):

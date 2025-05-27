@@ -59,6 +59,13 @@ class GPTSFTModel(NLPAdapterModelMixin, MegatronGPTModel, SupervisedInterface):
                 inference_params["strategy"] = hydra.utils.instantiate(inference_params["strategy"], model=self)
         self.set_inference_params(**inference_params)
 
+    def configure_sharded_model(self):
+        """Configure the model for sharded training.
+        This method is required by PyTorch Lightning to properly handle model sharding.
+        """
+        # Call the parent class's implementation
+        return super().configure_sharded_model()
+
     def set_inference_params(self, length_params=None, sampling_params=None, strategy=None):
         # TODO (igitman): the name self._inference_params is very similar to self.inference_params
         #    that's used by the base model for another purpose. There is also self._inference_config
