@@ -328,12 +328,11 @@ class DistributedLogprob(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         softmax, target_mask, masked_target = ctx.saved_tensors
-        partition_vocab_size = softmax.size(-1)
 
         # 1 if it's the chosen log prob, 0 otherwise
-        is_chosen = (~target_mask).unsqueeze(-1) * torch.nn.functional.one_hot(
-            masked_target, num_classes=partition_vocab_size
-        )
+        is_chosen = torch.zeros_like(softmax)
+        is_chosen.scatter_(-1, masked_target.unsqueeze(-1), 1.0)
+        is_chosen = is_chosen.masked_fill(target_mask.unsqueeze(-1), 0.0)
 
         grad_input = is_chosen.float().sub_(softmax)
 
