@@ -44,12 +44,14 @@ jobs:
       test_to_run: ${{ steps.test_to_run.outputs.main }}
       all: ${{ steps.all.outputs.main }}
       run_ci: ${{ steps.evaluate.outputs.run_ci }}
+      build_args: ${{ steps.manifest.outputs.BUILD_ARGS }}
     steps:
       - name: Parse test_to_run
         id: test_to_run
         run: |
           parsed_string=$(echo ${{ inputs.test_to_run || 'all' }} | jq -c --raw-input 'split(",")')
           echo "main=${parsed_string}" | tee -a "$GITHUB_OUTPUT"
+      
       - name: Parse all
         id: all
         run: |
@@ -89,6 +91,36 @@ jobs:
           # Run CI only (on main or if label is attached) and if it's not only docs
           echo run_ci=$([[ ("$LABEL" = "true" || "$IS_PULLREQUEST" = "false" || "$MERGE_GROUP" = "true") ]] && echo "true" || echo "false") | tee -a "$GITHUB_OUTPUT"
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: ${{ github.run_id }}
+
+      - name: Parse manifest.json
+        id: manifest
+        run: |
+          cd ${{ github.run_id }}
+
+          BUILD_ARGS=$(cat << EOF
+          BASE_IMAGE=$(cat setup/manifest.json | jq -r '."ngc-pytorch"')
+          NEMO_REPO=$(cat setup/manifest.json | jq -r '."vcs-dependencies".nemo.repo')
+          NEMO_TAG=$(cat setup/manifest.json | jq -r '."vcs-dependencies".nemo.ref')
+          MLM_REPO=$(cat setup/manifest.json | jq -r '."vcs-dependencies".megatron.repo')
+          MLM_TAG=$(cat setup/manifest.json | jq -r '."vcs-dependencies".megatron.ref')
+          TE_REPO=$(cat setup/manifest.json | jq -r '."vcs-dependencies".te.repo')
+          TE_TAG=$(cat setup/manifest.json | jq -r '."vcs-dependencies".te.ref')
+          TRTLLM_REPO=$(cat setup/manifest.json | jq -r '."vcs-dependencies".trtllm.repo')
+          TRTLLM_TAG=$(cat setup/manifest.json | jq -r '."vcs-dependencies".trtllm.ref')
+          PROTOBUF_VERSION=$(cat setup/manifest.json | jq -r '."pypi-dependencies".protobuf')
+          PYTRITON_VERSION=$(cat setup/manifest.json | jq -r '."pypi-dependencies".pytriton')
+          PYNVML_VERSION=$(cat setup/manifest.json | jq -r '."pypi-dependencies".pynvml')
+          EOF
+          )
+
+          echo "BUILD_ARGS<<EOF" >> $GITHUB_OUTPUT
+          echo "$BUILD_ARGS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          
   build-container:
     if: ${{ needs.pre-flight.outputs.run_ci == 'true' }}
     needs: [pre-flight]
@@ -101,7 +133,8 @@ jobs:
       build-args: |
         MAX_JOBS=32
         ALIGNER_COMMIT=${{ github.sha }}
-  
+        ${{ needs.pre-flight.outputs.BUILD_ARGS }}
+
   Unit_Tests:
     name: ${{ matrix.test_case }}
     needs: [build-container, pre-flight]
