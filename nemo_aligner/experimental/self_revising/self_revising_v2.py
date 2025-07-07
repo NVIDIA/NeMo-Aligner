@@ -284,8 +284,8 @@ and answers the user's question better. Your evaluation should consider factors 
 relevance, accuracy, depth, creativity, and level of detail of their responses. Begin your evaluation by
 comparing the two responses and provide a short explanation. Avoid any position biases and ensure that
 the order in which the responses were presented does not influence your decision. Do not allow the length
-of the responses to influence your evaluation. Do not favor certain names of the assistants. Be as objective
-as possible. After providing your explanation, output your final verdict by strictly following this format:
+of the responses to influence your evaluation. Assistant responses which contain any references or mentions of a Revised Response (especially in brackets, braces, or parentheses) should be judged as very poor quality and never preferred.
+Be as objective as possible. After providing your explanation, output your final verdict by strictly following this format:
 "[[A]]" if assistant A is better, "[[B]]" if assistant B is better.
 
 [[User Question]]
@@ -373,6 +373,7 @@ class SelfRevisingTrainer:
 
         #self.num_responses_to_gen = self.model.cfg.spin.num_responses_to_gen
         self.num_critiques_to_gen = self.model.cfg.spin.num_critiques_to_gen
+        self.orig_response_always_rejected = self.model.cfg.spin.get("orig_response_always_rejected", False)
         
         self.use_meta_critiques = self.model.cfg.spin.get("use_meta_critiques", False)
         self.meta_critiques_pcnt = self.model.cfg.spin.get("meta_critiques_pcnt", -1.0)
@@ -1378,6 +1379,8 @@ class SelfRevisingTrainer:
                             reject_idx = torch.multinomial(torch.FloatTensor(elo_scores == elo_scores.min()), num_samples=1, replacement=False, generator=self.rng_generator).item()
                         else:
                             reject_idx = torch.multinomial(torch.FloatTensor(elo_scores != elo_scores[chosen_idx]), num_samples=1, replacement=False, generator=self.rng_generator).item()
+                        if self.orig_response_always_rejected and chosen_idx != 0:
+                            reject_idx = 0
                         chosen_and_reject_responses.append( {"chosen": candidate_responses[chosen_idx], "reject": candidate_responses[reject_idx], "chosen_is_orig": chosen_idx == 0} )
                         
                         if self.use_meta_critiques and len(meta_buffer) < self.model.cfg.global_batch_size * 30:
@@ -1413,9 +1416,9 @@ class SelfRevisingTrainer:
                         prompt_len = cand_selected[1]
                         prompt_tokens = cand_selected[0][:prompt_len]
                         
-                        chosen_resp_str = (cand_selected[-2]["chosen"] if cand_selected[-2] is not None else "NULL") + self.model.cfg.data.chat_prompt_tokens.end_of_turn
+                        chosen_resp_str = (cand_selected[-2]["chosen"] if cand_selected[-2]["chosen"] is not None else "NULL") + self.model.cfg.data.chat_prompt_tokens.end_of_turn
                         chosen_resp_tokens = torch.LongTensor(self.tokenizer.text_to_ids(chosen_resp_str)).to(prompt_tokens.device)
-                        reject_resp_str = (cand_selected[-2]["reject"] if cand_selected[-2] is not None else "NULL") + self.model.cfg.data.chat_prompt_tokens.end_of_turn
+                        reject_resp_str = (cand_selected[-2]["reject"] if cand_selected[-2]["reject"] is not None else "NULL") + self.model.cfg.data.chat_prompt_tokens.end_of_turn
                         reject_resp_tokens = torch.LongTensor(self.tokenizer.text_to_ids(reject_resp_str)).to(prompt_tokens.device)
 
                         # 1 x max_len tensor

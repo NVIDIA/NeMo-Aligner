@@ -1348,7 +1348,7 @@ class SelfRevisingTrainer:
                             chosen_and_reject_responses,
                         )
                     ):
-                        candidate_responses_with_critiques[idx].append((t, s, e, op_and_r[0], op_and_r[-1], critique, revise, select, end))
+                        candidate_responses_with_critiques.append((t, s, e, op_and_r[0], op_and_r[-1], critique, revise, select, end))
 
                     final_buffer = []
                     # now we need to pick the chosen/rejected
