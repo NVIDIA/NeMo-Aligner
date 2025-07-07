@@ -9,6 +9,7 @@ trainer:
   
   # self-rewarding specific args
   self_revising:
+    use_onelogger: False
     max_iterations: 3   # the number of iterations to conduct self-rewarding for, with the reference policy updated on each iteration
     max_epochs: 1       # the number of epochs to use per iteration
     max_steps: -1

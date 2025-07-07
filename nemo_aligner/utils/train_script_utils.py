@@ -211,13 +211,13 @@ class CustomLoggerWrapper:
         self.apply_fn("finalize", "success")
 
 
-def resolve_and_create_trainer(cfg, pop_trainer_key):
+def resolve_and_create_trainer(cfg, pop_trainer_key, callbacks=None):
     """resolve the cfg, remove the key before constructing the PTL trainer
         and then restore it after
     """
     OmegaConf.resolve(cfg)
     with temp_pop_from_config(cfg.trainer, pop_trainer_key):
-        return MegatronTrainerBuilder(cfg).create_trainer()
+        return MegatronTrainerBuilder(cfg).create_trainer(callbacks=callbacks)
 
 
 @contextmanager

@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from functools import partial
+import os
+import subprocess
+#import wandb
 
 import torch
 import torch.multiprocessing as mp
@@ -28,7 +31,7 @@ from nemo_aligner.data.nlp.builders import (
     collate_with_pad_to_max_batch,
     identity_collate,
 )
-from nemo_aligner.experimental.self_revising.self_revising import SelfRevisingTrainer
+from nemo_aligner.experimental.self_revising.self_revising_v2 import SelfRevisingTrainer
 from nemo_aligner.models.nlp.gpt.megatron_gpt_spin_model import MegatronGPTSPINModel
 from nemo_aligner.utils.distributed import Timer
 from nemo_aligner.utils.train_script_utils import (
@@ -57,6 +60,80 @@ OmegaConf.register_new_resolver("int_div", lambda x, y: x // y, replace=True)
 OmegaConf.register_new_resolver("subtract", lambda x, y: x - y, replace=True)
 
 mp.set_start_method("spawn", force=True)
+os.environ.setdefault("WANDB_START_METHOD", "thread")
+
+def count_lines(filename):
+    output = subprocess.check_output(['wc', '-l', filename]).decode('utf-8')
+    # Extract the line count
+    line_count = int(output.split()[0])
+    
+    return line_count
+
+def ensure_wandb_logged_in():
+    """
+    Checks if the user is already logged into w&b.
+    If not logged in, attempts to login using WANDB_API_KEY.
+    """
+    # Get the API key from environment variable.
+    api_key = os.environ.get("WANDB_API_KEY")
+    if not api_key:
+        raise ValueError("WANDB_API_KEY environment variable not set.")
+
+    # Attempt to login without forcing a re-login.
+    login_info = wandb.login(key=api_key, relogin=False)
+    
+    # The login_info is usually a dictionary that might contain a 'status' key.
+    # For example, if already logged in, it might include "already logged in".
+    if isinstance(login_info, dict) and login_info.get("status") == "already logged in":
+        print("Already logged into wandb.")
+    else:
+        print("Logged into wandb successfully.")
+
+
+def create_onelogger_objects(cfg):
+    node_rank = os.environ.get("NODE_RANK", "0")
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    master_addr = os.environ.get("MASTER_ADDR", "")
+    print(f"NODE_RANK: {node_rank}, MASTER_ADDR: {master_addr}")
+    #if node_rank == '0' and local_rank == 0:
+    #    ensure_wandb_logged_in()
+    #    wandb.init(project=additional_args.project_name, name=additional_args.runname)
+    if local_rank == 0:
+        from one_logger_utils.pytorch_lightning import TimeEventCallback
+        
+        app_tag = cfg.exp_manager.wandb_logger_kwargs.project
+        dataset_len = count_lines(cfg.model.data.train_ds.file_path)
+        one_logger_callback_config = {
+            "enable_for_current_rank": os.environ.get('LOCAL_RANK') == '0',
+            "one_logger_async": True,
+            "one_logger_project": app_tag + "_onelogger",
+            "log_every_n_train_iterations": cfg.trainer.self_revising.val_check_interval, 
+            "app_tag_run_version": "0.0.0", 
+            "summary_data_schema_version": "1.0.0",
+            "app_run_type": "training",
+            "app_tag": app_tag,
+            "app_tag_run_name": cfg.exp_manager.wandb_logger_kwargs.name,
+            "world_size": os.environ.get('WORLD_SIZE', -1),
+            "global_batch_size": cfg.model.global_batch_size,
+            "batch_size": 1,
+            "micro_batch_size": cfg.model.micro_batch_size,
+            "train_iterations_target": dataset_len // cfg.model.global_batch_size,
+            "train_samples_target": dataset_len,
+            "is_train_iterations_enabled": True,
+            "is_baseline_run": False,
+            "is_test_iterations_enabled": False,
+            "is_validation_iterations_enabled": True,
+            "is_save_checkpoint_enabled": False,
+            "is_log_throughput_enabled": False,
+            "seq_length": cfg.model.encoder_seq_length,
+            #"save_checkpoint_strategy": "sync",
+        }
+        one_logger_callback_utils = TimeEventCallback(one_logger_callback_config)
+    else:
+        one_logger_callback_utils = None
+
+    return one_logger_callback_utils
+
 
 
 @hydra_runner(config_path="conf", config_name="gpt_self_revising_alt_llama3")
@@ -65,8 +142,18 @@ def main(cfg) -> None:
 
     logging.info("\n\n************** Experiment configuration ***********")
     logging.info(f"\n{OmegaConf.to_yaml(cfg)}")
+    
+    if cfg.trainer.self_revising.get("use_onelogger", False):
+        one_logger_cb = create_onelogger_objects(cfg)
+    else:
+        one_logger_cb = None
 
-    trainer = resolve_and_create_trainer(cfg, "self_revising")
+    trainer = resolve_and_create_trainer(cfg, "self_revising", [one_logger_cb] if one_logger_cb is not None else None)
+    
+    if cfg.trainer.self_revising.get("use_onelogger", False) and one_logger_cb is not None:
+        from one_logger_utils.pytorch_lightning import _hook_save_checkpoint
+        trainer.save_checkpoint = _hook_save_checkpoint(trainer.save_checkpoint, one_logger_cb)
+    
     exp_manager(trainer, cfg.exp_manager)
     logger = CustomLoggerWrapper(trainer.loggers)
 
