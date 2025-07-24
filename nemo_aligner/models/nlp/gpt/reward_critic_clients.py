@@ -101,7 +101,7 @@ def load_principle_mapping(file_path):
     """Load mapping from text to principle_cls from jsonl file"""
     text_to_principle = {}
     try:
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             for line in f:
                 data = json.loads(line.strip())
                 if "text" in data and "principle_cls" in data:
