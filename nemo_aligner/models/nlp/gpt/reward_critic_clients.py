@@ -106,6 +106,8 @@ def load_principle_mapping(file_path):
                 data = json.loads(line.strip())
                 if "text" in data and "principle_cls" in data:
                     text_to_principle[data["text"]] = data["principle_cls"]
+                else:
+                    raise ValueError(f"Invalid line in {file_path}: {line.strip()}")
         print(f"Loaded {len(text_to_principle)} principle mappings from {file_path}")
     except FileNotFoundError:
         print(f"Warning: File {file_path} not found. Using empty principle mapping.")
