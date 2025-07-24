@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import re
 import subprocess
 from collections import Counter
@@ -90,6 +91,67 @@ def extract_dialogue_llama(text):
     assistant_text = re.findall(assistant_pattern, text, re.DOTALL)
 
     return user_text, assistant_text
+
+
+# Global variable to store the principle mapping
+_principle_mapping = None
+
+
+def load_principle_mapping(file_path):
+    """Load mapping from text to principle_cls from jsonl file"""
+    text_to_principle = {}
+    try:
+        with open(file_path, "r") as f:
+            for line in f:
+                data = json.loads(line.strip())
+                if "text" in data and "principle_cls" in data:
+                    text_to_principle[data["text"]] = data["principle_cls"]
+    except FileNotFoundError:
+        print(f"Warning: File {file_path} not found. Using empty principle mapping.")
+    except Exception as e:
+        print(f"Error loading principle mapping: {e}")
+    return text_to_principle
+
+
+def get_principle_for_text_from_file(text, file_path=None):
+    """Get principle_cls for given text from the mapping file"""
+    global _principle_mapping
+
+    if file_path is None:
+        file_path = "/lustre/fsw/portfolios/llmservice/users/jiaqiz/launch_scripts/principle_rm_rlhf/processed_dedup_filtered_top1_train_critic_cleaned_principlecls_shuf.rl.train_and_val.jsonl"
+
+    # Load mapping if not already loaded
+    if _principle_mapping is None:
+        _principle_mapping = load_principle_mapping(file_path)
+
+    # Extract the key by removing the assistant's actual response
+    # Keep everything up to and including "<|start_header_id|>assistant<|end_header_id|>\n\n"
+    assistant_header = "<|start_header_id|>assistant<|end_header_id|>"
+    if assistant_header in text:
+        # Find the last occurrence of the assistant header
+        idx = text.rfind(assistant_header)
+        if idx != -1:
+            key = text[: idx + len(assistant_header)] + "\n\n"
+        else:
+            raise ValueError(f"Failed to find assistant header in text: {text[:100]}...")
+    else:
+        raise ValueError(f"Assistant header not found in text: {text[:100]}...")
+
+    return _principle_mapping.get(key, None)
+
+
+def process_text_to_send_to_principle_rm(text, principle=None):
+    if not text.endswith("<|eot_id|>"):
+        text += "<|eot_id|>"
+
+    # Get principle from mapping if not provided
+    if principle is None:
+        principle = get_principle_for_text_from_file(text)
+        if principle is None:
+            raise ValueError(f"Principle not found for text: {text[:100]}...")  # Show first 100 chars for debugging
+
+    text += f"<|start_header_id|>user<|end_header_id|>\n\nEvaluate the response to the previous prompt in terms of whether it satisfies this principle: {principle}. Only answer Yes or No.<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
+    return text
 
 
 def _str_list2numpy(str_list) -> np.ndarray:
@@ -422,10 +484,10 @@ class RemoteGPTRMClient:
                 rollout_batch["response_tokens"][i, : rollout_batch["response_lengths"][i]].tolist()
             )
             format_correct = True
+            text = process_text_to_send_to_principle_rm(text)
+            # user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
 
-            user_text, assistant_text = extract_dialogue_llama(text + "<|start_header_id|>")
-
-            text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
+            # text = chat_template(user_text=user_text, assistant_text=assistant_text, template="HS2")
             # if not text.endswith("<|eot_id|>"):
             # text = text + "<|eot_id|>"
             texts.append(text)
