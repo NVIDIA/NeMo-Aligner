@@ -106,6 +106,7 @@ def load_principle_mapping(file_path):
                 data = json.loads(line.strip())
                 if "text" in data and "principle_cls" in data:
                     text_to_principle[data["text"]] = data["principle_cls"]
+        print(f"Loaded {len(text_to_principle)} principle mappings from {file_path}")
     except FileNotFoundError:
         print(f"Warning: File {file_path} not found. Using empty principle mapping.")
     except Exception as e:
@@ -131,11 +132,14 @@ def get_principle_for_text_from_file(text, file_path=None):
         # Find the last occurrence of the assistant header
         idx = text.rfind(assistant_header)
         if idx != -1:
-            key = "<|begin_of_text|>" + text[: idx + len(assistant_header)] + "\n\n"
+            key = text[: idx + len(assistant_header)] + "\n\n"
+            if not key.startswith("<|begin_of_text|>"):
+                key = "<|begin_of_text|>" + key
+            print(key)
         else:
-            raise ValueError(f"Failed to find assistant header in text: {text[:1000]}...")
+            raise ValueError(f"Failed to find assistant header in text: {text[:10000]}...")
     else:
-        raise ValueError(f"Assistant header not found in text: {text[:1000]}...")
+        raise ValueError(f"Assistant header not found in text: {text[:10000]}...")
 
     return _principle_mapping.get(key, None)
 
