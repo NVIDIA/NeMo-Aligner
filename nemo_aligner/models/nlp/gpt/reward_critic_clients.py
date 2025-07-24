@@ -131,11 +131,11 @@ def get_principle_for_text_from_file(text, file_path=None):
         # Find the last occurrence of the assistant header
         idx = text.rfind(assistant_header)
         if idx != -1:
-            key = text[: idx + len(assistant_header)] + "\n\n"
+            key = "<|begin_of_text|>" + text[: idx + len(assistant_header)] + "\n\n"
         else:
-            raise ValueError(f"Failed to find assistant header in text: {text[:100]}...")
+            raise ValueError(f"Failed to find assistant header in text: {text[:1000]}...")
     else:
-        raise ValueError(f"Assistant header not found in text: {text[:100]}...")
+        raise ValueError(f"Assistant header not found in text: {text[:1000]}...")
 
     return _principle_mapping.get(key, None)
 
@@ -148,7 +148,7 @@ def process_text_to_send_to_principle_rm(text, principle=None):
     if principle is None:
         principle = get_principle_for_text_from_file(text)
         if principle is None:
-            raise ValueError(f"Principle not found for text: {text[:100]}...")  # Show first 100 chars for debugging
+            raise ValueError(f"Principle not found for text: {text[:1000]}...")  # Show first 100 chars for debugging
 
     text += f"<|start_header_id|>user<|end_header_id|>\n\nEvaluate the response to the previous prompt in terms of whether it satisfies this principle: {principle}. Only answer Yes or No.<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
     return text
