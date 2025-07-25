@@ -138,25 +138,43 @@ def get_principle_for_text_from_file(text, file_path=None):
             if not key.startswith("<|begin_of_text|>"):
                 key = "<|begin_of_text|>" + key
 
-            # Check for every <|start_header_id|> and add <|eot_id|> before it if missing
-            header_pattern = "<|start_header_id|>"
+            # Check for <|start_header_id|>user and <|start_header_id|>assistant and add <|eot_id|> before them if missing
+            # But skip <|start_header_id|>system
+            user_header = "<|start_header_id|>user"
+            assistant_header_pattern = "<|start_header_id|>assistant"
             eot_pattern = "<|eot_id|>"
 
-            # Find all positions of <|start_header_id|>
+            # Process user headers
             pos = 0
             while True:
-                pos = key.find(header_pattern, pos)
+                pos = key.find(user_header, pos)
                 if pos == -1:
                     break
 
                 # Check if it's preceded by <|eot_id|>
                 eot_pos = pos - len(eot_pattern)
                 if eot_pos < 0 or key[eot_pos:pos] != eot_pattern:
-                    # Add <|eot_id|> before <|start_header_id|>
+                    # Add <|eot_id|> before <|start_header_id|>user
                     key = key[:pos] + eot_pattern + key[pos:]
                     pos += len(eot_pattern)  # Adjust position after insertion
 
-                pos += len(header_pattern)  # Move past this header
+                pos += len(user_header)  # Move past this header
+
+            # Process assistant headers
+            pos = 0
+            while True:
+                pos = key.find(assistant_header_pattern, pos)
+                if pos == -1:
+                    break
+
+                # Check if it's preceded by <|eot_id|>
+                eot_pos = pos - len(eot_pattern)
+                if eot_pos < 0 or key[eot_pos:pos] != eot_pattern:
+                    # Add <|eot_id|> before <|start_header_id|>assistant
+                    key = key[:pos] + eot_pattern + key[pos:]
+                    pos += len(eot_pattern)  # Adjust position after insertion
+
+                pos += len(assistant_header_pattern)  # Move past this header
 
             print(key)
         else:
