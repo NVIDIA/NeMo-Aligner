@@ -137,6 +137,27 @@ def get_principle_for_text_from_file(text, file_path=None):
             key = text[: idx + len(assistant_header)] + "\n\n"
             if not key.startswith("<|begin_of_text|>"):
                 key = "<|begin_of_text|>" + key
+
+            # Check for every <|start_header_id|> and add <|eot_id|> before it if missing
+            header_pattern = "<|start_header_id|>"
+            eot_pattern = "<|eot_id|>"
+
+            # Find all positions of <|start_header_id|>
+            pos = 0
+            while True:
+                pos = key.find(header_pattern, pos)
+                if pos == -1:
+                    break
+
+                # Check if it's preceded by <|eot_id|>
+                eot_pos = pos - len(eot_pattern)
+                if eot_pos < 0 or key[eot_pos:pos] != eot_pattern:
+                    # Add <|eot_id|> before <|start_header_id|>
+                    key = key[:pos] + eot_pattern + key[pos:]
+                    pos += len(eot_pattern)  # Adjust position after insertion
+
+                pos += len(header_pattern)  # Move past this header
+
             print(key)
         else:
             raise ValueError(f"Failed to find assistant header in text: {text[:10000]}...")
