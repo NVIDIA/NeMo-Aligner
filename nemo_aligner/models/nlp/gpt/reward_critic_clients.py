@@ -176,14 +176,18 @@ def get_principle_for_text_from_file(text, file_path=None):
 
                 pos += len(assistant_header_pattern)  # Move past this header
 
-            print(key)
         else:
             raise ValueError(f"Failed to find assistant header in text: {text[:10000]}...")
     else:
         raise ValueError(f"Assistant header not found in text: {text[:10000]}...")
 
     key = key.replace("<|eom_id|>", "")
-    return _principle_mapping.get(key, None)
+    print(key)
+
+    if key not in _principle_mapping:
+        print(f"Warning: Key not found in principle mapping, falling back to default 'accuracy'. Key: {key[:2000]}...")
+
+    return _principle_mapping.get(key, "accuracy")
 
 
 def process_text_to_send_to_principle_rm(text, principle=None):
