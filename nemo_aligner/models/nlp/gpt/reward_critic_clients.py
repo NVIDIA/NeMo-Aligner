@@ -182,6 +182,7 @@ def get_principle_for_text_from_file(text, file_path=None):
     else:
         raise ValueError(f"Assistant header not found in text: {text[:10000]}...")
 
+    key = key.replace("<|eom_id|>", "")
     return _principle_mapping.get(key, None)
 
 
