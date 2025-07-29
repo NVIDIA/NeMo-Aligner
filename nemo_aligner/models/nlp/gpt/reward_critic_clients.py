@@ -195,11 +195,11 @@ def process_text_to_send_to_principle_rm(text, principle=None):
         text += "<|eot_id|>"
 
     # Get principle from mapping if not provided
-    if principle is None:
-        principle = get_principle_for_text_from_file(text)
-        if principle is None:
-            raise ValueError(f"Principle not found for text: {text[:1000]}...")  # Show first 100 chars for debugging
-
+    # if principle is None:
+    #     principle = get_principle_for_text_from_file(text)
+    #     if principle is None:
+    #         raise ValueError(f"Principle not found for text: {text[:1000]}...")  # Show first 100 chars for debugging
+    principle = "accuracy"
     text += f"<|start_header_id|>user<|end_header_id|>\n\nEvaluate the response to the previous prompt in terms of whether it satisfies this principle: {principle}. Only answer Yes or No.<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"
     return text
 
